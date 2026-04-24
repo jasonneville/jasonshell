@@ -1,0 +1,165 @@
+.bottom-bar.surface {
+  align-items: center;
+  background:
+    linear-gradient(180deg, rgba(13, 16, 24, 0.98) 0%, rgba(7, 10, 16, 0.99) 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 -12px 30px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color: #f2f5ff;
+  display: flex;
+  height: 100%;
+  padding: 0 0.55rem;
+  width: 100%;
+}
+
+.bottom-bar .taskbar-strip {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.bottom-bar .launcher-strip {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.18rem;
+  min-height: 2rem;
+  padding-right: 0.35rem;
+  position: relative;
+}
+
+.bottom-bar .launcher-strip::after {
+  background: rgba(255, 255, 255, 0.1);
+  content: '';
+  height: 1rem;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+}
+
+.bottom-bar .launcher-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.2rem;
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.82rem;
+  justify-content: center;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+  width: 1.82rem;
+}
+
+.bottom-bar .launcher-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(144, 181, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.bottom-bar .launcher-button:active:not(:disabled) {
+  background: rgba(120, 148, 213, 0.14);
+}
+
+.bottom-bar .launcher-button:focus-visible,
+.bottom-bar .task-button:focus-visible {
+  outline: 2px solid rgba(144, 181, 255, 0.65);
+  outline-offset: 2px;
+}
+
+.bottom-bar .launcher-button:disabled,
+.bottom-bar .task-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.bottom-bar .launcher-icon {
+  display: block;
+  height: 1.04rem;
+  pointer-events: none;
+  width: 1.04rem;
+}
+
+.bottom-bar .task-strip {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 0.18rem;
+  min-height: 2rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bottom-bar .task-button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.2rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #f2f5ff;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 1 15rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  gap: 0.32rem;
+  min-height: 1.82rem;
+  min-width: 0;
+  padding: 0.22rem 0.46rem;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.bottom-bar .task-button:hover:not(:disabled) {
+  background: rgba(100, 131, 211, 0.14);
+  border-color: rgba(144, 181, 255, 0.18);
+}
+
+.bottom-bar .task-button:active:not(:disabled) {
+  background: rgba(100, 131, 211, 0.22);
+}
+
+.bottom-bar .task-button-active {
+  background:
+    linear-gradient(180deg, rgba(72, 102, 191, 0.36), rgba(40, 56, 104, 0.3));
+  border-color: rgba(150, 186, 255, 0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 0 0 1px rgba(112, 148, 235, 0.08);
+}
+
+.bottom-bar .task-button-minimized {
+  color: rgba(226, 232, 250, 0.72);
+}
+
+.bottom-bar .task-icon {
+  display: block;
+  flex: 0 0 auto;
+  height: 0.9rem;
+  pointer-events: none;
+  width: 0.9rem;
+}
+
+.bottom-bar .task-label {
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bottom-bar .strip-fallback {
+  color: rgba(214, 223, 255, 0.68);
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 0 0.2rem;
+  white-space: nowrap;
+}

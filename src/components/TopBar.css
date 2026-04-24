@@ -1,0 +1,170 @@
+.top-bar.surface {
+  align-items: center;
+  background:
+    linear-gradient(180deg, rgba(26, 31, 43, 0.96) 0%, rgba(15, 18, 28, 0.98) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #eef3ff;
+  display: flex;
+  gap: 0.42rem;
+  height: 100%;
+  justify-content: flex-end;
+  padding: 0 0.7rem;
+  width: 100%;
+}
+
+.top-bar .rail-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.top-bar .stack-pins {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.32rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  padding: 0 0.25rem;
+  scrollbar-width: thin;
+}
+
+.top-bar .stack-pins.stack-pins-hover {
+  background: rgba(77, 124, 254, 0.12);
+  border-radius: 0.28rem;
+  box-shadow: inset 0 0 0 1px rgba(124, 160, 255, 0.34);
+}
+
+.top-bar .rail-scroll {
+  background: transparent;
+  border: 0;
+  color: rgba(238, 243, 255, 0.9);
+  cursor: pointer;
+  font-size: 1.05rem;
+  height: 1.55rem;
+  width: 1.35rem;
+  padding: 0 0.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.top-bar .rail-scroll:hover {
+  background: rgba(77, 124, 254, 0.08);
+  border-radius: 0.22rem;
+}
+
+.top-bar .pin-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(240, 244, 255, 0.95);
+  background: linear-gradient(180deg, rgba(77, 124, 254, 0.06), rgba(77, 124, 254, 0.02));
+  pointer-events: none;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 0.28rem;
+}
+
+.top-bar .stack-pins.stack-pins-hover {
+  background: rgba(77, 124, 254, 0.12);
+  border-radius: 0.28rem;
+  box-shadow: inset 0 0 0 1px rgba(124, 160, 255, 0.34);
+}
+
+.top-bar .stack-pins button {
+  background: rgba(9, 13, 22, 0.54);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 0.24rem;
+  color: rgba(238, 243, 255, 0.9);
+  font-size: 0.64rem;
+  font-weight: 750;
+  height: 1.55rem;
+  max-width: 9.5rem;
+  min-width: 3.5rem;
+  overflow: hidden;
+  padding: 0 0.52rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-bar .stack-pins button:hover {
+  background: rgba(77, 124, 254, 0.15);
+  border-color: rgba(124, 160, 255, 0.34);
+}
+
+.top-bar .time-pill {
+  align-items: flex-end;
+  background: rgba(9, 13, 22, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.24rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  min-width: 5.6rem;
+  padding: 0.18rem 0.5rem;
+  text-align: right;
+}
+
+.top-bar .time-pill strong {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.top-bar .time-pill span {
+  color: rgba(218, 225, 246, 0.68);
+  font-size: 0.56rem;
+  font-weight: 600;
+}
+
+.top-bar .search-control {
+  align-items: center;
+  background: rgba(9, 13, 22, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.24rem;
+  display: grid;
+  grid-template-columns: minmax(5rem, 1fr) auto;
+  height: 1.55rem;
+  max-width: 18rem;
+  min-width: 12rem;
+  padding: 0 0.34rem 0 0.48rem;
+}
+
+.top-bar .search-control:focus-within {
+  border-color: rgba(124, 160, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(86, 132, 255, 0.25);
+}
+
+.top-bar .search-control input {
+  background: transparent;
+  border: 0;
+  color: #eef3ff;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 650;
+  min-width: 0;
+  outline: 0;
+}
+
+.top-bar .search-control input::placeholder,
+.top-bar .search-control span {
+  color: rgba(218, 225, 246, 0.46);
+}
+
+.top-bar .search-control span {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.18rem;
+  font-size: 0.55rem;
+  font-weight: 800;
+  padding: 0.02rem 0.2rem;
+}

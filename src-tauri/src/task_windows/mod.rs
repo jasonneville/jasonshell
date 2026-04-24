@@ -1,0 +1,100 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskbarWindow {
+    pub hwnd: String,
+    pub title: String,
+    pub process_name: String,
+    pub icon_data_url: String,
+    pub is_active: bool,
+    pub is_minimized: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskWindowAction {
+    Focus,
+    Maximize,
+    Minimize,
+    Close,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWindowPreviewImage {
+    pub image_data_url: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[cfg(target_os = "windows")]
+mod actions;
+#[cfg(target_os = "windows")]
+mod icons;
+#[cfg(target_os = "windows")]
+mod previews;
+#[cfg(all(target_os = "windows", test))]
+mod tests;
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[tauri::command]
+pub fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::list_open_task_windows()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+pub fn activate_task_window(hwnd: String, was_active: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        actions::activate_task_window(hwnd, was_active)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (hwnd, was_active);
+        Err("Taskbar window integration is only supported on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn maximize_task_window(hwnd: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        actions::maximize_task_window(hwnd)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = hwnd;
+        Err("Taskbar window integration is only supported on Windows".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn perform_task_window_action(
+    hwnd: String,
+    action: TaskWindowAction,
+) -> Result<(), String> {
+    actions::perform_task_window_action(hwnd, action)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
+    previews::capture_task_window_preview(hwnd)
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn parse_hwnd(hwnd: &str) -> Result<::windows::Win32::Foundation::HWND, String> {
+    let hwnd_value = hwnd
+        .parse::<isize>()
+        .map_err(|error| format!("Invalid window handle '{hwnd}': {error}"))?;
+
+    Ok(::windows::Win32::Foundation::HWND(hwnd_value as *mut _))
+}

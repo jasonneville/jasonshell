@@ -1,0 +1,5 @@
+model = "gpt-5.4"
+
+[[skills.config]]
+path = 'C:\Users\jnev1\.codex\skills\karpathy-guidelines\SKILL.md'
+enabled = false

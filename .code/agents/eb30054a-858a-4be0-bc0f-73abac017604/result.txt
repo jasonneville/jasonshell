@@ -1,0 +1,2 @@
+Reading the backend Rust files to inspect current stack popup, shell windows, and shell paths. Running a glob to find .rs files under src-tauri/src and reporting intent.
+

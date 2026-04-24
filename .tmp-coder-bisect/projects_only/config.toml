@@ -1,0 +1,6 @@
+model = "gpt-5.4"
+
+[projects.'"'"'C:\dev\jasonShell'"'"']
+trust_level = "trusted"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
