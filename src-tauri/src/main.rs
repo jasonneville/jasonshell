@@ -1,5 +1,6 @@
 mod launchers;
 mod layout;
+mod process_manager;
 mod search_panel;
 mod search_sources;
 mod shell_paths;
@@ -15,7 +16,7 @@ mod appbar;
 mod explorer;
 
 use std::sync::Mutex;
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 #[cfg(target_os = "windows")]
 use appbar::ShellRuntimeState;
@@ -42,6 +43,10 @@ fn main() {
             search_panel::hide_search_panel,
             search_panel::publish_search_panel,
             search_panel::get_search_panel_payload,
+            process_manager::show_process_manager,
+            process_manager::hide_process_manager,
+            process_manager::list_processes,
+            process_manager::kill_process,
             search_sources::search_system,
             shell_paths::open_shell_path,
             stack_popup::list_pinned_stack_folders,
@@ -53,6 +58,7 @@ fn main() {
             stack_popup::get_stack_popup_request,
             stack_popup::read_stack_folder,
             stack_popup::open_stack_item,
+            stack_popup::open_stack_item_with_picker,
             stack_popup::rename_stack_item,
             stack_popup::copy_stack_items,
             stack_popup::cut_stack_items,
@@ -69,6 +75,14 @@ fn main() {
             if window.label() == shell_windows::STACK_POPUP_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::PROCESS_MANAGER_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = window.emit(process_manager::PROCESS_MANAGER_CLOSED_EVENT, ());
                 let _ = window.hide();
                 return;
             }

@@ -1,0 +1,158 @@
+.process-manager-surface {
+  background:
+    radial-gradient(circle at top right, rgba(82, 119, 209, 0.18), transparent 34%),
+    linear-gradient(180deg, rgba(13, 16, 24, 0.98), rgba(6, 8, 13, 0.99));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-sizing: border-box;
+  color: #f2f5ff;
+  display: flex;
+  flex-direction: column;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  width: 100vw;
+}
+
+.process-manager-header {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.6rem;
+  padding: 0.45rem 0.6rem;
+}
+
+.process-manager-header strong,
+.process-manager-header span {
+  display: block;
+}
+
+.process-manager-header strong {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.process-manager-header span {
+  color: rgba(218, 226, 252, 0.66);
+  font-size: 0.62rem;
+  margin-top: 0.12rem;
+}
+
+.process-manager-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.process-manager-actions button,
+.process-row-head button,
+.kill-button {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.45rem;
+  color: #f2f5ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  min-height: 1.5rem;
+  padding: 0.18rem 0.5rem;
+}
+
+.process-manager-actions button:hover:not(:disabled),
+.process-row-head button:hover,
+.kill-button:hover:not(:disabled) {
+  background: rgba(112, 148, 235, 0.18);
+  border-color: rgba(144, 181, 255, 0.28);
+}
+
+.process-manager-actions button:disabled,
+.kill-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.process-table {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.process-row {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 1.4fr) 3.7rem 3.9rem 5.2rem 6.4rem 4.2rem 4.8rem 4rem;
+  gap: 0.35rem;
+  min-height: 1.72rem;
+  padding: 0 0.45rem;
+}
+
+.process-row-head {
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(229, 235, 255, 0.82);
+  flex: 0 0 auto;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  min-height: 1.85rem;
+  text-transform: uppercase;
+}
+
+.process-row-head button {
+  background: transparent;
+  border-color: transparent;
+  justify-self: start;
+  padding-left: 0;
+  text-transform: inherit;
+}
+
+.process-table-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.process-table-body .process-row:hover {
+  background: rgba(112, 148, 235, 0.09);
+}
+
+.process-name,
+.process-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-name {
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.process-number,
+.process-status {
+  color: rgba(224, 231, 252, 0.76);
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.process-number {
+  text-align: right;
+}
+
+.kill-button {
+  background: rgba(255, 84, 84, 0.08);
+  border-color: rgba(255, 119, 119, 0.18);
+  color: #ffd7d7;
+  justify-self: end;
+}
+
+.process-empty {
+  color: rgba(224, 231, 252, 0.68);
+  font-size: 0.72rem;
+  padding: 1rem;
+}

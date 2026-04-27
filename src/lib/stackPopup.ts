@@ -223,6 +223,10 @@ export function openStackItem(path: string): Promise<void> {
   return invoke('open_stack_item', { path });
 }
 
+export function openStackItemWithPicker(path: string): Promise<void> {
+  return invoke('open_stack_item_with_picker', { path });
+}
+
 function stackEntryFromItem(item: StackItem): StackEntry {
   return {
     id: item.path,

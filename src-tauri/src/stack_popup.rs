@@ -244,6 +244,15 @@ pub fn open_stack_item(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_stack_item_with_picker(path: String) -> Result<(), String> {
+    let path = normalize_existing_path(&path)?;
+    if Path::new(&path).is_dir() {
+        return Err("Open with is only available for files".to_string());
+    }
+    shell_paths::open_shell_path_with_picker(path)
+}
+
+#[tauri::command]
 pub fn rename_stack_item(path: String, new_name: String) -> Result<StackItem, String> {
     let source = PathBuf::from(normalize_existing_path(&path)?);
     let new_name = validate_child_name(&new_name)?;

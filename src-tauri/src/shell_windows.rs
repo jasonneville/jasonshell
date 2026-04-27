@@ -7,6 +7,7 @@ pub const BOTTOM_BAR_LABEL: &str = "bottom-bar";
 pub const TASK_PREVIEW_LABEL: &str = "task-preview";
 pub const SEARCH_PANEL_LABEL: &str = "search-panel";
 pub const STACK_POPUP_LABEL: &str = "stack-popup";
+pub const PROCESS_MANAGER_LABEL: &str = "process-manager";
 pub const TOP_BAR_HEIGHT_LOGICAL: f64 = 26.0;
 pub const BOTTOM_BAR_HEIGHT_LOGICAL: f64 = 36.0;
 pub const TASK_PREVIEW_WIDTH_LOGICAL: f64 = 332.0;
@@ -15,6 +16,8 @@ pub const SEARCH_PANEL_WIDTH_LOGICAL: f64 = 420.0;
 pub const SEARCH_PANEL_HEIGHT_LOGICAL: f64 = 320.0;
 pub const STACK_POPUP_WIDTH_LOGICAL: f64 = 980.0;
 pub const STACK_POPUP_HEIGHT_LOGICAL: f64 = 430.0;
+pub const PROCESS_MANAGER_WIDTH_LOGICAL: f64 = 720.0;
+pub const PROCESS_MANAGER_HEIGHT_LOGICAL: f64 = 520.0;
 const DISABLE_NATIVE_CONTEXT_MENU_SCRIPT: &str =
     "window.addEventListener('contextmenu', (event) => event.preventDefault());";
 
@@ -60,6 +63,7 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _preview = build_preview_window(app)?;
     let _search = build_search_panel_window(app)?;
     let _stack = build_stack_popup_window(app)?;
+    let _process_manager = build_process_manager_window(app)?;
 
     Ok(CreatedShellWindows { top, bottom })
 }
@@ -156,6 +160,32 @@ fn build_stack_popup_window(app: &App) -> AppResult<WebviewWindow> {
             .visible(false)
             .build()?,
     )
+}
+
+fn build_process_manager_window(app: &App) -> AppResult<WebviewWindow> {
+    Ok(WebviewWindowBuilder::new(
+        app,
+        PROCESS_MANAGER_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .always_on_top(true)
+    .devtools(false)
+    .decorations(false)
+    .focused(false)
+    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+    .inner_size(
+        PROCESS_MANAGER_WIDTH_LOGICAL,
+        PROCESS_MANAGER_HEIGHT_LOGICAL,
+    )
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(false)
+    .shadow(true)
+    .skip_taskbar(true)
+    .theme(Some(Theme::Dark))
+    .title("JasonShell Process Manager")
+    .visible(false)
+    .build()?)
 }
 
 pub fn to_physical_height(logical_height: f64, scale_factor: f64) -> i32 {

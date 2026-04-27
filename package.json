@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test:search": "tsc -p tsconfig.test.json && node --test tests/searchPanelState.test.mjs tests/stackPopupState.test.mjs tests/folderDrag.test.mjs tests/taskbarGroups.test.mjs tests/taskbarTilePointer.test.mjs tests/topBarPins.test.mjs tests/stackBrowserTopBarPinFlow.test.mjs",
+    "test:search": "tsc -p tsconfig.test.json && node --test tests/searchPanelState.test.mjs tests/stackPopupState.test.mjs tests/folderDrag.test.mjs tests/taskbarGroups.test.mjs tests/taskbarTilePointer.test.mjs tests/topBarPins.test.mjs tests/stackBrowserTopBarPinFlow.test.mjs tests/contextMenuPosition.test.mjs tests/stackPopupContextMenu.test.mjs tests/processManagerState.test.mjs tests/processManagerWiring.test.mjs",
     "cargo:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "validate": "npm run check && npm run build && npm run test:search && npm run cargo:test && npm run cargo:check",

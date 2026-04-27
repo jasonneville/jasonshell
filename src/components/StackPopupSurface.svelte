@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     copyStackItems,
     deleteStackItem,
@@ -9,6 +9,7 @@
     listStackFolder,
     newStackFolder,
     openStackItem,
+    openStackItemWithPicker,
     pinStackFolder,
     pasteStackItems,
     renameStackItem,
@@ -42,6 +43,7 @@
     type StackSortColumn
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
+  import { positionContextMenuInViewport } from '../lib/contextMenuPosition';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
 
@@ -50,6 +52,12 @@
   let errorMessage = '';
   let rowMenu: { x: number; y: number; path: string } | null = null;
   let backgroundMenu: { x: number; y: number } | null = null;
+  let rowMenuElement: HTMLDivElement | null = null;
+  let backgroundMenuElement: HTMLDivElement | null = null;
+  let rowSubmenuOpensLeft = false;
+  let createFolderDraft: string | null = null;
+  let renameDraft: string | null = null;
+  let editorInput: HTMLInputElement | null = null;
   let typeToSelectBuffer = '';
   let typeToSelectTimer: number | null = null;
   let lastHtmlDropAt = 0;
@@ -207,6 +215,21 @@
     }
   }
 
+  async function openSelectedWithPicker() {
+    closeMenus();
+    if (!selectedEntry || selectedEntry.entryType !== 'File') {
+      return;
+    }
+
+    try {
+      await openStackItemWithPicker(selectedEntry.path);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open stack item with picker', error);
+      errorMessage = operationErrorMessage(error, 'Open with unavailable');
+    }
+  }
+
   async function copySelected(cut: boolean) {
     closeMenus();
     if (!selectedPaths.length) {
@@ -269,13 +292,23 @@
     }
   }
 
-  async function createFolder() {
+  function beginCreateFolder() {
     closeMenus();
     if (!currentPath) {
       return;
     }
+    renameDraft = null;
+    createFolderDraft = 'New Folder';
+    focusEditorInput();
+  }
 
-    const name = window.prompt('New folder name', 'New Folder');
+  async function createFolder() {
+    closeMenus();
+    if (!currentPath || createFolderDraft === null) {
+      return;
+    }
+
+    const name = createFolderDraft.trim();
     if (!name) {
       return;
     }
@@ -287,6 +320,7 @@
         applyStackFolderListing(stackState, currentPath, listing),
         createdEntry.path
       );
+      createFolderDraft = null;
       errorMessage = '';
     } catch (error) {
       console.error('Failed to create stack folder', error);
@@ -324,13 +358,23 @@
     }
   }
 
-  async function renameSelected() {
+  function beginRenameSelected() {
     closeMenus();
     if (!selectedEntry) {
       return;
     }
+    createFolderDraft = null;
+    renameDraft = selectedEntry.name;
+    focusEditorInput();
+  }
 
-    const nextName = window.prompt('Rename stack item', selectedEntry.name);
+  async function renameSelected() {
+    closeMenus();
+    if (!selectedEntry || renameDraft === null) {
+      return;
+    }
+
+    const nextName = renameDraft.trim();
     if (!nextName || nextName === selectedEntry.name) {
       return;
     }
@@ -342,6 +386,7 @@
         applyStackFolderListing(stackState, currentPath, listing),
         renamedEntry.path
       );
+      renameDraft = null;
       errorMessage = '';
     } catch (error) {
       console.error('Failed to rename stack item', error);
@@ -382,6 +427,41 @@
   function closeMenus() {
     rowMenu = null;
     backgroundMenu = null;
+  }
+
+  function cancelInlineEditor() {
+    createFolderDraft = null;
+    renameDraft = null;
+  }
+
+  function focusEditorInput() {
+    window.requestAnimationFrame(() => {
+      editorInput?.focus();
+      editorInput?.select();
+    });
+  }
+
+  async function positionOpenMenus() {
+    await tick();
+    if (rowMenu && rowMenuElement) {
+      rowMenu = positionedMenu(rowMenu, rowMenuElement);
+      rowSubmenuOpensLeft = rowMenu.x + rowMenuElement.getBoundingClientRect().width + 154 > window.innerWidth;
+    }
+    if (backgroundMenu && backgroundMenuElement) {
+      backgroundMenu = positionedMenu(backgroundMenu, backgroundMenuElement);
+    }
+  }
+
+  function positionedMenu<T extends { x: number; y: number }>(menu: T, element: HTMLElement): T {
+    const rect = element.getBoundingClientRect();
+    return {
+      ...menu,
+      ...positionContextMenuInViewport(
+        menu,
+        { width: rect.width, height: rect.height },
+        { width: window.innerWidth, height: window.innerHeight }
+      )
+    };
   }
 
   function focusDetailsGrid() {
@@ -456,12 +536,14 @@
     }
     rowMenu = { x: event.clientX, y: event.clientY, path: entry.path };
     backgroundMenu = null;
+    void positionOpenMenus();
   }
 
   function handleBackgroundContextMenu(event: MouseEvent) {
     event.preventDefault();
     rowMenu = null;
     backgroundMenu = { x: event.clientX, y: event.clientY };
+    void positionOpenMenus();
   }
 
   function selectedDragPaths(entry: StackEntry) {
@@ -582,9 +664,16 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest('.inline-editor') && event.key !== 'Escape') {
+      return;
+    }
+
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (rowMenu || backgroundMenu) {
+      if (createFolderDraft !== null || renameDraft !== null) {
+        cancelInlineEditor();
+      } else if (rowMenu || backgroundMenu) {
         closeMenus();
       } else {
         void hideStackPopup();
@@ -615,7 +704,7 @@
       void pasteIntoCurrentFolder();
     } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'n') {
       event.preventDefault();
-      void createFolder();
+      beginCreateFolder();
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
       event.preventDefault();
       stackState = selectAllStackEntries(stackState);
@@ -643,7 +732,7 @@
       }
     } else if (event.key === 'F2') {
       event.preventDefault();
-      void renameSelected();
+      beginRenameSelected();
     } else if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
       typeToSelect(event.key);
     }
@@ -685,9 +774,9 @@
       <button type="button" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
       <button type="button" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
       <button type="button" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
-      <button type="button" disabled={!selectedEntry} on:click={() => void renameSelected()}>Rename</button>
+      <button type="button" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
       <button type="button" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
-      <button type="button" disabled={!currentPath} on:click={() => void createFolder()}>New Folder</button>
+      <button type="button" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
       <button type="button" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
     </div>
   </header>
@@ -698,6 +787,32 @@
       <span>Loading...</span>
     {/if}
   </div>
+
+  {#if createFolderDraft !== null || renameDraft !== null}
+    <form
+      class="inline-editor"
+      on:submit|preventDefault={() => createFolderDraft !== null ? void createFolder() : void renameSelected()}
+    >
+      <label for="stack-inline-editor">{createFolderDraft !== null ? 'New folder name' : 'Rename item'}</label>
+      <input
+        id="stack-inline-editor"
+        bind:this={editorInput}
+        value={createFolderDraft ?? renameDraft ?? ''}
+        on:input={(event) => {
+          const value = event.currentTarget.value;
+          if (createFolderDraft !== null) {
+            createFolderDraft = value;
+          } else {
+            renameDraft = value;
+          }
+        }}
+        on:click|stopPropagation
+        on:mousedown|stopPropagation
+      />
+      <button type="submit">OK</button>
+      <button type="button" on:click={cancelInlineEditor}>Cancel</button>
+    </form>
+  {/if}
 
   <div
     class="details-table"
@@ -780,14 +895,21 @@
       style={`left:${rowMenu.x}px;top:${rowMenu.y}px`}
       role="menu"
       tabindex="-1"
+      bind:this={rowMenuElement}
       on:click|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
       <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => selectedEntry && void activateEntry(selectedEntry)}>Open</button>
+      <div class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
+        <button type="button" class="submenu-trigger" role="menuitem" aria-haspopup="true" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</button>
+        <div class="context-menu context-submenu-panel" role="menu">
+          <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'File'} on:click={() => void openSelectedWithPicker()}>Choose app...</button>
+        </div>
+      </div>
       <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
       <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
       <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} on:click={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => void renameSelected()}>Rename</button>
+      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
       <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
       <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
     </div>
@@ -799,11 +921,12 @@
       style={`left:${backgroundMenu.x}px;top:${backgroundMenu.y}px`}
       role="menu"
       tabindex="-1"
+      bind:this={backgroundMenuElement}
       on:click|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
       <button type="button" role="menuitem" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
-      <button type="button" role="menuitem" disabled={!currentPath} on:click={() => void createFolder()}>New Folder</button>
+      <button type="button" role="menuitem" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
     </div>
   {/if}
 </section>
@@ -816,7 +939,7 @@
     box-shadow: 0 22px 46px rgba(0, 0, 0, 0.44);
     color: #f0f4ff;
     display: grid;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto auto 1fr;
     height: 100%;
     overflow: hidden;
     padding: 0.65rem;
@@ -871,6 +994,52 @@
     justify-content: space-between;
     min-height: 1.45rem;
     padding: 0.35rem 0.05rem 0.4rem;
+  }
+
+  .inline-editor {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.35rem;
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.45rem;
+    padding: 0.38rem;
+  }
+
+  .inline-editor label {
+    color: rgba(218, 226, 248, 0.72);
+    font-size: 0.62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .inline-editor input {
+    background: rgba(5, 8, 15, 0.72);
+    border: 1px solid rgba(124, 160, 255, 0.34);
+    border-radius: 0.28rem;
+    color: #f0f4ff;
+    flex: 1 1 auto;
+    font: inherit;
+    font-size: 0.72rem;
+    min-width: 8rem;
+    padding: 0.28rem 0.45rem;
+  }
+
+  .inline-editor input:focus {
+    border-color: rgba(150, 184, 255, 0.72);
+    outline: 2px solid rgba(77, 124, 254, 0.28);
+  }
+
+  .inline-editor button {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.28rem;
+    color: #eef3ff;
+    font-size: 0.62rem;
+    font-weight: 750;
+    min-height: 1.55rem;
+    padding: 0 0.5rem;
   }
 
   .details-table {
@@ -1154,6 +1323,28 @@
     padding: 0.25rem;
     position: fixed;
     z-index: 50;
+  }
+
+  .context-submenu {
+    position: relative;
+  }
+
+  .context-submenu-panel {
+    display: none;
+    left: calc(100% + 0.25rem);
+    min-width: 9rem;
+    position: absolute;
+    top: 0;
+  }
+
+  .context-submenu.left .context-submenu-panel {
+    left: auto;
+    right: calc(100% + 0.25rem);
+  }
+
+  .context-submenu:hover .context-submenu-panel,
+  .context-submenu:focus-within .context-submenu-panel {
+    display: grid;
   }
 
   .context-menu button {

@@ -23,6 +23,36 @@
   min-width: 0;
 }
 
+.bottom-bar .process-manager-button {
+  align-items: center;
+  align-self: stretch;
+  background: rgba(255, 255, 255, 0.035);
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(236, 241, 255, 0.84);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 1.72rem;
+  font-size: 0.86rem;
+  font-weight: 800;
+  height: 100%;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.bottom-bar .process-manager-button:hover {
+  background: rgba(112, 148, 235, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #f7f9ff;
+}
+
+.bottom-bar .process-manager-button:focus-visible {
+  outline: 2px solid rgba(144, 181, 255, 0.65);
+  outline-offset: -2px;
+}
+
 .bottom-bar .launcher-strip {
   align-items: stretch;
   display: flex;

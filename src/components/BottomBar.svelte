@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
+  import { showProcessManager } from '../lib/processManager';
   import {
     launchPinnedTaskbarLauncher,
     listPinnedTaskbarLaunchers,
@@ -411,6 +412,19 @@
       cancelTaskGroupPointerDrag();
     }
   }
+  async function openProcessManager(event: MouseEvent) {
+    const button = event.currentTarget as HTMLButtonElement | null;
+    if (!button) {
+      return;
+    }
+    await hidePreview();
+    const rect = button.getBoundingClientRect();
+    try {
+      await showProcessManager({ anchorLeft: rect.left, anchorWidth: rect.width });
+    } catch (error) {
+      console.error('Failed to open process manager', error);
+    }
+  }
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     void Promise.all([loadPinnedLaunchers(), refreshTaskbarWindows()]);
@@ -529,4 +543,13 @@
       {/if}
     </div>
   </section>
+  <button
+    class="process-manager-button"
+    type="button"
+    title="Processes"
+    aria-label="Open process manager"
+    on:click={(event) => void openProcessManager(event)}
+  >
+    ▦
+  </button>
 </div>

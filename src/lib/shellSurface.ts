@@ -4,6 +4,7 @@ export type ShellSurface =
   | 'task-preview'
   | 'search-panel'
   | 'stack-popup'
+  | 'process-manager'
   | 'unknown';
 
 type SurfaceMeta = {
@@ -32,6 +33,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Pinned folder stack browser',
     title: 'JasonShell Stack'
   },
+  'process-manager': {
+    subtitle: 'Running process monitor',
+    title: 'JasonShell Process Manager'
+  },
   unknown: {
     subtitle: 'Surface route unavailable',
     title: 'JasonShell'
@@ -45,6 +50,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'task-preview'
     || label === 'search-panel'
     || label === 'stack-popup'
+    || label === 'process-manager'
   ) {
     return label;
   }

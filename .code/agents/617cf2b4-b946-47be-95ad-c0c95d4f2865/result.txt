@@ -1,0 +1,4 @@
+Reading the key frontend files to inspect current top-bar and stack browser implementations so targeted UI/interaction changes can be made. Running parallel reads of the listed files plus a quick grep for related symbols (stackPins, pinSearchFolder, onDragDropEvent) to find connected code.
+
+Applying frontend changes: adding rail scrolling, improved drag/drop handling, context-menu unpin, breadcrumbs, keyboard navigation, and small CSS updates. Editing TopBar.svelte, TopBar.css, StackPopupSurface.svelte, and folderDrag.ts in a single batch. Including intent report.
+
