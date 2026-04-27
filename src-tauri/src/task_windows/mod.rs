@@ -9,6 +9,14 @@ pub struct TaskbarWindow {
     pub icon_data_url: String,
     pub is_active: bool,
     pub is_minimized: bool,
+    pub activity_state: TaskbarWindowActivityState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskbarWindowActivityState {
+    Idle,
+    Busy,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -88,6 +96,11 @@ pub(crate) fn perform_task_window_action(
 #[cfg(target_os = "windows")]
 pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
     previews::capture_task_window_preview(hwnd)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn shell_file_icon_data_url(path: &std::path::Path) -> Result<String, String> {
+    icons::file_icon_data_url(path)
 }
 
 #[cfg(target_os = "windows")]

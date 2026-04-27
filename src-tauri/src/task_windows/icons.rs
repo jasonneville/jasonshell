@@ -94,7 +94,7 @@ fn taskbar_icon_handle_with_timeout(hwnd: HWND, icon_kind: usize) -> IconLookup 
     }
 }
 
-fn file_icon_data_url(path: &Path) -> Result<String, String> {
+pub(super) fn file_icon_data_url(path: &Path) -> Result<String, String> {
     let path_wide = to_wide(path);
     let mut icon_info = SHFILEINFOW::default();
     let icon_result = unsafe {

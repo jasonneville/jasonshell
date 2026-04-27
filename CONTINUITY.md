@@ -1,16 +1,15 @@
 # Continuity Ledger
 
 ## Snapshot
-- 2026-04-24 [CODE] Search Panel is implemented and validated: top bar owns search, `search-panel` renders results, Rust stores latest payload, and Windows Search/SystemIndex rows merge with local indexed snapshots.
-- 2026-04-24 [USER] Goal: implement Stack Popup / Stack Browser as a persistent single `stack-popup` webview with top-bar pinned folders, pin-from-search, persistent navigation history, details table, copy/cut/paste/rename commands, app-local pin persistence, tests, and `stack_browser.md`.
-- 2026-04-24 [CODE] Now: Stack Browser vertical slice is implemented and validated; top-bar folder pins open the persistent popup, search folder results expose a pin action, popup state keeps history across hide/show and folder switching, and backend commands cover folder reads, persisted pins, native clipboard copy/cut, paste, rename, and item open.
-- 2026-04-24 [TOOL] QA: blocking Stack Popup recursive folder paste issue was found, then fixed with backend self/descendant paste guards and a Rust regression test.
-- 2026-04-24 [CODE] Now: Stack Browser follow-up fixes are implemented and validated; folder switches/history navigation clear stale rows, and recursive self-copy/self-move into descendants is rejected.
-- 2026-04-24 [CODE] Now: Search panel mouse behavior fixed; single-click selects a result, double-click launches it, one-click folder `Pin` pins to top bar, and Explorer folder drops on the top bar pin folders.
-- 2026-04-24 [CODE] Now: folder pinning from search is fixed by resolving `shell:` aliases (Profile/Desktop/Personal/Downloads) to real filesystem paths before backend pin validation.
-- 2026-04-24 [CODE] Now: search folder rows are draggable with internal folder path payloads, top-bar drop pins and opens the dropped folder, and first pin-load seeds default `Desktop` + `Downloads` pins.
-- 2026-04-24 [CODE] Next: runtime coverage still depends on real filesystem permissions, Windows drag/drop delivery, and Windows clipboard/shell behavior.
-- 2026-04-23 [USER] Open questions: none.
+- 2026-04-24 [CODE] Search Panel, Stack Browser Waves 1-5, and stack-popup request-delivery hardening are implemented and validated; detailed milestones remain in `wave_1.md` through `wave_5.md` and `stack_browser.md`.
+- 2026-04-25 [CODE] Current taskbar baseline: grouped app tiles, flush bottom-bar layout, pointer-driven reorder, click-vs-drag activation handling, activity-indicator gating, and DWM/no-activate filtering are implemented and QA-verified.
+- 2026-04-25 [USER] Goal: finish the remaining Stack Browser/top-bar polish issues: immediate top-bar visibility after pin, native Explorer drag acceptance cursor, non-blank large-folder first paint, mouse back/forward navigation, and unclipped top-bar pin menus.
+- 2026-04-25 [CODE] Now: TopBar reveals newly added pins after `stack-pins:updated`, and stack pin mutations now also target `emitTo('top-bar', 'stack-pins:updated', pins)` so Stack Browser pin actions update the separate top-bar webview immediately; native Explorer `Files` drags are accepted during dragover, and pinned-folder `Open`/`Unpin` uses a native Tauri popup menu so the menu can escape the 26px top-bar webview.
+- 2026-04-25 [CODE] Now: Stack Browser keeps existing rows rendered while a different folder is loading, uses a smaller first page (`80`) before larger background pages (`500`), and listens for mouse buttons 4/5 to drive back/forward history.
+- 2026-04-25 [CODE] Now: retained Stack Browser rows stay visible but non-interactive until the first real page for the requested folder arrives; TopBar startup pin hydration no longer auto-scrolls to the last persisted pin, and native pin menu actions now use the event payload path directly.
+- 2026-04-26 [CODE] Now: stack-popup pin mutations emit `stack-pins:updated` to an explicit `{ kind: 'WebviewWindow', label: 'top-bar' }` target, and `TopBar.svelte` listens with the same webview-window scoped target so Stack Browser pins apply immediately in the target top-bar webview.
+- 2026-04-26 [CODE] Now: `pin_stack_folder` and `unpin_stack_folder` return the complete next pin model and `src/lib/stackPopup.ts` emits that mutation result directly, avoiding stale immediate `listStackPins()` publication after Stack Browser pin/unpin actions.
+- 2026-04-26 [ASSUMPTION] UNCONFIRMED: live Windows/Tauri smoke coverage is still needed for Stack Browser right-click Pin immediate top-bar display, native Explorer drag cursor behavior, native popup placement on the top bar, and mouse XButton delivery across webview focus states.
 
 ## Decisions
 - 2026-04-23 [CODE] D001 ACTIVE: workspace-aware shell inventory docs should favor user-visible behavior over crate/module structure when summarizing the rewrite.
@@ -23,41 +22,36 @@
 - 2026-04-24 [CODE] D008 ACTIVE: Windows Search integration should prefer real SystemIndex OLE DB rows when available and use the warmed app-managed persistent index only as the unavailable/empty fallback.
 
 ## Done (recent)
-- 2026-04-24 [CODE] Completed Search Panel through Windows Search/SystemIndex parity and cached provider refresh behavior.
-- 2026-04-24 [CODE] Added persistent `stack-popup` webview creation, surface routing, TS invoke wrapper, StackPopup Svelte surface, top-bar pinned-folder strip, and search-panel folder pin action.
-- 2026-04-24 [CODE] Added stack backend helpers for app-local pin persistence, folder details, latest popup request, item open, copy/cut/paste, rename, and native Windows file clipboard integration.
-- 2026-04-24 [CODE] Added `stackPopupState` reducer tests for history persistence, stale payload ignoring, selection, size formatting, and path name extraction.
-- 2026-04-24 [CODE] Fixed QA findings: stale stack rows are cleared on folder/history changes, and folder paste rejects self/descendant destinations to avoid recursive copies.
-- 2026-04-24 [CODE] Fixed Search Panel mouse interactions by replacing row `mousedown` launch with click-to-select/double-click-to-launch and a real one-click pin button; added top-bar native drag/drop folder pinning from Explorer paths.
-- 2026-04-24 [CODE] Fixed Stack pin persistence path validation for curated search folders by resolving supported `shell:` aliases before canonical existence checks.
-- 2026-04-24 [CODE] Added internal drag-and-drop from Search Panel folder rows to Top Bar pin rail; drop path pins via existing backend command and opens stack popup for the dropped folder.
-- 2026-04-24 [CODE] Added default pin seeding logic so first-load pin state includes Desktop and Downloads when those folders exist.
-- 2026-04-24 [CODE] Added `stack_browser.md` describing behavior, commands, files, and keyboard shortcuts.
+- 2026-04-26 [CODE] Fixed Stack Browser Pin stale publication by returning authoritative backend mutation results for pin/unpin and publishing those arrays directly to top-bar listeners.
+- 2026-04-26 [CODE] Added tests-only failing regression `tests/stackBrowserTopBarPinFlow.test.mjs` for Stack Browser Pin requiring immediate top-bar model update without relying on reload/list startup hydration; no production fix applied.
+- 2026-04-26 [CODE] Corrected Stack Browser immediate pin refresh by aligning stack pin update emit/listen paths on an explicit Tauri `{ kind: 'WebviewWindow', label: 'top-bar' }` target.
+- 2026-04-25 [CODE] Finished remaining Stack Browser/top-bar polish: immediate pin reveal, native Explorer `Files` drag acceptance, retained large-folder first paint, mouse back/forward navigation, and native top-bar pin context menus.
+- 2026-04-25 [CODE] Added focused regression coverage for native folder drag recognition, retained-entry loading state, symlink path preservation, and top-bar pin reveal behavior.
+- 2026-04-25 [CODE] Fixed QA follow-up defects around stack-folder page materialization, TopBar duplicate reloads, pin update payloads, retained-row gating, startup reveal suppression, and native menu payload handling.
+- 2026-04-25 [CODE] Restored shared top-bar pin refresh, Stack Browser pin context action, shared folder drag payloads, incremental folder page merging, and reduced stack-popup backend page cost.
 
 ## Working set
 - 2026-04-23 [CODE] `CONTINUITY.md`
-- 2026-04-24 [CODE] `src-tauri/src/main.rs`
-- 2026-04-24 [CODE] `src-tauri/src/shell_windows.rs`
-- 2026-04-24 [CODE] `src-tauri/src/stack_popup.rs`
-- 2026-04-24 [CODE] `src/App.svelte`
-- 2026-04-24 [CODE] `src/lib/shellSurface.ts`
-- 2026-04-23 [CODE] `src/components/TopBar.svelte`
-- 2026-04-24 [CODE] `src/components/TopBar.css`
-- 2026-04-24 [CODE] `src/components/SearchPanelSurface.svelte`
-- 2026-04-24 [CODE] `src/components/StackPopupSurface.svelte`
-- 2026-04-24 [CODE] `src/lib/stackPopup.ts`
-- 2026-04-24 [CODE] `src/lib/stackPopupState.ts`
+- 2026-04-24 [CODE] `wave_1.md` through `wave_5.md`, `stack_browser.md`
+- 2026-04-25 [CODE] `src-tauri/src/main.rs`, `src-tauri/src/taskbar_menu.rs`, `src-tauri/src/stack_popup.rs`
+- 2026-04-25 [CODE] `src/components/StackPopupSurface.svelte`, `src/lib/stackPopupState.ts`, `tests/stackPopupState.test.mjs`
+- 2026-04-24 [CODE] `src/components/TopBar.svelte`, `src/components/TopBar.css`
+- 2026-04-25 [CODE] `src/lib/topBarPins.ts`, `tests/topBarPins.test.mjs`
+- 2026-04-25 [CODE] `src/lib/stackPopup.ts`, `src/lib/stackPopupState.ts`, `src/lib/folderDrag.ts`, `src/lib/taskbarMenus.ts`
+- 2026-04-24 [CODE] `tests/taskbarGroups.test.mjs`, `tests/stackPopupState.test.mjs`, `tests/folderDrag.test.mjs`, `tests/stackBrowserTopBarPinFlow.test.mjs`
+- 2026-04-24 [CODE] `package.json`, `tsconfig.test.json`
 
 ## Receipts
-- 2026-04-24 [TOOL] Search Panel milestone validations passed across targeted panel payloads, broad search, persistent index, realtime refresh, and Windows Search/SystemIndex row retrieval; latest pre-stack validation had `npm run validate` passing with 7 Node tests and 43 Rust tests.
-- 2026-04-24 [TOOL] Strict Windows Search implementation validation: `cargo fmt --manifest-path src-tauri/Cargo.toml` completed; `npm run cargo:test` passed 41 Rust tests.
-- 2026-04-24 [TOOL] `npm run test:search` first hit sandbox `spawn EPERM`; approved rerun passed 7 Node tests. `npm run validate` passed with `svelte-check` 0 errors/0 warnings, Vite build, 7 Node tests, 41 Rust tests, and `cargo check`.
-- 2026-04-24 [TOOL] Final QA closure reran `npm run validate`; it passed with `svelte-check` 0 errors/0 warnings, Vite build, 7 Node tests, 41 Rust tests, and `cargo check`.
-- 2026-04-24 [TOOL] Cairo parity search pass validation: `cargo fmt --manifest-path src-tauri/Cargo.toml` completed; `npm run test:search` passed 7 tests after sandbox `spawn EPERM` approved rerun; `npm run cargo:test` passed 43 tests; `npm run validate` passed fully.
-- 2026-04-24 [TOOL] Stack Browser validation: first sandboxed `npm run test:search` hit known Node `spawn EPERM`; approved rerun passed 13 Node tests. `cargo test --manifest-path src-tauri/Cargo.toml` passed 47 Rust tests.
-- 2026-04-24 [TOOL] Final Stack Browser `npm run validate` passed: `svelte-check` 0 errors/0 warnings, Vite build passed, 13 Node tests passed, 47 Rust tests passed, and `cargo check` passed. `cargo fmt --manifest-path src-tauri/Cargo.toml --check` also passed.
-- 2026-04-24 [TOOL] Stack Popup QA review reran targeted validation: sandboxed `npm run test:search` hit `spawn EPERM`; approved rerun passed 13 Node tests. `npm run cargo:test` passed 47 Rust tests.
-- 2026-04-24 [TOOL] Post-QA Stack Browser validation passed: `npm run test:search` approved rerun passed 15 Node tests after sandbox `spawn EPERM`; `npm run cargo:test` passed 48 Rust tests; final `npm run validate` passed with 15 Node tests, 48 Rust tests, Vite build, `svelte-check`, and `cargo check`; `cargo fmt --manifest-path src-tauri/Cargo.toml --check` passed.
-- 2026-04-24 [TOOL] Search mouse/drop fix validation passed: `npm run validate` completed with `svelte-check` 0 errors/0 warnings, Vite build, 15 Node tests, 48 Rust tests, and `cargo check`.
-- 2026-04-24 [TOOL] Pin fix validation passed: `npm run cargo:test` passed 49 Rust tests after adding shell-alias resolution coverage; `npm run validate` passed with `svelte-check` 0 errors/0 warnings, Vite build, 15 Node tests, 49 Rust tests, and `cargo check`.
-- 2026-04-24 [TOOL] Drag/default-pin validation passed: final `npm run validate` succeeded with `svelte-check` 0 errors/0 warnings, Vite build, 15 Node tests, 49 Rust tests, and `cargo check`.
+- 2026-04-26 [TOOL] Final mandatory QA and orchestration verification for Stack Browser stale pin publication passed: inspected `src-tauri/src/stack_popup.rs`, `src/lib/stackPopup.ts`, `src/components/TopBar.svelte`, `tests/stackBrowserTopBarPinFlow.test.mjs`, and `package.json`; confirmed pin/unpin return and publish backend mutation arrays, top-bar WebviewWindow target remains intact, and no stale immediate `listStackPins()` read remains in pin/unpin. Validation passed: focused new Node test, `npm run test:search` (74 tests), focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup` (26 tests), `cargo check --manifest-path src-tauri/Cargo.toml`, `npm run check`, and final `npm run validate` rerun (74 Node tests, 78 Rust tests, cargo check).
+- 2026-04-26 [TOOL] Stack Browser Pin stale-publication implementation validation passed: `node --test tests/stackBrowserTopBarPinFlow.test.mjs`, `npm run test:search` (74 Node tests), focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup` (26 tests), `cargo check --manifest-path src-tauri/Cargo.toml`, `npm run check`, and full `npm run validate` all passed after `pin_stack_folder`/`unpin_stack_folder` began returning `Vec<PinnedStackFolder>` and TS emitted those mutation results directly.
+- 2026-04-26 [TOOL] Mandatory QA tests-first review for `tests/stackBrowserTopBarPinFlow.test.mjs` confirmed the regression fails as requested: focused `node --test tests/stackBrowserTopBarPinFlow.test.mjs` and configured `npm run test:search` both fail with immediate top-bar paths `[C:\\Alpha]` vs expected `[C:\\Alpha, C:\\Beta]`; no production fix applied. QA notes source-string brittleness but accepts it as a targeted TDD reproduction of stale `pinStackFolder` publication.
+- 2026-04-26 [TOOL] Focused tests-only regression intentionally failed: `node --test tests/stackBrowserTopBarPinFlow.test.mjs` reported actual top-bar paths `[C:\\Alpha]` vs expected `[C:\\Alpha, C:\\Beta]`, demonstrating stale immediate publication while startup reload pins contain the new folder.
+- 2026-04-26 [TOOL] Mandatory QA for explicit top-bar WebviewWindow pin delivery passed: inspected `src/lib/topBarPins.ts`, `src/lib/stackPopup.ts`, `src/components/TopBar.svelte`, `src/components/StackPopupSurface.svelte`, Tauri v2 `event.d.ts`, and `tests/topBarPins.test.mjs`; focused `npx tsc -p tsconfig.test.json && node --test tests/topBarPins.test.mjs`, `npm run check`, and `npm run test:search` passed. Test coverage verifies helper shape but not full stackPopup-to-TopBar wiring; residual risk remains live Tauri multi-webview smoke coverage.
+- 2026-04-26 [TOOL] Top-bar immediate Stack Browser pin fix validation passed: replaced the mismatched `emitTo('top-bar', ...)`/`getCurrentWindow().listen(...)` event path with explicit WebviewWindow target delivery/listening via `topBarWebviewWindowEventTarget`; final orchestration reran `npm run validate`, which passed with Svelte check, Vite build, 73 Node tests, 78 Rust tests, and `cargo check`. Residual risk remains live Windows/Tauri multi-webview smoke coverage.
+- 2026-04-25 [TOOL] Immediate top-bar pin visibility final confirmation passed: inspected direct `emitTo('top-bar', 'stack-pins:updated', pins)` delivery in `src/lib/stackPopup.ts`, payload application in `src/components/TopBar.svelte`, and Stack Browser pin invocation in `src/components/StackPopupSurface.svelte`; reran `npm run check` plus `npx tsc -p tsconfig.test.json && node --test tests/topBarPins.test.mjs`, all passed, with residual risk limited to live Windows/Tauri multi-webview smoke behavior.
+- 2026-04-25 [TOOL] Listener-alignment follow-up passed: changed `src/components/TopBar.svelte` to receive `stack-pins:updated` through `getCurrentWindow().listen(...)`, matching the targeted `emitTo('top-bar', ...)` sender in `src/lib/stackPopup.ts`; `npm run check` and `npm run validate` both passed, with residual risk limited to live Windows/Tauri multi-webview delivery smoke coverage.
+- 2026-04-25 [TOOL] Mandatory QA final confirmation for the remaining Stack Browser/top-bar polish passed: inspected retained-row gating in `src/components/StackPopupSurface.svelte` and `src/lib/stackPopupState.ts`, startup pin reveal suppression in `src/components/TopBar.svelte` and `src/lib/topBarPins.ts`, and native pin-menu payload handling in `src/components/TopBar.svelte`; reran `npm run check` and `npx tsc -p tsconfig.test.json && node --test tests/stackPopupState.test.mjs tests/topBarPins.test.mjs`, both passed, with residual risk limited to live Windows/Tauri native interaction smoke behavior.
+- 2026-04-25 [TOOL] Remaining Stack Browser/top-bar follow-up validation passed: `npx tsc -p tsconfig.test.json && node --test tests/folderDrag.test.mjs tests/stackPopupState.test.mjs` passed 28 tests; `npm run check` passed with 0 errors/0 warnings; focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup` passed 26 tests; `cargo check --manifest-path src-tauri/Cargo.toml` passed; `npm run validate` passed with Vite build, 67 Node tests, 78 Rust tests, and `cargo check`. Separate `cargo fmt --manifest-path src-tauri/Cargo.toml --check` reported pre-existing formatting diffs in `src-tauri/src/stack_popup.rs`.
+- 2026-04-25 [TOOL] Mandatory QA final event-payload confirmation passed: inspected `src/lib/stackPopup.ts`, `src/components/TopBar.svelte`, `src/components/StackPopupSurface.svelte`, and `src-tauri/src/stack_popup.rs`; no findings remained after `stack-pins:updated` began carrying `StackPin[]` payloads, with residual risk limited to live Windows/Tauri drag/drop and cross-surface event delivery smoke behavior.
+- 2026-04-25 [TOOL] QA follow-up regression pass passed: `npm run check` passed with 0 errors/0 warnings; focused `npx tsc -p tsconfig.test.json && node --test tests/stackPopupState.test.mjs tests/topBarPins.test.mjs` passed 27 tests; `npm run test:search` passed 72 tests; `npm run validate` passed with Svelte check, Vite build, 72 Node tests, 78 Rust tests, and `cargo check`.
+- 2026-04-25 [TOOL] QA follow-up fix validation passed: focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup` passed 26 tests including new symlink-path preservation coverage; `npm run check` passed with 0 errors/0 warnings; `npm run validate` passed with Vite build, 66 Node tests, 78 Rust tests, and `cargo check`.

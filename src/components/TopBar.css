@@ -74,6 +74,30 @@
   border-radius: 0.28rem;
 }
 
+.top-bar .pin-drop-status {
+  position: absolute;
+  right: 0.3rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(25, 38, 66, 0.96);
+  border: 1px solid rgba(124, 160, 255, 0.34);
+  border-radius: 0.22rem;
+  color: rgba(240, 244, 255, 0.96);
+  font-size: 0.62rem;
+  font-weight: 750;
+  max-width: 18rem;
+  overflow: hidden;
+  padding: 0.18rem 0.42rem;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-bar .pin-drop-status.error {
+  background: rgba(70, 22, 28, 0.96);
+  border-color: rgba(255, 119, 137, 0.48);
+}
+
 .top-bar .stack-pins.stack-pins-hover {
   background: rgba(77, 124, 254, 0.12);
   border-radius: 0.28rem;
@@ -99,6 +123,10 @@
 .top-bar .stack-pins button:hover {
   background: rgba(77, 124, 254, 0.15);
   border-color: rgba(124, 160, 255, 0.34);
+}
+
+.top-bar .stack-pins button.dragging {
+  opacity: 0.55;
 }
 
 .top-bar .time-pill {

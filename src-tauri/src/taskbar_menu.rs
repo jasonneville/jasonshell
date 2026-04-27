@@ -1,5 +1,5 @@
 use crate::launchers;
-use crate::shell_windows::BOTTOM_BAR_LABEL;
+use crate::shell_windows::{BOTTOM_BAR_LABEL, TOP_BAR_LABEL};
 use crate::task_windows::{self, TaskWindowAction};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use base64::Engine;
@@ -11,8 +11,10 @@ use tauri::{AppHandle, Emitter, LogicalPosition, Manager};
 
 const TASKBAR_REFRESH_WINDOWS_EVENT: &str = "taskbar:refresh-windows";
 const TASKBAR_REFRESH_LAUNCHERS_EVENT: &str = "taskbar:refresh-launchers";
+const TOP_BAR_PIN_MENU_ACTION_EVENT: &str = "top-bar:pin-menu-action";
 const TASK_WINDOW_MENU_PREFIX: &str = "task-window";
 const LAUNCHER_MENU_PREFIX: &str = "launcher";
+const TOP_BAR_PIN_MENU_PREFIX: &str = "top-bar-pin";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +31,21 @@ pub struct ShowLauncherContextMenuRequest {
     pub shortcut_path: String,
     pub x: f64,
     pub y: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowTopBarPinContextMenuRequest {
+    pub path: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TopBarPinMenuActionPayload {
+    action: String,
+    path: String,
 }
 
 #[tauri::command]
@@ -109,6 +126,39 @@ pub fn show_launcher_context_menu(
         .map_err(|error| format!("Failed to show launcher context menu: {error}"))
 }
 
+#[tauri::command]
+pub fn show_top_bar_pin_context_menu(
+    app_handle: AppHandle,
+    request: ShowTopBarPinContextMenuRequest,
+) -> Result<(), String> {
+    let top_bar = app_handle
+        .get_webview_window(TOP_BAR_LABEL)
+        .ok_or_else(|| "Top bar window is unavailable".to_string())?;
+    let encoded_path = BASE64_URL.encode(&request.path);
+    let open_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TOP_BAR_PIN_MENU_PREFIX}:open:{encoded_path}"),
+        "Open",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build top-bar pin open item: {error}"))?;
+    let unpin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TOP_BAR_PIN_MENU_PREFIX}:unpin:{encoded_path}"),
+        "Unpin",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build top-bar pin unpin item: {error}"))?;
+    let menu = Menu::with_items(&app_handle, &[&open_item, &unpin_item])
+        .map_err(|error| format!("Failed to build top-bar pin context menu: {error}"))?;
+
+    top_bar
+        .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
+        .map_err(|error| format!("Failed to show top-bar pin context menu: {error}"))
+}
+
 pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
     let id = &event.id().0;
 
@@ -156,6 +206,23 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
 
         let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
         let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
+        return;
+    }
+
+    if let Some((action, encoded_path)) = parse_menu_payload(id, TOP_BAR_PIN_MENU_PREFIX) {
+        let path = match decode_shortcut_path(encoded_path) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("top-bar pin menu decode failed: {error}");
+                return;
+            }
+        };
+
+        let payload = TopBarPinMenuActionPayload {
+            action: action.to_string(),
+            path,
+        };
+        let _ = app_handle.emit_to(TOP_BAR_LABEL, TOP_BAR_PIN_MENU_ACTION_EVENT, payload);
     }
 }
 

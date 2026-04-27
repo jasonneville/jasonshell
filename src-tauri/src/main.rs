@@ -37,6 +37,7 @@ fn main() {
             task_preview::hide_task_window_preview,
             taskbar_menu::show_task_window_context_menu,
             taskbar_menu::show_launcher_context_menu,
+            taskbar_menu::show_top_bar_pin_context_menu,
             search_panel::show_search_panel,
             search_panel::hide_search_panel,
             search_panel::publish_search_panel,
@@ -46,6 +47,7 @@ fn main() {
             stack_popup::list_pinned_stack_folders,
             stack_popup::pin_stack_folder,
             stack_popup::unpin_stack_folder,
+            stack_popup::reorder_pinned_stack_folders,
             stack_popup::show_stack_popup,
             stack_popup::hide_stack_popup,
             stack_popup::get_stack_popup_request,
@@ -64,6 +66,13 @@ fn main() {
             taskbar_menu::handle_taskbar_menu_event(app_handle, event);
         })
         .on_window_event(|window, event| {
+            if window.label() == shell_windows::STACK_POPUP_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = window.hide();
+                return;
+            }
+
             if matches!(
                 window.label(),
                 shell_windows::TOP_BAR_LABEL | shell_windows::BOTTOM_BAR_LABEL

@@ -11,7 +11,10 @@ Implement the `features.md` Stack Popup as a persistent shell-owned folder brows
 - Folder search results expose a `Pin` action; pinned folders appear in the top-bar folder rail.
 - Clicking a pinned folder opens the stack popup anchored below that top-bar button.
 - The popup keeps its Svelte history state while hidden, so opening folder A, hiding it, opening folder B, and pressing Back returns to folder A.
-- The popup shows a details table with name, type, size, and modified date.
+- The popup shows a details grid with sortable name, type, size, and modified columns while keeping folders grouped before files.
+- Hidden, system, read-only, symlink, and reparse-point rows carry metadata indicators; hidden/system rows render subdued and read-only/link rows get visual rails/badges.
+- Opening a folder focuses the details grid so keyboard navigation applies immediately.
+- Pinned folders can be reordered in the top-bar rail by dragging pins; the order is persisted.
 
 ## File Operations
 
@@ -21,6 +24,9 @@ Implement the `features.md` Stack Popup as a persistent shell-owned folder brows
 - Paste applies the current JasonShell stack clipboard into the active folder and refreshes the visible rows.
 - Rename validates that the new name is a child name, rejects path separators, and fails if the destination already exists.
 - Paste chooses Explorer-style collision names with `- Copy (n)` suffixes.
+- Folder reads consume all backend pages and surface partial-listing warnings when individual entries cannot be inspected.
+- Stack item metadata distinguishes hidden, system, read-only, symlink, and reparse-point entries so display and copy safeguards can make those states visible.
+- Pin persistence writes through a temporary file and rename, and corrupt pin JSON is backed up before the rail falls back to an empty/default load.
 
 ## Main Interfaces
 
@@ -33,12 +39,12 @@ Implement the `features.md` Stack Popup as a persistent shell-owned folder brows
 
 ## Validation
 
-- TypeScript state tests cover persistent history, branch navigation, stale folder payload rejection, selection preservation, and size/name formatting.
-- Rust tests cover rename validation, folder details ordering, paste collision naming, and clipboard-mode stability.
+- TypeScript state tests cover persistent history, branch navigation, stale folder payload rejection, selection preservation, sort behavior, and size/name formatting.
+- Rust tests cover rename validation, folder details ordering, attribute helpers, pin reorder/corrupt-backup helpers, paste collision naming, and clipboard-mode stability.
 - Full project validation should run with `npm run validate`.
 
 ## Known Limits
 
-- The popup currently loads a bounded folder page through the frontend wrapper rather than virtualizing every row.
+- Very large folders are fully enumerated through backend pages, but the current UI still renders the accumulated rows directly rather than virtualizing them.
 - Paste consumes JasonShell's runtime clipboard state; copy/cut also publishes native Windows clipboard data for Explorer interoperability.
 - External folder changes are refreshed through explicit reload after operations, not a long-lived watcher.

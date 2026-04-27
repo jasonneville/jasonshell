@@ -1,5 +1,5 @@
 .bottom-bar.surface {
-  align-items: center;
+  align-items: stretch;
   background:
     linear-gradient(180deg, rgba(13, 16, 24, 0.98) 0%, rgba(7, 10, 16, 0.99) 100%);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -9,53 +9,54 @@
   color: #f2f5ff;
   display: flex;
   height: 100%;
-  padding: 0 0.55rem;
+  padding: 0;
   width: 100%;
 }
 
 .bottom-bar .taskbar-strip {
-  align-items: center;
+  align-items: stretch;
+  align-self: stretch;
   display: flex;
   flex: 1;
-  gap: 0.35rem;
+  gap: 0;
+  height: 100%;
   min-width: 0;
 }
 
 .bottom-bar .launcher-strip {
-  align-items: center;
+  align-items: stretch;
   display: flex;
   flex: 0 0 auto;
-  gap: 0.18rem;
-  min-height: 2rem;
-  padding-right: 0.35rem;
+  gap: 0;
+  padding-right: 0;
   position: relative;
 }
 
 .bottom-bar .launcher-strip::after {
   background: rgba(255, 255, 255, 0.1);
   content: '';
-  height: 1rem;
+  height: 100%;
   position: absolute;
   right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
   width: 1px;
 }
 
 .bottom-bar .launcher-button {
   align-items: center;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 0.2rem;
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
   display: inline-flex;
-  height: 1.82rem;
+  align-self: stretch;
+  height: auto;
   justify-content: center;
   transition:
     border-color 140ms ease,
     background 140ms ease,
     box-shadow 140ms ease;
-  width: 1.82rem;
+  width: 1.62rem;
 }
 
 .bottom-bar .launcher-button:hover:not(:disabled) {
@@ -68,10 +69,14 @@
   background: rgba(120, 148, 213, 0.14);
 }
 
-.bottom-bar .launcher-button:focus-visible,
-.bottom-bar .task-button:focus-visible {
+.bottom-bar .launcher-button:focus-visible {
   outline: 2px solid rgba(144, 181, 255, 0.65);
   outline-offset: 2px;
+}
+
+.bottom-bar .task-button:focus-visible {
+  outline: 2px solid rgba(144, 181, 255, 0.65);
+  outline-offset: -2px;
 }
 
 .bottom-bar .launcher-button:disabled,
@@ -82,37 +87,120 @@
 
 .bottom-bar .launcher-icon {
   display: block;
-  height: 1.04rem;
+  height: 0.96rem;
   pointer-events: none;
-  width: 1.04rem;
+  width: 0.96rem;
 }
 
 .bottom-bar .task-strip {
-  align-items: center;
+  align-items: stretch;
+  align-self: stretch;
   display: flex;
   flex: 1;
-  gap: 0.18rem;
-  min-height: 2rem;
+  gap: 0;
+  height: 100%;
   min-width: 0;
   overflow: hidden;
 }
 
+.bottom-bar .task-group {
+  align-items: stretch;
+  align-self: stretch;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
+  border-top: 0;
+  border-bottom: 0;
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 0;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  touch-action: none;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.bottom-bar .task-group-active {
+  background: rgba(72, 102, 191, 0.12);
+  border-color: rgba(150, 186, 255, 0.18);
+}
+
+.bottom-bar .task-group-dragging {
+  opacity: 0.58;
+  cursor: grabbing;
+  transition: none;
+  user-select: none;
+  will-change: transform;
+}
+
+.bottom-bar .task-group-drop-target {
+  background: rgba(144, 181, 255, 0.1);
+  border-color: rgba(144, 181, 255, 0.38);
+}
+
+.bottom-bar .task-group-busy::after {
+  animation: taskbar-activity-slide 1.15s linear infinite;
+  background: linear-gradient(90deg, transparent, rgba(37, 211, 102, 0.96), transparent);
+  bottom: 0;
+  content: '';
+  height: 2px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-100%);
+  width: 62%;
+}
+
+@keyframes taskbar-activity-slide {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(162%);
+  }
+}
+
+.bottom-bar .task-count {
+  align-items: center;
+  background: rgba(144, 181, 255, 0.24);
+  border: 1px solid rgba(144, 181, 255, 0.34);
+  border-radius: 999px;
+  color: #f5f7ff;
+  display: inline-flex;
+  font-size: 0.54rem;
+  font-weight: 800;
+  height: 0.88rem;
+  justify-content: center;
+  min-width: 0.88rem;
+  padding: 0 0.16rem;
+}
+
 .bottom-bar .task-button {
   align-items: center;
+  align-self: stretch;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 0.2rem;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   color: #f2f5ff;
   cursor: pointer;
   display: inline-flex;
-  flex: 0 1 15rem;
-  font-size: 0.65rem;
+  flex: 0 1 12rem;
+  font-size: 0.62rem;
   font-weight: 600;
-  gap: 0.32rem;
-  min-height: 1.82rem;
+  gap: 0.28rem;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
-  padding: 0.22rem 0.46rem;
+  padding: 0 0.38rem;
   transition:
     border-color 140ms ease,
     background 140ms ease,
@@ -144,9 +232,9 @@
 .bottom-bar .task-icon {
   display: block;
   flex: 0 0 auto;
-  height: 0.9rem;
+  height: 0.82rem;
   pointer-events: none;
-  width: 0.9rem;
+  width: 0.82rem;
 }
 
 .bottom-bar .task-label {

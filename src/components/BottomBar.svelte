@@ -17,6 +17,15 @@
     showTaskWindowPreview
   } from '../lib/taskbarPreview';
   import {
+    hasTaskbarGroupDragStarted,
+    buildTaskWindowGroups,
+    taskbarGroupDragDelta,
+    taskbarGroupDropTargetFromDisplacement,
+    taskbarGroupOrderFromDisplacement,
+    taskbarGroupReorderOffset,
+    type TaskWindowGroup
+  } from '../lib/taskbarGroups';
+  import {
     TASKBAR_REFRESH_LAUNCHERS_EVENT,
     TASKBAR_REFRESH_WINDOWS_EVENT,
     TASK_PREVIEW_DELAY_MS,
@@ -25,6 +34,11 @@
     taskWindowActionLabel,
     taskWindowLabel
   } from '../lib/taskbarUi';
+  import {
+    pendingTaskbarTilePointer,
+    resolveTaskbarTilePointerRelease,
+    shouldSuppressTaskbarTileClick
+  } from '../lib/taskbarTilePointer';
   import {
     activateTaskWindow,
     listOpenTaskWindows,
@@ -39,6 +53,32 @@
   let previewRequestId = 0;
   let previewShowTimer: number | null = null;
   let previewHideTimer: number | null = null;
+  let taskGroupOrder: string[] = [];
+  let draggingGroupKey: string | null = null;
+  let dropTargetGroupKey: string | null = null;
+  let taskGroupDragPointerId: number | null = null;
+  let taskGroupDragStartX = 0;
+  let taskGroupDragCurrentX = 0;
+  let taskGroupDragStarted = false;
+  let taskGroupDragOriginalOrder: string[] = [];
+  let taskGroupPreviewOrder: string[] = [];
+  let taskGroupDragElement: HTMLElement | null = null;
+  let taskGroupDragRects: ReturnType<typeof taskGroupRects> = [];
+  let pendingTaskWindowHwnd: string | null = null;
+  let suppressClickTaskWindowHwnd: string | null = null;
+
+  $: taskGroupDragDeltaX = taskGroupDragStarted
+    ? taskbarGroupDragDelta(taskGroupDragStartX, taskGroupDragCurrentX)
+    : 0;
+  $: taskWindowGroups = buildTaskWindowGroups(openWindows, taskGroupOrder);
+  $: taskGroupPreviewOrder = taskGroupDragStarted && draggingGroupKey
+    ? taskbarGroupOrderFromDisplacement(
+        draggingGroupKey,
+        taskGroupDragOriginalOrder,
+        taskGroupDragRects,
+        taskGroupDragDeltaX
+      )
+    : taskGroupOrder;
 
   function nextPreviewRequestId() {
     previewRequestId += 1;
@@ -102,11 +142,15 @@
   }
   async function refreshTaskbarWindows() {
     try {
-      openWindows = await listOpenTaskWindows();
+      const nextWindows = await listOpenTaskWindows();
+      const nextGroups = buildTaskWindowGroups(nextWindows, taskGroupOrder);
+      openWindows = nextWindows;
+      taskGroupOrder = nextGroups.map((group) => group.key);
       taskbarMessage = openWindows.length ? 'Open task windows' : 'No open task windows';
     } catch (error) {
       console.error('Failed to load open task windows', error);
       openWindows = [];
+      taskGroupOrder = [];
       taskbarMessage = 'Open windows unavailable';
     }
   }
@@ -191,6 +235,182 @@
       console.error(`Failed to open launcher menu for ${launcher.name}`, error);
     }
   }
+  function taskGroupLabel(group: TaskWindowGroup) {
+    return group.windows.length > 1
+      ? `${group.label} (${group.windows.length} windows)`
+      : group.label;
+  }
+  function taskGroupStyle(group: TaskWindowGroup) {
+    const previewOrderIndex = taskGroupPreviewOrder.indexOf(group.key);
+    if (draggingGroupKey !== group.key || !taskGroupDragStarted) {
+      return previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '';
+    }
+
+    const liveReorderOffset = taskbarGroupReorderOffset(
+      group.key,
+      taskGroupPreviewOrder,
+      taskGroupDragRects
+    );
+    const visualDelta = taskGroupDragDeltaX + liveReorderOffset;
+    return draggingGroupKey === group.key && taskGroupDragStarted
+      ? `order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`
+      : (previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '');
+  }
+  function taskGroupRects() {
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-task-group-key]'))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          key: element.dataset.taskGroupKey ?? '',
+          left: rect.left,
+          width: rect.width
+        };
+      })
+      .filter((rect) => rect.key);
+  }
+  function applyTaskGroupPointerPlacement(clientX: number) {
+    if (!draggingGroupKey) {
+      return;
+    }
+
+    const rects = taskGroupDragRects.length ? taskGroupDragRects : taskGroupRects();
+    const target = taskbarGroupDropTargetFromDisplacement(
+      draggingGroupKey,
+      taskGroupDragOriginalOrder,
+      rects,
+      taskbarGroupDragDelta(taskGroupDragStartX, clientX)
+    );
+    if (!target) {
+      return;
+    }
+
+    dropTargetGroupKey = target.targetKey;
+  }
+  function releaseTaskGroupPointerCapture() {
+    if (!taskGroupDragElement || taskGroupDragPointerId === null) {
+      return;
+    }
+
+    try {
+      if (taskGroupDragElement.hasPointerCapture(taskGroupDragPointerId)) {
+        taskGroupDragElement.releasePointerCapture(taskGroupDragPointerId);
+      }
+    } catch {
+      // Pointer capture can already be gone if the OS/browser canceled the pointer stream.
+    }
+  }
+  function captureTaskGroupPointer(pointerId: number) {
+    try {
+      taskGroupDragElement?.setPointerCapture(pointerId);
+    } catch {
+      // Drag still works while the pointer remains over the taskbar; capture is best effort.
+    }
+  }
+  function resetTaskGroupPointerDrag() {
+    draggingGroupKey = null;
+    dropTargetGroupKey = null;
+    taskGroupDragPointerId = null;
+    taskGroupDragStartX = 0;
+    taskGroupDragCurrentX = 0;
+    taskGroupDragStarted = false;
+    taskGroupDragOriginalOrder = [];
+    taskGroupDragElement = null;
+    taskGroupDragRects = [];
+    pendingTaskWindowHwnd = null;
+  }
+  function cancelTaskGroupPointerDrag() {
+    releaseTaskGroupPointerCapture();
+    if (taskGroupDragStarted && taskGroupDragOriginalOrder.length) {
+      taskGroupOrder = taskGroupDragOriginalOrder;
+    }
+    resetTaskGroupPointerDrag();
+  }
+  function startTaskGroupPointerDrag(group: TaskWindowGroup, event: PointerEvent) {
+    if (event.button !== 0 || activatingHwnd) {
+      return;
+    }
+    const target = event.currentTarget as HTMLElement;
+    draggingGroupKey = group.key;
+    dropTargetGroupKey = group.key;
+    taskGroupDragPointerId = event.pointerId;
+    taskGroupDragStartX = event.clientX;
+    taskGroupDragCurrentX = event.clientX;
+    taskGroupDragStarted = false;
+    taskGroupDragOriginalOrder = taskWindowGroups.map((item) => item.key);
+    taskGroupDragElement = target;
+    taskGroupDragRects = taskGroupRects();
+    // Capture immediately so crossing a neighbor before the drag threshold does not drop rightward moves.
+    captureTaskGroupPointer(event.pointerId);
+  }
+  function handleTaskWindowPointerDown(taskWindow: TaskbarWindow, event: PointerEvent) {
+    pendingTaskWindowHwnd = pendingTaskbarTilePointer(event.button, taskWindow.hwnd);
+  }
+  function moveTaskGroupPointerDrag(event: PointerEvent) {
+    if (taskGroupDragPointerId !== event.pointerId || !draggingGroupKey) {
+      return;
+    }
+
+    taskGroupDragCurrentX = event.clientX;
+    const started = hasTaskbarGroupDragStarted(taskGroupDragStartX, event.clientX);
+    if (!taskGroupDragStarted && started) {
+      taskGroupDragStarted = true;
+      clearPreviewShowTimer();
+      void hidePreview();
+    }
+    if (!taskGroupDragStarted) {
+      return;
+    }
+
+    event.preventDefault();
+    applyTaskGroupPointerPlacement(event.clientX);
+  }
+  function finishTaskGroupPointerDrag(event: PointerEvent) {
+    if (taskGroupDragPointerId !== event.pointerId) {
+      return;
+    }
+    const releaseResult = resolveTaskbarTilePointerRelease(
+      pendingTaskWindowHwnd,
+      taskGroupDragStarted
+    );
+    if (taskGroupDragStarted && draggingGroupKey) {
+      applyTaskGroupPointerPlacement(event.clientX);
+      taskGroupOrder = taskbarGroupOrderFromDisplacement(
+        draggingGroupKey,
+        taskGroupDragOriginalOrder,
+        taskGroupDragRects,
+        taskbarGroupDragDelta(taskGroupDragStartX, event.clientX)
+      );
+    }
+    releaseTaskGroupPointerCapture();
+    resetTaskGroupPointerDrag();
+    suppressClickTaskWindowHwnd = releaseResult.suppressClickHwnd;
+    if (releaseResult.activateHwnd) {
+      const taskWindow = openWindows.find((item) => item.hwnd === releaseResult.activateHwnd);
+      if (taskWindow) {
+        void toggleWindow(taskWindow);
+      }
+    }
+  }
+  function handleTaskGroupLostPointerCapture(event: PointerEvent) {
+    if (taskGroupDragPointerId === event.pointerId) {
+      cancelTaskGroupPointerDrag();
+    }
+  }
+  function handleTaskWindowClick(taskWindow: TaskbarWindow, event: MouseEvent) {
+    if (shouldSuppressTaskbarTileClick(suppressClickTaskWindowHwnd, taskWindow.hwnd)) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClickTaskWindowHwnd = null;
+      return;
+    }
+    void toggleWindow(taskWindow);
+  }
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && taskGroupDragPointerId !== null) {
+      event.preventDefault();
+      cancelTaskGroupPointerDrag();
+    }
+  }
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     void Promise.all([loadPinnedLaunchers(), refreshTaskbarWindows()]);
@@ -237,6 +457,8 @@
   });
 </script>
 
+<svelte:window on:keydown={handleGlobalKeydown} />
+
 <div class="surface bottom-bar">
   <section class="taskbar-strip" aria-label="Taskbar">
     <div class="launcher-strip" aria-label="Pinned Explorer taskbar apps">
@@ -260,24 +482,47 @@
     </div>
 
     <div class="task-strip" aria-label="Open windows">
-      {#if openWindows.length}
-        {#each openWindows as taskWindow (taskWindow.hwnd)}
-          <button
-            class:task-button-active={taskWindow.isActive}
-            class:task-button-minimized={taskWindow.isMinimized}
-            class="task-button"
-            type="button"
-            title={taskWindowLabel(taskWindow)}
-            aria-label={taskWindowActionLabel(taskWindow)}
-            disabled={activatingHwnd === taskWindow.hwnd}
-            on:click={() => void toggleWindow(taskWindow)}
-            on:mouseenter={(event) => queuePreview(taskWindow, event)}
-            on:mouseleave={schedulePreviewHide}
-            on:contextmenu={(event) => void openTaskMenu(taskWindow, event)}
+      {#if taskWindowGroups.length}
+        {#each taskWindowGroups as group (group.key)}
+          <div
+            class:task-group-active={group.isActive}
+            class:task-group-busy={group.isBusy}
+            class:task-group-dragging={draggingGroupKey === group.key}
+            class:task-group-drop-target={dropTargetGroupKey === group.key && draggingGroupKey !== group.key}
+            class="task-group"
+            data-task-group-key={group.key}
+            role="group"
+            aria-label={taskGroupLabel(group)}
+            style={taskGroupStyle(group)}
+            on:pointerdown={(event) => startTaskGroupPointerDrag(group, event)}
+            on:pointermove={moveTaskGroupPointerDrag}
+            on:pointerup={finishTaskGroupPointerDrag}
+            on:pointercancel={cancelTaskGroupPointerDrag}
+            on:lostpointercapture={handleTaskGroupLostPointerCapture}
           >
-            <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
-            <span class="task-label">{taskWindowLabel(taskWindow)}</span>
-          </button>
+            {#if group.windows.length > 1}
+              <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
+            {/if}
+            {#each group.windows as taskWindow (taskWindow.hwnd)}
+              <button
+                class:task-button-active={taskWindow.isActive}
+                class:task-button-minimized={taskWindow.isMinimized}
+                class="task-button"
+                type="button"
+                title={taskWindowLabel(taskWindow)}
+                aria-label={taskWindowActionLabel(taskWindow)}
+                disabled={activatingHwnd === taskWindow.hwnd}
+                on:pointerdown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
+                on:click={(event) => handleTaskWindowClick(taskWindow, event)}
+                on:mouseenter={(event) => queuePreview(taskWindow, event)}
+                on:mouseleave={schedulePreviewHide}
+                on:contextmenu={(event) => void openTaskMenu(taskWindow, event)}
+              >
+                <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
+                <span class="task-label">{taskWindowLabel(taskWindow)}</span>
+              </button>
+            {/each}
+          </div>
         {/each}
       {:else}
         <div class="strip-fallback">{taskbarMessage}</div>

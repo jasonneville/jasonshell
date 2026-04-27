@@ -1,6 +1,6 @@
 <script lang="ts">
   import './TopBar.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
@@ -27,14 +27,22 @@
   import {
     listStackPins,
     pinStackFolder,
+    reorderStackPins,
+    STACK_PINS_UPDATED_EVENT,
     unpinStackFolder,
     showStackPopup,
     type StackPin
   } from '../lib/stackPopup';
-  import { folderPathFromTransfer, hasFolderDragPayload } from '../lib/folderDrag';
+  import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
   import { buildSearchCatalog } from '../lib/searchCatalog';
   import { rankSearchResults, recordSearchUsage } from '../lib/searchRanking';
   import { isSystemPathResult, searchSystem, SEARCH_INDEX_REFRESHED_EVENT } from '../lib/systemSearch';
+  import {
+    showTopBarPinContextMenu,
+    TOP_BAR_PIN_MENU_ACTION_EVENT,
+    type TopBarPinMenuActionPayload
+  } from '../lib/taskbarMenus';
+  import { stackPinRevealPath, topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
     shouldApplySystemSearchResponse,
     shouldRefreshSystemSearchAfterIndexUpdate,
@@ -73,6 +81,14 @@
   let systemSearchTimer: number | null = null;
   let systemSearchRefreshTimer: number | null = null;
   let systemSearchSequence = 0;
+  let pinDropStatus = '';
+  let pinDropStatusKind: 'info' | 'error' = 'info';
+  let pinDropStatusTimer: number | null = null;
+  let draggingPinPath: string | null = null;
+  let pendingVisiblePinPath: string | null = null;
+  let stackPinsLoaded = false;
+
+  const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
 
   $: allResults = buildSearchCatalog(launchers, openWindows, systemResults);
   $: searchResults = rankSearchResults(allResults, searchQuery);
@@ -106,29 +122,60 @@
 
   async function loadStackPins() {
     try {
-      stackPins = await listStackPins();
+      await applyStackPins(await listStackPins(), false);
+      stackPinsLoaded = true;
     } catch (error) {
       console.error('Failed to load stack pins', error);
       stackPins = [];
+      stackPinsLoaded = true;
     }
+  }
+
+  function showPinDropStatus(message: string, kind: 'info' | 'error' = 'info') {
+    pinDropStatus = message;
+    pinDropStatusKind = kind;
+    if (pinDropStatusTimer !== null) {
+      window.clearTimeout(pinDropStatusTimer);
+    }
+    pinDropStatusTimer = window.setTimeout(() => {
+      pinDropStatus = '';
+      pinDropStatusTimer = null;
+    }, 2_800);
   }
 
   async function pinSearchFolder(folderPath: string) {
-    try {
-      await pinStackFolder(folderPath);
-      await loadStackPins();
-    } catch (error) {
-      console.error('Failed to pin stack folder', error);
-    }
+    pendingVisiblePinPath = folderPath;
+    await applyStackPins(await pinStackFolder(folderPath));
   }
 
-  async function pinDroppedFolders(paths: string[]) {
+  async function pinAndOpenDroppedFolders(paths: string[], target: EventTarget | null) {
+    const normalizedPaths = paths
+      .map((path) => normalizeDroppedPath(path))
+      .filter((path): path is string => Boolean(path));
+    const pinnedPaths: string[] = [];
     for (const path of paths) {
-      await pinStackFolder(path).catch((error) => {
+      const normalizedPath = normalizeDroppedPath(path);
+      if (!normalizedPath) {
+        continue;
+      }
+      await pinStackFolder(normalizedPath).then(() => {
+        pinnedPaths.push(normalizedPath);
+      }).catch((error) => {
         console.error(`Failed to pin dropped folder ${path}`, error);
       });
     }
-    await loadStackPins();
+    if (!pinnedPaths.length) {
+      showPinDropStatus(
+        normalizedPaths.length
+          ? 'Drop a folder path, not a file or unavailable location'
+          : 'Drop a folder to pin it',
+        'error'
+      );
+      return;
+    }
+    showPinDropStatus(pinnedPaths.length === 1 ? 'Pinned folder' : `Pinned ${pinnedPaths.length} folders`);
+    pendingVisiblePinPath = pinnedPaths[pinnedPaths.length - 1] ?? null;
+    await openStackPath(pinnedPaths[0], target);
   }
 
   async function openPanel() {
@@ -152,6 +199,13 @@
     await openStackPath(pin.path, target);
   }
 
+  function handlePinClick(event: MouseEvent, pin: StackPin, index: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    focusedPinIndex = index;
+    void openStackFromPin(pin, event.currentTarget);
+  }
+
   async function openStackPath(path: string, target: EventTarget | null) {
     const button = target as HTMLElement | null;
     const rect = button?.getBoundingClientRect() ?? searchControl?.getBoundingClientRect();
@@ -169,27 +223,23 @@
     });
   }
 
-  function draggedFolderPath(event: DragEvent): string | null {
-    return folderPathFromTransfer(event.dataTransfer);
-  }
-
-  async function pinAndDisplayFolder(path: string, target: EventTarget | null) {
-    await pinSearchFolder(path);
-    await openStackPath(path, target);
-  }
-
   function handlePinRailDragOver(event: DragEvent) {
-    if (!hasFolderDragPayload(event.dataTransfer)) {
+    if (!draggingPinPath && !hasFolderDragPayload(event.dataTransfer)) {
       return;
     }
     event.preventDefault();
-    pinRailHover = true;
+    pinRailHover = !draggingPinPath;
     if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'copy';
+      event.dataTransfer.dropEffect = draggingPinPath ? 'move' : 'copy';
     }
   }
 
   function handlePinRailDrop(event: DragEvent) {
+    if (draggingPinPath) {
+      draggingPinPath = null;
+      pinRailHover = false;
+      return;
+    }
     if (!hasFolderDragPayload(event.dataTransfer)) {
       pinRailHover = false;
       return;
@@ -197,35 +247,71 @@
 
     event.preventDefault();
     const dt = event.dataTransfer;
-    // Try to extract file paths from DataTransfer.files (Tauri/Electron may expose .path)
-    const filePaths: string[] = [];
-    if (dt?.files && dt.files.length) {
-      for (const f of Array.from(dt.files as any)) {
-        try {
-          if (f && typeof (f as any).path === 'string' && (f as any).path) {
-            filePaths.push((f as any).path);
-          }
-        } catch {
-          // ignore
-        }
-      }
-    }
-
     pinRailHover = false;
-    if (filePaths.length) {
-      void pinDroppedFolders(filePaths);
-      return;
-    }
-
-    const path = draggedFolderPath(event);
-    if (!path) {
-      return;
-    }
-    void pinAndDisplayFolder(path, event.currentTarget);
+    void pinAndOpenDroppedFolders(folderPathsFromTransfer(dt), event.currentTarget);
   }
 
   function handlePinRailDragLeave() {
     pinRailHover = false;
+  }
+
+  function handlePinDragStart(event: DragEvent, pin: StackPin) {
+    draggingPinPath = pin.path;
+    event.dataTransfer?.setData(PIN_DRAG_TYPE, pin.path);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
+  }
+
+  function handlePinDragEnd() {
+    draggingPinPath = null;
+    pinRailHover = false;
+  }
+
+  function handlePinDragOver(event: DragEvent, targetPin: StackPin) {
+    if (!draggingPinPath || draggingPinPath === targetPin.path) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }
+
+  async function handlePinDrop(event: DragEvent, targetPin: StackPin) {
+    if (!draggingPinPath || draggingPinPath === targetPin.path) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const sourcePath = event.dataTransfer?.getData(PIN_DRAG_TYPE) || draggingPinPath;
+    draggingPinPath = null;
+    const nextPins = movePinBefore(stackPins, sourcePath, targetPin.path);
+    if (nextPins === stackPins) {
+      return;
+    }
+    stackPins = nextPins;
+    try {
+      await applyStackPins(await reorderStackPins(nextPins.map((pin) => pin.path)));
+      showPinDropStatus('Reordered pinned folders');
+    } catch (error) {
+      console.error('Failed to reorder stack pins', error);
+      showPinDropStatus('Could not save pin order', 'error');
+      await loadStackPins();
+    }
+  }
+
+  function movePinBefore(pins: StackPin[], sourcePath: string, targetPath: string) {
+    const sourceIndex = pins.findIndex((pin) => pin.path === sourcePath);
+    const targetIndex = pins.findIndex((pin) => pin.path === targetPath);
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+      return pins;
+    }
+    const nextPins = [...pins];
+    const [pin] = nextPins.splice(sourceIndex, 1);
+    const insertIndex = nextPins.findIndex((item) => item.path === targetPath);
+    nextPins.splice(Math.max(0, insertIndex), 0, pin);
+    return nextPins;
   }
 
   function updateRailScrollButtons() {
@@ -286,23 +372,62 @@
       const btn = pinRailEl?.querySelectorAll('button')[prev] as HTMLElement | undefined;
       btn?.focus();
       updateRailScrollButtons();
-    } else if (event.key === 'Enter') {
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
       const idx = focusedPinIndex ?? 0;
       const pin = stackPins[idx];
       if (pin) {
-        void openStackFromPin(pin, pinRailEl?.querySelectorAll('button')[idx]);
+        void openStackFromPin(pin, pinRailEl?.querySelectorAll('button')[idx] ?? null);
       }
     }
   }
 
-  function handlePinContextMenu(event: MouseEvent, path: string) {
-    event.preventDefault();
-    const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-    if (window.confirm(`Unpin '${name}'?`)) {
-      void unpinStackFolder(path).then(() => loadStackPins()).catch((error) => {
-        console.error('Failed to unpin folder', error);
-      });
+  function queryPinButton(path: string) {
+    if (!pinRailEl) {
+      return null;
     }
+
+    return Array.from(pinRailEl.querySelectorAll<HTMLElement>('button[data-path]'))
+      .find((button) => button.dataset.path === path) ?? null;
+  }
+
+  async function revealPin(path: string) {
+    await tick();
+    window.requestAnimationFrame(() => {
+      queryPinButton(path)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      updateRailScrollButtons();
+    });
+  }
+
+  async function applyStackPins(nextPins: StackPin[], allowDetectedAdd = stackPinsLoaded) {
+    const addedPinPath = stackPinRevealPath(stackPins, nextPins, pendingVisiblePinPath, allowDetectedAdd);
+    stackPins = nextPins;
+    pendingVisiblePinPath = null;
+    if (addedPinPath) {
+      await revealPin(addedPinPath);
+      return;
+    }
+
+    await tick();
+    updateRailScrollButtons();
+  }
+
+  function handlePinContextMenu(event: MouseEvent, pin: StackPin) {
+    event.preventDefault();
+    event.stopPropagation();
+    void showTopBarPinContextMenu({
+      path: pin.path,
+      x: event.clientX,
+      y: event.clientY
+    }).catch((error) => {
+      console.error('Failed to show top-bar pin context menu', error);
+    });
+  }
+
+  async function unpinFromMenu(path: string) {
+    await unpinStackFolder(path).catch((error) => {
+      console.error('Failed to unpin folder', error);
+    });
   }
 
   async function publishSearchResults(payload = searchPanelPayload) {
@@ -462,13 +587,31 @@
       unlisteners.push(unlisten);
     });
     void listen<string>(SEARCH_PANEL_PIN_FOLDER_EVENT, (event) => {
-      void pinSearchFolder(event.payload);
+      void pinSearchFolder(event.payload).catch((error) => {
+        console.error('Failed to pin stack folder', error);
+      });
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<StackPin[]>(STACK_PINS_UPDATED_EVENT, (event) => {
+      void applyStackPins(event.payload);
+    }, {
+      target: topBarWebviewWindowEventTarget()
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<TopBarPinMenuActionPayload>(TOP_BAR_PIN_MENU_ACTION_EVENT, (event) => {
+      if (event.payload.action === 'open') {
+        void openStackPath(event.payload.path, queryPinButton(event.payload.path));
+      } else if (event.payload.action === 'unpin') {
+        void unpinFromMenu(event.payload.path);
+      }
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop') {
-        void pinDroppedFolders(event.payload.paths);
+        void pinAndOpenDroppedFolders(event.payload.paths, pinRailEl);
       }
     }).then((unlisten) => {
       unlisteners.push(unlisten);
@@ -501,6 +644,9 @@
       if (systemSearchRefreshTimer !== null) {
         window.clearTimeout(systemSearchRefreshTimer);
       }
+      if (pinDropStatusTimer !== null) {
+        window.clearTimeout(pinDropStatusTimer);
+      }
       void hideSearchPanel().catch(() => undefined);
       for (const unlisten of unlisteners) {
         unlisten();
@@ -530,19 +676,28 @@
       on:wheel={handleRailWheel}
       on:keydown={handlePinRailKeydown}
     >
-      {#each stackPins as pin (pin.id)}
+      {#each stackPins as pin, index (pin.id)}
         <button
           type="button"
           title={pin.path}
           data-path={pin.path}
-          on:click={(event) => void openStackFromPin(pin, event.currentTarget)}
-          on:contextmenu={(event) => handlePinContextMenu(event, pin.path)}
+          draggable="true"
+          class:dragging={draggingPinPath === pin.path}
+          on:click={(event) => handlePinClick(event, pin, index)}
+          on:contextmenu={(event) => handlePinContextMenu(event, pin)}
+          on:dragstart={(event) => handlePinDragStart(event, pin)}
+          on:dragend={handlePinDragEnd}
+          on:dragover={(event) => handlePinDragOver(event, pin)}
+          on:drop={(event) => void handlePinDrop(event, pin)}
         >
           {pin.name}
         </button>
       {/each}
       {#if pinRailHover}
         <div class="pin-drop-overlay" aria-hidden="true">Drop to pin folder</div>
+      {/if}
+      {#if pinDropStatus}
+        <div class:error={pinDropStatusKind === 'error'} class="pin-drop-status" role="status">{pinDropStatus}</div>
       {/if}
     </div>
     {#if showRailScrollRight}

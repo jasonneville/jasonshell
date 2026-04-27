@@ -16,7 +16,7 @@
     defaultSearchPanelViewState,
     shouldRevealSelectedResult
   } from '../lib/searchPanelState';
-  import { folderPathToUri, JASONSHELL_FOLDER_DRAG_TYPE } from '../lib/folderDrag';
+  import { setFolderDragPayload } from '../lib/folderDrag';
 
   let panelState = defaultSearchPanelViewState;
   let resultRows: Array<HTMLDivElement | undefined> = [];
@@ -82,10 +82,7 @@
       return;
     }
 
-    event.dataTransfer.effectAllowed = 'copy';
-    event.dataTransfer.setData(JASONSHELL_FOLDER_DRAG_TYPE, result.path);
-    event.dataTransfer.setData('text/plain', result.path);
-    event.dataTransfer.setData('text/uri-list', folderPathToUri(result.path));
+    setFolderDragPayload(event.dataTransfer, [result.path], 'copy');
   }
 
   function trackResultRow(node: HTMLDivElement, index: number) {
