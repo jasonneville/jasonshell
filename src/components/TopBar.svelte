@@ -407,7 +407,7 @@
       await revealPin(addedPinPath);
       return;
     }
-
+    await loadStackPins();
     await tick();
     updateRailScrollButtons();
   }
