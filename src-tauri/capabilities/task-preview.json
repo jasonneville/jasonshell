@@ -1,0 +1,11 @@
+{
+  "identifier": "task-preview",
+  "description": "Task preview auxiliary surface capability: preview payload, activation event, and window-label access.",
+  "windows": [
+    "task-preview"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

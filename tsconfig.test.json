@@ -7,11 +7,8 @@
     "outDir": "dist-tests"
   },
   "include": [
-    "src/lib/searchCatalog.ts",
-    "src/lib/searchPanelState.ts",
-    "src/lib/systemSearchState.ts",
-    "src/lib/stackPopupState.ts",
-    "src/lib/contextMenuPosition.ts",
-    "src/lib/processManagerState.ts"
+    "src/lib/*.ts",
+    "src/features/**/*.ts",
+    "src/ipc/**/*.ts"
   ]
 }

@@ -131,6 +131,21 @@
   height: 100%;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.bottom-bar .task-strip::after {
+  background: linear-gradient(90deg, transparent, rgba(7, 10, 16, 0.92));
+  content: '';
+  display: none;
+  inset: 0 0 0 auto;
+  pointer-events: none;
+  position: absolute;
+  width: 2.4rem;
+}
+
+.bottom-bar .task-strip-overflow::after {
+  display: block;
 }
 
 .bottom-bar .task-group {
@@ -159,6 +174,19 @@
 .bottom-bar .task-group-active {
   background: rgba(72, 102, 191, 0.12);
   border-color: rgba(150, 186, 255, 0.18);
+}
+
+.bottom-bar .task-group-active::before {
+  background: linear-gradient(180deg, #9db8ff, rgba(124, 160, 255, 0.4));
+  content: '';
+  inset: 0 auto 0 0;
+  pointer-events: none;
+  position: absolute;
+  width: 2px;
+}
+
+.bottom-bar .task-group-minimized {
+  opacity: 0.78;
 }
 
 .bottom-bar .task-group-dragging {
@@ -210,6 +238,10 @@
   justify-content: center;
   min-width: 0.88rem;
   padding: 0 0.16rem;
+  position: absolute;
+  right: 0.12rem;
+  top: 0.12rem;
+  z-index: 1;
 }
 
 .bottom-bar .task-button {
@@ -280,4 +312,27 @@
   font-weight: 600;
   padding: 0 0.2rem;
   white-space: nowrap;
+}
+
+.bottom-bar .taskbar-overflow-status {
+  align-items: center;
+  background: rgba(7, 10, 16, 0.88);
+  border-left: 1px solid rgba(144, 181, 255, 0.22);
+  color: rgba(226, 234, 255, 0.72);
+  display: none;
+  font-size: 0.54rem;
+  font-weight: 800;
+  height: 100%;
+  letter-spacing: 0.03em;
+  padding: 0 0.42rem;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  text-transform: uppercase;
+  top: 0;
+  z-index: 2;
+}
+
+.bottom-bar .taskbar-overflow-status.visible {
+  display: flex;
 }

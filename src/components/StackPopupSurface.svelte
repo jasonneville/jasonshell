@@ -1,4 +1,5 @@
 <script lang="ts">
+  import './StackPopupSurface.css';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import {
@@ -44,6 +45,12 @@
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
   import { positionContextMenuInViewport } from '../lib/contextMenuPosition';
+  import {
+    stackBrowserBreadcrumbOverflow,
+    stackBrowserDeletePrompt,
+    stackBrowserScrollTopForIndex,
+    stackBrowserVirtualWindow
+  } from '../features/stack-browser/viewModel';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
 
@@ -62,6 +69,9 @@
   let typeToSelectTimer: number | null = null;
   let lastHtmlDropAt = 0;
   let detailsGrid: HTMLDivElement | null = null;
+  let detailsBody: HTMLDivElement | null = null;
+  let detailsBodyScrollTop = 0;
+  let detailsBodyHeight = 0;
   let lastHandledOpenRequestKey: string | null = null;
   let pendingOpenRequestKey: string | null = null;
   let folderLoadSequence = 0;
@@ -74,7 +84,9 @@
   $: canGoBack = canNavigateStackBack(stackState);
   $: canGoForward = canNavigateStackForward(stackState);
   $: breadcrumbs = stackBreadcrumbSegments(currentPath);
+  $: breadcrumbOverflow = stackBrowserBreadcrumbOverflow(breadcrumbs, 5);
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
+  $: virtualEntries = stackBrowserVirtualWindow(entries, detailsBodyScrollTop, detailsBodyHeight);
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
@@ -182,12 +194,14 @@
 
         mergedListing = mergeStackFolderListings(mergedListing, page);
         stackState = applyStackFolderListing(stackState, folderPath, mergedListing);
+        updateDetailsViewport();
         focusDetailsGrid();
       });
       if (loadSequence !== folderLoadSequence) {
         return;
       }
       stackState = applyStackFolderListing(stackState, folderPath, mergedListing ?? listing);
+      updateDetailsViewport();
       focusDetailsGrid();
     } catch (error) {
       console.error('Failed to load stack folder', error);
@@ -267,14 +281,14 @@
       return;
     }
 
-    const label = selectedPaths.length === 1 && selectedEntry ? selectedEntry.name : `${selectedPaths.length} items`;
-    if (!window.confirm(`Delete ${label}?`)) {
+    const deletePrompt = stackBrowserDeletePrompt(entries, selectedPaths, stackState.selectedPath);
+    if (!deletePrompt.canDelete || !window.confirm(deletePrompt.message)) {
       return;
     }
 
     try {
       const failures: string[] = [];
-      for (const path of selectedPaths) {
+      for (const path of deletePrompt.paths) {
         try {
           await deleteStackItem(path);
         } catch (error) {
@@ -468,6 +482,23 @@
     window.requestAnimationFrame(() => detailsGrid?.focus());
   }
 
+  function updateDetailsViewport() {
+    window.requestAnimationFrame(() => {
+      if (!detailsBody) {
+        detailsBodyScrollTop = 0;
+        detailsBodyHeight = 0;
+        return;
+      }
+      detailsBodyScrollTop = detailsBody.scrollTop;
+      detailsBodyHeight = detailsBody.getBoundingClientRect().height;
+    });
+  }
+
+  function handleDetailsBodyScroll() {
+    detailsBodyScrollTop = detailsBody?.scrollTop ?? 0;
+    detailsBodyHeight = detailsBody?.getBoundingClientRect().height ?? 0;
+  }
+
   function sortBy(column: StackSortColumn) {
     stackState = updateStackSort(stackState, column);
     focusDetailsGrid();
@@ -508,14 +539,34 @@
     if (hasRetainedRows) {
       return;
     }
-    const entry = entries[Math.max(0, Math.min(entries.length - 1, index))];
+    const normalizedIndex = Math.max(0, Math.min(entries.length - 1, index));
+    const entry = entries[normalizedIndex];
     if (entry) {
       stackState = selectStackEntry(stackState, entry.path, range ? 'range' : 'single');
+      scrollEntryIndexIntoView(normalizedIndex);
     }
   }
 
   function selectedIndex() {
     return entries.findIndex((entry) => entry.path === stackState.selectedPath);
+  }
+
+  function scrollEntryIndexIntoView(index: number) {
+    if (!detailsBody || index < 0 || !entries.length) {
+      return;
+    }
+    const viewportHeight = detailsBodyHeight || detailsBody.getBoundingClientRect().height;
+    const nextScrollTop = stackBrowserScrollTopForIndex(
+      index,
+      detailsBody.scrollTop,
+      viewportHeight,
+      entries.length
+    );
+    if (nextScrollTop !== detailsBody.scrollTop) {
+      detailsBody.scrollTop = nextScrollTop;
+      detailsBodyScrollTop = nextScrollTop;
+      detailsBodyHeight = viewportHeight;
+    }
   }
 
   async function navigateParent() {
@@ -643,6 +694,7 @@
     const path = findTypeToSelectPath(entries, typeToSelectBuffer, stackState.selectedPath);
     if (path) {
       stackState = selectStackEntry(stackState, path);
+      scrollEntryIndexIntoView(entries.findIndex((entry) => entry.path === path));
     }
   }
 
@@ -660,6 +712,7 @@
     const entry = stackState.entries[next];
     if (entry) {
       stackState = selectStackEntry(stackState, entry.path);
+      scrollEntryIndexIntoView(next);
     }
   }
 
@@ -749,16 +802,20 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} on:click={closeMenus} on:mousedown={handleMouseNavigation} />
+<svelte:window on:keydown={handleKeydown} on:click={closeMenus} on:mousedown={handleMouseNavigation} on:resize={updateDetailsViewport} />
 
-<section class="stack-popup" aria-label="Stack browser">
+<section class="stack-popup" aria-label="Stack browser" aria-busy={loadingPath ? 'true' : 'false'}>
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>
       {#if currentPath}
         <nav class="breadcrumbs" aria-label="Path breadcrumbs">
-          {#each breadcrumbs as crumb, i (crumb.path)}
-            <button type="button" class="crumb" on:click={() => void openFolder(crumb.path)}>{crumb.name}</button>
-            {#if i < breadcrumbs.length - 1}
+          {#each breadcrumbOverflow.visibleSegments as crumb, i (crumb.path)}
+            <button type="button" class="crumb" aria-current={crumb.path === currentPath ? 'page' : undefined} on:click={() => void openFolder(crumb.path)}>{crumb.name}</button>
+            {#if i === 0 && breadcrumbOverflow.hiddenCount}
+              <span class="crumb-sep">/</span>
+              <span class="crumb-overflow" title={breadcrumbOverflow.hiddenTitle} aria-label={`${breadcrumbOverflow.hiddenCount} collapsed path segments`}>...</span>
+            {/if}
+            {#if i < breadcrumbOverflow.visibleSegments.length - 1}
               <span class="crumb-sep">/</span>
             {/if}
           {/each}
@@ -781,7 +838,7 @@
     </div>
   </header>
 
-  <div class="stack-status">
+  <div class="stack-status surface-state" class:error={!!errorMessage} class:info={!errorMessage} role="status" aria-live="polite">
     <span>{errorMessage || stackState.statusMessage}</span>
     {#if loadingPath}
       <span>Loading...</span>
@@ -818,6 +875,7 @@
     class="details-table"
     role="grid"
     aria-label="Folder details"
+    aria-busy={loadingPath ? 'true' : 'false'}
     aria-rowcount={entries.length + 1}
     aria-colcount="4"
     tabindex="0"
@@ -834,8 +892,16 @@
     </div>
 
     {#if entries.length}
-      <div class="details-body">
-        {#each entries as entry, index (entry.id)}
+      <div
+        class="details-body"
+        bind:this={detailsBody}
+        on:scroll={handleDetailsBodyScroll}
+      >
+        {#if virtualEntries.beforeHeight}
+          <div class="virtual-spacer" style={`height:${virtualEntries.beforeHeight}px`} aria-hidden="true"></div>
+        {/if}
+        {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
+          {@const entry = virtualRow.item}
           {@const fileIcon = stackFileIconForEntry(entry)}
           <button
             class:selected={stackState.selectedPaths.includes(entry.path)}
@@ -845,7 +911,7 @@
             class:retained={hasRetainedRows}
             type="button"
             role="row"
-            aria-rowindex={index + 2}
+            aria-rowindex={virtualRow.index + 2}
             aria-selected={stackState.selectedPaths.includes(entry.path)}
             aria-disabled={hasRetainedRows}
             disabled={hasRetainedRows}
@@ -883,9 +949,12 @@
             <span role="gridcell" aria-colindex="4">{formatModified(entry.modifiedMs)}</span>
           </button>
         {/each}
+        {#if virtualEntries.afterHeight}
+          <div class="virtual-spacer" style={`height:${virtualEntries.afterHeight}px`} aria-hidden="true"></div>
+        {/if}
       </div>
     {:else}
-      <div class="empty-stack">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
+      <div class="empty-stack surface-state" class:loading={!!loadingPath} class:info={!loadingPath} role="status">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
     {/if}
   </div>
 
@@ -901,7 +970,7 @@
     >
       <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => selectedEntry && void activateEntry(selectedEntry)}>Open</button>
       <div class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
-        <button type="button" class="submenu-trigger" role="menuitem" aria-haspopup="true" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</button>
+        <button type="button" class="submenu-trigger" role="menuitem" aria-haspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</button>
         <div class="context-menu context-submenu-panel" role="menu">
           <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'File'} on:click={() => void openSelectedWithPicker()}>Choose app...</button>
         </div>
@@ -930,484 +999,3 @@
     </div>
   {/if}
 </section>
-
-<style>
-  .stack-popup {
-    background: linear-gradient(180deg, rgba(23, 28, 39, 0.98), rgba(10, 13, 21, 0.98));
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.45rem;
-    box-shadow: 0 22px 46px rgba(0, 0, 0, 0.44);
-    color: #f0f4ff;
-    display: grid;
-    grid-template-rows: auto auto auto 1fr;
-    height: 100%;
-    overflow: hidden;
-    padding: 0.65rem;
-    width: 100%;
-  }
-
-  .stack-toolbar {
-    display: grid;
-    gap: 0.65rem;
-  }
-
-  .stack-path {
-    color: rgba(240, 244, 255, 0.92);
-    font-size: 0.82rem;
-    font-weight: 750;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .stack-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .stack-actions button {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.28rem;
-    color: #eef3ff;
-    font-size: 0.62rem;
-    font-weight: 750;
-    min-height: 1.45rem;
-    padding: 0 0.42rem;
-  }
-
-  .stack-actions button:disabled {
-    color: rgba(218, 226, 248, 0.32);
-  }
-
-  .stack-actions button:not(:disabled):hover {
-    background: rgba(77, 124, 254, 0.18);
-    border-color: rgba(124, 160, 255, 0.35);
-  }
-
-  .stack-status {
-    color: rgba(218, 226, 248, 0.58);
-    display: flex;
-    font-size: 0.62rem;
-    justify-content: space-between;
-    min-height: 1.45rem;
-    padding: 0.35rem 0.05rem 0.4rem;
-  }
-
-  .inline-editor {
-    align-items: center;
-    background: rgba(255, 255, 255, 0.055);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.35rem;
-    display: flex;
-    gap: 0.4rem;
-    margin-bottom: 0.45rem;
-    padding: 0.38rem;
-  }
-
-  .inline-editor label {
-    color: rgba(218, 226, 248, 0.72);
-    font-size: 0.62rem;
-    font-weight: 800;
-    text-transform: uppercase;
-  }
-
-  .inline-editor input {
-    background: rgba(5, 8, 15, 0.72);
-    border: 1px solid rgba(124, 160, 255, 0.34);
-    border-radius: 0.28rem;
-    color: #f0f4ff;
-    flex: 1 1 auto;
-    font: inherit;
-    font-size: 0.72rem;
-    min-width: 8rem;
-    padding: 0.28rem 0.45rem;
-  }
-
-  .inline-editor input:focus {
-    border-color: rgba(150, 184, 255, 0.72);
-    outline: 2px solid rgba(77, 124, 254, 0.28);
-  }
-
-  .inline-editor button {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.28rem;
-    color: #eef3ff;
-    font-size: 0.62rem;
-    font-weight: 750;
-    min-height: 1.55rem;
-    padding: 0 0.5rem;
-  }
-
-  .details-table {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.38rem;
-    display: grid;
-    grid-template-rows: auto 1fr;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .details-table:focus-visible {
-    outline: 2px solid rgba(150, 184, 255, 0.62);
-    outline-offset: -2px;
-  }
-
-  .details-header,
-  .details-body button {
-    display: grid;
-    grid-template-columns: minmax(10rem, 1fr) 5.5rem 5rem 8.5rem;
-  }
-
-  .details-header {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(218, 226, 248, 0.58);
-    font-size: 0.58rem;
-    font-weight: 800;
-    min-height: 1.65rem;
-    text-transform: uppercase;
-  }
-
-  .details-header .details-sort,
-  .details-body button > span {
-    align-content: center;
-    min-width: 0;
-    overflow: hidden;
-    padding: 0 0.55rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .details-body button > span:first-child {
-    align-items: center;
-    display: flex;
-    gap: 0.4rem;
-  }
-
-  .stack-entry-icon {
-    align-items: center;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 0.18rem;
-    display: inline-flex;
-    flex: 0 0 auto;
-    height: 1rem;
-    justify-content: center;
-    min-width: 1rem;
-    overflow: hidden;
-    position: relative;
-    width: 1rem;
-  }
-
-  .stack-entry-icon img {
-    height: 1rem;
-    width: 1rem;
-  }
-
-  .stack-entry-icon-shape,
-  .stack-entry-icon-shape::before,
-  .stack-entry-icon-shape::after {
-    box-sizing: border-box;
-    display: block;
-    position: absolute;
-  }
-
-  .stack-entry-icon-shape {
-    inset: 0;
-  }
-
-  .stack-entry-icon-folder .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #ffd67a, #d79932);
-    border-radius: 0.1rem 0.1rem 0 0;
-    content: '';
-    height: 0.28rem;
-    left: 0.12rem;
-    top: 0.2rem;
-    width: 0.42rem;
-  }
-
-  .stack-entry-icon-folder .stack-entry-icon-shape::after {
-    background: linear-gradient(180deg, #ffd978, #b97920);
-    border: 1px solid rgba(255, 239, 177, 0.55);
-    border-radius: 0.12rem;
-    content: '';
-    height: 0.55rem;
-    inset: 0.34rem 0.1rem 0.11rem;
-  }
-
-  .stack-entry-icon-file .stack-entry-icon-shape::before,
-  .stack-entry-icon-document .stack-entry-icon-shape::before,
-  .stack-entry-icon-code .stack-entry-icon-shape::before,
-  .stack-entry-icon-image .stack-entry-icon-shape::before,
-  .stack-entry-icon-audio .stack-entry-icon-shape::before,
-  .stack-entry-icon-video .stack-entry-icon-shape::before,
-  .stack-entry-icon-archive .stack-entry-icon-shape::before,
-  .stack-entry-icon-app .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(184, 203, 242, 0.86));
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    border-radius: 0.12rem;
-    content: '';
-    inset: 0.13rem 0.2rem 0.12rem;
-  }
-
-  .stack-entry-icon-file .stack-entry-icon-shape::after,
-  .stack-entry-icon-document .stack-entry-icon-shape::after,
-  .stack-entry-icon-code .stack-entry-icon-shape::after,
-  .stack-entry-icon-image .stack-entry-icon-shape::after,
-  .stack-entry-icon-audio .stack-entry-icon-shape::after,
-  .stack-entry-icon-video .stack-entry-icon-shape::after,
-  .stack-entry-icon-archive .stack-entry-icon-shape::after,
-  .stack-entry-icon-app .stack-entry-icon-shape::after {
-    border-left: 0.2rem solid transparent;
-    border-top: 0.2rem solid rgba(105, 133, 190, 0.75);
-    content: '';
-    right: 0.2rem;
-    top: 0.13rem;
-  }
-
-  .stack-entry-icon-app .stack-entry-icon-shape::before {
-    background: linear-gradient(135deg, #8fc7ff, #3767d5);
-    border-radius: 0.18rem;
-    inset: 0.16rem;
-  }
-
-  .stack-entry-icon-app .stack-entry-icon-shape::after {
-    background: rgba(255, 255, 255, 0.72);
-    border: 0;
-    border-radius: 999px;
-    content: '';
-    height: 0.26rem;
-    inset: 0.37rem;
-  }
-
-  .stack-entry-icon-image .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #d9fff5, #6bd8bd);
-  }
-
-  .stack-entry-icon-archive .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #f0d6ff, #ac75df);
-  }
-
-  .stack-entry-icon-code .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #e5edff, #83a3ff);
-  }
-
-  .stack-entry-icon-folder {
-    background: linear-gradient(180deg, rgba(245, 191, 92, 0.42), rgba(164, 113, 35, 0.32));
-    border-color: rgba(245, 191, 92, 0.38);
-    color: #fff0c7;
-  }
-
-  .stack-entry-icon-app {
-    background: linear-gradient(180deg, rgba(114, 178, 255, 0.42), rgba(45, 86, 177, 0.34));
-    border-color: rgba(132, 196, 255, 0.42);
-    color: #e9f3ff;
-  }
-
-  .stack-entry-icon-image,
-  .stack-entry-icon-video {
-    background: linear-gradient(180deg, rgba(100, 211, 181, 0.34), rgba(35, 112, 97, 0.28));
-    border-color: rgba(111, 230, 194, 0.32);
-  }
-
-  .stack-entry-icon-archive {
-    background: linear-gradient(180deg, rgba(204, 151, 255, 0.34), rgba(91, 51, 137, 0.32));
-    border-color: rgba(204, 151, 255, 0.32);
-  }
-
-  .stack-entry-icon-code {
-    background: linear-gradient(180deg, rgba(144, 181, 255, 0.32), rgba(57, 84, 158, 0.3));
-    border-color: rgba(144, 181, 255, 0.34);
-  }
-
-  .details-header .details-sort {
-    background: transparent;
-    border: 0;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    text-transform: inherit;
-  }
-
-  .details-header .details-sort:hover,
-  .details-header .details-sort:focus-visible {
-    background: rgba(124, 160, 255, 0.14);
-    color: rgba(240, 244, 255, 0.86);
-    outline: 0;
-  }
-
-  .details-body {
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-color: rgba(124, 160, 255, 0.45) rgba(255, 255, 255, 0.06);
-  }
-
-  .details-body button {
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
-    color: rgba(240, 244, 255, 0.9);
-    font: inherit;
-    font-size: 0.7rem;
-    min-height: 1.9rem;
-    text-align: left;
-    width: 100%;
-  }
-
-  .details-body button:hover,
-  .details-body button.selected {
-    background: rgba(77, 124, 254, 0.16);
-  }
-
-  .details-body button.selected {
-    outline: 1px solid rgba(124, 160, 255, 0.34);
-    outline-offset: -1px;
-  }
-
-  .details-body button.subdued {
-    color: rgba(218, 226, 248, 0.58);
-  }
-
-  .details-body button.readonly {
-    box-shadow: inset 3px 0 0 rgba(245, 191, 92, 0.42);
-  }
-
-  .details-body button.linked {
-    box-shadow: inset 3px 0 0 rgba(132, 196, 255, 0.48);
-  }
-
-  .details-body button.readonly.linked {
-    box-shadow:
-      inset 3px 0 0 rgba(245, 191, 92, 0.42),
-      inset 6px 0 0 rgba(132, 196, 255, 0.36);
-  }
-
-  .details-body button.retained {
-    cursor: progress;
-  }
-
-  .item-badges {
-    display: inline-flex;
-    gap: 0.18rem;
-    margin-left: 0.35rem;
-    padding: 0;
-    vertical-align: middle;
-  }
-
-  .item-badges span {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 999px;
-    color: rgba(240, 244, 255, 0.7);
-    font-size: 0.5rem;
-    font-weight: 800;
-    line-height: 1;
-    padding: 0.12rem 0.25rem;
-  }
-
-  .details-body button:focus-visible {
-    outline: 2px solid rgba(150, 184, 255, 0.72);
-    outline-offset: -2px;
-  }
-
-  .context-menu {
-    background: rgba(15, 20, 32, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 0.35rem;
-    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.42);
-    display: grid;
-    min-width: 8.5rem;
-    padding: 0.25rem;
-    position: fixed;
-    z-index: 50;
-  }
-
-  .context-submenu {
-    position: relative;
-  }
-
-  .context-submenu-panel {
-    display: none;
-    left: calc(100% + 0.25rem);
-    min-width: 9rem;
-    position: absolute;
-    top: 0;
-  }
-
-  .context-submenu.left .context-submenu-panel {
-    left: auto;
-    right: calc(100% + 0.25rem);
-  }
-
-  .context-submenu:hover .context-submenu-panel,
-  .context-submenu:focus-within .context-submenu-panel {
-    display: grid;
-  }
-
-  .context-menu button {
-    background: transparent;
-    border: 0;
-    border-radius: 0.24rem;
-    color: rgba(240, 244, 255, 0.92);
-    font: inherit;
-    font-size: 0.68rem;
-    min-height: 1.55rem;
-    padding: 0 0.55rem;
-    text-align: left;
-  }
-
-  .context-menu button:hover:not(:disabled),
-  .context-menu button:focus-visible {
-    background: rgba(77, 124, 254, 0.22);
-  }
-
-  .context-menu button:disabled {
-    color: rgba(218, 226, 248, 0.32);
-  }
-
-  .empty-stack {
-    align-items: center;
-    color: rgba(218, 226, 248, 0.58);
-    display: grid;
-    font-size: 0.72rem;
-    justify-items: center;
-  }
-
-  .breadcrumbs {
-    width: 100%;
-    display: flex;
-    gap: 0.25rem;
-    align-items: center;
-    flex-wrap: nowrap;
-    overflow: hidden;
-  }
-
-  .breadcrumbs .crumb {
-    background: transparent;
-    border: 0;
-    color: rgba(240, 244, 255, 0.9);
-    font-weight: 700;
-    min-width: 0;
-    padding: 0 0.25rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow: hidden;
-  }
-
-  .breadcrumbs .crumb:last-child {
-    flex: 1 1 auto;
-    text-align: left;
-  }
-
-  .breadcrumbs .crumb-sep {
-    color: rgba(218, 226, 248, 0.46);
-    padding: 0 0.12rem;
-  }
-
-  .stack-actions button:nth-child(3) {
-    background: rgba(255, 255, 255, 0.04);
-  }
-</style>

@@ -4,13 +4,13 @@ import {
   applySearchPanelPayload,
   defaultSearchPanelViewState,
   shouldRevealSelectedResult
-} from '../dist-tests/searchPanelState.js';
-import { buildSearchCatalog } from '../dist-tests/searchCatalog.js';
+} from '../dist-tests/lib/searchPanelState.js';
+import { buildSearchCatalog } from '../dist-tests/lib/searchCatalog.js';
 import {
   shouldRefreshSystemSearchAfterIndexUpdate,
   shouldApplySystemSearchResponse,
   shouldRetryIndexedSearch
-} from '../dist-tests/systemSearchState.js';
+} from '../dist-tests/lib/systemSearchState.js';
 
 test('applies a typed search payload with visible results and selection', () => {
   const next = applySearchPanelPayload(defaultSearchPanelViewState, {

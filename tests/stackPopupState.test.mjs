@@ -25,8 +25,8 @@ import {
   stackPopupRequestKey,
   stackItemNameFromPath,
   updateStackSort
-} from '../dist-tests/stackPopupState.js';
-import { stackFileIconForEntry } from '../dist-tests/stackFileIcons.js';
+} from '../dist-tests/lib/stackPopupState.js';
+import { stackFileIconForEntry } from '../dist-tests/lib/stackFileIcons.js';
 
 const documents = 'C:\\Users\\me\\Documents';
 const downloads = 'C:\\Users\\me\\Downloads';

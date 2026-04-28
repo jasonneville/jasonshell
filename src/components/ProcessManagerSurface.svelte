@@ -19,6 +19,12 @@
     type ProcessSortColumn,
     type ProcessSortState
   } from '../lib/processManagerState';
+  import {
+    buildProcessTreeRows,
+    filterProcesses,
+    processMetricPercent,
+    safeKillButtonState
+  } from '../features/process-manager/processManagerUxState';
 
   const REFRESH_INTERVAL_MS = 1_000;
 
@@ -29,9 +35,13 @@
   let isLoading = false;
   let refreshTimer: number | null = null;
   let killingPid: number | null = null;
+  let armedKillPid: number | null = null;
+  let processFilter = '';
   let inFlightRequest = 0;
 
   $: sortedProcesses = sortProcesses(processes, sortState);
+  $: visibleProcesses = filterProcesses(sortedProcesses, processFilter);
+  $: processRows = buildProcessTreeRows(visibleProcesses);
   $: totalMemoryBytes = processes.reduce((total, process) => total + (process.memoryBytes ?? 0), 0);
 
   function sortBy(column: ProcessSortColumn) {
@@ -43,6 +53,13 @@
       return '';
     }
     return sortState.direction === 'asc' ? ' ▲' : ' ▼';
+  }
+
+  function ariaSort(column: ProcessSortColumn) {
+    if (sortState.column !== column) {
+      return 'none';
+    }
+    return sortState.direction === 'asc' ? 'ascending' : 'descending';
   }
 
   async function refreshProcesses() {
@@ -58,6 +75,9 @@
         return;
       }
       processes = nextProcesses;
+      if (armedKillPid !== null && !nextProcesses.some((process) => process.pid === armedKillPid)) {
+        armedKillPid = null;
+      }
       const nextTotalMemoryBytes = nextProcesses.reduce(
         (total, process) => total + (process.memoryBytes ?? 0),
         0
@@ -97,6 +117,7 @@
 
   function closeSurface() {
     isOpen = false;
+    armedKillPid = null;
     stopRefreshTimer();
   }
 
@@ -111,7 +132,13 @@
     if (!process.isKillable || killingPid !== null) {
       return;
     }
+    if (armedKillPid !== process.pid) {
+      armedKillPid = process.pid;
+      statusMessage = `Confirm kill for ${process.name} (${process.pid})`;
+      return;
+    }
     killingPid = process.pid;
+    armedKillPid = null;
     statusMessage = `Killing ${process.name} (${process.pid})…`;
     try {
       await killProcess(process.pid);
@@ -124,6 +151,19 @@
     } finally {
       killingPid = null;
     }
+  }
+
+  function clearKillArm() {
+    if (armedKillPid !== null) {
+      armedKillPid = null;
+      statusMessage = 'Kill confirmation canceled';
+    }
+  }
+
+  function processRowStyle(rowDepth: number, process: ProcessInfo) {
+    const cpuFill = processMetricPercent(process.cpuPercent, 100);
+    const memoryFill = processMetricPercent(process.memoryBytes, totalMemoryBytes);
+    return `--process-depth: ${rowDepth}; --cpu-fill: ${cpuFill}%; --memory-fill: ${memoryFill}%;`;
   }
 
   onMount(() => {
@@ -145,15 +185,34 @@
   });
 </script>
 
-<svelte:window on:keydown={(event) => event.key === 'Escape' && void requestClose()} />
+<svelte:window
+  on:keydown={(event) => {
+    if (event.key === 'Escape' && armedKillPid !== null) {
+      clearKillArm();
+      return;
+    }
+    if (event.key === 'Escape') {
+      void requestClose();
+    }
+  }}
+/>
 
 <main class="process-manager-surface" aria-label="Process manager">
   <header class="process-manager-header">
     <div>
       <strong>Processes</strong>
-      <span>{statusMessage}</span>
+      <span role="status" aria-live="polite">{statusMessage}</span>
     </div>
     <div class="process-manager-actions">
+      <label class="process-filter">
+        <span>Filter</span>
+        <input
+          bind:value={processFilter}
+          aria-label="Filter processes by name, PID, parent PID, path, or status"
+          placeholder="name, pid, path"
+          on:input={() => { armedKillPid = null; }}
+        />
+      </label>
       <button type="button" on:click={() => void refreshProcesses()} disabled={isLoading}>
         {isLoading ? 'Refreshing…' : 'Refresh'}
       </button>
@@ -161,42 +220,67 @@
     </div>
   </header>
 
-  <section class="process-table" aria-live={isOpen ? 'polite' : 'off'}>
+  <div class="process-table" role="grid" tabindex="0" aria-label="Running processes" aria-live={isOpen ? 'polite' : 'off'}>
     <div class="process-row process-row-head" role="row">
-      <button type="button" on:click={() => sortBy('name')}>Name{sortIndicator('name')}</button>
-      <button type="button" on:click={() => sortBy('pid')}>PID{sortIndicator('pid')}</button>
-      <button type="button" on:click={() => sortBy('cpuPercent')}>CPU{sortIndicator('cpuPercent')}</button>
-      <button type="button" on:click={() => sortBy('memoryBytes')}>Memory{sortIndicator('memoryBytes')}</button>
-      <button type="button" on:click={() => sortBy('startTimeMs')}>Start Time{sortIndicator('startTimeMs')}</button>
-      <button type="button" on:click={() => sortBy('threadCount')}>Threads{sortIndicator('threadCount')}</button>
-      <span>Status</span>
-      <span>Action</span>
+      <button type="button" role="columnheader" aria-sort={ariaSort('name')} on:click={() => sortBy('name')}>Name{sortIndicator('name')}</button>
+      <button type="button" role="columnheader" aria-sort={ariaSort('pid')} on:click={() => sortBy('pid')}>PID{sortIndicator('pid')}</button>
+      <button type="button" role="columnheader" aria-sort={ariaSort('cpuPercent')} on:click={() => sortBy('cpuPercent')}>CPU{sortIndicator('cpuPercent')}</button>
+      <button type="button" role="columnheader" aria-sort={ariaSort('memoryBytes')} on:click={() => sortBy('memoryBytes')}>Memory{sortIndicator('memoryBytes')}</button>
+      <button type="button" role="columnheader" aria-sort={ariaSort('startTimeMs')} on:click={() => sortBy('startTimeMs')}>Start Time{sortIndicator('startTimeMs')}</button>
+      <button type="button" role="columnheader" aria-sort={ariaSort('threadCount')} on:click={() => sortBy('threadCount')}>Threads{sortIndicator('threadCount')}</button>
+      <span role="columnheader">Status</span>
+      <span role="columnheader">Action</span>
     </div>
 
-    <div class="process-table-body">
-      {#if sortedProcesses.length}
-        {#each sortedProcesses as process (process.pid)}
-          <div class="process-row" role="row" title={process.executablePath ?? process.name}>
-            <span class="process-name">{process.name}</span>
-            <span class="process-number">{process.pid}</span>
-            <span class="process-number">{formatProcessCpu(process.cpuPercent)}</span>
-            <span class="process-number">{formatProcessMemory(process.memoryBytes)}</span>
-            <span class="process-number">{formatProcessStartTime(process.startTimeMs)}</span>
-            <span class="process-number">{process.threadCount ?? '—'}</span>
-            <span class="process-status">{process.status}</span>
-            <button
-              class="kill-button"
-              type="button"
-              disabled={!process.isKillable || killingPid !== null}
-              on:click={() => void killRow(process)}
-            >
-              {killingPid === process.pid ? 'Killing…' : 'Kill'}
-            </button>
+    <div class="process-table-body" role="rowgroup">
+      {#if processRows.length}
+        {#each processRows as row (row.process.pid)}
+          {@const process = row.process}
+          {@const killState = safeKillButtonState(process, armedKillPid, killingPid)}
+          <div
+            class:process-row-armed={killState.isArmed}
+            class="process-row"
+            role="row"
+            title={process.executablePath ?? process.name}
+            style={processRowStyle(row.depth, process)}
+          >
+            <span class="process-name" role="gridcell">
+              <span class="process-tree-indent" aria-hidden="true"></span>
+              <span class="process-name-copy">{process.name}</span>
+              {#if row.childCount}
+                <span class="process-child-count" aria-label={`${row.childCount} child processes`}>{row.childCount}</span>
+              {/if}
+            </span>
+            <span class="process-number" role="gridcell">{process.pid}</span>
+            <span class="process-number process-meter" role="gridcell">
+              <span aria-hidden="true"></span>
+              <strong>{formatProcessCpu(process.cpuPercent)}</strong>
+            </span>
+            <span class="process-number process-meter memory" role="gridcell">
+              <span aria-hidden="true"></span>
+              <strong>{formatProcessMemory(process.memoryBytes)}</strong>
+            </span>
+            <span class="process-number" role="gridcell">{formatProcessStartTime(process.startTimeMs)}</span>
+            <span class="process-number" role="gridcell">{process.threadCount ?? '—'}</span>
+            <span class="process-status" role="gridcell">{process.status}</span>
+            <span class="process-action" role="gridcell">
+              <button
+                class="kill-button"
+                type="button"
+                aria-label={killState.ariaLabel}
+                disabled={killState.disabled}
+                on:click={() => void killRow(process)}
+              >
+                {killState.label}
+              </button>
+            </span>
           </div>
         {/each}
       {:else}
-        <div class="process-empty">{isLoading ? 'Loading processes…' : statusMessage}</div>
+        <div class="process-empty surface-state" class:loading={isLoading} class:info={!isLoading} role="status">
+          {isLoading ? 'Loading processes…' : (processFilter ? 'No processes match this filter' : statusMessage)}
+        </div>
       {/if}
     </div>
-  </section>
+  </div>
 </main>

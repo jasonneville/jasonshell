@@ -1,5 +1,7 @@
 # Wave 1: Correctness And Safety
 
+Status: historical Stack Browser roadmap note. Use `action_plan.md` for current phase ordering and `master_spec.md` plus source/tests for current behavior.
+
 ## Objective
 
 Address the highest-risk correctness and safety blockers before adding broader Explorer-parity UI. Wave 1 makes Stack Browser directory views complete, prevents unsafe recursive traversal through links/reparse points, surfaces partial listing errors, and ensures Delete is not a permanent recursive filesystem removal by default.

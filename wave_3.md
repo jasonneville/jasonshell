@@ -1,5 +1,7 @@
 # Wave 3: Explorer-Grade Operations
 
+Status: historical Stack Browser roadmap note. Use `action_plan.md` for current phase ordering and `master_spec.md` plus source/tests for current behavior.
+
 ## Objective
 
 Expose the core file-management operations already expected from Explorer and harden backend operation semantics. Wave 3 makes Delete, New Folder, and Reveal available in the Stack Browser UI, supports Explorer-origin clipboard paste, improves move behavior across volumes, and returns partial-failure summaries instead of hiding operation errors.

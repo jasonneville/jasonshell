@@ -15,5 +15,5 @@ test('row context menu exposes working Open with picker labels only', () => {
 
 test('Open with picker is backed by a Tauri command wrapper', () => {
   assert.match(stackPopupApi, /openStackItemWithPicker\(path: string\): Promise<void>/);
-  assert.match(stackPopupApi, /invoke\('open_stack_item_with_picker', \{ path \}\)/);
+  assert.match(stackPopupApi, /invoke\(IPC_COMMANDS\.openStackItemWithPicker, \{ path \}\)/);
 });

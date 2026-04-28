@@ -1,13 +1,39 @@
 :root {
   color-scheme: dark;
+  --js-font-sans: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --js-color-text: #f0f4ff;
+  --js-color-text-strong: #f6f8ff;
+  --js-color-text-muted: rgba(218, 226, 248, 0.64);
+  --js-color-text-subtle: rgba(218, 226, 248, 0.46);
+  --js-color-surface: rgba(13, 16, 24, 0.98);
+  --js-color-surface-raised: rgba(23, 28, 39, 0.98);
+  --js-color-surface-sunken: rgba(7, 9, 14, 0.72);
+  --js-color-border: rgba(255, 255, 255, 0.1);
+  --js-color-border-soft: rgba(255, 255, 255, 0.06);
+  --js-color-accent: #7ca0ff;
+  --js-color-accent-soft: rgba(77, 124, 254, 0.16);
+  --js-color-accent-border: rgba(124, 160, 255, 0.36);
+  --js-color-info: rgba(77, 124, 254, 0.16);
+  --js-color-warning: rgba(245, 191, 92, 0.18);
+  --js-color-error: rgba(255, 84, 84, 0.14);
+  --js-color-error-border: rgba(255, 119, 137, 0.42);
+  --js-radius-xs: 0.18rem;
+  --js-radius-sm: 0.26rem;
+  --js-radius-md: 0.38rem;
+  --js-radius-lg: 0.5rem;
+  --js-space-1: 0.18rem;
+  --js-space-2: 0.35rem;
+  --js-space-3: 0.55rem;
+  --js-space-4: 0.7rem;
+  --js-shadow-raised: 0 18px 42px rgba(0, 0, 0, 0.42);
+  --js-shadow-panel: 0 22px 46px rgba(0, 0, 0, 0.44);
+  --js-focus-ring: 0 0 0 2px rgba(150, 184, 255, 0.66);
+  --js-motion-fast: 140ms;
+  --js-motion-medium: 220ms;
+  --js-scrollbar-thumb: rgba(124, 160, 255, 0.45);
+  --js-scrollbar-track: rgba(255, 255, 255, 0.06);
   font-family:
-    'Inter',
-    'Segoe UI Variable Text',
-    'Segoe UI',
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+    var(--js-font-sans);
   line-height: 1.4;
   font-synthesis: none;
   font-weight: 400;
@@ -41,4 +67,70 @@ button {
   font: inherit;
   margin: 0;
   padding: 0;
+}
+
+:where(button, [role='button'], [tabindex], input):focus-visible {
+  outline: 0;
+  box-shadow: var(--js-focus-ring);
+}
+
+.surface-state {
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-md);
+  color: var(--js-color-text-muted);
+  font-size: 0.72rem;
+  padding: var(--js-space-3);
+}
+
+.surface-state.loading,
+.surface-state.info {
+  background: var(--js-color-info);
+  border-color: var(--js-color-accent-border);
+}
+
+.surface-state.warning {
+  background: var(--js-color-warning);
+  border-color: rgba(245, 191, 92, 0.42);
+}
+
+.surface-state.error {
+  background: var(--js-color-error);
+  border-color: var(--js-color-error-border);
+  color: #ffdfe4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --js-motion-fast: 1ms;
+    --js-motion-medium: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  :root {
+    --js-color-text: CanvasText;
+    --js-color-text-strong: CanvasText;
+    --js-color-text-muted: CanvasText;
+    --js-color-text-subtle: CanvasText;
+    --js-color-surface: Canvas;
+    --js-color-surface-raised: Canvas;
+    --js-color-surface-sunken: Canvas;
+    --js-color-border: CanvasText;
+    --js-color-border-soft: CanvasText;
+    --js-color-accent: Highlight;
+    --js-color-accent-soft: Highlight;
+    --js-color-accent-border: Highlight;
+    --js-focus-ring: 0 0 0 2px Highlight;
+    --js-shadow-raised: none;
+    --js-shadow-panel: none;
+  }
 }

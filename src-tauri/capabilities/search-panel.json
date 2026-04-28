@@ -1,0 +1,11 @@
+{
+  "identifier": "search-panel",
+  "description": "Search panel auxiliary surface capability: search result payload events and window-label access.",
+  "windows": [
+    "search-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

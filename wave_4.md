@@ -1,5 +1,7 @@
 # Wave 4: Selection, Context, Keyboard, And Drag-Drop Parity
 
+Status: historical Stack Browser roadmap note. Use `action_plan.md` for current phase ordering and `master_spec.md` plus source/tests for current behavior.
+
 ## Objective
 
 Bring the Stack Browser interaction model up to a developer-grade Explorer baseline. Wave 4 adds multi-selection, batch operations, Stack Browser drag/drop file operations, custom context menus to replace globally suppressed native menus, and keyboard parity for core file-manager workflows.

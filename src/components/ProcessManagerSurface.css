@@ -1,14 +1,14 @@
 .process-manager-surface {
   background:
     radial-gradient(circle at top right, rgba(82, 119, 209, 0.18), transparent 34%),
-    linear-gradient(180deg, rgba(13, 16, 24, 0.98), rgba(6, 8, 13, 0.99));
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    linear-gradient(180deg, var(--js-color-surface), rgba(6, 8, 13, 0.99));
+  border: 1px solid var(--js-color-border);
+  box-shadow: var(--js-shadow-raised), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   box-sizing: border-box;
-  color: #f2f5ff;
+  color: var(--js-color-text);
   display: flex;
   flex-direction: column;
-  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--js-font-sans);
   height: 100vh;
   overflow: hidden;
   width: 100vw;
@@ -16,7 +16,7 @@
 
 .process-manager-header {
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--js-color-border-soft);
   display: flex;
   flex: 0 0 auto;
   justify-content: space-between;
@@ -37,23 +37,54 @@
 }
 
 .process-manager-header span {
-  color: rgba(218, 226, 252, 0.66);
+  color: var(--js-color-text-muted);
   font-size: 0.62rem;
   margin-top: 0.12rem;
 }
 
 .process-manager-actions {
+  align-items: center;
   display: flex;
   gap: 0.35rem;
+}
+
+.process-filter {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-md);
+  display: inline-flex;
+  gap: 0.32rem;
+  min-height: 1.5rem;
+  padding: 0 0.38rem;
+}
+
+.process-filter span {
+  color: var(--js-color-text-muted);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.process-filter input {
+  background: transparent;
+  border: 0;
+  color: var(--js-color-text);
+  font: inherit;
+  font-size: 0.62rem;
+  min-width: 8rem;
+  outline: 0;
 }
 
 .process-manager-actions button,
 .process-row-head button,
 .kill-button {
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.45rem;
-  color: #f2f5ff;
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-md);
+  color: var(--js-color-text);
   cursor: pointer;
   font: inherit;
   font-size: 0.62rem;
@@ -66,7 +97,7 @@
 .process-row-head button:hover,
 .kill-button:hover:not(:disabled) {
   background: rgba(112, 148, 235, 0.18);
-  border-color: rgba(144, 181, 255, 0.28);
+  border-color: var(--js-color-accent-border);
 }
 
 .process-manager-actions button:disabled,
@@ -84,9 +115,9 @@
 
 .process-row {
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  border-bottom: 1px solid var(--js-color-border-soft);
   display: grid;
-  grid-template-columns: minmax(8.5rem, 1.4fr) 3.7rem 3.9rem 5.2rem 6.4rem 4.2rem 4.8rem 4rem;
+  grid-template-columns: minmax(8.5rem, 1.4fr) 3.7rem 3.9rem 5.2rem minmax(5.4rem, 6.4rem) 4.2rem 4.8rem 4rem;
   gap: 0.35rem;
   min-height: 1.72rem;
   padding: 0 0.45rem;
@@ -94,7 +125,7 @@
 
 .process-row-head {
   background: rgba(255, 255, 255, 0.045);
-  color: rgba(229, 235, 255, 0.82);
+  color: var(--js-color-text-muted);
   flex: 0 0 auto;
   font-size: 0.58rem;
   font-weight: 800;
@@ -115,27 +146,61 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
 }
 
 .process-table-body .process-row:hover {
   background: rgba(112, 148, 235, 0.09);
 }
 
+.process-row-armed {
+  background: rgba(255, 84, 84, 0.08);
+  box-shadow: inset 2px 0 0 var(--js-color-error-border);
+}
+
 .process-name,
-.process-status {
+.process-status,
+.process-action {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .process-name {
+  align-items: center;
+  display: flex;
   font-size: 0.66rem;
   font-weight: 700;
+  gap: 0.26rem;
+}
+
+.process-tree-indent {
+  flex: 0 0 calc(var(--process-depth, 0) * 0.72rem);
+  height: 1px;
+}
+
+.process-name-copy {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.process-child-count {
+  align-items: center;
+  background: rgba(124, 160, 255, 0.18);
+  border: 1px solid var(--js-color-accent-border);
+  border-radius: 999px;
+  color: var(--js-color-text);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.52rem;
+  height: 0.86rem;
+  justify-content: center;
+  min-width: 0.86rem;
 }
 
 .process-number,
 .process-status {
-  color: rgba(224, 231, 252, 0.76);
+  color: var(--js-color-text-muted);
   font-size: 0.62rem;
   font-variant-numeric: tabular-nums;
 }
@@ -144,15 +209,81 @@
   text-align: right;
 }
 
+.process-meter {
+  align-items: center;
+  display: grid;
+  gap: 0.2rem;
+  grid-template-columns: minmax(1.4rem, 1fr) 2.3rem;
+}
+
+.process-meter > span {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  height: 0.28rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.process-meter > span::before {
+  background: linear-gradient(90deg, rgba(92, 214, 149, 0.68), rgba(124, 160, 255, 0.88));
+  border-radius: inherit;
+  content: '';
+  inset: 0 auto 0 0;
+  position: absolute;
+  width: var(--cpu-fill, 0%);
+}
+
+.process-meter.memory > span::before {
+  background: linear-gradient(90deg, rgba(124, 160, 255, 0.68), rgba(245, 191, 92, 0.84));
+  width: var(--memory-fill, 0%);
+}
+
+.process-meter strong {
+  font: inherit;
+}
+
 .kill-button {
   background: rgba(255, 84, 84, 0.08);
-  border-color: rgba(255, 119, 119, 0.18);
+  border-color: var(--js-color-error-border);
   color: #ffd7d7;
+}
+
+.process-row-armed .kill-button {
+  background: rgba(255, 84, 84, 0.2);
+  box-shadow: 0 0 0 1px rgba(255, 119, 137, 0.2);
+}
+
+.process-action {
   justify-self: end;
 }
 
 .process-empty {
-  color: rgba(224, 231, 252, 0.68);
+  color: var(--js-color-text-muted);
   font-size: 0.72rem;
   padding: 1rem;
+}
+
+@media (max-width: 720px) {
+  .process-manager-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .process-manager-actions {
+    flex-wrap: wrap;
+  }
+
+  .process-filter {
+    flex: 1 1 100%;
+  }
+
+  .process-filter input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .process-row {
+    grid-template-columns: minmax(7.5rem, 1fr) 3.4rem 3.5rem 4.8rem 5.4rem 3.8rem 4.4rem 3.8rem;
+    min-width: 38rem;
+  }
 }

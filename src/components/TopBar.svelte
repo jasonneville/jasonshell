@@ -48,6 +48,7 @@
     shouldRefreshSystemSearchAfterIndexUpdate,
     shouldRetryIndexedSearch
   } from '../lib/systemSearchState';
+  import { topBarIdentityState } from '../features/top-bar/topBarUxState';
 
   const timeFormatter = new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
@@ -99,6 +100,7 @@
     selectedIndex,
     statusMessage: searchStatus
   };
+  $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
   $: if (searchOpen) {
     void publishSearchResults(searchPanelPayload);
   }
@@ -407,7 +409,6 @@
       await revealPin(addedPinPath);
       return;
     }
-    await loadStackPins();
     await tick();
     updateRailScrollButtons();
   }
@@ -658,9 +659,20 @@
 <svelte:window on:keydown={handleGlobalKeydown} />
 
 <div class="surface top-bar">
+  <button
+    class="shell-home-button"
+    type="button"
+    aria-label="JasonShell Home: open command search"
+    on:click={() => {
+      searchInput?.focus();
+      void openPanel();
+    }}
+  >
+    JasonShell
+  </button>
   <div class="rail-wrap">
     {#if showRailScrollLeft}
-      <button type="button" class="rail-scroll left" aria-hidden="true" on:click={scrollRailLeft}>&lsaquo;</button>
+      <button type="button" class="rail-scroll left" aria-label="Scroll pinned folders left" on:click={scrollRailLeft}>&lsaquo;</button>
     {/if}
     <div
       class="stack-pins"
@@ -669,6 +681,7 @@
       tabindex="0"
       bind:this={pinRailEl}
       aria-label="Pinned folders"
+      aria-orientation="horizontal"
       on:dragenter={handlePinRailDragOver}
       on:dragover={handlePinRailDragOver}
       on:dragleave={handlePinRailDragLeave}
@@ -682,6 +695,8 @@
           title={pin.path}
           data-path={pin.path}
           draggable="true"
+          aria-label={`Open pinned folder ${pin.name}`}
+          aria-haspopup="dialog"
           class:dragging={draggingPinPath === pin.path}
           on:click={(event) => handlePinClick(event, pin, index)}
           on:contextmenu={(event) => handlePinContextMenu(event, pin)}
@@ -697,11 +712,11 @@
         <div class="pin-drop-overlay" aria-hidden="true">Drop to pin folder</div>
       {/if}
       {#if pinDropStatus}
-        <div class:error={pinDropStatusKind === 'error'} class="pin-drop-status" role="status">{pinDropStatus}</div>
+        <div class:error={pinDropStatusKind === 'error'} class="pin-drop-status" role="status" aria-live="polite">{pinDropStatus}</div>
       {/if}
     </div>
     {#if showRailScrollRight}
-      <button type="button" class="rail-scroll right" aria-hidden="true" on:click={scrollRailRight}>&rsaquo;</button>
+      <button type="button" class="rail-scroll right" aria-label="Scroll pinned folders right" on:click={scrollRailRight}>&rsaquo;</button>
     {/if}
   </div>
   <div
@@ -715,6 +730,8 @@
     <input
       bind:this={searchInput}
       aria-label="Search apps, windows, files, folders, and commands"
+      aria-expanded={searchOpen}
+      aria-haspopup="listbox"
       autocomplete="off"
       placeholder="Search"
       value={searchQuery}

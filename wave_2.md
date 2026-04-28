@@ -1,5 +1,7 @@
 # Wave 2: Pin, Drop, And Open Interoperability
 
+Status: historical Stack Browser/top-bar roadmap note. Use `action_plan.md` for current phase ordering and `master_spec.md` plus source/tests for current behavior.
+
 ## Objective
 
 Make folder pinning from search, internal drag, Windows Explorer drag/drop, file URI payloads, UNC/network paths, and stale pin lifecycle behavior consistent and reliable. Every valid dropped folder should become visible on the top bar and immediately traversable in Stack Browser.

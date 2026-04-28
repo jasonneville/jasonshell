@@ -6,8 +6,15 @@ const USAGE_STORAGE_KEY = 'jasonshell.search.usage';
 type UsageMap = Record<string, number>;
 
 export function rankSearchResults(results: SearchPanelResult[], query: string): SearchPanelResult[] {
+  return rankSearchResultsWithUsage(results, query, readUsage());
+}
+
+export function rankSearchResultsWithUsage(
+  results: SearchPanelResult[],
+  query: string,
+  usage: UsageMap
+): SearchPanelResult[] {
   const tokens = normalize(query).split(' ').filter(Boolean);
-  const usage = readUsage();
 
   return results
     .map((result) => ({

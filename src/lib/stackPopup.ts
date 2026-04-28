@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, emitTo } from '@tauri-apps/api/event';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 import { topBarWebviewWindowEventTarget } from './topBarPins';
 
 export const STACK_POPUP_LABEL = 'stack-popup';
@@ -113,7 +114,7 @@ export async function showStackPopup(request: ShowStackPopupRequest): Promise<vo
     path: request.folderPath,
     requestId: nextStackPopupRequestId()
   };
-  await invoke('show_stack_popup', { request: payload });
+  await invoke(IPC_COMMANDS.showStackPopup, { request: payload });
   await emitTo(STACK_POPUP_LABEL, STACK_POPUP_OPEN_EVENT, payload).catch(() => undefined);
 }
 
@@ -123,11 +124,11 @@ function nextStackPopupRequestId() {
 }
 
 export function hideStackPopup(): Promise<void> {
-  return invoke('hide_stack_popup');
+  return invoke(IPC_COMMANDS.hideStackPopup);
 }
 
 export function getStackPopupRequest(): Promise<RawShowStackPopupRequest | null> {
-  return invoke('get_stack_popup_request');
+  return invoke(IPC_COMMANDS.getStackPopupRequest);
 }
 
 const STACK_FOLDER_INITIAL_PAGE_LIMIT = 80;
@@ -145,7 +146,7 @@ export async function listStackFolder(
 
   while (true) {
     const limit = offset === 0 ? STACK_FOLDER_INITIAL_PAGE_LIMIT : STACK_FOLDER_SUBSEQUENT_PAGE_LIMIT;
-    const page = await invoke<StackFolderPage>('read_stack_folder', {
+    const page = await invoke<StackFolderPage>(IPC_COMMANDS.readStackFolder, {
       path: folderPath,
       offset,
       limit
@@ -172,59 +173,59 @@ export async function listStackFolder(
 }
 
 export function listStackPins(): Promise<StackPin[]> {
-  return invoke('list_pinned_stack_folders');
+  return invoke(IPC_COMMANDS.listPinnedStackFolders);
 }
 
 export async function pinStackFolder(folderPath: string): Promise<StackPin[]> {
-  const pins = await invoke<StackPin[]>('pin_stack_folder', { path: folderPath });
+  const pins = await invoke<StackPin[]>(IPC_COMMANDS.pinStackFolder, { path: folderPath });
   await emitStackPinsUpdated(pins);
   return pins;
 }
 
 export async function unpinStackFolder(folderPath: string): Promise<StackPin[]> {
-  const pins = await invoke<StackPin[]>('unpin_stack_folder', { path: folderPath });
+  const pins = await invoke<StackPin[]>(IPC_COMMANDS.unpinStackFolder, { path: folderPath });
   await emitStackPinsUpdated(pins);
   return pins;
 }
 
 export async function reorderStackPins(paths: string[]): Promise<StackPin[]> {
-  const pins = await invoke<StackPin[]>('reorder_pinned_stack_folders', { orderedPaths: paths });
+  const pins = await invoke<StackPin[]>(IPC_COMMANDS.reorderPinnedStackFolders, { orderedPaths: paths });
   await emitStackPinsUpdated(pins);
   return pins;
 }
 
 export function copyStackItems(paths: string[], cut: boolean): Promise<void> {
-  return invoke(cut ? 'cut_stack_items' : 'copy_stack_items', { paths });
+  return invoke(cut ? IPC_COMMANDS.cutStackItems : IPC_COMMANDS.copyStackItems, { paths });
 }
 
 export async function pasteStackItems(destinationPath: string): Promise<StackPasteListing> {
-  const result = await invoke<StackPasteResult>('paste_stack_items', { destination: destinationPath });
+  const result = await invoke<StackPasteResult>(IPC_COMMANDS.pasteStackItems, { destination: destinationPath });
   const listing = await listStackFolder(destinationPath);
   return { ...listing, pasteFailures: result.failures ?? [] };
 }
 
 export function renameStackItem(path: string, newName: string): Promise<StackEntry> {
-  return invoke<StackItem>('rename_stack_item', { path, newName }).then(stackEntryFromItem);
+  return invoke<StackItem>(IPC_COMMANDS.renameStackItem, { path, newName }).then(stackEntryFromItem);
 }
 
 export function deleteStackItem(path: string): Promise<void> {
-  return invoke('delete_stack_item', { path });
+  return invoke(IPC_COMMANDS.deleteStackItem, { path });
 }
 
 export function newStackFolder(parent: string, name: string): Promise<StackEntry> {
-  return invoke<StackItem>('new_stack_folder', { parent, name }).then(stackEntryFromItem);
+  return invoke<StackItem>(IPC_COMMANDS.newStackFolder, { parent, name }).then(stackEntryFromItem);
 }
 
 export function revealStackItem(path: string): Promise<void> {
-  return invoke('reveal_stack_item', { path });
+  return invoke(IPC_COMMANDS.revealStackItem, { path });
 }
 
 export function openStackItem(path: string): Promise<void> {
-  return invoke('open_stack_item', { path });
+  return invoke(IPC_COMMANDS.openStackItem, { path });
 }
 
 export function openStackItemWithPicker(path: string): Promise<void> {
-  return invoke('open_stack_item_with_picker', { path });
+  return invoke(IPC_COMMANDS.openStackItemWithPicker, { path });
 }
 
 function stackEntryFromItem(item: StackItem): StackEntry {

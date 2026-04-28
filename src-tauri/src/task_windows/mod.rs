@@ -93,9 +93,24 @@ pub(crate) fn perform_task_window_action(
     actions::perform_task_window_action(hwnd, action)
 }
 
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn perform_task_window_action(
+    hwnd: String,
+    action: TaskWindowAction,
+) -> Result<(), String> {
+    let _ = (hwnd, action);
+    Err("Taskbar window integration is only supported on Windows".to_string())
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
     previews::capture_task_window_preview(hwnd)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
+    let _ = hwnd;
+    Err("Taskbar window previews are only supported on Windows".to_string())
 }
 
 #[cfg(target_os = "windows")]

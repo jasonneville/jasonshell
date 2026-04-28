@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { positionContextMenuInViewport } from '../dist-tests/contextMenuPosition.js';
+import { positionContextMenuInViewport } from '../dist-tests/lib/contextMenuPosition.js';
 
 test('keeps a context menu at the requested point when it fits', () => {
   assert.deepEqual(

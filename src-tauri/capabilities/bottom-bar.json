@@ -1,0 +1,11 @@
+{
+  "identifier": "bottom-bar",
+  "description": "Bottom-bar shell surface capability: taskbar, launcher, preview, process-manager, event, and window-label access.",
+  "windows": [
+    "bottom-bar"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

@@ -1,18 +1,73 @@
 .top-bar.surface {
   align-items: center;
   background:
-    linear-gradient(180deg, rgba(26, 31, 43, 0.96) 0%, rgba(15, 18, 28, 0.98) 100%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
+  border-bottom: 1px solid var(--js-color-border-soft);
   box-shadow:
     0 10px 32px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  color: #eef3ff;
+  color: var(--js-color-text);
   display: flex;
-  gap: 0.42rem;
+  gap: var(--js-space-2);
   height: 100%;
   justify-content: flex-end;
-  padding: 0 0.7rem;
+  padding: 0 var(--js-space-4);
   width: 100%;
+}
+
+.top-bar .shell-home-button {
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(124, 160, 255, 0.22), rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--js-color-accent-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text-strong);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.64rem;
+  font-weight: 850;
+  height: 1.55rem;
+  letter-spacing: 0.03em;
+  padding: 0 0.5rem;
+}
+
+.top-bar .shell-home-button:hover {
+  background: var(--js-color-accent-soft);
+}
+
+.top-bar .top-bar-identity {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--js-space-1);
+  min-width: 0;
+}
+
+.top-bar .top-bar-identity span {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: 999px;
+  color: var(--js-color-text-muted);
+  font-size: 0.54rem;
+  font-weight: 800;
+  max-width: 5.6rem;
+  overflow: hidden;
+  padding: 0.08rem 0.34rem;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.top-bar .top-bar-identity span.indexing {
+  background: var(--js-color-warning);
+  border-color: rgba(245, 191, 92, 0.42);
+  color: var(--js-color-text);
+}
+
+.top-bar .top-bar-identity .workspace-reserved {
+  border-style: dashed;
+  color: var(--js-color-text-subtle);
 }
 
 .top-bar .rail-wrap {
@@ -26,25 +81,26 @@
 .top-bar .stack-pins {
   align-items: center;
   display: inline-flex;
-  gap: 0.32rem;
+  gap: var(--js-space-2);
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   white-space: nowrap;
-  padding: 0 0.25rem;
+  padding: 0 var(--js-space-1);
   scrollbar-width: thin;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
 }
 
 .top-bar .stack-pins.stack-pins-hover {
-  background: rgba(77, 124, 254, 0.12);
-  border-radius: 0.28rem;
-  box-shadow: inset 0 0 0 1px rgba(124, 160, 255, 0.34);
+  background: var(--js-color-accent-soft);
+  border-radius: var(--js-radius-sm);
+  box-shadow: inset 0 0 0 1px var(--js-color-accent-border);
 }
 
 .top-bar .rail-scroll {
   background: transparent;
   border: 0;
-  color: rgba(238, 243, 255, 0.9);
+  color: var(--js-color-text);
   cursor: pointer;
   font-size: 1.05rem;
   height: 1.55rem;
@@ -56,8 +112,8 @@
 }
 
 .top-bar .rail-scroll:hover {
-  background: rgba(77, 124, 254, 0.08);
-  border-radius: 0.22rem;
+  background: var(--js-color-accent-soft);
+  border-radius: var(--js-radius-xs);
 }
 
 .top-bar .pin-drop-overlay {
@@ -66,12 +122,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(240, 244, 255, 0.95);
+  color: var(--js-color-text-strong);
   background: linear-gradient(180deg, rgba(77, 124, 254, 0.06), rgba(77, 124, 254, 0.02));
   pointer-events: none;
   font-size: 0.78rem;
   font-weight: 700;
-  border-radius: 0.28rem;
+  border-radius: var(--js-radius-sm);
 }
 
 .top-bar .pin-drop-status {
@@ -79,10 +135,10 @@
   right: 0.3rem;
   top: 50%;
   transform: translateY(-50%);
-  background: rgba(25, 38, 66, 0.96);
-  border: 1px solid rgba(124, 160, 255, 0.34);
-  border-radius: 0.22rem;
-  color: rgba(240, 244, 255, 0.96);
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-accent-border);
+  border-radius: var(--js-radius-xs);
+  color: var(--js-color-text);
   font-size: 0.62rem;
   font-weight: 750;
   max-width: 18rem;
@@ -94,21 +150,15 @@
 }
 
 .top-bar .pin-drop-status.error {
-  background: rgba(70, 22, 28, 0.96);
-  border-color: rgba(255, 119, 137, 0.48);
-}
-
-.top-bar .stack-pins.stack-pins-hover {
-  background: rgba(77, 124, 254, 0.12);
-  border-radius: 0.28rem;
-  box-shadow: inset 0 0 0 1px rgba(124, 160, 255, 0.34);
+  background: var(--js-color-error);
+  border-color: var(--js-color-error-border);
 }
 
 .top-bar .stack-pins button {
-  background: rgba(9, 13, 22, 0.54);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 0.24rem;
-  color: rgba(238, 243, 255, 0.9);
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
   font-size: 0.64rem;
   font-weight: 750;
   height: 1.55rem;
@@ -121,8 +171,8 @@
 }
 
 .top-bar .stack-pins button:hover {
-  background: rgba(77, 124, 254, 0.15);
-  border-color: rgba(124, 160, 255, 0.34);
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .top-bar .stack-pins button.dragging {
@@ -131,9 +181,9 @@
 
 .top-bar .time-pill {
   align-items: flex-end;
-  background: rgba(9, 13, 22, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.24rem;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
@@ -150,16 +200,16 @@
 }
 
 .top-bar .time-pill span {
-  color: rgba(218, 225, 246, 0.68);
+  color: var(--js-color-text-muted);
   font-size: 0.56rem;
   font-weight: 600;
 }
 
 .top-bar .search-control {
   align-items: center;
-  background: rgba(9, 13, 22, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.24rem;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
   display: grid;
   grid-template-columns: minmax(5rem, 1fr) auto;
   height: 1.55rem;
@@ -169,14 +219,14 @@
 }
 
 .top-bar .search-control:focus-within {
-  border-color: rgba(124, 160, 255, 0.55);
-  box-shadow: 0 0 0 1px rgba(86, 132, 255, 0.25);
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
 }
 
 .top-bar .search-control input {
   background: transparent;
   border: 0;
-  color: #eef3ff;
+  color: var(--js-color-text);
   font: inherit;
   font-size: 0.68rem;
   font-weight: 650;
@@ -190,9 +240,29 @@
 }
 
 .top-bar .search-control span {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.18rem;
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-xs);
   font-size: 0.55rem;
   font-weight: 800;
   padding: 0.02rem 0.2rem;
+}
+
+@media (max-width: 520px) {
+  .top-bar.surface {
+    gap: var(--js-space-1);
+    padding: 0 var(--js-space-2);
+  }
+
+  .top-bar .time-pill {
+    min-width: 4.8rem;
+    padding-inline: var(--js-space-2);
+  }
+
+  .top-bar .search-control {
+    min-width: 7.5rem;
+  }
+
+  .top-bar .top-bar-identity {
+    display: none;
+  }
 }

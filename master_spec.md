@@ -44,7 +44,8 @@ This first-step logging is mandatory even if the implementation is small. If a r
 - Process manager: hidden persistent `process-manager` webview opened from bottom-bar; lists live processes with CPU, memory, start time, thread count, status, executable-path title, sortable columns, guarded kill action, and focus-loss close behavior.
 - Search: top-bar input drives a dedicated `search-panel` webview because the top bar is too short for rich results. Search merges pinned apps, open windows, static commands, and indexed system app/file/folder results.
 - Backend: Rust commands are registered in `src-tauri/src/main.rs`; Windows-specific native logic is under `src-tauri/src/*` and `src-tauri/src/task_windows/*`.
-- Validation bundle: `npm run validate` runs Svelte check, TypeScript/Vite build, Node tests, Rust tests, and Cargo check.
+- Validation bundle: `npm run validate` runs Svelte check, TypeScript/Vite build, `npm run test:node`, Rust tests, and Cargo check. `npm run test:search` remains a compatibility alias for the broader Node helper/source suite.
+- System tray: parked/experimental as of 2026-04-27 Phase 0. The Rust module is compiled for Windows tests only and Tauri commands are intentionally not registered until a shipped surface, capabilities, and live smoke coverage exist.
 - Current important residual risk: live Windows/Tauri smoke coverage is still useful for multi-webview event delivery, native popup placement, native Explorer drag cursor behavior, mouse XButton behavior, and exact WebView geometry despite strong unit/build validation.
 
 ## Deep technical orientation for future implementation agents
@@ -55,7 +56,7 @@ JasonShell should be reasoned about as a small native shell with six long-lived 
 - **IPC boundary:** TypeScript wrappers in `src/lib/*.ts` are the canonical frontend boundary to Rust commands and app events. Components should not invent command strings or event names inline unless the wrapper, event table, tests, and this spec are updated together.
 - **Native shell boundary:** `src-tauri/src/appbar.rs`, `explorer.rs`, `layout.rs`, `shell_windows.rs`, `task_windows/*`, `launchers.rs`, `taskbar_menu.rs`, `task_preview.rs`, `search_panel.rs`, `stack_popup.rs`, `process_manager.rs`, and `shell_paths.rs` are allowed to touch native window, process, ShellExecute, AppBar, DWM, OLE DB, COM, GDI, clipboard, and filesystem APIs. Treat these modules as failure domains with explicit rollback, stale-response, and pointer-lifetime invariants.
 - **Source of truth:** Rust is authoritative for OS state, persisted stack pins, normalized filesystem paths, latest auxiliary-window payloads, task-window/process enumeration, process killability, launcher validation, and native menu selection. Svelte state is authoritative only for view state such as current selection, scroll/reveal intent, transient drag state, search query, history cursor, retained rows, process sort column/direction, refresh/killing status, and local result ranking usage.
-- **Persistence ownership:** `stack_popup.rs` owns stack pin storage. `search_sources/index.rs` owns search index cache storage. `searchRanking.ts` owns only browser `localStorage` usage boosts. Do not persist HWNDs, active/minimized state, preview payloads, latest popup/search payloads, drag state, or native clipboard mirrors.
+- **Persistence ownership:** `stack_popup.rs` owns stack pin storage. `search_sources/index.rs` owns search index cache storage. `settings.rs` owns versioned shell settings/workspace/task-history foundation storage. `searchRanking.ts` owns only browser `localStorage` usage boosts. Do not persist secrets, HWNDs, active/minimized state, preview payloads, latest popup/search payloads, drag state, process snapshots, or native clipboard mirrors.
 - **Staleness model:** Search, preview, stack popup, and process manager use request identifiers, latest-request fallbacks, or sequence gates. New async work must either be idempotent or explicitly rejected when stale. The correct default is to keep the previous visible state until the next authoritative payload arrives rather than clearing UI early.
 - **Validation model:** Use pure JS/TS unit tests for reducers, event-target construction, drag/drop parsing, context-menu math, taskbar reorder/click state machines, and process-manager sort/format/source wiring. Use Rust tests for path validation, pagination, filesystem semantics, AppBar geometry helpers, task-window filtering, process-manager helper behavior, search scoring/cache/provider mapping, and Win32 wrapper invariants. Use live `npm run tauri dev` smoke only for WebView2 delivery, exact native geometry, DWM capture, Explorer taskbar/AppBar interaction, native menus, native process-manager placement/focus-loss behavior, native file drops, Open With picker, and mouse XButton delivery.
 
@@ -64,9 +65,9 @@ Implementation mental model by surface:
 1. `top-bar` is the orchestration surface for search and stack pins. It owns query text, selected search result, pin rail view state, and reacts to events from `search-panel`, Stack Browser pin mutations, and native top-bar pin menus.
 2. `bottom-bar` is the orchestration surface for launchers and open windows. It owns preferred task group order, drag/click disambiguation, preview request sequence, and refresh reactions after native menu actions.
 3. `search-panel` is a render-only auxiliary surface for the latest `SearchPanelPayload`. It emits selection/activation/pin intents; top bar executes them.
-4. `stack-popup` is a stateful auxiliary folder browser. It owns navigation history, selection, sorting, retained rows, inline editor state, HTML drop suppression, context menus, and background page merging; Rust owns canonical filesystem mutations and pin persistence.
+4. `stack-popup` is a stateful auxiliary folder browser. It owns navigation history, selection, sorting, retained rows, virtualized visible-row calculation, inline editor state, HTML drop suppression, context menus, and background page merging; Rust owns canonical filesystem mutations and pin persistence.
 5. `task-preview` is a render-only auxiliary preview surface. Rust owns preview positioning and image capture; bottom bar owns request ordering and hide/show timers.
-6. `process-manager` is a stateful auxiliary process table. Rust owns process enumeration, CPU-time snapshots, metadata, positioning, focus-loss hide, and kill guardrails; Svelte owns open/closed refresh cadence, in-flight request gating, sorting, formatting, and status text.
+6. `process-manager` is a stateful auxiliary process table. Rust owns process enumeration, CPU-time snapshots, metadata, positioning, focus-loss hide, and kill guardrails; Svelte owns open/closed refresh cadence, in-flight request gating, filtering, tree-aware display rows, metric mini bars, two-step kill confirmation state, sorting, formatting, and status text.
 
 Cross-boundary do nots:
 
@@ -150,9 +151,9 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 | --- | --- | --- | --- |
 | `top-bar` | `src/components/TopBar.svelte` + `TopBar.css` | `shell_windows.rs`, `appbar.rs`, `search_panel.rs`, `stack_popup.rs`, `taskbar_menu.rs` | Primary upper rail: pinned folder stacks, time/date, search input. |
 | `bottom-bar` | `src/components/BottomBar.svelte` + `BottomBar.css` | `shell_windows.rs`, `appbar.rs`, `launchers.rs`, `task_windows/*`, `taskbar_menu.rs`, `task_preview.rs` | Taskbar-like lower rail: launchers, grouped windows, previews, menus. |
-| `task-preview` | `src/components/TaskPreviewSurface.svelte` | `task_preview.rs`, `task_windows/previews.rs` | Hover preview for open task windows. |
-| `search-panel` | `src/components/SearchPanelSurface.svelte` | `search_panel.rs`, `search_sources/*`, `shell_paths.rs` | Search result list anchored under the top-bar search input. |
-| `stack-popup` | `src/components/StackPopupSurface.svelte` | `stack_popup.rs`, `shell_paths.rs`, `task_windows/icons.rs` | Persistent folder browser anchored under top-bar pinned folders. |
+| `task-preview` | `src/components/TaskPreviewSurface.svelte` + `TaskPreviewSurface.css` | `task_preview.rs`, `task_windows/previews.rs` | Hover preview for open task windows. |
+| `search-panel` | `src/components/SearchPanelSurface.svelte` + `SearchPanelSurface.css` | `search_panel.rs`, `search_sources/*`, `shell_paths.rs` | Search result list anchored under the top-bar search input. |
+| `stack-popup` | `src/components/StackPopupSurface.svelte` + `StackPopupSurface.css` | `stack_popup.rs`, `shell_paths.rs`, `task_windows/icons.rs` | Persistent folder browser anchored under top-bar pinned folders. |
 | `process-manager` | `src/components/ProcessManagerSurface.svelte` + `ProcessManagerSurface.css` | `process_manager.rs`, `shell_windows.rs` | Task Manager-like process list popup anchored above the bottom-bar process button. |
 
 ## Top bar spec
@@ -176,6 +177,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 
 - Main component: `src/components/TopBar.svelte`.
 - Styling: `src/components/TopBar.css`.
+- Pin hydration invariant: initial `loadStackPins()` applies backend pins without recursively reloading pins. `applyStackPins()` updates state, reveals only explicitly/newly added pins after initial hydration, then ticks and updates rail scroll affordances. This prevents `applyStackPins -> loadStackPins -> applyStackPins` recursion and keeps startup from auto-scrolling to the last persisted pin.
 - Search helpers:
   - `src/lib/searchPanel.ts` wraps `show_search_panel`, `hide_search_panel`, `publish_search_panel`, `get_search_panel_payload`, and `open_shell_path`.
   - `src/lib/searchCatalog.ts` merges pinned launcher/open-window/system results into a search catalog.
@@ -361,6 +363,20 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - This milestone targets the primary monitor only; multi-monitor taskbar parity is not implemented despite feature-document references to broader Cairo behavior.
 - Launcher parity with Explorer is conservative: unsupported/unresolvable pins are skipped.
 
+## Visual system and accessibility baseline
+
+- Global visual tokens live in `src/app.css` with `--js-*` variables for text, surfaces, borders, accent, semantic status colors, radii, spacing, shadows, focus ring, scrollbar colors, and motion durations.
+- `src/app.css` owns shared focus-visible treatment, `.surface-state` status classes (`loading`, `info`, `warning`, `error`), reduced-motion overrides, and high-contrast/forced-colors token substitutions.
+- Surface CSS should prefer tokens from `src/app.css` over hard-coded colors, radii, shadows, spacing, or scrollbar colors. When extracting Svelte-scoped styles into a global CSS file, scope selectors to the surface root class to avoid leaking generic class names such as `.surface` into other webviews.
+- Search panel, Stack Browser, and Task Preview styles are split into `SearchPanelSurface.css`, `StackPopupSurface.css`, and `TaskPreviewSurface.css`; their Svelte files import the CSS files explicitly.
+- Accessibility baseline:
+  - Top-bar rail scroll buttons are real named buttons and the pinned-folder toolbar exposes horizontal orientation.
+  - Top-bar search input exposes popup state via `aria-haspopup="listbox"` and `aria-expanded`.
+  - Search panel result list owns `aria-activedescendant`; folder pin buttons have explicit labels.
+  - Stack Browser grid and status regions expose busy/status state; breadcrumbs mark the current crumb.
+  - Process Manager uses a grid with sortable column headers and matching row gridcells, including the action cell.
+  - Task Preview is a real button, not a generic div with button role.
+
 ## Process manager popup spec
 
 ### User behavior
@@ -503,10 +519,10 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 
 ### Known risks
 
-- UI does not virtualize accumulated large-folder rows yet; backend paging improves first paint but large lists can still become DOM-heavy.
+- Large-folder rows are virtualized in the frontend via `src/lib/stackPopupViewModel.ts` / `src/features/stack-browser/viewModel.ts`. Keyboard and type-to-select movement must call the scroll-into-view helper so the selected row stays mounted in the virtual window.
 - External file-system changes require explicit reload or operation-triggered refresh; there is no long-lived watcher.
 - Live WebView2 geometry/input smoke remains useful for native drag cursor, XButton delivery, and context-menu placement on scaled displays.
-- Stack Browser intentionally has no filesystem watcher and no DOM virtualization. If adding either, preserve retained-row semantics, stale page rejection, and existing reducer unit tests.
+- Stack Browser intentionally has no long-lived filesystem watcher. If adding one, preserve retained-row semantics, stale page rejection, virtual row mount behavior, and existing reducer/unit tests.
 - Copying symlinks/reparse points is deliberately unsupported to avoid unsafe recursive/cross-volume behavior. Do not silently follow these without a cycle/reparse policy and tests.
 
 ## Search panel/index spec
@@ -578,6 +594,8 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - System search: `search_system`.
 - Shell paths: `open_shell_path`.
 - Stack popup: `list_pinned_stack_folders`, `pin_stack_folder`, `unpin_stack_folder`, `reorder_pinned_stack_folders`, `show_stack_popup`, `hide_stack_popup`, `get_stack_popup_request`, `read_stack_folder`, `open_stack_item`, `open_stack_item_with_picker`, `rename_stack_item`, `copy_stack_items`, `cut_stack_items`, `paste_stack_items`, `delete_stack_item`, `new_stack_folder`, `reveal_stack_item`.
+- Settings: `load_shell_settings`, `save_shell_settings`.
+- Diagnostics: `record_diagnostic`, `export_diagnostics`.
 - Runtime metrics: `report_shell_surface_runtime_metrics`.
 
 ### Rust modules
@@ -597,10 +615,13 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `taskbar_menu.rs`: native context menus and menu event routing.
 - `search_panel.rs`: search panel positioning, visibility, latest payload.
 - `process_manager.rs`: process-manager positioning/show/hide, process enumeration, CPU snapshot deltas, start-time conversion, and guarded termination.
+- `contracts.rs`: backend command/event/surface constants and Rust tests for command/event uniqueness.
+- `diagnostics.rs`: bounded backend diagnostics ring buffer with recursive field/text redaction and export command.
+- `settings.rs`: versioned shell settings load/save/migration, corrupt-file backup, atomic write, and secret-key rejection.
 - `search_sources.rs` and `search_sources/*`: app/file/Windows Search persistent indexing and search result scoring.
 - `shell_paths.rs`: safe shell path opening and Windows Open With picker launch via ShellExecuteW `openas`.
-- `stack_popup.rs`: pinned stack folders, popup positioning, folder listing, file operations, clipboard behavior.
-- `system_tray.rs`: present in the current worktree; inspect before changing because it appears as untracked/active work in `git status` as of this spec migration.
+- `stack_popup.rs`: facade for Stack Browser commands and runtime state. Implementation is split under `src-tauri/src/stack_popup/` into models, paths, items, paging, file operations, pins, clipboard, and popup-window responsibilities while preserving command names and payload shapes.
+- `system_tray.rs`: parked/experimental Windows notification-area relay prototype. It is compiled only for Windows Rust tests via `#[cfg(all(target_os = "windows", test))]` and its Tauri commands are intentionally not registered in `main.rs`.
 
 ### Backend implementation contracts and invariants
 
@@ -641,9 +662,9 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `src/App.svelte`: label-based surface router.
 - `src/components/TopBar.svelte` / `TopBar.css`: top shell rail.
 - `src/components/BottomBar.svelte` / `BottomBar.css`: bottom taskbar rail.
-- `src/components/SearchPanelSurface.svelte`: search result webview.
-- `src/components/StackPopupSurface.svelte`: stack browser webview.
-- `src/components/TaskPreviewSurface.svelte`: hover preview webview.
+- `src/components/SearchPanelSurface.svelte` / `SearchPanelSurface.css`: search result webview.
+- `src/components/StackPopupSurface.svelte` / `StackPopupSurface.css`: stack browser webview.
+- `src/components/TaskPreviewSurface.svelte` / `TaskPreviewSurface.css`: hover preview webview.
 - `src/components/ProcessManagerSurface.svelte` / `ProcessManagerSurface.css`: process-manager popup webview.
 - `src/lib/runtimeMetrics.ts`: frontend metric capture and backend reporting.
 - `src/lib/shellSurface.ts`: surface metadata and label resolver.
@@ -656,6 +677,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `src/lib/taskbarPreview.ts`: preview IPC wrapper.
 - `src/lib/processManager.ts`: process-manager IPC wrapper and event constants.
 - `src/lib/processManagerState.ts`: process-manager sort and formatter helpers.
+- `src/lib/settings.ts`: frontend settings schema, default settings, secret-key guard, and settings IPC wrappers.
 - `src/lib/searchPanel.ts`: search panel payload/event/IPC contract.
 - `src/lib/searchPanelState.ts`: search panel view-state reducer.
 - `src/lib/searchCatalog.ts`: local result catalog composition.
@@ -664,10 +686,13 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `src/lib/systemSearchState.ts`: stale response/retry gates.
 - `src/lib/stackPopup.ts`: stack popup and stack pin IPC/event wrapper.
 - `src/lib/stackPopupState.ts`: stack browser state reducer.
+- `src/lib/stackPopupViewModel.ts`: Stack Browser virtual-row, breadcrumb-overflow, delete-prompt, and scroll-into-view helpers.
 - `src/lib/stackFileIcons.ts`: icon fallback logic.
 - `src/lib/contextMenuPosition.ts`: menu clamp/flip math.
 - `src/lib/folderDrag.ts`: folder and stack path drag/drop normalization.
-- `src/lib/systemTray.ts`: present in current worktree; inspect before modifying because it may be part of in-progress unrelated work.
+- `src/lib/systemTray.ts`: frontend normalization/click-request helper for the parked tray prototype; covered by Node tests but not wired to shipped Tauri commands or UI.
+- `src/ipc/commands.ts`, `src/ipc/events.ts`, `src/ipc/surfaces.ts`, `src/ipc/diagnostics.ts`: shared frontend IPC command/event/surface constants and frontend diagnostics ring-buffer/redaction helpers. Production wrappers should import `IPC_COMMANDS` rather than embedding command string literals.
+- `src/features/top-bar/*`, `src/features/bottom-bar/*`, `src/features/search/*`, `src/features/stack-browser/*`, `src/features/process-manager/*`: Phase 2/4 pure feature seams for UX state, grouping, virtualization, and view-model helpers.
 
 ### Frontend module ownership categories
 
@@ -680,7 +705,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
   - `ProcessManagerSurface.svelte`: open/closed refresh lifecycle, process list sorting/display, stale refresh rejection, kill status, and close behavior.
 - Thin Tauri IPC/event wrappers:
   - `taskbarLaunchers.ts`, `taskbarWindows.ts`, `taskbarMenus.ts`, `taskbarPreview.ts`, `processManager.ts`, `searchPanel.ts`, `systemSearch.ts`, `stackPopup.ts`, `runtimeMetrics.ts`.
-  - These modules should stay boring: define exported types, constants, and `invoke`/`emit` wrappers. Add tests when wrapper behavior includes event target construction, payload translation, pagination, or publication side effects.
+  - These modules should stay boring: define exported types, constants, and `invoke`/`emit` wrappers. Use `IPC_COMMANDS` from `src/ipc/commands.ts` for command names. Add tests when wrapper behavior includes event target construction, payload translation, pagination, or publication side effects.
 - Pure reducers/helpers covered by Node tests:
   - `stackPopupState.ts` (`tests/stackPopupState.test.mjs`) for history, request keys, stale/retained rows, sorting, selection, breadcrumbs, formatting.
   - `searchPanelState.ts` (`tests/searchPanelState.test.mjs`) for payload application and selected-row reveal decisions.
@@ -713,7 +738,14 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 | `process-manager:open` | Rust -> `process-manager` | unit | ProcessManagerSurface starts polling and refreshes immediately. |
 | `process-manager:closed` | Rust -> `process-manager` | unit | ProcessManagerSurface stops polling after explicit hide or focus loss. |
 
-IPC wrappers should remain thin and explicit: TypeScript modules in `src/lib/*` call Rust commands by string name; Rust commands return serializable camelCase payloads. Avoid introducing ad-hoc event names inside components without updating this section and tests.
+IPC wrappers should remain thin and explicit: TypeScript modules in `src/lib/*` call Rust commands through `IPC_COMMANDS` from `src/ipc/commands.ts`; Rust command/event/surface constants live in `src-tauri/src/contracts.rs`. Rust commands return serializable camelCase payloads. Avoid introducing ad-hoc command/event names inside components without updating the frontend IPC modules, backend contracts, tests, and this section.
+
+Capability and CSP contract:
+
+- Tauri capability files are split per current surface under `src-tauri/capabilities/*.json`: `top-bar` remains in `default.json`; `bottom-bar`, `task-preview`, `search-panel`, `stack-popup`, and `process-manager` each have a single-window capability file.
+- The current permission set remains `core:default` plus `core:window:default` because every surface needs event/invoke/window-label primitives, but future tightening should happen per capability file rather than returning to one all-window capability.
+- `src-tauri/tauri.conf.json` defines both production `csp` and development `devCsp`. Production allows self, Tauri IPC, data/asset images, and inline styles required by the current Svelte/webview styling model; development additionally allows localhost dev-server connect/image/script evaluation paths.
+- Contract tests in `tests/contractsSettings.test.mjs` check capability file shape, CSP non-null/dev split, wrapper use of `IPC_COMMANDS`, diagnostics redaction, settings defaults, and command registration.
 
 ### Advanced event/IPC rules
 
@@ -741,9 +773,11 @@ IPC wrappers should remain thin and explicit: TypeScript modules in `src/lib/*` 
 
 - Stack pins: `stack-folders-v1.json` in Tauri app local data directory, managed by `src-tauri/src/stack_popup.rs`.
 - Search index: `search-index-v1.json` in app-managed persistent storage, managed by `src-tauri/src/search_sources/index.rs`.
+- Shell settings foundation: `jasonshell-settings-v1.json` in Tauri app local data directory, managed by `src-tauri/src/settings.rs` and wrapped by `src/lib/settings.ts`.
 - Explorer taskbar pins source: `%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar`.
 - Runtime-only state: task preview request state, latest search panel payload, latest stack popup request, stack clipboard, task-window activity snapshots, process-manager CPU snapshots.
 - OpenCode orchestrator instructions: `C:\Users\jnev1\.config\opencode\AGENTS.md`. As of the 2026-04-26 spec migration, future agents should use this `master_spec.md` ledger workflow instead of `CONTINUITY.md`.
+- Repo-local future agent template: `C:\dev\jasonshell\new_agent.md`. It is a skill-first orchestrator profile that requires `master_spec.md` preflight, mandatory relevant Codex skill loading, subagent-based specialist execution, and QA before completion.
 - Do not delete `CONTINUITY.md` unless explicitly requested by the user; current instruction is to forget it going forward, not remove it.
 
 ### Persistence details and migration expectations
@@ -757,6 +791,14 @@ IPC wrappers should remain thin and explicit: TypeScript modules in `src/lib/*` 
   - Stored under app local data dir and owned exclusively by `search_sources/index.rs`.
   - Format is `SearchIndexCache { version: 1, generatedAtEpochSecs, entries }`. `read_cache()` returns `None` on version mismatch or parse failure; there is no corrupt backup for this performance cache.
   - Cache is an acceleration hint, not source of truth. It can be deleted safely and rebuilt.
+- `jasonshell-settings-v1.json`:
+  - Stored under `app_handle.path().app_local_data_dir()` and owned by `settings.rs`; current commands are `load_shell_settings` and `save_shell_settings`.
+  - Format is pretty JSON object `{ schema: "jasonshell.settings", version: 1, ui, workspaces, taskHistory }` with camelCase fields over IPC and Rust `task_history` internally.
+  - Version 1 defaults are `ui.activeWorkspaceId = null`, `ui.enableDiagnosticsExport = false`, empty `workspaces`, and empty `taskHistory`.
+  - Unversioned/legacy settings migrate to v1 defaults while preserving `ui.activeWorkspaceId` if present. Unsupported future versions return an error rather than silently truncating.
+  - Corrupt JSON is renamed to `*.corrupt-<epoch>.bak` and defaults are returned.
+  - Secret-like keys containing token, secret, password, credential, api key, authorization, or cookie are rejected recursively by Rust before load/save returns persisted settings; the frontend wrapper has the same guard before invoking save.
+- Durable ownership rule: settings may reserve arrays for future workspaces/task history, but stack pins and search index cache keep their existing files/owners until a later migration explicitly supersedes them.
 - Browser localStorage:
   - `jasonshell.search.usage` is a frontend usage boost map owned by `searchRanking.ts`. It should remain small, result-id keyed, and non-sensitive.
 - External configuration/source data:
@@ -770,7 +812,8 @@ IPC wrappers should remain thin and explicit: TypeScript modules in `src/lib/*` 
 
 - `npm run check`: Svelte/TypeScript check via `svelte-check --tsconfig ./tsconfig.json`.
 - `npm run build`: `tsc --noEmit && vite build`.
-- `npm run test:search`: `tsc -p tsconfig.test.json` plus Node tests:
+- `npm run test:node`: `tsc -p tsconfig.test.json` plus `node --test tests/*.test.mjs`. `tsconfig.test.json` emits `src/lib/*.ts`, `src/features/**/*.ts`, and `src/ipc/**/*.ts` into `dist-tests`; tests should import the emitted `dist-tests/lib/**`, `dist-tests/features/**`, and `dist-tests/ipc/**` paths so stale root helper artifacts cannot mask omitted source files.
+- `npm run test:search`: compatibility alias for `npm run test:node`; prefer `test:node` in new docs and CI because the suite covers more than search:
   - `tests/searchPanelState.test.mjs`
   - `tests/stackPopupState.test.mjs`
   - `tests/folderDrag.test.mjs`
@@ -780,19 +823,27 @@ IPC wrappers should remain thin and explicit: TypeScript modules in `src/lib/*` 
   - `tests/stackBrowserTopBarPinFlow.test.mjs`
   - `tests/contextMenuPosition.test.mjs`
   - `tests/stackPopupContextMenu.test.mjs`
+  - `tests/stackPopupViewModel.test.mjs`
   - `tests/processManagerState.test.mjs`
   - `tests/processManagerWiring.test.mjs`
+  - `tests/processManagerUxState.test.mjs`
+  - `tests/searchUxState.test.mjs`
+  - `tests/taskbarUxState.test.mjs`
+  - `tests/contractsSettings.test.mjs`
+  - `tests/systemTray.test.mjs`
 - `npm run cargo:test`: Rust tests via `cargo test --manifest-path src-tauri/Cargo.toml`.
 - `npm run cargo:check`: Rust compile check via `cargo check --manifest-path src-tauri/Cargo.toml`.
 - `npm run validate`: full bundle: check, build, JS tests, Rust tests, Cargo check.
+- Windows CI: `.github/workflows/windows-ci.yml` runs checkout, Node 20 setup with npm cache, stable Rust setup, `npm ci`, `npm run check`, `npm run build`, `npm run test:node`, `npm run cargo:test`, and `npm run cargo:check` on `windows-latest` for pushes to `main` and pull requests.
+- Live smoke checklist: `docs/smoke-test-windows.md` covers manual post-static-validation checks for all six shipped surfaces and explicitly notes system tray as parked/experimental.
 
 Run strategy:
 
 - Documentation-only changes: read back edited headings/sections, search for required headings/terms, and run `git status --short`. Full build is not required unless code snippets/contracts changed in a way that should be cross-checked.
-- Pure frontend helper changes: run `npm run test:search` or a focused `npx tsc -p tsconfig.test.json && node --test tests/<file>.mjs`, plus `npm run check` if Svelte/component typing may be affected.
+- Pure frontend helper changes: run `npm run test:node` or a focused `npx tsc -p tsconfig.test.json && node --test tests/<file>.mjs`, plus `npm run check` if Svelte/component typing may be affected.
 - Svelte component changes: run `npm run check` and the focused Node tests for any helper touched; run `npm run build` when import graphs, payload types, or component syntax changed.
 - Rust command/native changes: run focused `cargo test --manifest-path src-tauri/Cargo.toml <module-or-test-filter>` when available, then `npm run cargo:check`; run full `npm run cargo:test` for cross-module command/payload/native helper changes.
-- Cross-boundary command/event changes: run at least `npm run check`, `npm run test:search`, `npm run cargo:check`, and focused Rust tests for the command owner. Full `npm run validate` is preferred before declaring a feature slice complete.
+- Cross-boundary command/event changes: run at least `npm run check`, `npm run test:node`, `npm run cargo:check`, and focused Rust tests for the command owner. Full `npm run validate` is preferred before declaring a feature slice complete.
 - AppBar/window geometry/native shell changes: static validation is insufficient. After check/test/build, run live `npm run tauri dev` and inspect terminal runtime metrics plus actual top/bottom geometry. Use Win32/UIA inspection when debugging zero-height or blank WebView2 regressions.
 - Search/index changes: run Rust search tests through `npm run cargo:test` or a focused search filter, and Node tests if top-bar/search-panel state changed. Avoid live broad scans as a substitute for bounded-root tests.
 - Stack Browser file-operation changes: run focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup`, relevant Node tests (`stackPopupState`, `folderDrag`, `contextMenuPosition`, `stackPopupContextMenu`, `stackBrowserTopBarPinFlow`), and `npm run check` for Svelte wiring.
@@ -801,7 +852,7 @@ Run strategy:
 
 ### Coverage map
 
-- Top bar pins and Stack Browser pin flow: `tests/topBarPins.test.mjs`, `tests/stackBrowserTopBarPinFlow.test.mjs`.
+- Top bar pins and Stack Browser pin flow: `tests/topBarPins.test.mjs`, `tests/stackBrowserTopBarPinFlow.test.mjs`. `topBarPins` also guards that `applyStackPins` does not recursively reload pins during hydration.
 - Folder drag/drop: `tests/folderDrag.test.mjs`.
 - Stack Browser reducer and retained-row semantics: `tests/stackPopupState.test.mjs`.
 - Context menu positioning: `tests/contextMenuPosition.test.mjs`.
@@ -810,6 +861,7 @@ Run strategy:
 - Taskbar grouping/reorder/activity: `tests/taskbarGroups.test.mjs`.
 - Taskbar pointer click-vs-drag: `tests/taskbarTilePointer.test.mjs`.
 - Process manager sort/format/source wiring: `tests/processManagerState.test.mjs` and `tests/processManagerWiring.test.mjs`.
+- Parked system-tray prototype normalization/click request helpers: `tests/systemTray.test.mjs`.
 - Rust stack popup file/pin operations: `cargo test --manifest-path src-tauri/Cargo.toml stack_popup`.
 - Rust process-manager helpers: `cargo test --manifest-path src-tauri/Cargo.toml process_manager`.
 - Rust task-window filtering/activity: `src-tauri/src/task_windows/tests.rs` through cargo tests.
@@ -819,7 +871,7 @@ Run strategy:
 
 - `npm run check`: Svelte syntax/type errors, missing imports, stale prop/types in components and TS wrappers.
 - `npm run build`: TypeScript project build plus Vite production bundling/import graph issues.
-- `npm run test:search`: pure TS helper/source regressions for search panel state, stack popup state, drag/drop normalization, taskbar grouping/reorder, pointer click suppression, process-manager sorting/formatting/wiring, pin publication/reveal helpers, context-menu placement, and source-level Stack Browser menu contract.
+- `npm run test:node`: pure TS helper/source regressions for search panel state, stack popup state, drag/drop normalization, taskbar grouping/reorder, pointer click suppression, process-manager sorting/formatting/wiring, system-tray prototype normalization, pin publication/reveal helpers, context-menu placement, and source-level Stack Browser menu contract.
 - `npm run cargo:test`: Rust helper/unit regressions for layout, AppBar geometry/rollback/stabilization helpers, launcher utilities, task-window filtering/activity, process-manager guardrails/CPU math, icon/preview helpers, search cache/scoring/provider row mapping, stack popup path/file/pin/clipboard semantics, and shell/native wrappers that have tests.
 - `npm run cargo:check`: command registration/type integration, Windows crate API usage, cfg fallback compile paths, and Rust borrow/type errors not exercised by focused tests.
 - Live smoke: OS-owned behavior: AppBar reservation and Explorer taskbar restoration, topmost/no-activate behavior, real WebView2 event delivery to hidden windows, native menu placement, ShellExecute/Open With UI, DWM preview capture, native file drops, XButton mouse navigation, scaled-display placement.
@@ -903,9 +955,22 @@ Use this checklist before touching major shell surfaces:
 - 2026-04-24 `[CODE]` Primary monitor is the active target; multi-monitor parity is not complete.
 - 2026-04-26 `[CODE]` Large stack folders progressively load but are not DOM-virtualized.
 - 2026-04-26 `[CODE]` Process manager metrics are best-effort: first CPU snapshot can be unknown, protected/elevated processes may omit path/memory/start metadata, and live Tauri smoke is still needed for exact popup placement/focus-loss polling stop behavior.
+- 2026-04-27 `[CODE]` System tray support is explicitly parked/experimental. The backend prototype is test-only, frontend helpers are covered by Node tests, and no shipped UI or registered Tauri commands expose tray behavior.
+- 2026-04-27 `[TOOL]` Static validation passed for the Phase 1 visual/accessibility baseline, but manual keyboard-only, narrow-width, reduced-motion, and screenshot passes still require live Windows/WebView2 smoke using `docs/smoke-test-windows.md`.
+- 2026-04-27 `[TOOL]` Static validation and adversarial QA passed for Phase 2-5, but live Windows/Tauri smoke remains required for per-surface capabilities, production/development CSP behavior, Stack Browser virtual scroll feel and row-height alignment, drag/drop/menu behavior in WebView2, and restart persistence of `jasonshell-settings-v1.json`.
+- 2026-04-27 `[CODE]` `src/lib/systemTray.ts` still exposes a typed helper for `invoke_system_tray_icon` as parked/test-covered frontend utility code, but `main.rs` intentionally does not register that command until system tray becomes a shipped surface with capabilities and live smoke coverage.
 
 ## Change Ledger
 
+- 2026-04-27T00:00Z [CODE] IMPLEMENTED: Completed `action_plan.md` Phase 2 through Phase 5 integration. Phase 2 added frontend feature seams under `src/features/*`, Stack Browser virtual row/window helpers, breadcrumb overflow, explicit delete prompt state, keyboard scroll-into-view for virtualized rows, and split Rust Stack Browser implementation under `src-tauri/src/stack_popup/` while preserving public command names/payloads. Phase 3 added frontend/backend IPC contract modules, per-surface Tauri capability files, production/development CSP split, and frontend/backend diagnostics ring buffers with redaction/export. Phase 4 upgraded bottom-bar overflow/focus state, Process Manager filtering/tree rows/metric bars/two-step kill UX, grouped keyboard-first search helpers, and top-bar shell identity/status affordances without workspace coupling. Phase 5 added versioned settings persistence through `src-tauri/src/settings.rs` and `src/lib/settings.ts` with defaults, migration, corrupt backup, atomic save, and secret-key rejection. Follow-up QA fixes enforced emitted test imports, `src/ipc/**/*.ts` compilation, wrapper use of `IPC_COMMANDS`, recursive frontend diagnostics redaction, non-empty workspace/task-history settings types, and the Stack Browser virtual keyboard mount guarantee.
+- 2026-04-27T00:00Z [TOOL] VALIDATED: Phase 2-5 specialist subagents used relevant loaded skills (`senior-frontend`, `senior-backend`, `rust-skills`, `tdd-guide`, `spec-driven-workflow`, `adversarial-reviewer`) for implementation and QA. Final local validation after QA fixes passed: `npm run validate` completed with `npm run check` 0 errors/0 warnings, production `npm run build` passed, `npm run test:node` passed 111/111 Node tests, `npm run cargo:test` passed 103 Rust tests with 1 ignored live system-tray diagnostic, and `npm run cargo:check` passed. `cargo fmt --manifest-path src-tauri/Cargo.toml --check` passed for the integrated Rust code. Adversarial re-review found no remaining Phase 2-5 blockers; residual concerns are live Windows/Tauri smoke for CSP/capabilities, Stack Browser virtualization feel, restart persistence, and the explicit parked system-tray frontend helper whose Rust commands remain intentionally unregistered.
+- 2026-04-27T00:00Z [USER] IN_PROGRESS: Implement `action_plan.md` Phase 2 through Phase 5 without returning before integration and testing. Expected affected surfaces/modules: extracted `src/features/*` frontend feature modules, Stack Browser Rust module split/scalability polish, centralized IPC/event/surface contracts, Tauri capabilities/CSP/diagnostics, bottom-bar/process-manager/search/top-bar UX upgrades, durable versioned settings/persistence foundation, tests, documentation, and `master_spec.md`. Constraints: act as the skill-first orchestrator from `AGENTS.md`, use relevant Codex skills and subagents, preserve unrelated dirty worktree changes, and run QA/validation before completion.
+- 2026-04-27T00:00Z [USER] IN_PROGRESS: Implement `action_plan.md` Phase 0 and Phase 1 without returning before integration and testing. Expected affected surfaces/modules: validation scripts and Node test coverage, TopBar pin hydration state, taskbar group tests, system tray status, Windows CI workflow, README/docs/action-plan-aligned documentation, `src/app.css` design tokens, surface CSS/Svelte accessibility/responsive/reduced-motion updates, and durable `master_spec.md` sections. Constraints: act as skill-first orchestrator, use relevant Codex skills, delegate specialist work to subagents, preserve unrelated changes, and run validation before completion.
+- 2026-04-27T00:00Z [CODE] IMPLEMENTED: Completed `action_plan.md` Phase 0 and Phase 1 integration. Phase 0 repaired the Node test compilation model by compiling all `src/lib/*.ts`, added canonical `npm run test:node` with `test:search` as a compatibility alias, resolved taskbar group test drift, fixed TopBar pin hydration recursion with source-level regression coverage, parked the system-tray prototype as Windows-test-only with no registered shipped commands, added Windows CI, refreshed current-vs-historical product docs, and added `docs/smoke-test-windows.md`. Phase 1 added global `src/app.css` design tokens/status/focus/reduced-motion/high-contrast support, extracted Search Panel/Stack Browser/Task Preview CSS files, improved ARIA/keyboard semantics across current surfaces, and fixed QA-found CSS/ARIA regressions before closure.
+- 2026-04-27T00:00Z [TOOL] VALIDATED: Specialist subagents implemented frontend, validation/docs/CI, Rust system-tray, adversarial QA, and QA follow-up slices using relevant loaded skills (`senior-frontend`, `rust-skills`, `tdd-guide`, `spec-driven-workflow`, `adversarial-reviewer`). Final local `npm run validate` passed: `npm run check` 0 errors/0 warnings, production `npm run build` passed, `npm run test:node` passed 91/91 Node tests, `npm run cargo:test` passed 93 Rust tests with 1 ignored live system-tray diagnostic, and `npm run cargo:check` passed. `npm run test:search` passed as alias. `cargo fmt --manifest-path src-tauri/Cargo.toml --check` still reports pre-existing formatting diffs in `src-tauri/src/stack_popup.rs`; `git diff --check` still reports pre-existing trailing-whitespace/CRLF issues in dirty out-of-scope files, while the in-scope StackPopupSurface trailing-whitespace issue was fixed.
+- 2026-04-27 [USER] IN_PROGRESS: Create `new_agent.md` as a future-use agent file. Scope: repo-root `new_agent.md`; adapt the master-spec-ledger workflow from `C:\Users\jnev1\.config\opencode\AGENTS.md`; require `master_spec.md` as first-read context; require relevant Codex skill loading and subagent-based specialist execution; do not force irrelevant skills such as frontend for backend-only fixes.
+- 2026-04-27 [CODE] IMPLEMENTED: Added `new_agent.md` as a skill-first orchestration profile that requires session skill inspection on every request, mandatory loading of every relevant installed Codex skill, strict no-direct-implementation delegation rules, QA or verification before completion, and an adapted `Master Spec Ledger (compaction-safe)` section rooted in `master_spec.md`.
+- 2026-04-27 [TOOL] VALIDATED: Read back `new_agent.md`, confirmed the required `master_spec.md` preflight, relevant-vs-irrelevant skill rules, mandatory use of installed `C:\Users\jnev1\.codex\skills` plus bundled or plugin session skills, and strict subagent-only specialist execution model. QA document review found no content defects; residual risk is limited to unverified live Codex discovery and runtime loading behavior for the new agent file.
 - 2026-04-26T00:00Z [USER] IN_PROGRESS: Verify process-manager QA follow-ups are fully resolved before completion. Scope: inspect Start Time UI/sort/test/source wiring in `src/components/ProcessManagerSurface.svelte`, `src/components/ProcessManagerSurface.css`, `src/lib/processManagerState.ts`, `tests/processManagerState.test.mjs`, `tests/processManagerWiring.test.mjs`; verify `master_spec.md` includes process-manager as sixth surface/window in durable functional sections with no stale five-window wording; run focused Node/Rust validation where feasible. Constraints: do not commit and preserve unrelated changes.
 - 2026-04-26T00:00Z [TOOL] VALIDATED: Follow-up QA inspected process-manager Start Time UI/sort/format/test wiring and durable `master_spec.md` process-manager surface/window/command/lifecycle/test/risk sections. Searched `master_spec.md` for stale five-window wording and confirmed six-window/process-manager functional coverage. Ran focused `npx tsc -p tsconfig.test.json && node --test tests/processManagerState.test.mjs tests/processManagerWiring.test.mjs`, focused `cargo test --manifest-path src-tauri/Cargo.toml process_manager`, and `npm run check`; all passed. No in-scope follow-up defects found; live Tauri smoke remains the only residual risk for actual popup placement/focus-loss behavior.
 - 2026-04-26T00:00Z [USER] Objective: address in-scope QA follow-ups for the newly implemented process-manager popup. Expected affected surfaces/modules: `src/components/ProcessManagerSurface.svelte`, `src/lib/processManagerState.ts`, `src-tauri/src/process_manager.rs`, process-manager tests, and durable process-manager architecture/spec sections. Status: IN_PROGRESS.

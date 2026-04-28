@@ -1,6 +1,6 @@
 <script lang="ts">
   import './BottomBar.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import { showProcessManager } from '../lib/processManager';
@@ -45,6 +45,11 @@
     listOpenTaskWindows,
     type TaskbarWindow
   } from '../lib/taskbarWindows';
+  import {
+    nextTaskbarFocusIndex,
+    taskbarOverflowState,
+    taskGroupStateLabel
+  } from '../features/bottom-bar/taskbarUxState';
   let launcherMessage = 'Loading Explorer taskbar pins…';
   let launchers: PinnedTaskbarLauncher[] = [];
   let taskbarMessage = 'Loading open windows…';
@@ -67,6 +72,8 @@
   let taskGroupDragRects: ReturnType<typeof taskGroupRects> = [];
   let pendingTaskWindowHwnd: string | null = null;
   let suppressClickTaskWindowHwnd: string | null = null;
+  let taskStripEl: HTMLDivElement | null = null;
+  let taskbarOverflow = taskbarOverflowState(0, 0, 0);
 
   $: taskGroupDragDeltaX = taskGroupDragStarted
     ? taskbarGroupDragDelta(taskGroupDragStartX, taskGroupDragCurrentX)
@@ -148,11 +155,13 @@
       openWindows = nextWindows;
       taskGroupOrder = nextGroups.map((group) => group.key);
       taskbarMessage = openWindows.length ? 'Open task windows' : 'No open task windows';
+      void tick().then(updateTaskbarOverflow);
     } catch (error) {
       console.error('Failed to load open task windows', error);
       openWindows = [];
       taskGroupOrder = [];
       taskbarMessage = 'Open windows unavailable';
+      updateTaskbarOverflow();
     }
   }
   async function loadPinnedLaunchers() {
@@ -237,9 +246,7 @@
     }
   }
   function taskGroupLabel(group: TaskWindowGroup) {
-    return group.windows.length > 1
-      ? `${group.label} (${group.windows.length} windows)`
-      : group.label;
+    return taskGroupStateLabel(group);
   }
   function taskGroupStyle(group: TaskWindowGroup) {
     const previewOrderIndex = taskGroupPreviewOrder.indexOf(group.key);
@@ -412,6 +419,38 @@
       cancelTaskGroupPointerDrag();
     }
   }
+  function updateTaskbarOverflow() {
+    if (!taskStripEl) {
+      taskbarOverflow = taskbarOverflowState(0, 0, taskWindowGroups.length);
+      return;
+    }
+    taskbarOverflow = taskbarOverflowState(
+      taskStripEl.clientWidth,
+      taskStripEl.scrollWidth,
+      taskWindowGroups.length
+    );
+  }
+  function taskStripButtons() {
+    return Array.from(taskStripEl?.querySelectorAll<HTMLButtonElement>('.task-button') ?? []);
+  }
+  function handleTaskStripKeydown(event: KeyboardEvent) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+      return;
+    }
+    const buttons = taskStripButtons();
+    if (!buttons.length) {
+      return;
+    }
+    const currentIndex = Math.max(0, buttons.indexOf(document.activeElement as HTMLButtonElement));
+    const nextIndex = nextTaskbarFocusIndex(currentIndex, buttons.length, event.key);
+    if (nextIndex < 0) {
+      return;
+    }
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+    buttons[nextIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    updateTaskbarOverflow();
+  }
   async function openProcessManager(event: MouseEvent) {
     const button = event.currentTarget as HTMLButtonElement | null;
     if (!button) {
@@ -450,6 +489,8 @@
     const taskbarPollTimer = window.setInterval(() => {
       void refreshTaskbarWindows();
     }, 1_000);
+    const resizeHandler = () => updateTaskbarOverflow();
+    window.addEventListener('resize', resizeHandler);
 
     const runtimeMetricsTimer = window.setTimeout(() => {
       void reportShellSurfaceRuntimeMetrics('bottom-bar').catch((error) => {
@@ -464,6 +505,7 @@
       void hideTaskWindowPreview(requestId).catch(() => undefined);
       window.clearInterval(taskbarPollTimer);
       window.clearTimeout(runtimeMetricsTimer);
+      window.removeEventListener('resize', resizeHandler);
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -495,16 +537,28 @@
       {/if}
     </div>
 
-    <div class="task-strip" aria-label="Open windows">
+    <div
+      class:task-strip-overflow={taskbarOverflow.hasOverflow}
+      class="task-strip"
+      role="toolbar"
+      aria-label="Open windows"
+      aria-orientation="horizontal"
+      aria-describedby="taskbar-overflow-status"
+      tabindex="-1"
+      bind:this={taskStripEl}
+      on:keydown={handleTaskStripKeydown}
+    >
       {#if taskWindowGroups.length}
         {#each taskWindowGroups as group (group.key)}
           <div
             class:task-group-active={group.isActive}
             class:task-group-busy={group.isBusy}
+            class:task-group-minimized={group.isMinimized}
             class:task-group-dragging={draggingGroupKey === group.key}
             class:task-group-drop-target={dropTargetGroupKey === group.key && draggingGroupKey !== group.key}
             class="task-group"
             data-task-group-key={group.key}
+            data-window-count={group.windows.length}
             role="group"
             aria-label={taskGroupLabel(group)}
             style={taskGroupStyle(group)}
@@ -541,6 +595,15 @@
       {:else}
         <div class="strip-fallback">{taskbarMessage}</div>
       {/if}
+      <div
+        id="taskbar-overflow-status"
+        class:visible={taskbarOverflow.hasOverflow}
+        class="taskbar-overflow-status"
+        role="status"
+        aria-live="polite"
+      >
+        {taskbarOverflow.summary}
+      </div>
     </div>
   </section>
   <button

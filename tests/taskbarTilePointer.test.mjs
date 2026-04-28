@@ -4,7 +4,7 @@ import {
   pendingTaskbarTilePointer,
   resolveTaskbarTilePointerRelease,
   shouldSuppressTaskbarTileClick
-} from '../dist-tests/taskbarTilePointer.js';
+} from '../dist-tests/lib/taskbarTilePointer.js';
 
 test('tracks pending taskbar tile activation only for the primary button', () => {
   assert.equal(pendingTaskbarTilePointer(0, '101'), '101');

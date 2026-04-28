@@ -1,5 +1,7 @@
 # Wave 5: Display, Metadata, Accessibility, And Persistence Polish
 
+Status: historical Stack Browser roadmap note. Use `action_plan.md` for current phase ordering and `master_spec.md` plus source/tests for current behavior.
+
 ## Objective
 
 Close the remaining medium-severity Explorer-grade gaps: sortable/details display, Windows metadata visibility, focus management, ARIA/grid semantics, pin rail management polish, and resilient pin persistence.

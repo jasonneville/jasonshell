@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 import type { SearchPanelResult, SearchPanelResultKind } from './searchPanel';
 
 export const SEARCH_INDEX_REFRESHED_EVENT = 'search-index:refreshed';
@@ -14,7 +15,7 @@ type SystemSearchResult = {
 };
 
 export function searchSystem(query: string): Promise<SearchPanelResult[]> {
-  return invoke<SystemSearchResult[]>('search_system', { query }).then((results) =>
+  return invoke<SystemSearchResult[]>(IPC_COMMANDS.searchSystem, { query }).then((results) =>
     results.map((result) => ({
       id: result.id,
       kind: result.kind,

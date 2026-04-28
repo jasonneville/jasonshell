@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 
 type TaskbarWindowPayload = {
   hwnd: string | number | bigint;
@@ -31,14 +32,14 @@ function normalizeTaskbarWindow(window: TaskbarWindowPayload): TaskbarWindow {
 }
 
 export async function listOpenTaskWindows(): Promise<TaskbarWindow[]> {
-  const windows = await invoke<TaskbarWindowPayload[]>('list_open_task_windows');
+  const windows = await invoke<TaskbarWindowPayload[]>(IPC_COMMANDS.listOpenTaskWindows);
   return windows.map(normalizeTaskbarWindow);
 }
 
 export function activateTaskWindow(hwnd: string, wasActive: boolean): Promise<void> {
-  return invoke('activate_task_window', { hwnd, wasActive });
+  return invoke(IPC_COMMANDS.activateTaskWindow, { hwnd, wasActive });
 }
 
 export function maximizeTaskWindow(hwnd: string): Promise<void> {
-  return invoke('maximize_task_window', { hwnd });
+  return invoke(IPC_COMMANDS.maximizeTaskWindow, { hwnd });
 }

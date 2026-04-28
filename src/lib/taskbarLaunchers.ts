@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export type PinnedTaskbarLauncher = {
   id: string;
@@ -8,9 +9,9 @@ export type PinnedTaskbarLauncher = {
 };
 
 export function listPinnedTaskbarLaunchers(): Promise<PinnedTaskbarLauncher[]> {
-  return invoke('list_pinned_taskbar_apps');
+  return invoke(IPC_COMMANDS.listPinnedTaskbarApps);
 }
 
 export function launchPinnedTaskbarLauncher(shortcutPath: string): Promise<void> {
-  return invoke('launch_pinned_taskbar_app', { shortcutPath });
+  return invoke(IPC_COMMANDS.launchPinnedTaskbarApp, { shortcutPath });
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import './TaskPreviewSurface.css';
   import { onMount } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
   import {
@@ -66,11 +67,11 @@
   });
 </script>
 
-<div
+<button
+  type="button"
   class="surface preview-surface"
   aria-disabled={!preview}
-  role="button"
-  tabindex="0"
+  aria-label={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
   on:click={() => void handlePreviewActivate()}
   on:keydown={(event) => void handlePreviewKeydown(event)}
   on:mouseenter={() => void emit(TASK_PREVIEW_HOVER_ENTER_EVENT)}
@@ -100,98 +101,4 @@
       </div>
     {/if}
   {/if}
-</div>
-
-<style>
-  .surface {
-    background:
-      linear-gradient(180deg, rgba(17, 22, 31, 0.98) 0%, rgba(10, 13, 20, 0.99) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.26rem;
-    box-shadow:
-      0 18px 36px rgba(0, 0, 0, 0.42),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    color: #eef3ff;
-    display: grid;
-    gap: 0.5rem;
-    height: 100%;
-    outline: none;
-    padding: 0.55rem;
-    width: 100%;
-  }
-
-  .preview-surface {
-    cursor: pointer;
-  }
-
-  .preview-surface:focus-visible {
-    border-color: rgba(152, 186, 255, 0.72);
-    box-shadow:
-      0 18px 36px rgba(0, 0, 0, 0.42),
-      inset 0 0 0 1px rgba(152, 186, 255, 0.4);
-  }
-
-  .preview-header {
-    align-items: center;
-    display: flex;
-    gap: 0.45rem;
-    min-width: 0;
-  }
-
-  .preview-icon {
-    display: block;
-    flex: 0 0 auto;
-    height: 1rem;
-    width: 1rem;
-  }
-
-  .preview-copy {
-    display: grid;
-    gap: 0.08rem;
-    min-width: 0;
-  }
-
-  .preview-copy strong {
-    font-size: 0.72rem;
-    font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .preview-copy span {
-    color: rgba(215, 223, 245, 0.72);
-    font-size: 0.58rem;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .preview-frame,
-  .preview-empty {
-    align-items: center;
-    background: rgba(7, 9, 14, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    display: flex;
-    flex: 1;
-    justify-content: center;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .preview-image {
-    display: block;
-    height: 100%;
-    object-fit: contain;
-    width: 100%;
-  }
-
-  .preview-empty {
-    color: rgba(214, 223, 255, 0.74);
-    font-size: 0.64rem;
-    font-weight: 600;
-    padding: 0.75rem;
-    text-align: center;
-  }
-</style>
+</button>

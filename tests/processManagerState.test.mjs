@@ -6,7 +6,7 @@ import {
   formatProcessStartTime,
   nextProcessSortState,
   sortProcesses
-} from '../dist-tests/processManagerState.js';
+} from '../dist-tests/lib/processManagerState.js';
 
 const processes = [
   { pid: 20, name: 'zeta', cpuPercent: 1.5, memoryBytes: 2048, threadCount: 2, startTimeMs: 1_700_000_000_000, status: 'running', isKillable: true },

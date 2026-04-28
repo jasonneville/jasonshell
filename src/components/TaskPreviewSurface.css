@@ -1,0 +1,89 @@
+.preview-surface {
+  background:
+    linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  box-shadow:
+    var(--js-shadow-raised),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: var(--js-color-text);
+  cursor: pointer;
+  display: grid;
+  gap: var(--js-space-3);
+  height: 100%;
+  outline: none;
+  padding: var(--js-space-3);
+  text-align: left;
+  width: 100%;
+}
+
+.preview-surface:focus-visible {
+  border-color: var(--js-color-accent-border);
+  box-shadow:
+    var(--js-shadow-raised),
+    var(--js-focus-ring);
+}
+
+.preview-header {
+  align-items: center;
+  display: flex;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.preview-icon {
+  display: block;
+  flex: 0 0 auto;
+  height: 1rem;
+  width: 1rem;
+}
+
+.preview-copy {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.preview-copy strong {
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-copy span {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-frame,
+.preview-empty {
+  align-items: center;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.preview-image {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.preview-empty {
+  color: var(--js-color-text-muted);
+  font-size: 0.64rem;
+  font-weight: 600;
+  padding: 0.75rem;
+  text-align: center;
+}

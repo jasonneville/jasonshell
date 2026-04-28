@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export const SEARCH_PANEL_LABEL = 'search-panel';
 export const SEARCH_PANEL_UPDATE_EVENT = 'search-panel:update';
@@ -32,21 +33,21 @@ export type ShowSearchPanelRequest = {
 };
 
 export function showSearchPanel(request: ShowSearchPanelRequest): Promise<void> {
-  return invoke('show_search_panel', { request });
+  return invoke(IPC_COMMANDS.showSearchPanel, { request });
 }
 
 export function hideSearchPanel(): Promise<void> {
-  return invoke('hide_search_panel');
+  return invoke(IPC_COMMANDS.hideSearchPanel);
 }
 
 export function publishSearchPanel(payload: SearchPanelPayload): Promise<void> {
-  return invoke('publish_search_panel', { payload });
+  return invoke(IPC_COMMANDS.publishSearchPanel, { payload });
 }
 
 export function getSearchPanelPayload(): Promise<SearchPanelPayload | null> {
-  return invoke('get_search_panel_payload');
+  return invoke(IPC_COMMANDS.getSearchPanelPayload);
 }
 
 export function openShellPath(path: string): Promise<void> {
-  return invoke('open_shell_path', { path });
+  return invoke(IPC_COMMANDS.openShellPath, { path });
 }

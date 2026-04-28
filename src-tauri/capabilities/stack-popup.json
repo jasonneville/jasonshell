@@ -1,0 +1,11 @@
+{
+  "identifier": "stack-popup",
+  "description": "Stack Browser auxiliary surface capability: folder browsing events, drag/drop IPC, and window-label access.",
+  "windows": [
+    "stack-popup"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

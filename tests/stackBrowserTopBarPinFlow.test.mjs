@@ -37,7 +37,7 @@ function currentPinMutationEventPayload({ mutationReturnedPins, postMutationList
     return postMutationListPins;
   }
 
-  if (/pin_stack_folder/.test(pinStackFolderBody) && /emitStackPinsUpdated\(pins\)/.test(pinStackFolderBody)) {
+  if (/(pin_stack_folder|IPC_COMMANDS\.pinStackFolder)/.test(pinStackFolderBody) && /emitStackPinsUpdated\(pins\)/.test(pinStackFolderBody)) {
     return mutationReturnedPins;
   }
 

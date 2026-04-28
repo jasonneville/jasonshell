@@ -4,7 +4,7 @@ import {
   EMPTY_TRAY_ICON_DATA_URL,
   normalizeTrayIcons,
   trayClickRequest
-} from '../dist-tests/systemTray.js';
+} from '../dist-tests/lib/systemTray.js';
 
 test('normalizes tray icons with stable labels and image fallback', () => {
   assert.deepEqual(normalizeTrayIcons([

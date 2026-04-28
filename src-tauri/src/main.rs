@@ -1,8 +1,13 @@
+#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+
+mod contracts;
+mod diagnostics;
 mod launchers;
 mod layout;
 mod process_manager;
 mod search_panel;
 mod search_sources;
+mod settings;
 mod shell_paths;
 mod shell_windows;
 mod stack_popup;
@@ -10,17 +15,36 @@ mod task_preview;
 mod task_windows;
 mod taskbar_menu;
 
+// Phase 0 R4 decision: the system tray relay is parked as an experimental
+// Windows-only prototype. Do not register its commands until a later phase adds
+// a shipped surface, capabilities, live-smoke coverage, and product docs.
+#[cfg(all(target_os = "windows", test))]
+mod system_tray;
+
 #[cfg(target_os = "windows")]
 mod appbar;
 #[cfg(target_os = "windows")]
 mod explorer;
 
 use std::sync::Mutex;
+#[cfg(target_os = "windows")]
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 #[cfg(target_os = "windows")]
 use appbar::ShellRuntimeState;
 
+#[cfg(not(target_os = "windows"))]
+fn main() {
+    eprintln!(
+        "JasonShell must be run as a native Windows build. Running it inside WSL builds a \
+Linux/WSLg app, so Win32 AppBar edge binding, Windows task-window discovery, shell icons, and \
+Windows Search are unavailable. Run `npm run tauri dev` from Windows PowerShell or Windows \
+Terminal with Windows Node.js/Rust installed."
+    );
+    std::process::exit(1);
+}
+
+#[cfg(target_os = "windows")]
 fn main() {
     let builder = tauri::Builder::default()
         .manage(shell_runtime_state())
@@ -28,6 +52,7 @@ fn main() {
         .manage(search_panel_state())
         .manage(stack_popup_state())
         .manage(search_sources::search_index_state())
+        .manage(diagnostics::diagnostics_state())
         .invoke_handler(tauri::generate_handler![
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
@@ -66,6 +91,10 @@ fn main() {
             stack_popup::delete_stack_item,
             stack_popup::new_stack_folder,
             stack_popup::reveal_stack_item,
+            settings::load_shell_settings,
+            settings::save_shell_settings,
+            diagnostics::record_diagnostic,
+            diagnostics::export_diagnostics,
             report_shell_surface_runtime_metrics
         ])
         .on_menu_event(|app_handle, event| {

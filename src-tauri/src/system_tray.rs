@@ -1,3 +1,13 @@
+//! Experimental Windows notification-area relay prototype.
+//!
+//! Phase 0 parks this module intentionally: it is not registered in the Tauri
+//! command handler and is compiled only for focused Windows Rust tests. The code
+//! reaches into Explorer-owned toolbar internals, so shipping it requires a
+//! later product decision, live Windows smoke coverage, capability review, and a
+//! real shell surface before it can be treated as active JasonShell behavior.
+
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
@@ -22,6 +32,7 @@ const TB_GETITEMRECT: u32 = 0x041D;
 const TBSTATE_HIDDEN: u8 = 0x08;
 const SEND_TIMEOUT_MS: u32 = 50;
 const MAX_TRAY_METADATA_BYTES: usize = 64;
+const EMPTY_TRAY_ICON_DATA_URL: &str = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -229,21 +240,12 @@ fn click_toolbar_button(
 fn tray_icon_placeholder_data_url() -> String {
     // Keep the relay snapshot safe by exposing a placeholder when bounded native icon extraction
     // cannot obtain a copied icon handle for this tray item.
-    crate::task_windows::empty_icon_data_url()
+    EMPTY_TRAY_ICON_DATA_URL.to_string()
 }
 
-fn tray_native_icon_data_url(process: &RemoteProcess, button: ToolbarButton) -> Option<String> {
-    let metadata = read_tray_metadata(process, button.dw_data).ok()?;
-    for icon_handle in metadata.icon_handles() {
-        let Some(copied_icon) = copy_foreign_icon(icon_handle) else {
-            continue;
-        };
-        let data_url = crate::task_windows::hicon_data_url(copied_icon).ok();
-        destroy_local_icon(copied_icon);
-        if data_url.is_some() {
-            return data_url;
-        }
-    }
+fn tray_native_icon_data_url(_process: &RemoteProcess, _button: ToolbarButton) -> Option<String> {
+    // Native icon extraction depends on task-window icon conversion helpers that are intentionally
+    // not exported while this module is parked. Keep snapshots safe and explicit until integration.
     None
 }
 
