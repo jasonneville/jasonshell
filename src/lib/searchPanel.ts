@@ -6,6 +6,8 @@ export const SEARCH_PANEL_UPDATE_EVENT = 'search-panel:update';
 export const SEARCH_PANEL_ACTIVATE_EVENT = 'search-panel:activate';
 export const SEARCH_PANEL_SELECT_EVENT = 'search-panel:select';
 export const SEARCH_PANEL_PIN_FOLDER_EVENT = 'search-panel:pin-folder';
+export const SEARCH_PANEL_INTERACTION_EVENT = 'search-panel:interaction';
+export const SEARCH_PANEL_CLOSED_EVENT = 'search-panel:closed';
 
 export type SearchPanelResultKind = 'app' | 'window' | 'folder' | 'file' | 'command';
 

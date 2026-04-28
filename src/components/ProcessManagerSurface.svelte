@@ -8,18 +8,22 @@
     listProcesses,
     PROCESS_MANAGER_CLOSED_EVENT,
     PROCESS_MANAGER_OPEN_EVENT,
+    type ProcessKillConfirmation,
     type ProcessInfo
   } from '../lib/processManager';
   import {
     formatProcessCpu,
     formatProcessMemory,
+    formatProcessPorts,
     formatProcessStartTime,
     nextProcessSortState,
+    processDeveloperSummary,
     sortProcesses,
     type ProcessSortColumn,
     type ProcessSortState
   } from '../lib/processManagerState';
   import {
+    buildProcessKillPlan,
     buildProcessTreeRows,
     filterProcesses,
     processMetricPercent,
@@ -132,16 +136,24 @@
     if (!process.isKillable || killingPid !== null) {
       return;
     }
+    const killPlan = buildProcessKillPlan(processes, process, false);
     if (armedKillPid !== process.pid) {
       armedKillPid = process.pid;
-      statusMessage = `Confirm kill for ${process.name} (${process.pid})`;
+      statusMessage = killPlan.warnings.length
+        ? `Review single-process kill for ${process.name}: ${killPlan.warnings[0]}`
+        : `Confirm single-process kill for ${process.name} (${process.pid})`;
+      return;
+    }
+    if (!killPlan.canExecute) {
+      statusMessage = `Kill is guarded for ${process.name} (${process.pid})`;
+      armedKillPid = null;
       return;
     }
     killingPid = process.pid;
     armedKillPid = null;
     statusMessage = `Killing ${process.name} (${process.pid})…`;
     try {
-      await killProcess(process.pid);
+      await killProcess(process.pid, killConfirmationFromPlan(killPlan));
       statusMessage = `Killed ${process.name} (${process.pid})`;
       await refreshProcesses();
     } catch (error) {
@@ -164,6 +176,18 @@
     const cpuFill = processMetricPercent(process.cpuPercent, 100);
     const memoryFill = processMetricPercent(process.memoryBytes, totalMemoryBytes);
     return `--process-depth: ${rowDepth}; --cpu-fill: ${cpuFill}%; --memory-fill: ${memoryFill}%;`;
+  }
+
+  function killConfirmationFromPlan(killPlan: ReturnType<typeof buildProcessKillPlan>): ProcessKillConfirmation {
+    return {
+      confirmedTargetPid: killPlan.targetPid,
+      mode: killPlan.mode,
+      affectedPids: killPlan.affectedPids,
+      descendantPids: killPlan.descendantPids,
+      acknowledgedWarningCount: killPlan.warnings.length,
+      requiresSecondConfirmation: killPlan.requiresSecondConfirmation,
+      canExecute: killPlan.canExecute
+    };
   }
 
   onMount(() => {
@@ -208,8 +232,8 @@
         <span>Filter</span>
         <input
           bind:value={processFilter}
-          aria-label="Filter processes by name, PID, parent PID, path, or status"
-          placeholder="name, pid, path"
+          aria-label="Filter processes by name, PID, parent, path, command line, port, workspace, or status"
+          placeholder="name, pid, port, workspace"
           on:input={() => { armedKillPid = null; }}
         />
       </label>
@@ -237,18 +261,34 @@
         {#each processRows as row (row.process.pid)}
           {@const process = row.process}
           {@const killState = safeKillButtonState(process, armedKillPid, killingPid)}
+          {@const developerSummary = processDeveloperSummary(process)}
+          {@const portsLabel = formatProcessPorts(process.listeningPorts)}
           <div
             class:process-row-armed={killState.isArmed}
             class="process-row"
             role="row"
-            title={process.executablePath ?? process.name}
+            title={process.commandLine ?? process.executablePath ?? process.name}
             style={processRowStyle(row.depth, process)}
           >
-            <span class="process-name" role="gridcell">
-              <span class="process-tree-indent" aria-hidden="true"></span>
-              <span class="process-name-copy">{process.name}</span>
-              {#if row.childCount}
-                <span class="process-child-count" aria-label={`${row.childCount} child processes`}>{row.childCount}</span>
+            <span class="process-name-cell" role="gridcell">
+              <span class="process-name">
+                <span class="process-tree-indent" aria-hidden="true"></span>
+                <span class="process-name-copy">{process.name}</span>
+                {#if process.workspaceHint}
+                  <span class="process-workspace" aria-label={`Workspace hint ${process.workspaceHint.label}`}>{process.workspaceHint.label}</span>
+                {/if}
+                {#if row.childCount}
+                  <span class="process-child-count" aria-label={`${row.childCount} visible child processes`}>{row.childCount}</span>
+                {/if}
+                {#if (process.descendantProcessCount ?? 0) > 0}
+                  <span class="process-tree-guard" aria-label={`${process.descendantProcessCount} descendant processes; tree kill is guarded`}>tree</span>
+                {/if}
+                {#if portsLabel !== '—'}
+                  <span class="process-port-count" aria-label={`Listening ports ${portsLabel}`}>{portsLabel}</span>
+                {/if}
+              </span>
+              {#if developerSummary}
+                <span class="process-meta">{developerSummary}</span>
               {/if}
             </span>
             <span class="process-number" role="gridcell">{process.pid}</span>

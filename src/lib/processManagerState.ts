@@ -67,6 +67,39 @@ export function formatProcessStartTime(startTimeMs: number | null | undefined): 
   });
 }
 
+export function formatProcessPorts(ports: readonly number[] | null | undefined): string {
+  if (!ports?.length) {
+    return '—';
+  }
+
+  return ports.slice(0, 4).join(', ') + (ports.length > 4 ? ` +${ports.length - 4}` : '');
+}
+
+export function processDeveloperSummary(process: ProcessInfo): string {
+  const parts: string[] = [];
+  const ports = formatProcessPorts(process.listeningPorts);
+  if (ports !== '—') {
+    parts.push(`ports ${ports}`);
+  }
+  if (process.workspaceHint) {
+    parts.push(`workspace ${process.workspaceHint.label}`);
+  }
+  if (process.parentName) {
+    parts.push(`parent ${process.parentName} (${process.parentPid ?? 'unknown'})`);
+  } else if (typeof process.parentPid === 'number') {
+    parts.push(`parent ${process.parentPid}`);
+  }
+  if ((process.descendantProcessCount ?? 0) > 0) {
+    parts.push(`${process.descendantProcessCount} descendant${process.descendantProcessCount === 1 ? '' : 's'}`);
+  }
+  const command = process.commandLine?.trim() || process.executablePath?.trim();
+  if (command) {
+    parts.push(command);
+  }
+
+  return parts.join(' • ');
+}
+
 function defaultProcessSortDirection(column: ProcessSortColumn): SortDirection {
   return column === 'name' ? 'asc' : 'desc';
 }

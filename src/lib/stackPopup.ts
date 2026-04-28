@@ -61,6 +61,11 @@ type RawShowStackPopupRequest = {
   requestId?: string | null;
 };
 
+export type StackPopupLogicalSize = {
+  width: number;
+  height: number;
+};
+
 export type StackEntry = {
   id: string;
   name: string;
@@ -129,6 +134,18 @@ export function hideStackPopup(): Promise<void> {
 
 export function getStackPopupRequest(): Promise<RawShowStackPopupRequest | null> {
   return invoke(IPC_COMMANDS.getStackPopupRequest);
+}
+
+export function beginStackPopupFocusLossHold(): Promise<void> {
+  return invoke(IPC_COMMANDS.beginStackPopupFocusLossHold);
+}
+
+export function endStackPopupFocusLossHold(): Promise<void> {
+  return invoke(IPC_COMMANDS.endStackPopupFocusLossHold);
+}
+
+export function resizeStackPopup(width: number, height: number, persist = false): Promise<StackPopupLogicalSize> {
+  return invoke(IPC_COMMANDS.resizeStackPopup, { width, height, persist });
 }
 
 const STACK_FOLDER_INITIAL_PAGE_LIMIT = 80;

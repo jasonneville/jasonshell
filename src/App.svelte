@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import BottomBar from './components/BottomBar.svelte';
+  import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
   import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
   import SearchPanelSurface from './components/SearchPanelSurface.svelte';
   import StackPopupSurface from './components/StackPopupSurface.svelte';
@@ -46,6 +47,8 @@
   <StackPopupSurface />
 {:else if surface === 'process-manager'}
   <ProcessManagerSurface />
+{:else if surface === 'control-plane'}
+  <ControlPlaneSurface />
 {:else}
   <main class="unsupported-surface">
     <div class="panel">

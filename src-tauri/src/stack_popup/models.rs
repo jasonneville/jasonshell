@@ -5,6 +5,8 @@ use std::path::PathBuf;
 pub struct StackPopupRuntimeState {
     pub(crate) latest_request: Option<ShowStackPopupRequest>,
     pub(crate) clipboard: Option<StackClipboard>,
+    pub(crate) focus_loss_hold_count: usize,
+    pub(crate) restore_focus_after_hold: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -23,6 +25,13 @@ pub struct ShowStackPopupRequest {
     pub anchor_width: f64,
     #[serde(default)]
     pub request_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StackPopupLogicalSize {
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

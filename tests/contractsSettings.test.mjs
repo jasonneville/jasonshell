@@ -29,6 +29,8 @@ const capabilitySource = Object.values(capabilitySources).join('\n');
 const tauriConfigSource = readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8');
 const wrapperSources = [
   'runtimeMetrics.ts',
+  'controlPlane.ts',
+  'devTools.ts',
   'searchPanel.ts',
   'systemSearch.ts',
   'processManager.ts',
@@ -45,17 +47,24 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'stack_popup',
     'load_shell_settings',
     'save_shell_settings',
+    'list_workspaces',
+    'activate_workspace',
+    'build_terminal_launch_plan',
+    'spawn_workspace_task',
+    'get_workspace_git_status',
     'record_diagnostic',
-    'export_diagnostics'
+    'export_diagnostics',
+    'show_control_plane',
+    'hide_control_plane'
   ]) {
     assert.match(commandsSource, new RegExp(command));
   }
 
-  for (const event of ['search-index:refreshed', 'stack-pins:updated', 'process-manager:closed']) {
+  for (const event of ['search-index:refreshed', 'stack-pins:updated', 'process-manager:closed', 'task:output']) {
     assert.match(eventsSource, new RegExp(event));
   }
 
-  for (const surface of ['top-bar', 'bottom-bar', 'search-panel', 'stack-popup', 'process-manager']) {
+  for (const surface of ['top-bar', 'bottom-bar', 'search-panel', 'stack-popup', 'process-manager', 'control-plane']) {
     assert.match(surfacesSource, new RegExp(surface));
   }
 
@@ -141,17 +150,20 @@ test('backend settings and diagnostics commands are registered with hardened app
     'settings::load_shell_settings',
     'settings::save_shell_settings',
     'diagnostics::record_diagnostic',
-    'diagnostics::export_diagnostics'
+    'diagnostics::export_diagnostics',
+    'build_terminal_launch_plan',
+    'spawn_workspace_task',
+    'get_workspace_git_status'
   ]) {
     assert.match(mainSource, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 
-  for (const surface of ['top-bar', 'bottom-bar', 'task-preview', 'search-panel', 'stack-popup', 'process-manager']) {
+  for (const surface of ['top-bar', 'bottom-bar', 'task-preview', 'search-panel', 'stack-popup', 'process-manager', 'control-plane']) {
     assert.match(capabilitySource, new RegExp(surface));
   }
   assert.deepEqual(
     Object.values(capabilitySources).map((source) => JSON.parse(source).windows).sort((a, b) => a[0].localeCompare(b[0])),
-    [['bottom-bar'], ['process-manager'], ['search-panel'], ['stack-popup'], ['task-preview'], ['top-bar']]
+    [['bottom-bar'], ['control-plane'], ['process-manager'], ['search-panel'], ['stack-popup'], ['task-preview'], ['top-bar']]
   );
 
   assert.doesNotMatch(tauriConfigSource, /"csp": null/);

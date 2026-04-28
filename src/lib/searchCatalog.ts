@@ -1,6 +1,8 @@
 import type { SearchPanelResult } from './searchPanel';
 import type { PinnedTaskbarLauncher } from './taskbarLaunchers';
 import type { TaskbarWindow } from './taskbarWindows';
+import type { WorkspaceActivationPlan } from './workspaces.js';
+import { applyWorkspaceSearchBias, workspaceSearchResults } from './workspaces.js';
 
 const folderResults: SearchPanelResult[] = [
   folderResult('Home', 'shell:Profile', 'User profile folder', 72),
@@ -31,7 +33,8 @@ const commandResults: SearchPanelResult[] = [
 export function buildSearchCatalog(
   pinnedLaunchers: PinnedTaskbarLauncher[],
   taskWindows: TaskbarWindow[],
-  systemResults: SearchPanelResult[]
+  systemResults: SearchPanelResult[],
+  workspacePlan: WorkspaceActivationPlan | null = null
 ): SearchPanelResult[] {
   const appResults = pinnedLaunchers.map((launcher) => ({
     iconDataUrl: launcher.iconDataUrl,
@@ -52,7 +55,21 @@ export function buildSearchCatalog(
     terms: `${taskWindow.title} ${taskWindow.processName} window focus task`,
     title: taskWindow.title || taskWindow.processName
   }));
-  return [...windowResults, ...appResults, ...systemResults, ...folderResults, ...commandResults];
+  return applyWorkspaceSearchBias(
+    [
+      ...workspaceSearchResultsOrEmpty(workspacePlan),
+      ...windowResults,
+      ...appResults,
+      ...systemResults,
+      ...folderResults,
+      ...commandResults
+    ],
+    workspacePlan
+  );
+}
+
+function workspaceSearchResultsOrEmpty(workspacePlan: WorkspaceActivationPlan | null): SearchPanelResult[] {
+  return workspacePlan ? workspaceSearchResults(workspacePlan) : [];
 }
 
 function folderResult(

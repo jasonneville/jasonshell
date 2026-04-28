@@ -1,6 +1,6 @@
 {
   "identifier": "search-panel",
-  "description": "Search panel auxiliary surface capability: search result payload events and window-label access.",
+  "description": "Search panel auxiliary surface capability: workspace-biased search result payload events and window-label access.",
   "windows": [
     "search-panel"
   ],

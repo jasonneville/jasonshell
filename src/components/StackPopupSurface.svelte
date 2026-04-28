@@ -3,8 +3,10 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import {
+    beginStackPopupFocusLossHold,
     copyStackItems,
     deleteStackItem,
+    endStackPopupFocusLossHold,
     getStackPopupRequest,
     hideStackPopup,
     listStackFolder,
@@ -14,6 +16,7 @@
     pinStackFolder,
     pasteStackItems,
     renameStackItem,
+    resizeStackPopup,
     revealStackItem,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
@@ -53,6 +56,8 @@
   } from '../features/stack-browser/viewModel';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
+  const STACK_POPUP_MIN_WIDTH = 560;
+  const STACK_POPUP_MIN_HEIGHT = 280;
 
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
@@ -61,6 +66,8 @@
   let backgroundMenu: { x: number; y: number } | null = null;
   let rowMenuElement: HTMLDivElement | null = null;
   let backgroundMenuElement: HTMLDivElement | null = null;
+  let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
+  let deleteCancelButton: HTMLButtonElement | null = null;
   let rowSubmenuOpensLeft = false;
   let createFolderDraft: string | null = null;
   let renameDraft: string | null = null;
@@ -75,6 +82,19 @@
   let lastHandledOpenRequestKey: string | null = null;
   let pendingOpenRequestKey: string | null = null;
   let folderLoadSequence = 0;
+  let resizeGrip: HTMLButtonElement | null = null;
+  let resizeDrag:
+    | {
+        pointerId: number;
+        startX: number;
+        startY: number;
+        startWidth: number;
+        startHeight: number;
+      }
+    | null = null;
+  let pendingResize: { width: number; height: number; persist: boolean } | null = null;
+  let resizeFrame: number | null = null;
+  let resizeRequestChain: Promise<void> = Promise.resolve();
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -112,6 +132,9 @@
       disposed = true;
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
+      }
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
       }
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
@@ -282,27 +305,66 @@
     }
 
     const deletePrompt = stackBrowserDeletePrompt(entries, selectedPaths, stackState.selectedPath);
-    if (!deletePrompt.canDelete || !window.confirm(deletePrompt.message)) {
+    if (!deletePrompt.canDelete) {
       return;
     }
 
+    deleteConfirmation = {
+      title: deletePrompt.title,
+      message: deletePrompt.message,
+      paths: deletePrompt.paths,
+      folderPath: currentPath
+    };
+    await tick();
+    deleteCancelButton?.focus();
+  }
+
+  function cancelDeleteConfirmation() {
+    deleteConfirmation = null;
+    focusDetailsGrid();
+  }
+
+  async function confirmDeleteSelection() {
+    const pendingDelete = deleteConfirmation;
+    if (!pendingDelete) {
+      return;
+    }
+
+    deleteConfirmation = null;
+    let focusHoldStarted = false;
     try {
+      await beginStackPopupFocusLossHold();
+      focusHoldStarted = true;
       const failures: string[] = [];
-      for (const path of deletePrompt.paths) {
+      for (const path of pendingDelete.paths) {
         try {
           await deleteStackItem(path);
         } catch (error) {
           failures.push(operationErrorMessage(error, `Failed to delete ${path}`));
         }
       }
-      const listing = await listStackFolder(currentPath);
-      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      const listing = await listStackFolder(pendingDelete.folderPath);
+      if (currentPath === pendingDelete.folderPath) {
+        stackState = applyStackFolderListing(stackState, pendingDelete.folderPath, listing);
+      } else {
+        await loadFolder(currentPath);
+      }
+      focusDetailsGrid();
       errorMessage = failures.length
         ? `Delete completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: ${failures[0]}`
         : '';
     } catch (error) {
       console.error('Failed to delete stack item', error);
       errorMessage = operationErrorMessage(error, 'Delete unavailable');
+    } finally {
+      if (focusHoldStarted) {
+        try {
+          await endStackPopupFocusLossHold();
+        } catch (error) {
+          console.error('Failed to release stack popup focus hold', error);
+          errorMessage ||= operationErrorMessage(error, 'Stack Browser focus restore failed');
+        }
+      }
     }
   }
 
@@ -722,6 +784,14 @@
       return;
     }
 
+    if (deleteConfirmation) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelDeleteConfirmation();
+      }
+      return;
+    }
+
     if (event.key === 'Escape') {
       event.preventDefault();
       if (createFolderDraft !== null || renameDraft !== null) {
@@ -800,11 +870,92 @@
       void navigateHistory(1);
     }
   }
+
+  function beginResize(event: PointerEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: window.innerWidth,
+      startHeight: window.innerHeight
+    };
+    resizeGrip?.setPointerCapture(event.pointerId);
+  }
+
+  function handleResizePointerMove(event: PointerEvent) {
+    if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const width = Math.max(
+      STACK_POPUP_MIN_WIDTH,
+      Math.round(resizeDrag.startWidth + event.clientX - resizeDrag.startX)
+    );
+    const height = Math.max(
+      STACK_POPUP_MIN_HEIGHT,
+      Math.round(resizeDrag.startHeight + event.clientY - resizeDrag.startY)
+    );
+    scheduleResize(width, height, false);
+  }
+
+  function endResize(event: PointerEvent) {
+    if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    resizeGrip?.releasePointerCapture(event.pointerId);
+    const width = Math.max(
+      STACK_POPUP_MIN_WIDTH,
+      Math.round(resizeDrag.startWidth + event.clientX - resizeDrag.startX)
+    );
+    const height = Math.max(
+      STACK_POPUP_MIN_HEIGHT,
+      Math.round(resizeDrag.startHeight + event.clientY - resizeDrag.startY)
+    );
+    resizeDrag = null;
+    scheduleResize(width, height, true);
+  }
+
+  function scheduleResize(width: number, height: number, persist: boolean) {
+    pendingResize = { width, height, persist: pendingResize?.persist || persist };
+    if (resizeFrame !== null) {
+      return;
+    }
+
+    resizeFrame = window.requestAnimationFrame(() => {
+      resizeFrame = null;
+      const request = pendingResize;
+      pendingResize = null;
+      if (!request) {
+        return;
+      }
+      resizeRequestChain = resizeRequestChain
+        .catch(() => undefined)
+        .then(() => resizeStackPopup(request.width, request.height, request.persist))
+        .then(() => updateDetailsViewport())
+        .catch((error) => {
+          console.error('Failed to resize stack popup', error);
+          errorMessage = operationErrorMessage(error, 'Resize unavailable');
+        });
+    });
+  }
 </script>
 
-<svelte:window on:keydown={handleKeydown} on:click={closeMenus} on:mousedown={handleMouseNavigation} on:resize={updateDetailsViewport} />
+<svelte:window
+  on:keydown={handleKeydown}
+  on:click={closeMenus}
+  on:mousedown={handleMouseNavigation}
+  on:pointermove={handleResizePointerMove}
+  on:pointerup={endResize}
+  on:pointercancel={endResize}
+  on:resize={updateDetailsViewport}
+/>
 
-<section class="stack-popup" aria-label="Stack browser" aria-busy={loadingPath ? 'true' : 'false'}>
+<section class:resizing={!!resizeDrag} class="stack-popup" aria-label="Stack browser" aria-busy={loadingPath ? 'true' : 'false'}>
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>
       {#if currentPath}
@@ -998,4 +1149,34 @@
       <button type="button" role="menuitem" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
     </div>
   {/if}
+
+  {#if deleteConfirmation}
+    <div class="delete-confirm-backdrop" role="presentation" on:click|stopPropagation>
+      <div
+        class="delete-confirm-dialog"
+        role="dialog"
+        tabindex="-1"
+        aria-modal="true"
+        aria-labelledby="stack-delete-confirm-title"
+        aria-describedby="stack-delete-confirm-message"
+      >
+        <h2 id="stack-delete-confirm-title">{deleteConfirmation.title}</h2>
+        <p id="stack-delete-confirm-message">{deleteConfirmation.message}</p>
+        <div class="delete-confirm-actions">
+          <button type="button" bind:this={deleteCancelButton} on:click={cancelDeleteConfirmation}>Cancel</button>
+          <button type="button" class="danger" on:click={() => void confirmDeleteSelection()}>Delete</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <button
+    type="button"
+    class="stack-resize-grip"
+    aria-label="Resize Stack Browser"
+    title="Resize Stack Browser"
+    bind:this={resizeGrip}
+    on:pointerdown={beginResize}
+    on:click|stopPropagation
+  ></button>
 </section>

@@ -164,10 +164,215 @@ export function stackBrowserDeletePrompt(
   };
 }
 
+export type StackBrowserTemplateAction = {
+  id: string;
+  label: string;
+  fileName: string;
+  kind: 'file' | 'folder';
+};
+
+export type StackBrowserGitOperation = 'diff' | 'stage' | 'restore';
+
+export type StackBrowserContextActionKind =
+  | 'open-editor'
+  | 'open-terminal'
+  | 'copy-path'
+  | 'copy-directory-path'
+  | 'copy-name'
+  | 'create-from-template'
+  | 'git-operation';
+
+export type StackBrowserContextActionPlan = {
+  id: string;
+  kind: StackBrowserContextActionKind;
+  label: string;
+  targetPath: string;
+  workingDirectory?: string;
+  clipboardText?: string;
+  templateId?: string;
+  templateKind?: StackBrowserTemplateAction['kind'];
+  plannedPath?: string;
+  gitOperation?: StackBrowserGitOperation;
+  destructive: boolean;
+  requiresConfirmation: boolean;
+};
+
+export type StackBrowserGitContext = {
+  repositoryRoot?: string | null;
+  changedPaths?: readonly string[];
+};
+
+export type StackBrowserContextActionInput = {
+  currentFolderPath: string;
+  entry?: StackEntry | null;
+  templates?: readonly StackBrowserTemplateAction[];
+  git?: StackBrowserGitContext | null;
+};
+
+export function stackBrowserContextActionPlans(
+  input: StackBrowserContextActionInput
+): StackBrowserContextActionPlan[] {
+  const entry = input.entry ?? null;
+  const targetPath = entry?.path ?? input.currentFolderPath;
+  const targetName = entry?.name ?? basename(targetPath);
+  const workingDirectory = entry?.entryType === 'File' ? parentPath(targetPath) : targetPath;
+  const plans: StackBrowserContextActionPlan[] = [
+    {
+      id: 'open-editor',
+      kind: 'open-editor',
+      label: `Open ${entry ? targetName : 'folder'} in editor`,
+      targetPath,
+      workingDirectory,
+      destructive: false,
+      requiresConfirmation: false
+    },
+    {
+      id: 'open-terminal',
+      kind: 'open-terminal',
+      label: 'Open terminal here',
+      targetPath: workingDirectory,
+      workingDirectory,
+      destructive: false,
+      requiresConfirmation: false
+    },
+    {
+      id: 'copy-path',
+      kind: 'copy-path',
+      label: 'Copy path',
+      targetPath,
+      clipboardText: targetPath,
+      destructive: false,
+      requiresConfirmation: false
+    }
+  ];
+
+  if (entry) {
+    plans.push(
+      {
+        id: 'copy-directory-path',
+        kind: 'copy-directory-path',
+        label: 'Copy containing folder path',
+        targetPath,
+        clipboardText: workingDirectory,
+        destructive: false,
+        requiresConfirmation: false
+      },
+      {
+        id: 'copy-name',
+        kind: 'copy-name',
+        label: 'Copy name',
+        targetPath,
+        clipboardText: targetName,
+        destructive: false,
+        requiresConfirmation: false
+      }
+    );
+  }
+
+  for (const template of input.templates ?? []) {
+    plans.push({
+      id: `template:${template.id}`,
+      kind: 'create-from-template',
+      label: template.label,
+      targetPath: workingDirectory,
+      workingDirectory,
+      templateId: template.id,
+      templateKind: template.kind,
+      plannedPath: joinPath(workingDirectory, template.fileName),
+      destructive: false,
+      requiresConfirmation: false
+    });
+  }
+
+  plans.push(...stackBrowserGitActionPlans(targetPath, workingDirectory, input.git ?? null));
+
+  return plans;
+}
+
+function stackBrowserGitActionPlans(
+  targetPath: string,
+  workingDirectory: string,
+  git: StackBrowserGitContext | null
+): StackBrowserContextActionPlan[] {
+  if (!git?.repositoryRoot || !isWithinPath(targetPath, git.repositoryRoot)) {
+    return [];
+  }
+
+  const changed = (git.changedPaths ?? []).some((path) => samePath(path, targetPath));
+  const plans: StackBrowserContextActionPlan[] = [
+    {
+      id: 'git:diff',
+      kind: 'git-operation',
+      label: 'Show git diff plan',
+      targetPath,
+      workingDirectory,
+      gitOperation: 'diff',
+      destructive: false,
+      requiresConfirmation: false
+    }
+  ];
+
+  if (changed) {
+    plans.push(
+      {
+        id: 'git:stage',
+        kind: 'git-operation',
+        label: 'Stage file plan',
+        targetPath,
+        workingDirectory,
+        gitOperation: 'stage',
+        destructive: false,
+        requiresConfirmation: false
+      },
+      {
+        id: 'git:restore',
+        kind: 'git-operation',
+        label: 'Restore file plan',
+        targetPath,
+        workingDirectory,
+        gitOperation: 'restore',
+        destructive: true,
+        requiresConfirmation: true
+      }
+    );
+  }
+
+  return plans;
+}
+
 function positiveNumber(value: number | undefined, fallback: number) {
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function basename(path: string): string {
+  const normalized = path.replace(/\//g, '\\').replace(/\\+$/g, '');
+  return normalized.split('\\').filter(Boolean).at(-1) ?? normalized;
+}
+
+function parentPath(path: string): string {
+  const normalized = path.replace(/\//g, '\\').replace(/\\+$/g, '');
+  const index = normalized.lastIndexOf('\\');
+  return index > 0 ? normalized.slice(0, index) : normalized;
+}
+
+function joinPath(parent: string, child: string): string {
+  return `${parent.replace(/[\\/]+$/g, '')}\\${child.replace(/^[\\/]+/g, '')}`;
+}
+
+function samePath(left: string, right: string): boolean {
+  return normalizePath(left) === normalizePath(right);
+}
+
+function isWithinPath(path: string, root: string): boolean {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(root);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}\\`);
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\//g, '\\').replace(/\\+$/g, '').toLocaleLowerCase();
 }

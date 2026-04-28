@@ -10,6 +10,7 @@ test('process manager surface and commands are routed through app and Rust comma
   const bottomBar = readFileSync('src/components/BottomBar.svelte', 'utf8');
   const processSurface = readFileSync('src/components/ProcessManagerSurface.svelte', 'utf8');
   const processState = readFileSync('src/lib/processManagerState.ts', 'utf8');
+  const processWrapper = readFileSync('src/lib/processManager.ts', 'utf8');
   const processManager = readFileSync('src-tauri/src/process_manager.rs', 'utf8');
 
   assert.match(app, /ProcessManagerSurface/);
@@ -22,6 +23,18 @@ test('process manager surface and commands are routed through app and Rust comma
   assert.match(bottomBar, /process-manager-button/);
   assert.match(processSurface, /sortBy\('startTimeMs'\)/);
   assert.match(processSurface, /formatProcessStartTime\(process\.startTimeMs\)/);
+  assert.match(processSurface, /processDeveloperSummary\(process\)/);
+  assert.match(processSurface, /buildProcessKillPlan\(processes, process, false\)/);
+  assert.match(processSurface, /killConfirmationFromPlan\(killPlan\)/);
   assert.match(processState, /startTimeMs/);
+  assert.match(processState, /formatProcessPorts/);
+  assert.match(processWrapper, /type ProcessKillConfirmation/);
+  assert.match(processWrapper, /invoke\(IPC_COMMANDS\.killProcess, \{ pid, confirmation \}\)/);
   assert.match(processManager, /start_time_ms: process_handle\.and_then\(process_start_time_ms\)/);
+  assert.match(processManager, /let command_line = process_handle\.and_then\(process_command_line\)/);
+  assert.match(processManager, /command_line,/);
+  assert.match(processManager, /listening_ports: listening_ports\.get\(&pid\)/);
+  assert.match(processManager, /workspace_hint_from_metadata/);
+  assert.match(processManager, /build_kill_guardrail_plan/);
+  assert.match(processManager, /validate_kill_guardrail_execution/);
 });

@@ -1,3 +1,4 @@
+use crate::workspaces::{normalize_workspace, WorkspaceProfile};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -16,7 +17,7 @@ pub struct ShellSettings {
     pub schema: String,
     pub version: u32,
     pub ui: ShellUiSettings,
-    pub workspaces: Vec<Value>,
+    pub workspaces: Vec<WorkspaceProfile>,
     pub task_history: Vec<Value>,
 }
 
@@ -44,8 +45,7 @@ impl Default for ShellSettings {
 
 #[tauri::command]
 pub fn load_shell_settings(app_handle: AppHandle) -> Result<ShellSettings, String> {
-    let path = settings_path(&app_handle)?;
-    load_settings_from_path(&path)
+    load_shell_settings_for_app(&app_handle)
 }
 
 #[tauri::command]
@@ -53,7 +53,19 @@ pub fn save_shell_settings(
     app_handle: AppHandle,
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
-    let path = settings_path(&app_handle)?;
+    save_shell_settings_for_app(&app_handle, settings)
+}
+
+pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<ShellSettings, String> {
+    let path = settings_path(app_handle)?;
+    load_settings_from_path(&path)
+}
+
+pub(crate) fn save_shell_settings_for_app(
+    app_handle: &AppHandle,
+    settings: ShellSettings,
+) -> Result<ShellSettings, String> {
+    let path = settings_path(app_handle)?;
     save_settings_to_path(&path, settings)
 }
 
@@ -88,7 +100,7 @@ fn load_settings_from_path(path: &Path) -> Result<ShellSettings, String> {
             .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
         &[],
     )?;
-    Ok(settings)
+    validate_settings(settings)
 }
 
 fn save_settings_to_path(
@@ -97,6 +109,7 @@ fn save_settings_to_path(
 ) -> Result<ShellSettings, String> {
     settings.schema = SETTINGS_SCHEMA.to_string();
     settings.version = SETTINGS_VERSION;
+    settings = validate_settings(settings)?;
     reject_secret_setting_keys(
         &serde_json::to_value(&settings)
             .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
@@ -110,6 +123,15 @@ fn save_settings_to_path(
         .map_err(|error| format!("failed to serialize shell settings: {error}"))?;
     write_file_atomic(path, &bytes)
         .map_err(|error| format!("failed to write shell settings: {error}"))?;
+    Ok(settings)
+}
+
+fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, String> {
+    let mut workspaces = Vec::with_capacity(settings.workspaces.len());
+    for workspace in settings.workspaces {
+        workspaces.push(normalize_workspace(workspace)?);
+    }
+    settings.workspaces = workspaces;
     Ok(settings)
 }
 

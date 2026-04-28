@@ -1,6 +1,6 @@
 {
   "identifier": "top-bar",
-  "description": "Top-bar shell surface capability: search, stack pin, event, and window-label access.",
+  "description": "Top-bar shell surface capability: search, workspace activation, stack pin, workspace tooling action plans, event, and window-label access.",
   "windows": [
     "top-bar"
   ],

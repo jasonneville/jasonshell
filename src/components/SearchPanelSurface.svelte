@@ -6,6 +6,7 @@
   import {
     getSearchPanelPayload,
     SEARCH_PANEL_ACTIVATE_EVENT,
+    SEARCH_PANEL_INTERACTION_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
     SEARCH_PANEL_SELECT_EVENT,
     SEARCH_PANEL_UPDATE_EVENT,
@@ -25,6 +26,7 @@
 
   let panelState = defaultSearchPanelViewState;
   let resultRows: Array<HTMLDivElement | undefined> = [];
+  let panelElement: HTMLElement | null = null;
   let lastRevealedSelection = '';
   $: query = panelState.query;
   $: results = panelState.results;
@@ -58,16 +60,24 @@
   });
 
   function activateResult(result: SearchPanelResult) {
+    markPanelInteraction();
     void emit(SEARCH_PANEL_ACTIVATE_EVENT, result.id);
   }
 
   function selectResult(result: SearchPanelResult) {
+    markPanelInteraction();
     void emit(SEARCH_PANEL_SELECT_EVENT, result.id);
+  }
+
+  function markPanelInteraction() {
+    panelElement?.focus({ preventScroll: true });
+    void emit(SEARCH_PANEL_INTERACTION_EVENT, null);
   }
 
   function pinFolderResult(event: MouseEvent, result: SearchPanelResult) {
     event.preventDefault();
     event.stopPropagation();
+    markPanelInteraction();
     if (result.kind === 'folder' && result.path) {
       void emit(SEARCH_PANEL_PIN_FOLDER_EVENT, result.path);
     }
@@ -122,7 +132,14 @@
   }
 </script>
 
-<section class="search-panel" aria-label="Search results">
+<svelte:window on:mousedown={markPanelInteraction} />
+
+<section
+  class="search-panel"
+  aria-label="Search results"
+  tabindex="-1"
+  bind:this={panelElement}
+>
   <header class="search-panel-header">
     <strong>Search</strong>
     <span>{query || 'Apps, windows, places, files, commands'}</span>

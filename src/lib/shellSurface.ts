@@ -5,6 +5,7 @@ export type ShellSurface =
   | 'search-panel'
   | 'stack-popup'
   | 'process-manager'
+  | 'control-plane'
   | 'unknown';
 
 type SurfaceMeta = {
@@ -37,6 +38,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Running process monitor',
     title: 'JasonShell Process Manager'
   },
+  'control-plane': {
+    subtitle: 'Settings and developer dashboard',
+    title: 'JasonShell Control Plane'
+  },
   unknown: {
     subtitle: 'Surface route unavailable',
     title: 'JasonShell'
@@ -51,6 +56,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'search-panel'
     || label === 'stack-popup'
     || label === 'process-manager'
+    || label === 'control-plane'
   ) {
     return label;
   }

@@ -13,6 +13,16 @@ export type SafeKillButtonState = {
   isArmed: boolean;
 };
 
+export type ProcessKillPlan = {
+  targetPid: number;
+  mode: 'single' | 'tree-plan';
+  affectedPids: number[];
+  descendantPids: number[];
+  warnings: string[];
+  requiresSecondConfirmation: boolean;
+  canExecute: boolean;
+};
+
 export function filterProcesses(processes: readonly ProcessInfo[], query: string): ProcessInfo[] {
   const tokens = normalize(query).split(' ').filter(Boolean);
   if (!tokens.length) {
@@ -24,7 +34,12 @@ export function filterProcesses(processes: readonly ProcessInfo[], query: string
       process.name,
       process.pid,
       process.parentPid ?? '',
+      process.parentName ?? '',
       process.executablePath ?? '',
+      process.commandLine ?? '',
+      process.listeningPorts?.join(' ') ?? '',
+      process.workspaceHint?.label ?? '',
+      process.workspaceHint?.path ?? '',
       process.status
     ].join(' '));
     return tokens.every((token) => haystack.includes(token));
@@ -117,17 +132,100 @@ export function safeKillButtonState(
   if (armedPid === process.pid) {
     return {
       disabled: false,
-      label: 'Confirm',
+      label: 'Kill 1',
       ariaLabel: `Confirm kill for ${process.name} process ${process.pid}`,
       isArmed: true
     };
   }
   return {
     disabled: false,
-    label: 'Kill',
-    ariaLabel: `Arm kill confirmation for ${process.name} process ${process.pid}`,
+    label: (process.descendantProcessCount ?? 0) > 0 ? 'Review' : 'Kill',
+    ariaLabel: `Arm single-process kill confirmation for ${process.name} process ${process.pid}`,
     isArmed: false
   };
+}
+
+export function buildProcessKillPlan(
+  processes: readonly ProcessInfo[],
+  process: ProcessInfo,
+  includeTreeRequested = false
+): ProcessKillPlan {
+  const descendantPids = processDescendantPids(processes, process.pid);
+  const warnings = processGuardrailWarnings(processes, process, descendantPids);
+  if (includeTreeRequested) {
+    return {
+      targetPid: process.pid,
+      mode: 'tree-plan',
+      affectedPids: [process.pid, ...descendantPids],
+      descendantPids,
+      warnings: [
+        ...warnings,
+        'Tree kill is guarded and plan-only; JasonShell does not terminate descendants by default.'
+      ],
+      requiresSecondConfirmation: true,
+      canExecute: false
+    };
+  }
+
+  return {
+    targetPid: process.pid,
+    mode: 'single',
+    affectedPids: [process.pid],
+    descendantPids,
+    warnings: [
+      ...warnings,
+      ...(descendantPids.length
+        ? [`Single-process kill leaves ${descendantPids.length} descendant process(es) running.`]
+        : [])
+    ],
+    requiresSecondConfirmation: true,
+    canExecute: process.isKillable
+  };
+}
+
+function processGuardrailWarnings(
+  processes: readonly ProcessInfo[],
+  process: ProcessInfo,
+  descendantPids: readonly number[]
+): string[] {
+  const warnings: string[] = [];
+  if (process.workspaceHint) {
+    warnings.push(`Target process is associated with workspace ${process.workspaceHint.label}.`);
+  }
+
+  const descendantPidSet = new Set(descendantPids);
+  if (processes.some((candidate) => descendantPidSet.has(candidate.pid) && candidate.workspaceHint)) {
+    warnings.push('Process tree includes workspace-associated descendant process(es).');
+  }
+
+  return warnings;
+}
+
+function processDescendantPids(processes: readonly ProcessInfo[], pid: number): number[] {
+  const childrenByParent = new Map<number, number[]>();
+  for (const process of processes) {
+    if (typeof process.parentPid !== 'number') {
+      continue;
+    }
+    const children = childrenByParent.get(process.parentPid) ?? [];
+    children.push(process.pid);
+    childrenByParent.set(process.parentPid, children);
+  }
+
+  const descendants: number[] = [];
+  const visited = new Set<number>();
+  const stack = [...(childrenByParent.get(pid) ?? [])];
+  while (stack.length) {
+    const childPid = stack.pop();
+    if (typeof childPid !== 'number' || visited.has(childPid)) {
+      continue;
+    }
+    visited.add(childPid);
+    descendants.push(childPid);
+    stack.push(...(childrenByParent.get(childPid) ?? []));
+  }
+
+  return descendants.sort((left, right) => left - right);
 }
 
 function normalize(value: string): string {

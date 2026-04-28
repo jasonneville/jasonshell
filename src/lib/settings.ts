@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { WorkspaceProfile } from './workspaces';
 
 export const SETTINGS_SCHEMA = 'jasonshell.settings';
 export const CURRENT_SETTINGS_VERSION = 1;
@@ -8,14 +9,13 @@ export interface ShellUiSettings {
   enableDiagnosticsExport: boolean;
 }
 
-export type ShellWorkspaceSettings = Record<string, unknown>;
 export type ShellTaskHistoryEntry = Record<string, unknown>;
 
 export interface ShellSettings {
   schema: typeof SETTINGS_SCHEMA;
   version: typeof CURRENT_SETTINGS_VERSION;
   ui: ShellUiSettings;
-  workspaces: ShellWorkspaceSettings[];
+  workspaces: WorkspaceProfile[];
   taskHistory: ShellTaskHistoryEntry[];
 }
 

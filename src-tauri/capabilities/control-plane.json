@@ -1,0 +1,11 @@
+{
+  "identifier": "control-plane",
+  "description": "Control-plane auxiliary surface capability: settings and developer dashboard rendering with only core/window access.",
+  "windows": [
+    "control-plane"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

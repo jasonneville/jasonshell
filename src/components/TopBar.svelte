@@ -19,6 +19,8 @@
     openShellPath,
     publishSearchPanel,
     SEARCH_PANEL_ACTIVATE_EVENT,
+    SEARCH_PANEL_CLOSED_EVENT,
+    SEARCH_PANEL_INTERACTION_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
     SEARCH_PANEL_SELECT_EVENT,
     showSearchPanel,
@@ -85,11 +87,15 @@
   let pinDropStatus = '';
   let pinDropStatusKind: 'info' | 'error' = 'info';
   let pinDropStatusTimer: number | null = null;
+  let searchBlurCloseTimer: number | null = null;
+  let searchPanelInteractionUntil = 0;
   let draggingPinPath: string | null = null;
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
 
   const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
+  const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
+  const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
 
   $: allResults = buildSearchCatalog(launchers, openWindows, systemResults);
   $: searchResults = rankSearchResults(allResults, searchQuery);
@@ -181,6 +187,7 @@
   }
 
   async function openPanel() {
+    cancelSearchBlurClose();
     searchOpen = true;
     const rect = searchControl.getBoundingClientRect();
     await showSearchPanel({
@@ -191,10 +198,44 @@
   }
 
   async function closePanel() {
+    cancelSearchBlurClose();
     searchOpen = false;
     await hideSearchPanel().catch((error) => {
       console.error('Failed to hide search panel', error);
     });
+  }
+
+  function cancelSearchBlurClose() {
+    if (searchBlurCloseTimer !== null) {
+      window.clearTimeout(searchBlurCloseTimer);
+      searchBlurCloseTimer = null;
+    }
+  }
+
+  function markSearchPanelInteraction() {
+    searchPanelInteractionUntil = Date.now() + SEARCH_PANEL_INTERACTION_GRACE_MS;
+  }
+
+  function scheduleSearchBlurClose() {
+    cancelSearchBlurClose();
+    searchBlurCloseTimer = window.setTimeout(() => {
+      searchBlurCloseTimer = null;
+      if (Date.now() < searchPanelInteractionUntil) {
+        return;
+      }
+      void closePanel();
+    }, SEARCH_BLUR_CLOSE_DELAY_MS);
+  }
+
+  function handleTopBarPointerDown(event: MouseEvent) {
+    if (!searchOpen || !searchControl) {
+      return;
+    }
+    const target = event.target instanceof Node ? event.target : null;
+    if (target && searchControl.contains(target)) {
+      return;
+    }
+    void closePanel();
   }
 
   async function openStackFromPin(pin: StackPin, target: EventTarget | null) {
@@ -578,19 +619,33 @@
     void loadSearchCatalog();
     void loadStackPins();
     void listen<string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
+      markSearchPanelInteraction();
       void activateResult(searchResults.find((result) => result.id === event.payload));
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
     void listen<string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
+      markSearchPanelInteraction();
       selectSearchResult(event.payload);
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
     void listen<string>(SEARCH_PANEL_PIN_FOLDER_EVENT, (event) => {
+      markSearchPanelInteraction();
       void pinSearchFolder(event.payload).catch((error) => {
         console.error('Failed to pin stack folder', error);
       });
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen(SEARCH_PANEL_INTERACTION_EVENT, () => {
+      markSearchPanelInteraction();
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen(SEARCH_PANEL_CLOSED_EVENT, () => {
+      cancelSearchBlurClose();
+      searchOpen = false;
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -648,6 +703,7 @@
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);
       }
+      cancelSearchBlurClose();
       void hideSearchPanel().catch(() => undefined);
       for (const unlisten of unlisteners) {
         unlisten();
@@ -656,7 +712,7 @@
   });
 </script>
 
-<svelte:window on:keydown={handleGlobalKeydown} />
+<svelte:window on:keydown={handleGlobalKeydown} on:pointerdown={handleTopBarPointerDown} />
 
 <div class="surface top-bar">
   <button
@@ -668,7 +724,7 @@
       void openPanel();
     }}
   >
-    JasonShell
+    jasonshell
   </button>
   <div class="rail-wrap">
     {#if showRailScrollLeft}
@@ -736,6 +792,7 @@
       placeholder="Search"
       value={searchQuery}
       on:focus={() => void openPanel()}
+      on:blur={scheduleSearchBlurClose}
       on:input={handleSearchInput}
       on:keydown={handleSearchKeydown}
     />

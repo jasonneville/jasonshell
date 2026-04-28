@@ -1,10 +1,14 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
+mod automation;
 mod contracts;
+mod control_plane;
+mod dev_tools;
 mod diagnostics;
 mod launchers;
 mod layout;
 mod process_manager;
+mod providers;
 mod search_panel;
 mod search_sources;
 mod settings;
@@ -14,6 +18,7 @@ mod stack_popup;
 mod task_preview;
 mod task_windows;
 mod taskbar_menu;
+mod workspaces;
 
 // Phase 0 R4 decision: the system tray relay is parked as an experimental
 // Windows-only prototype. Do not register its commands until a later phase adds
@@ -70,6 +75,8 @@ fn main() {
             search_panel::get_search_panel_payload,
             process_manager::show_process_manager,
             process_manager::hide_process_manager,
+            control_plane::show_control_plane,
+            control_plane::hide_control_plane,
             process_manager::list_processes,
             process_manager::kill_process,
             search_sources::search_system,
@@ -81,6 +88,9 @@ fn main() {
             stack_popup::show_stack_popup,
             stack_popup::hide_stack_popup,
             stack_popup::get_stack_popup_request,
+            stack_popup::begin_stack_popup_focus_loss_hold,
+            stack_popup::end_stack_popup_focus_loss_hold,
+            stack_popup::resize_stack_popup,
             stack_popup::read_stack_folder,
             stack_popup::open_stack_item,
             stack_popup::open_stack_item_with_picker,
@@ -91,10 +101,26 @@ fn main() {
             stack_popup::delete_stack_item,
             stack_popup::new_stack_folder,
             stack_popup::reveal_stack_item,
+            automation::parse_automation_cli,
+            automation::validate_automation_request,
+            automation::get_single_instance_forwarding_contract,
+            providers::resolve_provider_registry,
             settings::load_shell_settings,
             settings::save_shell_settings,
+            workspaces::list_workspaces,
+            workspaces::create_workspace,
+            workspaces::update_workspace,
+            workspaces::delete_workspace,
+            workspaces::activate_workspace,
             diagnostics::record_diagnostic,
             diagnostics::export_diagnostics,
+            dev_tools::tool_plans::build_terminal_launch_plan,
+            dev_tools::tool_plans::build_editor_launch_plan,
+            dev_tools::git_status::get_workspace_git_status,
+            dev_tools::task_runner::spawn_workspace_task,
+            dev_tools::task_runner::cancel_workspace_task,
+            dev_tools::task_runner::list_workspace_task_history,
+            dev_tools::task_runner::list_jasonshell_task_process_metadata,
             report_shell_surface_runtime_metrics
         ])
         .on_menu_event(|app_handle, event| {
@@ -104,6 +130,28 @@ fn main() {
             if window.label() == shell_windows::STACK_POPUP_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
+                if stack_popup::suppress_stack_popup_focus_loss(window.app_handle()) {
+                    return;
+                }
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::SEARCH_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(true))
+            {
+                let _ = window.app_handle().emit_to(
+                    shell_windows::TOP_BAR_LABEL,
+                    search_panel::SEARCH_PANEL_INTERACTION_EVENT,
+                    (),
+                );
+                return;
+            }
+
+            if window.label() == shell_windows::SEARCH_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = window.emit(search_panel::SEARCH_PANEL_CLOSED_EVENT, ());
                 let _ = window.hide();
                 return;
             }

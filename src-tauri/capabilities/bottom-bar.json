@@ -1,6 +1,6 @@
 {
   "identifier": "bottom-bar",
-  "description": "Bottom-bar shell surface capability: taskbar, launcher, preview, process-manager, event, and window-label access.",
+  "description": "Bottom-bar shell surface capability: taskbar, launcher, preview, process-manager, task metadata, developer tooling events, and window-label access.",
   "windows": [
     "bottom-bar"
   ],

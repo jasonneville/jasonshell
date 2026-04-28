@@ -14,7 +14,7 @@ use tauri::{AppHandle, State};
 
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackItem, StackPasteResult,
-    StackPopupRuntimeState,
+    StackPopupLogicalSize, StackPopupRuntimeState,
 };
 
 #[cfg(test)]
@@ -36,6 +36,10 @@ pub(crate) use paths::{
 pub(crate) use pins::{backup_corrupt_pin_store, reorder_pins_by_paths};
 #[cfg(test)]
 pub(crate) use popup_window::normalize_show_stack_popup_request;
+
+pub(crate) fn suppress_stack_popup_focus_loss(app_handle: &AppHandle) -> bool {
+    popup_window::suppress_stack_popup_focus_loss(app_handle)
+}
 
 #[tauri::command]
 pub fn list_pinned_stack_folders(app_handle: AppHandle) -> Result<Vec<PinnedStackFolder>, String> {
@@ -85,6 +89,33 @@ pub fn get_stack_popup_request(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
 ) -> Result<Option<ShowStackPopupRequest>, String> {
     Ok(popup_window::latest_stack_popup_request(state))
+}
+
+#[tauri::command]
+pub fn begin_stack_popup_focus_loss_hold(
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+) -> Result<(), String> {
+    popup_window::begin_stack_popup_focus_hold(&state);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn end_stack_popup_focus_loss_hold(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+) -> Result<(), String> {
+    popup_window::end_stack_popup_focus_hold(&app_handle, &state);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn resize_stack_popup(
+    app_handle: AppHandle,
+    width: f64,
+    height: f64,
+    persist: bool,
+) -> Result<StackPopupLogicalSize, String> {
+    popup_window::resize_stack_popup_window(app_handle, width, height, persist)
 }
 
 #[tauri::command]
@@ -141,8 +172,15 @@ pub fn paste_stack_items(
 }
 
 #[tauri::command]
-pub fn delete_stack_item(path: String) -> Result<(), String> {
-    file_ops::delete_stack_item_path(path)
+pub fn delete_stack_item(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    path: String,
+) -> Result<(), String> {
+    popup_window::begin_stack_popup_focus_hold(&state);
+    let result = file_ops::delete_stack_item_path(path);
+    popup_window::end_stack_popup_focus_hold(&app_handle, &state);
+    result
 }
 
 #[tauri::command]
@@ -648,9 +686,13 @@ mod tests {
         let root = test_dir("delete-test");
         fs::create_dir_all(root.join("Folder")).unwrap();
         fs::write(root.join("File.txt"), b"x").unwrap();
-        super::delete_stack_item(root.join("File.txt").to_str().unwrap().to_string()).unwrap();
+        super::file_ops::delete_stack_item_path(
+            root.join("File.txt").to_str().unwrap().to_string(),
+        )
+        .unwrap();
         assert!(!root.join("File.txt").exists());
-        super::delete_stack_item(root.join("Folder").to_str().unwrap().to_string()).unwrap();
+        super::file_ops::delete_stack_item_path(root.join("Folder").to_str().unwrap().to_string())
+            .unwrap();
         assert!(!root.join("Folder").exists());
         fs::remove_dir_all(root).ok();
     }

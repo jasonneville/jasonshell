@@ -19,14 +19,54 @@ pub const PROCESS_MANAGER_CLOSED_EVENT: &str = "process-manager:closed";
 pub struct ProcessInfo {
     pub pid: u32,
     pub parent_pid: Option<u32>,
+    pub parent_name: Option<String>,
     pub name: String,
     pub executable_path: Option<String>,
+    pub command_line: Option<String>,
+    pub listening_ports: Vec<u16>,
     pub cpu_percent: Option<f64>,
     pub memory_bytes: Option<u64>,
     pub thread_count: Option<u32>,
     pub start_time_ms: Option<u64>,
+    pub child_process_count: u32,
+    pub descendant_process_count: u32,
+    pub workspace_hint: Option<ProcessWorkspaceHint>,
     pub status: String,
     pub is_killable: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessWorkspaceHint {
+    pub kind: String,
+    pub label: String,
+    pub path: Option<String>,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(test), allow(dead_code))]
+pub struct ProcessKillPlan {
+    pub target_pid: u32,
+    pub mode: String,
+    pub affected_pids: Vec<u32>,
+    pub descendant_pids: Vec<u32>,
+    pub warnings: Vec<String>,
+    pub requires_second_confirmation: bool,
+    pub can_execute: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessKillConfirmation {
+    pub confirmed_target_pid: u32,
+    pub mode: String,
+    pub affected_pids: Vec<u32>,
+    pub descendant_pids: Vec<u32>,
+    pub acknowledged_warning_count: usize,
+    pub requires_second_confirmation: bool,
+    pub can_execute: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -135,24 +175,268 @@ pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 }
 
 #[tauri::command]
-pub fn kill_process(pid: u32) -> Result<(), String> {
-    if !is_pid_killable(pid, std::process::id()) {
-        return Err(format!("Refusing to terminate protected process {pid}"));
-    }
-
+pub fn kill_process(pid: u32, confirmation: Option<ProcessKillConfirmation>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        let processes = windows_impl::list_processes()?;
+        validate_kill_guardrail_execution(
+            &processes,
+            pid,
+            confirmation.as_ref(),
+            std::process::id(),
+        )?;
         windows_impl::kill_process(pid)
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = pid;
+        let _ = (pid, confirmation);
         Err("Process termination is only supported on Windows".to_string())
     }
 }
 
 fn is_pid_killable(pid: u32, current_pid: u32) -> bool {
     pid != 0 && pid != current_pid
+}
+
+fn enrich_process_tree(processes: &mut [ProcessInfo]) {
+    let by_pid = processes
+        .iter()
+        .map(|process| (process.pid, process.name.clone()))
+        .collect::<HashMap<_, _>>();
+    let children_by_parent = children_by_parent(processes);
+
+    for process in processes {
+        process.parent_name = process
+            .parent_pid
+            .and_then(|parent_pid| by_pid.get(&parent_pid).cloned());
+        let children = children_by_parent
+            .get(&process.pid)
+            .cloned()
+            .unwrap_or_default();
+        process.child_process_count = children.len() as u32;
+        process.descendant_process_count =
+            descendant_pids(process.pid, &children_by_parent).len() as u32;
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn build_kill_guardrail_plan(
+    processes: &[ProcessInfo],
+    target_pid: u32,
+    include_tree_requested: bool,
+    current_pid: u32,
+) -> Result<ProcessKillPlan, String> {
+    let target = processes
+        .iter()
+        .find(|process| process.pid == target_pid)
+        .ok_or_else(|| format!("Process {target_pid} is no longer visible"))?;
+    if !is_pid_killable(target.pid, current_pid) || !target.is_killable {
+        return Err(format!(
+            "Refusing to terminate protected process {target_pid}"
+        ));
+    }
+
+    let children_by_parent = children_by_parent(processes);
+    let descendants = descendant_pids(target_pid, &children_by_parent);
+    let mut warnings = Vec::new();
+
+    if let Some(workspace_hint) = &target.workspace_hint {
+        warnings.push(format!(
+            "Target process is associated with workspace {}",
+            workspace_hint.label
+        ));
+    }
+
+    if descendants.iter().any(|descendant_pid| {
+        processes
+            .iter()
+            .any(|process| process.pid == *descendant_pid && process.workspace_hint.is_some())
+    }) {
+        warnings
+            .push("Process tree includes workspace-associated descendant process(es)".to_string());
+    }
+
+    if include_tree_requested {
+        warnings.push(
+            "Tree termination is plan-only; JasonShell will not kill descendant processes by default"
+                .to_string(),
+        );
+        let mut affected_pids = vec![target_pid];
+        affected_pids.extend(descendants.iter().copied());
+        return Ok(ProcessKillPlan {
+            target_pid,
+            mode: "tree-plan".to_string(),
+            affected_pids,
+            descendant_pids: descendants,
+            warnings,
+            requires_second_confirmation: true,
+            can_execute: false,
+        });
+    }
+
+    if !descendants.is_empty() {
+        warnings.push(format!(
+            "Single-process kill leaves {} descendant process(es) running",
+            descendants.len()
+        ));
+    }
+
+    Ok(ProcessKillPlan {
+        target_pid,
+        mode: "single".to_string(),
+        affected_pids: vec![target_pid],
+        descendant_pids: descendants,
+        warnings,
+        requires_second_confirmation: true,
+        can_execute: true,
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn validate_kill_guardrail_execution(
+    processes: &[ProcessInfo],
+    target_pid: u32,
+    confirmation: Option<&ProcessKillConfirmation>,
+    current_pid: u32,
+) -> Result<ProcessKillPlan, String> {
+    let confirmation = confirmation.ok_or_else(|| {
+        format!("Refusing to terminate process {target_pid} without guardrail confirmation")
+    })?;
+    if confirmation.mode == "tree-plan" {
+        let _ = build_kill_guardrail_plan(processes, target_pid, true, current_pid)?;
+        return Err(
+            "Refusing to execute tree termination; tree kill is plan-only in JasonShell"
+                .to_string(),
+        );
+    }
+    if confirmation.mode != "single" {
+        return Err(format!(
+            "Refusing to terminate process {target_pid} with unsupported kill mode {}",
+            confirmation.mode
+        ));
+    }
+
+    let plan = build_kill_guardrail_plan(processes, target_pid, false, current_pid)?;
+    if !plan.can_execute || !confirmation.can_execute {
+        return Err(format!(
+            "Refusing to execute guarded kill plan for {target_pid}"
+        ));
+    }
+    if confirmation.confirmed_target_pid != plan.target_pid
+        || confirmation.mode != plan.mode
+        || confirmation.affected_pids != plan.affected_pids
+        || confirmation.descendant_pids != plan.descendant_pids
+        || confirmation.requires_second_confirmation != plan.requires_second_confirmation
+        || confirmation.acknowledged_warning_count != plan.warnings.len()
+    {
+        return Err(format!(
+            "Refusing to terminate process {target_pid}; guardrail confirmation is stale or incomplete"
+        ));
+    }
+
+    Ok(plan)
+}
+
+fn children_by_parent(processes: &[ProcessInfo]) -> HashMap<u32, Vec<u32>> {
+    let visible_pids = processes
+        .iter()
+        .map(|process| process.pid)
+        .collect::<std::collections::HashSet<_>>();
+    let mut children = HashMap::<u32, Vec<u32>>::new();
+    for process in processes {
+        let Some(parent_pid) = process.parent_pid else {
+            continue;
+        };
+        if visible_pids.contains(&parent_pid) {
+            children.entry(parent_pid).or_default().push(process.pid);
+        }
+    }
+    children
+}
+
+fn descendant_pids(pid: u32, children_by_parent: &HashMap<u32, Vec<u32>>) -> Vec<u32> {
+    let mut descendants = Vec::new();
+    let mut stack = children_by_parent.get(&pid).cloned().unwrap_or_default();
+    let mut visited = std::collections::HashSet::new();
+
+    while let Some(child_pid) = stack.pop() {
+        if !visited.insert(child_pid) {
+            continue;
+        }
+        descendants.push(child_pid);
+        if let Some(children) = children_by_parent.get(&child_pid) {
+            stack.extend(children.iter().copied());
+        }
+    }
+
+    descendants.sort_unstable();
+    descendants
+}
+
+fn workspace_hint_from_metadata(
+    executable_path: Option<&str>,
+    command_line: Option<&str>,
+) -> Option<ProcessWorkspaceHint> {
+    let values = [executable_path, command_line];
+    if let Ok(current_dir) = std::env::current_dir() {
+        let current_path = current_dir.to_string_lossy().to_string();
+        let current_normalized = normalize_path_for_match(&current_path);
+        if !current_normalized.is_empty()
+            && values
+                .iter()
+                .flatten()
+                .any(|value| normalize_path_for_match(value).contains(current_normalized.as_str()))
+        {
+            let label = current_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("current workspace")
+                .to_string();
+            return Some(ProcessWorkspaceHint {
+                kind: "path-associated".to_string(),
+                label,
+                path: Some(current_path),
+                source: "current-process-directory".to_string(),
+            });
+        }
+    }
+
+    for value in values.iter().flatten() {
+        if let Some((label, path)) = dev_workspace_from_text(value) {
+            return Some(ProcessWorkspaceHint {
+                kind: "path-associated".to_string(),
+                label,
+                path: Some(path),
+                source: "process-path".to_string(),
+            });
+        }
+    }
+
+    let mentions_jasonshell = values
+        .iter()
+        .flatten()
+        .any(|value| value.to_ascii_lowercase().contains("jasonshell"));
+    mentions_jasonshell.then(|| ProcessWorkspaceHint {
+        kind: "jasonshell-associated".to_string(),
+        label: "JasonShell".to_string(),
+        path: None,
+        source: "process-metadata".to_string(),
+    })
+}
+
+fn dev_workspace_from_text(value: &str) -> Option<(String, String)> {
+    let normalized = normalize_path_for_match(value);
+    let marker = "c:\\dev\\";
+    let start = normalized.find(marker)?;
+    let tail = &normalized[start + marker.len()..];
+    let label = tail
+        .split(|character: char| character == '\\' || character == '"' || character.is_whitespace())
+        .find(|segment| !segment.is_empty())?;
+    Some((label.to_string(), format!("C:\\dev\\{label}")))
+}
+
+fn normalize_path_for_match(value: &str) -> String {
+    value.replace('/', "\\").to_ascii_lowercase()
 }
 
 fn cpu_percent_from_snapshots(
@@ -203,21 +487,30 @@ fn record_cpu_snapshot(pid: u32, snapshot: ProcessCpuSnapshot) -> Option<f64> {
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::{
-        is_pid_killable, record_cpu_snapshot, retain_process_snapshots, ProcessCpuSnapshot,
-        ProcessInfo,
+        enrich_process_tree, is_pid_killable, record_cpu_snapshot, retain_process_snapshots,
+        workspace_hint_from_metadata, ProcessCpuSnapshot, ProcessInfo,
     };
+    use std::collections::HashMap;
+    use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
     use std::time::Instant;
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, NTSTATUS};
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_LISTEN,
+        TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows::Win32::Networking::WinSock::AF_INET;
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
     use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
-        PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, TerminateProcess, PEB,
+        PROCESS_BASIC_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_TERMINATE, PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
     };
 
     pub(super) fn list_processes() -> Result<Vec<ProcessInfo>, String> {
@@ -229,9 +522,10 @@ mod windows_impl {
         };
         let mut processes = Vec::new();
         let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry).is_ok() };
+        let listening_ports = listening_ports_by_pid();
 
         while has_entry {
-            processes.push(process_info_from_entry(&entry));
+            processes.push(process_info_from_entry(&entry, &listening_ports));
             has_entry = unsafe { Process32NextW(snapshot, &mut entry).is_ok() };
         }
 
@@ -245,6 +539,7 @@ mod windows_impl {
                 .cmp(&right.name.to_ascii_lowercase())
                 .then_with(|| left.pid.cmp(&right.pid))
         });
+        enrich_process_tree(&mut processes);
         retain_process_snapshots(processes.iter().map(|process| process.pid));
         Ok(processes)
     }
@@ -260,29 +555,49 @@ mod windows_impl {
         result
     }
 
-    fn process_info_from_entry(entry: &PROCESSENTRY32W) -> ProcessInfo {
+    fn process_info_from_entry(
+        entry: &PROCESSENTRY32W,
+        listening_ports: &HashMap<u32, Vec<u16>>,
+    ) -> ProcessInfo {
         let pid = entry.th32ProcessID;
-        let process_handle =
-            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok();
+        let process_handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+                false,
+                pid,
+            )
+        }
+        .ok()
+        .or_else(|| unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok());
         let process_name = wide_c_string(&entry.szExeFile)
             .trim_end_matches(".exe")
             .to_string();
         let cpu_percent = process_cpu_snapshot(process_handle)
             .and_then(|snapshot| record_cpu_snapshot(pid, snapshot));
         let current_pid = std::process::id();
+        let executable_path = process_handle.and_then(process_image_path);
+        let command_line = process_handle.and_then(process_command_line);
+        let workspace_hint =
+            workspace_hint_from_metadata(executable_path.as_deref(), command_line.as_deref());
         let process = ProcessInfo {
             pid,
             parent_pid: non_zero_parent_pid(entry.th32ParentProcessID),
+            parent_name: None,
             name: if process_name.trim().is_empty() {
                 format!("Process {pid}")
             } else {
                 process_name
             },
-            executable_path: process_handle.and_then(process_image_path),
+            executable_path,
+            command_line,
+            listening_ports: listening_ports.get(&pid).cloned().unwrap_or_default(),
             cpu_percent,
             memory_bytes: process_handle.and_then(process_memory_bytes),
             thread_count: Some(entry.cntThreads),
             start_time_ms: process_handle.and_then(process_start_time_ms),
+            child_process_count: 0,
+            descendant_process_count: 0,
+            workspace_hint,
             status: "running".to_string(),
             is_killable: is_pid_killable(pid, current_pid),
         };
@@ -298,6 +613,139 @@ mod windows_impl {
 
     fn non_zero_parent_pid(pid: u32) -> Option<u32> {
         (pid != 0).then_some(pid)
+    }
+
+    fn listening_ports_by_pid() -> HashMap<u32, Vec<u16>> {
+        let mut size = 0_u32;
+        unsafe {
+            let _ = GetExtendedTcpTable(
+                None,
+                &mut size,
+                false,
+                AF_INET.0 as u32,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            );
+        }
+        if size == 0 {
+            return HashMap::new();
+        }
+
+        let mut buffer = vec![0_u8; size as usize];
+        let result = unsafe {
+            GetExtendedTcpTable(
+                Some(buffer.as_mut_ptr().cast::<c_void>()),
+                &mut size,
+                false,
+                AF_INET.0 as u32,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+        };
+        if result != 0 {
+            return HashMap::new();
+        }
+
+        let table = buffer.as_ptr().cast::<MIB_TCPTABLE_OWNER_PID>();
+        let row_count = unsafe { (*table).dwNumEntries as usize };
+        let rows = unsafe {
+            std::slice::from_raw_parts(
+                (*table).table.as_ptr() as *const MIB_TCPROW_OWNER_PID,
+                row_count,
+            )
+        };
+        let mut ports_by_pid = HashMap::<u32, Vec<u16>>::new();
+        for row in rows {
+            if row.dwState != MIB_TCP_STATE_LISTEN.0 as u32 {
+                continue;
+            }
+            let port = u16::from_be((row.dwLocalPort & 0xffff) as u16);
+            if port == 0 {
+                continue;
+            }
+            ports_by_pid.entry(row.dwOwningPid).or_default().push(port);
+        }
+        for ports in ports_by_pid.values_mut() {
+            ports.sort_unstable();
+            ports.dedup();
+        }
+        ports_by_pid
+    }
+
+    fn process_command_line(process_handle: HANDLE) -> Option<String> {
+        let mut basic_info = PROCESS_BASIC_INFORMATION::default();
+        let status = unsafe {
+            NtQueryInformationProcess(
+                process_handle,
+                0,
+                (&mut basic_info as *mut PROCESS_BASIC_INFORMATION).cast::<c_void>(),
+                size_of::<PROCESS_BASIC_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if status.0 < 0 || basic_info.PebBaseAddress.is_null() {
+            return None;
+        }
+
+        let peb: PEB =
+            read_remote_value(process_handle, basic_info.PebBaseAddress.cast::<c_void>())?;
+        if peb.ProcessParameters.is_null() {
+            return None;
+        }
+        let parameters = read_remote_value::<RTL_USER_PROCESS_PARAMETERS>(
+            process_handle,
+            peb.ProcessParameters.cast::<c_void>(),
+        )?;
+        let command_line = parameters.CommandLine;
+        let char_count = usize::from(command_line.Length) / size_of::<u16>();
+        if char_count == 0 || char_count > 32_768 || command_line.Buffer.0.is_null() {
+            return None;
+        }
+
+        let mut buffer = vec![0_u16; char_count];
+        let mut bytes_read = 0_usize;
+        unsafe {
+            ReadProcessMemory(
+                process_handle,
+                command_line.Buffer.0.cast::<c_void>(),
+                buffer.as_mut_ptr().cast::<c_void>(),
+                usize::from(command_line.Length),
+                Some(&mut bytes_read),
+            )
+            .ok()?;
+        }
+        if bytes_read < usize::from(command_line.Length) {
+            return None;
+        }
+
+        let command_line = String::from_utf16_lossy(&buffer).trim().to_string();
+        (!command_line.is_empty()).then_some(command_line)
+    }
+
+    fn read_remote_value<T: Default>(process_handle: HANDLE, address: *const c_void) -> Option<T> {
+        let mut value = T::default();
+        let mut bytes_read = 0_usize;
+        unsafe {
+            ReadProcessMemory(
+                process_handle,
+                address,
+                (&mut value as *mut T).cast::<c_void>(),
+                size_of::<T>(),
+                Some(&mut bytes_read),
+            )
+            .ok()?;
+        }
+        (bytes_read == size_of::<T>()).then_some(value)
+    }
+
+    extern "system" {
+        fn NtQueryInformationProcess(
+            process_handle: HANDLE,
+            process_information_class: u32,
+            process_information: *mut c_void,
+            process_information_length: u32,
+            return_length: *mut u32,
+        ) -> NTSTATUS;
     }
 
     fn process_cpu_snapshot(process_handle: Option<HANDLE>) -> Option<ProcessCpuSnapshot> {
@@ -395,7 +843,12 @@ mod windows_impl {
 
 #[cfg(test)]
 mod tests {
-    use super::{cpu_percent_from_snapshots, is_pid_killable, ProcessCpuSnapshot};
+    use super::{
+        build_kill_guardrail_plan, cpu_percent_from_snapshots, dev_workspace_from_text,
+        enrich_process_tree, is_pid_killable, validate_kill_guardrail_execution,
+        workspace_hint_from_metadata, ProcessCpuSnapshot, ProcessInfo, ProcessKillConfirmation,
+        ProcessWorkspaceHint,
+    };
     use std::time::{Duration, Instant};
 
     #[test]
@@ -422,5 +875,205 @@ mod tests {
 
         assert!(percent > 0.0);
         assert!(percent < 100.0);
+    }
+
+    #[test]
+    fn enriches_parent_and_descendant_process_context() {
+        let mut processes = vec![
+            process(100, None, "Terminal", true),
+            process(110, Some(100), "pwsh", true),
+            process(120, Some(110), "node", true),
+            process(200, Some(999), "orphan", true),
+        ];
+
+        enrich_process_tree(&mut processes);
+
+        assert_eq!(processes[0].child_process_count, 1);
+        assert_eq!(processes[0].descendant_process_count, 2);
+        assert_eq!(processes[1].parent_name.as_deref(), Some("Terminal"));
+        assert_eq!(processes[1].descendant_process_count, 1);
+        assert_eq!(processes[3].parent_name, None);
+    }
+
+    #[test]
+    fn kill_guardrail_plan_keeps_tree_termination_non_executing() {
+        let mut processes = vec![
+            process(100, None, "Terminal", true),
+            process(110, Some(100), "pwsh", true),
+            process(120, Some(110), "node", true),
+        ];
+        enrich_process_tree(&mut processes);
+
+        let single =
+            build_kill_guardrail_plan(&processes, 100, false, 999).expect("single plan is valid");
+        assert_eq!(single.mode, "single");
+        assert_eq!(single.affected_pids, vec![100]);
+        assert_eq!(single.descendant_pids, vec![110, 120]);
+        assert!(single.can_execute);
+        assert!(single.requires_second_confirmation);
+
+        let tree =
+            build_kill_guardrail_plan(&processes, 100, true, 999).expect("tree plan is valid");
+        assert_eq!(tree.mode, "tree-plan");
+        assert_eq!(tree.affected_pids, vec![100, 110, 120]);
+        assert!(!tree.can_execute);
+        assert!(tree
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("will not kill descendant processes by default")));
+    }
+
+    #[test]
+    fn kill_guardrail_plan_refuses_protected_processes() {
+        let processes = vec![process(100, None, "JasonShell", false)];
+
+        let error = build_kill_guardrail_plan(&processes, 100, false, 999)
+            .expect_err("protected process should be rejected");
+
+        assert!(error.contains("protected process 100"));
+    }
+
+    #[test]
+    fn kill_guardrail_execution_requires_explicit_confirmation() {
+        let processes = vec![process(100, None, "node", true)];
+
+        let error = validate_kill_guardrail_execution(&processes, 100, None, 999)
+            .expect_err("direct kill without confirmation should be rejected");
+
+        assert!(error.contains("without guardrail confirmation"));
+    }
+
+    #[test]
+    fn kill_guardrail_execution_refuses_current_pid_even_with_confirmation() {
+        let processes = vec![process(100, None, "JasonShell", true)];
+        let confirmation = single_confirmation(100, &[], 0);
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 100)
+            .expect_err("current process kill should be rejected");
+
+        assert!(error.contains("protected process 100"));
+    }
+
+    #[test]
+    fn kill_guardrail_execution_rejects_stale_descendant_confirmation() {
+        let mut processes = vec![
+            process(100, None, "Terminal", true),
+            process(110, Some(100), "pwsh", true),
+            process(120, Some(110), "node", true),
+        ];
+        enrich_process_tree(&mut processes);
+        let confirmation = single_confirmation(100, &[], 1);
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect_err("stale descendant plan should be rejected");
+
+        assert!(error.contains("stale or incomplete"));
+    }
+
+    #[test]
+    fn kill_guardrail_execution_rejects_tree_plan_execution() {
+        let mut processes = vec![
+            process(100, None, "Terminal", true),
+            process(110, Some(100), "pwsh", true),
+        ];
+        enrich_process_tree(&mut processes);
+        let mut confirmation = single_confirmation(100, &[110], 2);
+        confirmation.mode = "tree-plan".to_string();
+        confirmation.affected_pids = vec![100, 110];
+        confirmation.can_execute = false;
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect_err("tree kill should remain plan-only");
+
+        assert!(error.contains("tree kill is plan-only"));
+    }
+
+    #[test]
+    fn kill_guardrail_execution_accepts_fresh_single_confirmation() {
+        let mut processes = vec![
+            process(100, None, "Terminal", true),
+            process(110, Some(100), "pwsh", true),
+        ];
+        enrich_process_tree(&mut processes);
+        let confirmation = single_confirmation(100, &[110], 1);
+
+        let plan = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect("fresh single-process confirmation should be executable");
+
+        assert_eq!(plan.mode, "single");
+        assert_eq!(plan.descendant_pids, vec![110]);
+    }
+
+    #[test]
+    fn kill_guardrail_execution_requires_workspace_warning_acknowledgement() {
+        let mut processes = vec![process(100, None, "node", true)];
+        processes[0].workspace_hint = Some(ProcessWorkspaceHint {
+            kind: "path-associated".to_string(),
+            label: "jasonshell".to_string(),
+            path: Some("C:\\dev\\jasonshell".to_string()),
+            source: "process-path".to_string(),
+        });
+        let confirmation = single_confirmation(100, &[], 0);
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect_err("workspace-associated process requires warning acknowledgement");
+
+        assert!(error.contains("stale or incomplete"));
+    }
+
+    #[test]
+    fn workspace_hints_use_current_or_dev_paths_without_workspace_crud() {
+        let hint = workspace_hint_from_metadata(
+            Some("C:\\tools\\node.exe"),
+            Some("node C:\\dev\\jasonshell\\server.js"),
+        )
+        .expect("dev path should produce a hint");
+
+        assert_eq!(hint.kind, "path-associated");
+        assert_eq!(hint.label, "jasonshell");
+        assert_eq!(hint.path.as_deref(), Some("C:\\dev\\jasonshell"));
+        assert_eq!(
+            dev_workspace_from_text("\"C:/dev/example-app/package.json\"")
+                .unwrap()
+                .0,
+            "example-app"
+        );
+    }
+
+    fn process(pid: u32, parent_pid: Option<u32>, name: &str, is_killable: bool) -> ProcessInfo {
+        ProcessInfo {
+            pid,
+            parent_pid,
+            parent_name: None,
+            name: name.to_string(),
+            executable_path: None,
+            command_line: None,
+            listening_ports: Vec::new(),
+            cpu_percent: None,
+            memory_bytes: None,
+            thread_count: None,
+            start_time_ms: None,
+            child_process_count: 0,
+            descendant_process_count: 0,
+            workspace_hint: None,
+            status: "running".to_string(),
+            is_killable,
+        }
+    }
+
+    fn single_confirmation(
+        target_pid: u32,
+        descendant_pids: &[u32],
+        acknowledged_warning_count: usize,
+    ) -> ProcessKillConfirmation {
+        ProcessKillConfirmation {
+            confirmed_target_pid: target_pid,
+            mode: "single".to_string(),
+            affected_pids: vec![target_pid],
+            descendant_pids: descendant_pids.to_vec(),
+            acknowledged_warning_count,
+            requires_second_confirmation: true,
+            can_execute: true,
+        }
     }
 }
