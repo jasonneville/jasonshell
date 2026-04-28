@@ -4,6 +4,14 @@ import type { StackBreadcrumbSegment } from './stackPopupState';
 export const STACK_BROWSER_ROW_HEIGHT_PX = 30;
 export const STACK_BROWSER_VIRTUAL_OVERSCAN_ROWS = 8;
 export const STACK_BROWSER_VIRTUAL_MIN_ROWS = 160;
+export const STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS = [
+  '[role="row"]',
+  '.context-menu',
+  '.delete-confirm-dialog',
+  '.inline-editor',
+  '.stack-toolbar',
+  '.stack-resize-grip'
+] as const;
 
 export const STACK_BROWSER_FRONTEND_EVENTS = {
   folderWatchRefreshRequested: 'stack-browser:folder-watch-refresh-requested',

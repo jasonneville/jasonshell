@@ -1,11 +1,8 @@
 .top-bar.surface {
   align-items: center;
-  background:
-    linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
+  background: var(--js-gradient-bar);
   border-bottom: 1px solid var(--js-color-border-soft);
-  box-shadow:
-    0 10px 32px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
   color: var(--js-color-text);
   display: flex;
   gap: var(--js-space-2);
@@ -17,8 +14,7 @@
 
 .top-bar .shell-home-button {
   align-items: center;
-  background:
-    linear-gradient(135deg, rgba(124, 160, 255, 0.22), rgba(255, 255, 255, 0.04));
+  background: var(--js-gradient-active);
   border: 1px solid var(--js-color-accent-border);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text-strong);
@@ -28,12 +24,13 @@
   font-size: 0.64rem;
   font-weight: 850;
   height: 1.55rem;
-  letter-spacing: 0.03em;
+  letter-spacing: 0;
   padding: 0 0.5rem;
 }
 
 .top-bar .shell-home-button:hover {
-  background: var(--js-color-accent-soft);
+  background: var(--js-color-control-hover);
+  box-shadow: var(--js-inset-highlight);
 }
 
 .top-bar .top-bar-identity {
@@ -45,7 +42,7 @@
 }
 
 .top-bar .top-bar-identity span {
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--js-color-surface-overlay);
   border: 1px solid var(--js-color-border-soft);
   border-radius: 999px;
   color: var(--js-color-text-muted);
@@ -61,7 +58,7 @@
 
 .top-bar .top-bar-identity span.indexing {
   background: var(--js-color-warning);
-  border-color: rgba(245, 191, 92, 0.42);
+  border-color: var(--js-color-warning-border);
   color: var(--js-color-text);
 }
 
@@ -123,7 +120,7 @@
   align-items: center;
   justify-content: center;
   color: var(--js-color-text-strong);
-  background: linear-gradient(180deg, rgba(77, 124, 254, 0.06), rgba(77, 124, 254, 0.02));
+  background: var(--js-color-accent-soft);
   pointer-events: none;
   font-size: 0.78rem;
   font-weight: 700;
@@ -155,7 +152,7 @@
 }
 
 .top-bar .stack-pins button {
-  background: var(--js-color-surface-sunken);
+  background: var(--js-gradient-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text);
@@ -184,7 +181,7 @@
   background: var(--js-color-surface-sunken);
   border: 1px solid var(--js-color-border-soft);
   border-radius: var(--js-radius-sm);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: var(--js-inset-highlight);
   display: flex;
   flex-direction: column;
   gap: 0.08rem;
@@ -196,7 +193,7 @@
 .top-bar .time-pill strong {
   font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
 
 .top-bar .time-pill span {
@@ -236,7 +233,7 @@
 
 .top-bar .search-control input::placeholder,
 .top-bar .search-control span {
-  color: rgba(218, 225, 246, 0.46);
+  color: var(--js-color-text-subtle);
 }
 
 .top-bar .search-control span {

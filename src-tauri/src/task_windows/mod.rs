@@ -5,11 +5,21 @@ use serde::{Deserialize, Serialize};
 pub struct TaskbarWindow {
     pub hwnd: String,
     pub title: String,
+    pub process_id: u32,
     pub process_name: String,
     pub icon_data_url: String,
     pub is_active: bool,
     pub is_minimized: bool,
     pub activity_state: TaskbarWindowActivityState,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskbarProcessWindow {
+    pub hwnd: String,
+    pub title: String,
+    pub process_id: u32,
+    pub is_active: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -52,6 +62,18 @@ pub fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
     #[cfg(target_os = "windows")]
     {
         windows::list_open_task_windows()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+pub fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::list_taskbar_process_windows()
     }
     #[cfg(not(target_os = "windows"))]
     {

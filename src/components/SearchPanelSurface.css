@@ -1,6 +1,5 @@
 .search-panel {
-  background:
-    linear-gradient(180deg, var(--js-color-surface-raised), var(--js-color-surface));
+  background: var(--js-gradient-surface);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-lg);
   box-shadow: var(--js-shadow-panel);
@@ -33,7 +32,7 @@
 }
 
 .search-panel-header kbd {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--js-color-surface-overlay);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-xs);
   color: var(--js-color-text-muted);
@@ -63,7 +62,7 @@
   color: var(--js-color-text-subtle);
   font-size: 0.56rem;
   font-weight: 850;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   padding: 0 var(--js-space-1);
   text-transform: uppercase;
 }
@@ -84,13 +83,14 @@
 .result-row:hover,
 .result-row:focus-visible,
 .result-selected {
-  background: var(--js-color-accent-soft);
+  background: var(--js-color-selected);
   border-color: var(--js-color-accent-border);
 }
 
 .result-icon {
   align-items: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--js-color-surface-overlay);
+  border: 1px solid var(--js-color-border-soft);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text-muted);
   display: grid;
@@ -148,7 +148,7 @@
 }
 
 .pin-folder {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--js-gradient-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text);
@@ -159,7 +159,7 @@
 
 .pin-folder:hover,
 .pin-folder:focus-visible {
-  background: var(--js-color-accent-soft);
+  background: var(--js-color-control-hover);
   border-color: var(--js-color-accent-border);
 }
 

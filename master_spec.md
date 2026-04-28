@@ -36,14 +36,15 @@ This first-step logging is mandatory even if the implementation is small. If a r
 ## Current system snapshot
 
 - Product: JasonShell, a Windows shell-foundation prototype using Tauri 2, Svelte 5, TypeScript, Rust, and Win32 APIs.
-- Primary surfaces: `top-bar`, `bottom-bar`, `task-preview`, `search-panel`, `stack-popup`, `process-manager`, and `control-plane`, all routed through a shared `index.html` and selected by Tauri webview window label.
+- Primary surfaces: `top-bar`, `bottom-bar`, `task-preview`, `search-panel`, `stack-popup`, `process-manager`, `control-plane`, and `settings-panel`, all routed through a shared `index.html` and selected by Tauri webview window label.
 - Native shell reservation: the top and bottom bars reserve primary-monitor edge space via Windows AppBar APIs and adjust/restabilize the work area.
-- Top bar: 26 logical pixels high; hosts pinned folder stack rail, date/time pill, and search input; opens search and stack browser auxiliary webviews.
-- Bottom bar: 36 logical pixels high; hosts Explorer taskbar `.lnk` launchers, grouped open-window task tiles with previews/menus/activation/minimization/reorder gestures, and a right-edge process-manager button.
-- Stack Browser: hidden persistent `stack-popup` webview opened from top-bar pinned folders; supports paged folder reads, navigation history, sorting, selection, file operations, in-webview delete confirmation, delete-time focus-loss suppression with refresh-in-place, persisted in-webview resizing, inline rename/new folder, drag/drop, context menus, and pin updates.
+- Top bar: 26 logical pixels high; hosts the JasonShell settings button, pinned folder stack rail, date/time pill, and search input; opens settings, search, and stack browser auxiliary webviews.
+- Bottom bar: 36 logical pixels high; hosts Explorer taskbar `.lnk` launchers, grouped open-window task tiles with previews/menus/activation/minimization/reorder gestures, content-sized active window tiles with min/max truncation bounds, and a right-edge process-manager button.
+- Stack Browser: hidden persistent `stack-popup` webview opened from top-bar pinned folders; supports paged folder reads, navigation history, sorting, selection, file operations, in-webview delete confirmation, delete-time focus-loss suppression with refresh-in-place, persisted in-webview resizing, inline rename/new folder, drag/drop, row and background/margin context menus, and pin updates.
 - Process manager: hidden persistent `process-manager` webview opened from bottom-bar; lists live processes with CPU, memory, start time, thread count, status, executable-path title, sortable columns, guarded kill action, and focus-loss close behavior.
 - Control plane: hidden persistent `control-plane` webview opened through explicit Tauri commands; renders an authority-light settings/developer dashboard model over existing settings, workspace, git, task, process, and provider contracts without exposing secrets or unbounded source lists.
 - Search: top-bar input drives a dedicated `search-panel` webview because the top bar is too short for rich results. Search merges pinned apps, open windows, static commands, and indexed system app/file/folder results; the panel closes on top-bar outside clicks, search-input blur when the user is not interacting with results, and search-panel focus loss.
+- Settings panel: hidden persistent `settings-panel` webview opened from the top-left `jasonshell` button; renders renderer-only app preferences including live theme, font, date-format, clock, density, focus, transparency, and search-hint controls.
 - Backend: Rust commands are registered in `src-tauri/src/main.rs`; Windows-specific native logic is under `src-tauri/src/*` and `src-tauri/src/task_windows/*`.
 - Validation bundle: `npm run validate` runs Svelte check, TypeScript/Vite build, `npm run test:node`, Rust tests, and Cargo check. `npm run test:search` remains a compatibility alias for the broader Node helper/source suite.
 - System tray: parked/experimental as of 2026-04-27 Phase 0. The Rust module is compiled for Windows tests only and Tauri commands are intentionally not registered until a shipped surface, capabilities, and live smoke coverage exist.
@@ -51,7 +52,7 @@ This first-step logging is mandatory even if the implementation is small. If a r
 
 ## Deep technical orientation for future implementation agents
 
-JasonShell should be reasoned about as a small native shell with seven long-lived Tauri webview windows, not as a single-page web app. Most defects in this repository come from crossing one of these boundaries incorrectly:
+JasonShell should be reasoned about as a small native shell with eight long-lived Tauri webview windows, not as a single-page web app. Most defects in this repository come from crossing one of these boundaries incorrectly:
 
 - **Surface boundary:** `src/App.svelte` routes one shared `index.html` bundle to a surface by `getCurrentWindow().label`. A component must assume it only owns its own labeled window and must use explicit Tauri events/commands to affect another surface.
 - **IPC boundary:** TypeScript wrappers in `src/lib/*.ts` are the canonical frontend boundary to Rust commands and app events. Components should not invent command strings or event names inline unless the wrapper, event table, tests, and this spec are updated together.
@@ -63,13 +64,14 @@ JasonShell should be reasoned about as a small native shell with seven long-live
 
 Implementation mental model by surface:
 
-1. `top-bar` is the orchestration surface for search and stack pins. It owns query text, selected search result, pin rail view state, and reacts to events from `search-panel`, Stack Browser pin mutations, and native top-bar pin menus.
-2. `bottom-bar` is the orchestration surface for launchers and open windows. It owns preferred task group order, drag/click disambiguation, preview request sequence, and refresh reactions after native menu actions.
+1. `top-bar` is the orchestration surface for search, settings, and stack pins. It owns query text, selected search result, pin rail view state, date/time rendering preferences, and reacts to events from `search-panel`, `settings-panel`, Stack Browser pin mutations, and native top-bar pin menus.
+2. `bottom-bar` is the orchestration surface for launchers and open windows. It owns preferred task group order, drag/click disambiguation, preview request sequence, content-sized task tile presentation bounds, and refresh reactions after native menu actions.
 3. `search-panel` is a render-only auxiliary surface for the latest `SearchPanelPayload`. It emits selection/activation/pin intents plus `search-panel:interaction` while the user is working in results; top bar executes intents and suppresses blur dismissal during the interaction grace window. Rust emits `search-panel:closed` when native focus loss hides the panel so top-bar `aria-expanded` state stays correct.
-4. `stack-popup` is a stateful auxiliary folder browser. It owns navigation history, selection, sorting, retained rows, virtualized visible-row calculation, inline editor state, in-webview delete confirmation state, custom resize drag state, HTML drop suppression, context menus, and background page merging; Rust owns canonical filesystem mutations, pin persistence, persisted popup geometry, and focus-loss suppression while delete execution is in flight. Stack Browser destructive confirmation must stay inside the `stack-popup` webview, not `window.confirm`, because the native browser dialog can cause Tauri focus loss and hide the popup before the user answers.
+4. `stack-popup` is a stateful auxiliary folder browser. It owns navigation history, selection, sorting, retained rows, virtualized visible-row calculation, inline editor state, in-webview delete confirmation state, custom resize drag state, HTML drop suppression, row and background/margin context menus, and background page merging; Rust owns canonical filesystem mutations, pin persistence, persisted popup geometry, and focus-loss suppression while delete execution is in flight. Background/margin right-clicks preserve row-specific menus, ignore toolbar/editor/dialog/resize controls, and expose directory actions plus selection-aware actions when selection exists. Stack Browser destructive confirmation must stay inside the `stack-popup` webview, not `window.confirm`, because the native browser dialog can cause Tauri focus loss and hide the popup before the user answers.
 5. `task-preview` is a render-only auxiliary preview surface. Rust owns preview positioning and image capture; bottom bar owns request ordering and hide/show timers.
 6. `process-manager` is a stateful auxiliary process table. Rust owns process enumeration, CPU-time snapshots, metadata, positioning, focus-loss hide, and kill guardrails; Svelte owns open/closed refresh cadence, in-flight request gating, filtering, tree-aware display rows, metric mini bars, two-step kill confirmation state, sorting, formatting, and status text.
 7. `control-plane` is an authority-light auxiliary dashboard. Rust owns window creation, show/hide positioning, and automation/provider contract validation; Svelte owns bounded rendering, section filtering, keyboard tab navigation, and secret-redacted summaries.
+8. `settings-panel` is a renderer-only auxiliary preferences dropdown. Rust owns top-bar anchored window placement and focus-loss hide; Svelte owns the preference controls and writes only localStorage-backed renderer preferences plus existing theme selection.
 
 Cross-boundary do nots:
 
@@ -85,7 +87,7 @@ Cross-boundary do nots:
 
 - `src/main.ts` mounts the Svelte application.
 - `src/App.svelte` calls `getCurrentWindow().label` and maps it through `src/lib/shellSurface.ts`.
-- `src/lib/shellSurface.ts` defines `ShellSurface = 'top-bar' | 'bottom-bar' | 'task-preview' | 'search-panel' | 'stack-popup' | 'process-manager' | 'control-plane' | 'unknown'` and surface metadata.
+- `src/lib/shellSurface.ts` defines `ShellSurface = 'top-bar' | 'bottom-bar' | 'task-preview' | 'search-panel' | 'stack-popup' | 'process-manager' | 'control-plane' | 'settings-panel' | 'unknown'` and surface metadata.
 - `src/App.svelte` renders:
   - `src/components/TopBar.svelte` for `top-bar`,
   - `src/components/BottomBar.svelte` for `bottom-bar`,
@@ -94,6 +96,7 @@ Cross-boundary do nots:
   - `src/components/StackPopupSurface.svelte` for `stack-popup`,
   - `src/components/ProcessManagerSurface.svelte` for `process-manager`,
   - `src/components/ControlPlaneSurface.svelte` for `control-plane`.
+  - `src/components/SettingsPanelSurface.svelte` for `settings-panel`.
 - `src/App.svelte` also suppresses the browser-native context menu globally; `src-tauri/src/shell_windows.rs` injects a native initialization script with the same context-menu suppression for the Tauri webviews.
 
 ### Backend startup and state
@@ -117,6 +120,7 @@ Cross-boundary do nots:
   - `search-panel` emits `search-panel:closed` and hides itself when it loses focus.
   - `process-manager` emits `process-manager:closed`, hides itself, and stops frontend polling when it loses focus.
   - `control-plane` is shown/hidden by explicit commands and is not part of AppBar cleanup ownership beyond normal app exit.
+  - `settings-panel` hides itself on native focus loss and can also be hidden by its Close/Done/Escape controls.
   - App exit also attempts appbar cleanup.
 
 Detailed lifecycle contract from `src-tauri/src/main.rs`:
@@ -124,14 +128,14 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `tauri::Builder::default()` installs managed `Mutex` state before any command can run: Windows `ShellRuntimeState` or non-Windows `Mutex<()>`, `TaskPreviewRuntimeState`, `SearchPanelRuntimeState`, `StackPopupRuntimeState`, and `search_sources::SearchIndexRuntimeState`.
 - `invoke_handler` registers all commands up front. If a command is added to Rust but not this list, frontend `invoke()` fails at runtime even when Rust compiles.
 - `on_menu_event` is centralized in `taskbar_menu::handle_taskbar_menu_event`. Native menu IDs encode action type and payload; do not attach per-menu closures.
-- `on_window_event` has four special cases: `stack-popup` hides on `WindowEvent::Focused(false)` unless `StackPopupRuntimeState` is holding focus loss during an internal delete command, `search-panel` emits `search-panel:closed` then hides on `WindowEvent::Focused(false)`, `process-manager` emits `process-manager:closed` then hides on `WindowEvent::Focused(false)`, and primary shell surfaces (`top-bar`, `bottom-bar`) clean AppBars and exit on close/destroy. `control-plane` currently has explicit show/hide commands and no focus-loss lifecycle event. Avoid adding generic close handlers that would make auxiliary windows terminate the shell.
+- `on_window_event` has special cases: `stack-popup` hides on `WindowEvent::Focused(false)` unless `StackPopupRuntimeState` is holding focus loss during an internal delete command, `search-panel` emits `search-panel:closed` then hides on `WindowEvent::Focused(false)`, `process-manager` emits `process-manager:closed` then hides on `WindowEvent::Focused(false)`, `settings-panel` hides on `WindowEvent::Focused(false)`, and primary shell surfaces (`top-bar`, `bottom-bar`) clean AppBars and exit on close/destroy. `control-plane` currently has explicit show/hide commands and no focus-loss lifecycle event. Avoid adding generic close handlers that would make auxiliary windows terminate the shell.
 - `.setup()` creates windows first, starts index warming second, then activates AppBars on Windows. This order matters: AppBar activation needs native HWNDs; search warming must not block surface creation; non-Windows fallback only shows top/bottom windows and leaves AppBar/runtime metric commands unsupported.
 - `app.run()` repeats AppBar cleanup on `RunEvent::Exit` and `ExitRequested`. Cleanup is intentionally idempotent through `ShellRuntimeState.cleaned_up`.
 - Frontend `reportShellSurfaceRuntimeMetrics(label)` calls the Windows-only `report_shell_surface_runtime_metrics` command about 250ms after `TopBar`/`BottomBar` mount. The returned/logged `ShellSurfaceRuntimeMetrics` contains native rect and frontend `outerHeight`, `innerHeight`, and `clientHeight` to catch zero-height WebView/native-window regressions early.
 
 ### Native window and geometry model
 
-- `src-tauri/src/shell_windows.rs` creates all seven webview windows as borderless, dark-theme, always-on-top, skip-taskbar windows.
+- `src-tauri/src/shell_windows.rs` creates all eight webview windows as borderless, native dark-themed, always-on-top, skip-taskbar windows; the renderer applies the user-selected JasonShell CSS theme and shell preferences across webviews after load.
 - Window labels and dimensions:
   - `top-bar`: `TOP_BAR_HEIGHT_LOGICAL = 26.0`.
   - `bottom-bar`: `BOTTOM_BAR_HEIGHT_LOGICAL = 36.0`.
@@ -140,13 +144,14 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
   - `stack-popup`: initial `980x430` logical; runtime stack popup size uses the persisted `stack-popup-geometry-v1.json` logical size when present, otherwise defaults to `980` wide and a monitor-height ratio, then clamps to the current monitor.
   - `process-manager`: `720x520` logical, clamped to the current monitor in `process_manager.rs` when shown.
   - `control-plane`: `860x620` logical, clamped to the current or primary monitor in `control_plane.rs` when shown.
+  - `settings-panel`: `440x520` logical, anchored below the top-left JasonShell button and clamped to the top-bar host width in `settings_panel.rs` when shown.
 - `src-tauri/src/layout.rs` computes preview rects for the top and bottom shell bars.
 - `src-tauri/src/layout.rs` also exposes pure Phase 9 multi-monitor planning contracts: `MonitorDescriptor`, `MonitorShellPlan`, `MonitorShellOwnership`, `plan_monitor_shell_layout`, `plan_popup_anchor`, and `assign_task_strip_monitor`. These helpers model mixed-DPI primary-shell vs secondary-task-strip ownership, popup anchoring against the source monitor, and stable task-strip monitor assignment before live multi-monitor AppBar activation is implemented.
 - `src-tauri/src/appbar.rs` handles AppBar registration (`ABM_NEW`, `ABM_QUERYPOS`, `ABM_SETPOS`, `ABM_REMOVE`), work-area mutation, Explorer taskbar hiding/restoring, topmost `SetWindowPos`, startup stabilization polling, and runtime surface metrics.
 - Do not reintroduce redundant `SetWindowPos`/AppBar positioning that races WebView2 startup or double-reserves work area; prior continuity recorded regressions around hidden appbar reservations and WebView blank/zero-height startup.
 - `shell_windows::create_shell_windows` reads the primary monitor once, converts physical monitor size to logical width using monitor scale factor, then calls `layout::build_shell_preview_rects` with physical top/bottom heights to size the top/bottom shell windows before AppBar activation.
-- Window creation order is top bar, bottom bar, task preview, search panel, stack popup, process manager, control plane. Only top and bottom are returned to AppBar activation; auxiliary windows are hidden persistent webviews reachable by label.
-- All seven windows are created with `always_on_top(true)`, `decorations(false)`, `focused(false)`, `resizable(false)`, `maximizable(false)`, `minimizable(false)`, `skip_taskbar(true)`, dark theme, and a context-menu suppression initialization script. `task-preview`, `search-panel`, `stack-popup`, `process-manager`, and `control-plane` keep `shadow(true)`; top/bottom bars use `shadow(false)`. Stack Browser user resizing is implemented by an in-webview bottom-right grip that calls Rust sizing commands because the native popup is borderless.
+- Window creation order is top bar, bottom bar, task preview, search panel, stack popup, process manager, control plane, settings panel. Only top and bottom are returned to AppBar activation; auxiliary windows are hidden persistent webviews reachable by label.
+- All eight windows are created with `always_on_top(true)`, `decorations(false)`, `focused(false)`, `resizable(false)`, `maximizable(false)`, `minimizable(false)`, `skip_taskbar(true)`, native dark theme, and a context-menu suppression initialization script. The renderer theme is CSS-token driven and may be dark or light independent of the native window hint. `task-preview`, `search-panel`, `stack-popup`, `process-manager`, `control-plane`, and `settings-panel` keep `shadow(true)`; top/bottom bars use `shadow(false)`. Stack Browser user resizing is implemented by an in-webview bottom-right grip that calls Rust sizing commands because the native popup is borderless.
 - AppBar activation registers top and bottom HWNDs with `ABM_NEW`, negotiates edge rectangles with `ABM_QUERYPOS`, forces requested thickness back into the returned rect, commits with `ABM_SETPOS`, mutates work area with `SPI_SETWORKAREA`, positions windows topmost with `SetWindowPos(..., SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOOWNERZORDER)`, shows windows, and then polls native rects until three stable matches or failure.
 - `appbar.rs` snapshots Explorer primary taskbar state, may hide it, starts a guard thread that repeatedly enforces hidden state every 100ms while active, and restores both taskbar and baseline work area during cleanup. Partial activation failure hides shell windows and rolls back registered AppBars/taskbar/work area.
 - `STARTUP_STABILIZATION_POLLS = 15`, `STARTUP_STABILIZATION_DELAY = 100ms`, and `REQUIRED_STABLE_POLLS = 3`; changing these alters live startup tolerance and should be justified with live metrics.
@@ -163,15 +168,17 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 | `stack-popup` | `src/components/StackPopupSurface.svelte` + `StackPopupSurface.css` | `stack_popup.rs`, `shell_paths.rs`, `task_windows/icons.rs` | Persistent folder browser anchored under top-bar pinned folders. |
 | `process-manager` | `src/components/ProcessManagerSurface.svelte` + `ProcessManagerSurface.css` | `process_manager.rs`, `shell_windows.rs` | Task Manager-like process list popup anchored above the bottom-bar process button. |
 | `control-plane` | `src/components/ControlPlaneSurface.svelte` + `ControlPlaneSurface.css` | `control_plane.rs`, `shell_windows.rs`, `automation.rs`, `providers.rs` | Settings and developer dashboard surface with bounded, secret-redacted summaries over existing contracts. |
+| `settings-panel` | `src/components/SettingsPanelSurface.svelte` + `SettingsPanelSurface.css` | `settings_panel.rs`, `shell_windows.rs` | Top-left JasonShell dropdown for renderer-only app preferences: theme, font, date/time, density, focus, transparency, and search hint. |
 
 ## Top bar spec
 
 ### User behavior
 
 - Stays docked on the primary monitor top edge at roughly half taskbar height.
+- The leftmost `jasonshell` button opens the `settings-panel` dropdown anchored below that button. It no longer opens search; search remains available from the search input and Ctrl/Cmd+K.
 - Shows a horizontally scrollable pinned folder rail on the left/middle.
-- Shows current time and date in a compact `time-pill` updated every second.
-- Shows a search control on the right with placeholder `Search` and shortcut hint `Ctrl K`.
+- Shows current time and date in a compact `time-pill` updated every second. The time/date display reads renderer preferences from `src/lib/shellPreferences.ts`, including 24-hour time, seconds visibility, and custom date format strings.
+- Shows a search control on the right with placeholder `Search` and an optional shortcut hint `Ctrl K`.
 - Focusing or typing in search opens `search-panel`; Ctrl+K focuses the input and opens the panel.
 - Pinned folder click opens `stack-popup` anchored below the pin.
 - Right-clicking a pin opens a native Tauri popup menu with `Open` and `Unpin`; native menu is required because a Svelte menu would be clipped by the 26px top-bar webview.
@@ -188,6 +195,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - Pin hydration invariant: initial `loadStackPins()` applies backend pins without recursively reloading pins. `applyStackPins()` updates state, reveals only explicitly/newly added pins after initial hydration, then ticks and updates rail scroll affordances. This prevents `applyStackPins -> loadStackPins -> applyStackPins` recursion and keeps startup from auto-scrolling to the last persisted pin.
 - Search helpers:
   - `src/lib/searchPanel.ts` wraps `show_search_panel`, `hide_search_panel`, `publish_search_panel`, `get_search_panel_payload`, and `open_shell_path`.
+  - `src/lib/settingsPanel.ts` wraps `show_settings_panel` and `hide_settings_panel` for the top-left JasonShell settings dropdown.
   - `src/lib/searchCatalog.ts` merges pinned launcher/open-window/system results into a search catalog.
   - `src/lib/searchRanking.ts` ranks results and records usage.
   - `src/lib/systemSearch.ts` wraps backend `search_system` and declares `search-index:refreshed`.
@@ -200,6 +208,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - Important state variables in `TopBar.svelte`:
   - `launchers`, `openWindows`, `systemResults` for search catalog composition.
   - `searchQuery`, `searchOpen`, `selectedIndex`, `searchStatus` for search UX.
+  - `shellPreferences` for date/time formatting and search shortcut hint visibility; it updates through the local preference-change event emitted by `src/lib/shellPreferences.ts`.
   - `stackPins`, `stackPinsLoaded`, `pendingVisiblePinPath`, `focusedPinIndex` for pin rail.
   - `draggingPinPath`, `pinDropStatus`, `pinRailHover`, scroll affordance flags for drag/drop and rail UI.
 - TopBar polls `listOpenTaskWindows()` every second so search window results stay fresh.
@@ -224,6 +233,9 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - Stack popup anchoring:
   - `openStackPath()` closes search first, reads the clicked pin/search-control `getBoundingClientRect()`, and calls `showStackPopup({ folderPath, anchorLeft, anchorWidth })`. The TS wrapper translates `folderPath` to Rust `path` and adds a unique `requestId`.
   - Rust stores the normalized latest request, positions/focuses the popup, and emits `stack-popup:open`; the TS wrapper additionally emits directly to `stack-popup` as a delivery hardening duplicate.
+- Settings panel anchoring:
+  - `openSettingsPanel()` closes search first, reads the JasonShell button `getBoundingClientRect()`, and calls `showSettingsPanel({ anchorLeft, anchorWidth })`.
+  - `src-tauri/src/settings_panel.rs` positions `settings-panel` below the top bar, aligning to the button's left edge and clamping inside the top-bar host width. The settings panel hides on focus loss, Escape, Done, or Close.
 - Keyboard/wheel behavior:
   - Ctrl/Cmd+K focuses search and opens the panel. Search input ArrowUp/ArrowDown moves top-bar-owned selection; Enter activates; Escape hides.
   - Pin rail ArrowLeft/ArrowRight moves focus among pin buttons, Enter/Space opens the focused pin, and vertical wheel deltas become horizontal rail scroll unless horizontal wheel movement dominates.
@@ -377,8 +389,14 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 ## Visual system and accessibility baseline
 
 - Global visual tokens live in `src/app.css` with `--js-*` variables for text, surfaces, borders, accent, semantic status colors, radii, spacing, shadows, focus ring, scrollbar colors, and motion durations.
-- `src/app.css` owns shared focus-visible treatment, `.surface-state` status classes (`loading`, `info`, `warning`, `error`), reduced-motion overrides, and high-contrast/forced-colors token substitutions.
+- Open Sans is the default application font. Local WOFF2 assets downloaded from Google Fonts live under `src/assets/fonts/open-sans/`; `src/app.css` declares `@font-face` entries for Latin and Latin Extended subsets and initializes `--js-font-sans` to the Open Sans stack.
+- `src/app.css` owns shared focus-visible treatment, form/button transition defaults, scrollbar styling, `.surface-state` status classes (`loading`, `info`, `warning`, `error`), reduced-motion overrides, and high-contrast/forced-colors token substitutions.
 - Surface CSS should prefer tokens from `src/app.css` over hard-coded colors, radii, shadows, spacing, or scrollbar colors. When extracting Svelte-scoped styles into a global CSS file, scope selectors to the surface root class to avoid leaking generic class names such as `.surface` into other webviews.
+- Shell-wide themes are `data-theme` token sets on `document.documentElement`, implemented by `src/lib/themes.ts` and `src/app.css`. The registry includes `base-dark`, `base-light`, `monokai`, `atom-one-dark`, `atom-one-light`, `nord`, `dracula`, `solarized-dark`, `solarized-light`, `github-dark`, `github-light`, `gruvbox-dark`, `gruvbox-light`, `tokyo-night`, `catppuccin-mocha`, and `ayu-dark`.
+- Theme application is renderer-only and must not move icons, tabs, bars, popup anchors, or component ordering. The selected theme is stored in `localStorage` under `jasonshell.theme`, applied before Svelte mount in `src/main.ts`, then kept synchronized across all Tauri webviews by `installShellThemeSync()` using `storage` events plus `BroadcastChannel` name `jasonshell.theme.changed` when available. BroadcastChannel failure is tolerated because theme persistence is cosmetic.
+- `ControlPlaneSurface.svelte` hosts the theme picker in the existing toolbar so the top bar, bottom bar, task tiles, and stack/search/process layouts retain their existing positions. The picker calls `setShellTheme()` only; it does not invoke privileged settings IPC and does not extend the authority-light Control Plane model.
+- Shell-wide renderer preferences are implemented by `src/lib/shellPreferences.ts` and surfaced in `settings-panel`. Preferences are stored in `localStorage["jasonshell.uiPreferences"]`, synchronized by `BroadcastChannel("jasonshell.uiPreferences.changed")` plus `storage` events, and applied before Svelte mount in `src/main.ts`. Current preferences include `fontId`, `dateFormat`, `use24HourTime`, `showSeconds`, `compactDensity`, `strongFocusRing`, `reducedTransparency`, and `showSearchShortcutHint`.
+- Date format strings are renderer-only and support tokens `yyyy`, `yy`, `MMMM`, `MMM`, `MM`, `M`, `dd`, `d`, `EEEE`, and `EEE`. Unknown characters are preserved as literals after control-character stripping and length bounding. The default date format is `EEE, MMM d`.
 - Search panel, Stack Browser, and Task Preview styles are split into `SearchPanelSurface.css`, `StackPopupSurface.css`, and `TaskPreviewSurface.css`; their Svelte files import the CSS files explicitly.
 - Accessibility baseline:
   - Top-bar rail scroll buttons are real named buttons and the pinned-folder toolbar exposes horizontal orientation.
@@ -395,6 +413,8 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `process-manager` is a hidden persistent Tauri webview opened by the rightmost button in `bottom-bar`.
 - It displays a compact Task Manager-like table with sortable `Name`, `PID`, `CPU`, `Memory`, `Start Time`, `Threads`, `Status`, and `Action` columns.
 - Default sort is CPU descending; metric columns, including `startTimeMs`, default to descending while `name` defaults to ascending. Unknown numeric/start-time values sort last under the default descending direction.
+- Taskbar-active processes are promoted ahead of background-only processes for every sort. They show a compact `taskbar` badge, with foreground taskbar windows highlighted through the same badge.
+- Automatic refreshes while sorted by volatile metrics (`CPU`, `Memory`, or `Threads`) update row values in place without continuously reordering existing rows; user sort changes, explicit refreshes, popup open, and post-kill refreshes can reapply the selected order.
 - Rows show process executable path in the row title when available. Rows can also expose best-effort command line, parent process name, child/descendant counts, listening TCP ports, and workspace/path hints. Protected/elevated processes may omit path, command line, ports, memory, CPU, or start-time metadata and display `—` through frontend formatters.
 - `Kill` is enabled only when Rust marks a process killable. Kill attempts are two-step confirmed in the frontend and must include backend guardrail confirmation data when invoking `kill_process`; bare direct-IPC PID kills are rejected.
 - Tree termination is plan-only and non-executing. JasonShell may warn about descendants/workspace-owned processes, but the shipped `kill_process` command terminates only the confirmed target process.
@@ -406,9 +426,11 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - IPC wrapper and event constants: `src/lib/processManager.ts`.
 - Sort/format helpers: `src/lib/processManagerState.ts`.
 - UX/tree/kill-plan helpers: `src/features/process-manager/processManagerUxState.ts`.
-- `ProcessInfo` payload fields are camelCase in TS: `{ pid, parentPid?, parentName?, name, executablePath?, commandLine?, listeningPorts?, cpuPercent?, memoryBytes?, threadCount?, startTimeMs?, childProcessCount?, descendantProcessCount?, workspaceHint?, status, isKillable }`.
+- `ProcessInfo` payload fields are camelCase in TS: `{ pid, parentPid?, parentName?, name, executablePath?, commandLine?, listeningPorts?, cpuPercent?, memoryBytes?, threadCount?, startTimeMs?, childProcessCount?, descendantProcessCount?, workspaceHint?, taskbarWindowCount?, taskbarActive?, taskbarForeground?, taskbarTitles?, status, isKillable }`. The `taskbar*` fields are frontend enrichment from task-window metadata, not persisted backend process payload fields.
 - `ProcessManagerSurface.svelte` listens for `process-manager:open` and `process-manager:closed`, tracks `isOpen`, `isLoading`, `inFlightRequest`, `killingPid`, local `sortState`, and `statusMessage`.
 - Refresh is concurrency-gated: if `isLoading` is true, a new refresh returns early; `inFlightRequest` rejects stale responses before replacing rows or status.
+- Each refresh loads `list_processes` plus best-effort lightweight `list_taskbar_process_windows`; task-window metadata includes `processId` so `enrichProcessesWithTaskbarWindows()` can mark taskbar-active process rows without invoking the full icon/activity taskbar enumeration used by the bottom bar.
+- `orderProcessRefresh()` keeps taskbar-active rows ahead of inactive rows. For automatic volatile-metric refreshes it preserves existing relative row order inside active/inactive buckets while replacing the metric values, reducing visual jumpiness under changing CPU/memory/thread samples. `buildProcessTreeRows(..., { promotedRootPids })` is used so taskbar-active child processes remain readable as top-level rows instead of being buried under inactive parents.
 - Table formatting uses `formatProcessCpu`, `formatProcessMemory`, and `formatProcessStartTime`. Start time is visible in the UI and sortable through the same `startTimeMs` column already supplied by Rust.
 - `killProcess(pid, confirmation?)` wraps `kill_process`; the UI builds confirmation from the current backend-enriched row/plan so direct IPC cannot bypass descendant/workspace/tree guardrails.
 
@@ -424,14 +446,16 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - CPU percent is derived from process-time deltas stored in `PROCESS_CPU_SNAPSHOTS: OnceLock<Mutex<HashMap<u32, ProcessCpuSnapshot>>>` and pruned to current PIDs after each enumeration.
 - Start time is `GetProcessTimes` creation time converted from Windows FILETIME ticks to Unix milliseconds and serialized as `startTimeMs`.
 - Process enrichment derives parent names, child/descendant counts, best-effort command lines, listening TCP ports, and workspace hints without persisting snapshots.
+- Task-window metadata from `src-tauri/src/task_windows/mod.rs` includes `process_id` serialized to `processId`; Process Manager uses lightweight `list_taskbar_process_windows` output only to prioritize/display taskbar-active rows.
 - `kill_process` rejects PID 0 and JasonShell's current PID before attempting `OpenProcess(PROCESS_TERMINATE)` / `TerminateProcess`; it also requires `ProcessKillConfirmation` acknowledging the backend plan mode, descendant count, and workspace warning state. Tree-plan execution and stale descendant/workspace confirmations are rejected. Non-Windows returns an unsupported error and `list_processes` returns an empty list.
 
 ### Process manager tests and risks
 
-- `tests/processManagerState.test.mjs` covers sort toggles/default directions, CPU/memory/start-time formatting, and metric/start-time ordering with unknown values last under descending sort.
-- `tests/processManagerUxState.test.mjs` covers filtering, process-tree rows, safe kill button states, developer summary text, and kill-tree plan guardrails.
-- `tests/processManagerWiring.test.mjs` verifies app/surface/command/button wiring and source-level exposure of visible process metadata and confirmed kill calls.
+- `tests/processManagerState.test.mjs` covers sort toggles/default directions, CPU/memory/start-time formatting, taskbar-active priority, stable volatile refresh ordering, volatile-column detection, and metric/start-time ordering with unknown values last under descending sort.
+- `tests/processManagerUxState.test.mjs` covers filtering, process-tree rows, taskbar-window enrichment, safe kill button states, developer summary text, and kill-tree plan guardrails.
+- `tests/processManagerWiring.test.mjs` verifies app/surface/command/button wiring, task-window process ID wiring, source-level exposure of visible process metadata, stable refresh ordering, and confirmed kill calls.
 - `cargo test --manifest-path src-tauri/Cargo.toml process_manager` covers kill guardrail planning/execution, stale confirmation rejection, workspace warning acknowledgement, tree-plan rejection, and CPU-percent helper math.
+- `cargo test --manifest-path src-tauri/Cargo.toml task_windows` covers task-window candidate filtering/activity helpers and now compiles the `process_id` task-window fixture contract.
 - Residual risks: protected/elevated processes can omit metadata; command-line/port discovery is best-effort and Windows-specific; first CPU sample is unknown until a second snapshot; process list polling is one-second best-effort rather than real-time; live Tauri smoke remains needed for exact anchored placement/focus-loss close behavior on scaled or multi-monitor setups.
 
 ## Stack Browser / stack popup spec
@@ -780,9 +804,12 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - `src/lib/automation.ts`: local automation CLI/validation/forwarding-contract types, wrappers, and safety assertions.
 - `src/lib/providerContracts.ts`: provider registry types, frontend budget normalization, secret/executable config guards, and registry safety assertion.
 - `src/lib/settings.ts`: frontend settings schema, default settings, secret-key guard, and settings IPC wrappers.
+- `src/lib/themes.ts`: shell theme registry, theme normalization, pre-mount application, localStorage persistence under `jasonshell.theme`, and cross-webview `BroadcastChannel`/`storage` synchronization for renderer CSS variables.
+- `src/lib/shellPreferences.ts`: renderer-only shell preference registry, Open Sans default font selection, date/time formatting helpers, localStorage persistence under `jasonshell.uiPreferences`, and cross-webview `BroadcastChannel`/`storage` synchronization for font/density/focus/transparency/search-hint preferences.
 - `src/lib/workspaces.ts`: workspace profile/activation types, workspace IPC wrappers, top-bar pin/task plan helpers, search-bias helper, and startup non-execution summary.
 - `src/lib/devTools.ts`: terminal/editor launch-plan wrappers, git status wrapper, declared task execution wrapper, task-history/process-metadata types, task event constants, and workspace-derived helper builders.
 - `src/lib/searchPanel.ts`: search panel payload/event/IPC contract.
+- `src/lib/settingsPanel.ts`: top-left settings dropdown show/hide IPC wrapper for `settings-panel`.
 - `src/lib/searchPanelState.ts`: search panel view-state reducer.
 - `src/lib/searchCatalog.ts`: local result catalog composition.
 - `src/lib/searchRanking.ts`: search result ranking/usage.
@@ -808,8 +835,9 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
   - `TaskPreviewSurface.svelte`: render latest preview payload, maximize/hide interactions.
   - `ProcessManagerSurface.svelte`: open/closed refresh lifecycle, process list sorting/display, stale refresh rejection, kill status, and close behavior.
   - `ControlPlaneSurface.svelte`: bounded, read-only dashboard rendering from passed-in settings/workspace/git/task/process/provider data, section filtering, ARIA tab semantics, keyboard section navigation, and secret-redacted text output.
+  - `SettingsPanelSurface.svelte`: renderer-only app settings dropdown for live theme selection, font selection, date/time formatting, density/focus/transparency/search-hint preferences, reset, Done, Close, and Escape dismissal.
 - Thin Tauri IPC/event wrappers:
-  - `taskbarLaunchers.ts`, `taskbarWindows.ts`, `taskbarMenus.ts`, `taskbarPreview.ts`, `processManager.ts`, `controlPlane.ts`, `automation.ts`, `providerContracts.ts`, `searchPanel.ts`, `systemSearch.ts`, `stackPopup.ts`, `runtimeMetrics.ts`.
+  - `taskbarLaunchers.ts`, `taskbarWindows.ts`, `taskbarMenus.ts`, `taskbarPreview.ts`, `processManager.ts`, `controlPlane.ts`, `automation.ts`, `providerContracts.ts`, `searchPanel.ts`, `settingsPanel.ts`, `systemSearch.ts`, `stackPopup.ts`, `runtimeMetrics.ts`.
   - These modules should stay boring: define exported types, constants, and `invoke`/`emit` wrappers. Use `IPC_COMMANDS` from `src/ipc/commands.ts` for command names. Add tests when wrapper behavior includes event target construction, payload translation, pagination, or publication side effects.
 - Pure reducers/helpers covered by Node tests:
   - `stackPopupState.ts` (`tests/stackPopupState.test.mjs`) for history, request keys, stale/retained rows, sorting, selection, breadcrumbs, formatting.
@@ -818,6 +846,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
   - `taskbarTilePointer.ts` (`tests/taskbarTilePointer.test.mjs`) for click-vs-drag release suppression.
   - `processManagerState.ts` (`tests/processManagerState.test.mjs`) for process sort/default direction and CPU/memory/start-time formatting.
   - `controlPlaneState.ts` (`tests/controlPlaneState.test.mjs`) for dashboard section assembly, bounded summary rendering, secret redaction, provider budget display, filtering, and keyboard action mapping.
+  - `shellPreferences.ts` (`tests/shellPreferences.test.mjs`) for Open Sans defaults, preference normalization/application, date/time formatting, and cross-webview sync cleanup.
   - `folderDrag.ts` (`tests/folderDrag.test.mjs`) for drag payload URI/path normalization.
   - `topBarPins.ts` (`tests/topBarPins.test.mjs`) for explicit WebviewWindow event target and reveal-path logic.
   - `contextMenuPosition.ts` (`tests/contextMenuPosition.test.mjs`) for viewport clamp/flip math.
@@ -844,6 +873,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 | `process-manager:open` | Rust -> `process-manager` | unit | ProcessManagerSurface starts polling and refreshes immediately. |
 | `process-manager:closed` | Rust -> `process-manager` | unit | ProcessManagerSurface stops polling after explicit hide or focus loss. |
 | `show_control_plane` / `hide_control_plane` | frontend -> Rust | none | Explicitly shows/focuses or hides the hidden `control-plane` webview; no event payload fallback is required. |
+| `show_settings_panel` / `hide_settings_panel` | `top-bar` or `settings-panel` -> Rust | `{ anchorLeft, anchorWidth }` for show; none for hide | Shows/focuses or hides the hidden `settings-panel` webview. Rust aligns the dropdown below the top-left JasonShell button and clamps it inside the top-bar host width. |
 | `parse_automation_cli` / `validate_automation_request` | frontend -> Rust | argv list or `AutomationRequest` | Parses safe first-party automation intents and enforces opt-in/security-boundary rules; it does not execute arbitrary commands. |
 | `get_single_instance_forwarding_contract` | frontend -> Rust | none | Returns the plan-only forwarding contract with `executesForwardedPayloads = false`. |
 | `resolve_provider_registry` | frontend -> Rust | `ProviderRegistryConfig` | Resolves bounded first-party provider definitions and rejects secret/executable/plugin config. |
@@ -921,6 +951,10 @@ Capability and CSP contract:
   - Corrupt geometry JSON is backed up as `stack-popup-geometry-v1.json.corrupt-<millis>` and ignored; missing/corrupt geometry falls back to the default monitor-clamped Stack Browser size.
 - Browser localStorage:
   - `jasonshell.search.usage` is a frontend usage boost map owned by `searchRanking.ts`. It should remain small, result-id keyed, and non-sensitive.
+  - `jasonshell.theme` is a frontend cosmetic theme id owned by `src/lib/themes.ts`. It is normalized against the first-party theme registry, applied before Svelte mount, and synchronized across shell webviews by `storage` events plus `BroadcastChannel` `jasonshell.theme.changed` when available. It must remain a non-secret renderer preference and should not be promoted to Rust settings without a versioned migration note.
+  - `jasonshell.uiPreferences` is a frontend renderer preference object owned by `src/lib/shellPreferences.ts`. It stores only UI preferences: `fontId`, `dateFormat`, `use24HourTime`, `showSeconds`, `compactDensity`, `strongFocusRing`, `reducedTransparency`, and `showSearchShortcutHint`. It is normalized before use, applied before Svelte mount, synchronized by `storage` events plus `BroadcastChannel` `jasonshell.uiPreferences.changed`, and must remain non-secret.
+- Local bundled font assets:
+  - `src/assets/fonts/open-sans/` contains Open Sans WOFF2 assets downloaded from Google Fonts plus the source CSS/manifest used during download. `src/app.css` imports only the local font files used by the shell and must not depend on runtime network font fetching.
 - External configuration/source data:
   - Explorer taskbar pins are read from `%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar`; JasonShell does not write Explorer pins.
   - Search roots come from `APPDATA`, `PROGRAMDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`, and `USERPROFILE`.
@@ -955,11 +989,14 @@ Capability and CSP contract:
   - `tests/devTools.test.mjs`
   - `tests/developerProviders.test.mjs`
   - `tests/stackBrowserContextActions.test.mjs`
+  - `tests/themeRegistry.test.mjs`
+  - `tests/shellPreferences.test.mjs`
+  - `tests/settingsPanelWiring.test.mjs`
 - `npm run cargo:test`: Rust tests via `cargo test --manifest-path src-tauri/Cargo.toml`.
 - `npm run cargo:check`: Rust compile check via `cargo check --manifest-path src-tauri/Cargo.toml`.
 - `npm run validate`: full bundle: check, build, JS tests, Rust tests, Cargo check.
 - Windows CI: `.github/workflows/windows-ci.yml` runs checkout, Node 20 setup with npm cache, stable Rust setup, `npm ci`, `npm run check`, `npm run build`, `npm run test:node`, `npm run cargo:test`, and `npm run cargo:check` on `windows-latest` for pushes to `main` and pull requests.
-- Live smoke checklist: `docs/smoke-test-windows.md` covers manual post-static-validation checks for all six shipped surfaces and explicitly notes system tray as parked/experimental.
+- Live smoke checklist: `docs/smoke-test-windows.md` covers manual post-static-validation checks for shipped surfaces and explicitly notes system tray as parked/experimental; update it when adding or promoting auxiliary surfaces such as `settings-panel`.
 
 Run strategy:
 
@@ -968,6 +1005,7 @@ Run strategy:
 - Svelte component changes: run `npm run check` and the focused Node tests for any helper touched; run `npm run build` when import graphs, payload types, or component syntax changed.
 - Rust command/native changes: run focused `cargo test --manifest-path src-tauri/Cargo.toml <module-or-test-filter>` when available, then `npm run cargo:check`; run full `npm run cargo:test` for cross-module command/payload/native helper changes.
 - Cross-boundary command/event changes: run at least `npm run check`, `npm run test:node`, `npm run cargo:check`, and focused Rust tests for the command owner. Full `npm run validate` is preferred before declaring a feature slice complete.
+- Settings-panel or shell-preference changes: run focused Node coverage for `tests/shellPreferences.test.mjs` and `tests/settingsPanelWiring.test.mjs`, `npm run check`, focused Rust `cargo test --manifest-path src-tauri/Cargo.toml settings_panel` when placement changes, and full `npm run validate` before declaring the slice complete.
 - AppBar/window geometry/native shell changes: static validation is insufficient. After check/test/build, run live `npm run tauri dev` and inspect terminal runtime metrics plus actual top/bottom geometry. Use Win32/UIA inspection when debugging zero-height or blank WebView2 regressions.
 - Search/index changes: run Rust search tests through `npm run cargo:test` or a focused search filter, and Node tests if top-bar/search-panel state changed. Avoid live broad scans as a substitute for bounded-root tests.
 - Stack Browser file-operation or popup-geometry changes: run focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup`, relevant Node tests (`stackPopupState`, `folderDrag`, `contextMenuPosition`, `stackPopupContextMenu`, `stackBrowserTopBarPinFlow`, `overlayDismissalWiring`), and `npm run check` for Svelte wiring.
@@ -993,11 +1031,14 @@ Run strategy:
 - Developer search providers: `tests/developerProviders.test.mjs`.
 - Stack Browser context action planning: `tests/stackBrowserContextActions.test.mjs`.
 - Parked system-tray prototype normalization/click request helpers: `tests/systemTray.test.mjs`.
+- Shell theme registry, theme count/options, DOM application, pre-mount application order, localStorage key, and cross-webview sync cleanup: `tests/themeRegistry.test.mjs`.
+- Shell preferences and Settings panel wiring: `tests/shellPreferences.test.mjs` covers Open Sans default/local asset wiring, preference normalization/application, date/time formatting, storage, BroadcastChannel sync, and listener cleanup. `tests/settingsPanelWiring.test.mjs` covers `settings-panel` surface routing, top-left button show command wiring, settings controls, capability file presence, and Rust placement test presence.
 - Rust stack popup file/pin operations: `cargo test --manifest-path src-tauri/Cargo.toml stack_popup`.
+- Rust settings-panel placement helpers: `cargo test --manifest-path src-tauri/Cargo.toml settings_panel`.
 - Rust process-manager helpers: `cargo test --manifest-path src-tauri/Cargo.toml process_manager`.
 - Rust workspace and developer tooling helpers: `cargo test --manifest-path src-tauri/Cargo.toml workspaces` and `cargo test --manifest-path src-tauri/Cargo.toml dev_tools`.
 - Rust task-window filtering/activity: `src-tauri/src/task_windows/tests.rs` through cargo tests.
-- Geometry/runtime metrics require live `npm run tauri dev` inspection; static tests cannot prove actual WebView2 native rect behavior.
+- Geometry/runtime metrics and exact settings-panel anchoring/focus delivery require live Tauri/WebView2 inspection; static tests cannot prove actual native rect behavior.
 
 ### Defect classes caught by validation
 
@@ -1042,6 +1083,8 @@ Use this checklist before touching major shell surfaces:
 
 - Do keep process enumeration and kill authority in Rust. Svelte may sort/display current rows but must not infer killability beyond backend fields.
 - Do keep process refresh conservative while the popup is open; avoid broad polling while hidden and avoid concurrent stacked `list_processes` requests.
+- Do preserve reader stability for automatic volatile-metric refreshes; use explicit sort changes or explicit refreshes when the user asks to reapply order.
+- Do keep taskbar-active process priority display-only. It may promote rows and badges, but killability must still come only from Rust process guardrails.
 - Do derive CPU percent from process-time snapshots rather than heavyweight per-row sampling loops.
 - Do guard destructive actions: never kill PID 0 or the current JasonShell process, and refresh after every kill attempt.
 - Do keep non-Windows fallbacks compiling with empty/unsupported behavior.
@@ -1113,6 +1156,12 @@ Use this checklist before touching major shell surfaces:
 
 ## Change Ledger
 
+- 2026-04-28T13:15:58-05:00 `[USER]` IN_PROGRESS: Add a JasonShell top-left dropdown from the `jasonshell` button with app settings, live theme selection, font selection/default Open Sans, custom date format string support, and additional useful shell settings. Expected affected surfaces/modules: `src/components/TopBar.svelte`, `src/components/TopBar.css`, `src/app.css`, `src/lib/themes.ts`, new settings/font/date-format helpers and tests if needed, downloaded Open Sans font assets, `tests/*`, and this spec. Constraints: preserve existing top-bar icon/tab/component positions except for the requested dropdown anchored to the existing button; theme changes must apply immediately to the UI; use downloaded Open Sans from Google Fonts as the default application font; keep settings renderer-safe and non-secret.
+- 2026-04-28T13:30:58-05:00 `[CODE]` IMPLEMENTED: Added a hidden persistent `settings-panel` webview opened by the existing top-left `jasonshell` top-bar button. `TopBar.svelte` now opens settings instead of search from that button while preserving existing icon/tab positions; search remains available from the search input and Ctrl/Cmd+K. `SettingsPanelSurface.svelte` exposes live shell settings for theme, font, custom date format, 24-hour time, seconds, compact density, strong focus ring, reduced transparency, and search shortcut hint, with Done/Close/Escape dismissal. `src/lib/shellPreferences.ts` owns renderer-only preference normalization, localStorage persistence under `jasonshell.uiPreferences`, BroadcastChannel/storage sync, and date/time formatting. Open Sans is now the default font through local WOFF2 assets downloaded from Google Fonts under `src/assets/fonts/open-sans/` and declared in `src/app.css`; runtime UI does not fetch network fonts. Added `settings_panel.rs`, command/capability/surface contracts, settings-panel routing, placement tests, and source-level Node coverage.
+- 2026-04-28T13:35:17-05:00 `[TOOL]` VALIDATED: Relevant skills loaded for this slice were `senior-frontend`, `tdd-guide`, and `rust-skills`; no subagent was dispatched because the latest user request did not explicitly ask for subagent delegation in this tool session. Validation passed after updating a stale capability-list assertion for the new `settings-panel`: full `npm run validate` passed with `npm run check` 0 errors/0 warnings, production build passed and emitted local Open Sans font assets, `npm run test:node` passed 164/164 Node tests, `npm run cargo:test` passed 153 Rust tests with 1 ignored live tray diagnostic, and `npm run cargo:check` passed. Live smoke launched `src-tauri\target\debug\jason-shell.exe`, confirmed the repo debug process stayed running after 6 seconds with responding `JasonShell Bottom Bar`, then stopped only the repo-local debug process. `git diff --check` passed with CRLF conversion warnings only.
+- 2026-04-28T12:42:39-05:00 `[USER]` IN_PROGRESS: Run a frontend-led visual polish pass across JasonShell without moving existing icon/tab/component positions or changing shell behavior, then add a shell-wide theme system with base dark, base light, and 10-15 popular application/editor-inspired themes such as Monokai, Atom, and Nord. Expected affected surfaces/modules: `src/app.css`, extracted surface CSS files under `src/components/*Surface.css`, top/bottom bar CSS, theme token helpers/tests if added, theme persistence or selection UI only if it preserves existing layout positions, visual-system tests, and this spec. Constraints: preserve shell geometry, positions, IPC, event behavior, keyboard behavior, and existing component ownership; use frontend specialist implementation and QA.
+- 2026-04-28T13:07:23-05:00 `[CODE]` IMPLEMENTED: Frontend agent landed the visual polish/theme slice and orchestration follow-up integrated QA fixes. `src/app.css` now defines a richer global visual token system, shared control/form/focus/scrollbar styling, and 16 renderer themes: `base-dark`, `base-light`, `monokai`, `atom-one-dark`, `atom-one-light`, `nord`, `dracula`, `solarized-dark`, `solarized-light`, `github-dark`, `github-light`, `gruvbox-dark`, `gruvbox-light`, `tokyo-night`, `catppuccin-mocha`, and `ayu-dark`. Surface CSS now consumes the tokens for bars, popups, panels, menus, buttons, rows, badges, meters, and selected/hover states without moving existing icons/tabs/components. Added `src/lib/themes.ts` for theme normalization, pre-mount application, `localStorage["jasonshell.theme"]` persistence, and cross-webview `storage`/`BroadcastChannel("jasonshell.theme.changed")` synchronization. `ControlPlaneSurface.svelte` exposes the theme picker in the existing toolbar without privileged settings IPC.
+- 2026-04-28T13:07:23-05:00 `[TOOL]` VALIDATED: Relevant skills used were `senior-frontend`, `tdd-guide`, and `adversarial-reviewer`; the implementation ran through a frontend worker and QA subagent. Focused `npx tsc -p tsconfig.test.json; node --test tests/themeRegistry.test.mjs` passed 4/4. Full `npm run validate` passed: Svelte check 0 errors/0 warnings, production build passed, `npm run test:node` passed 156/156 Node tests, `npm run cargo:test` passed 151 Rust tests with one ignored live tray diagnostic, and `npm run cargo:check` passed. Fresh live debug-binary smoke launched `src-tauri\target\debug\jason-shell.exe`, confirmed it stayed running after 6 seconds, exposed `JasonShell Bottom Bar`, and then stopped repo-local debug processes. Adversarial re-review returned CLEAN after theme-sync test and spec follow-ups.
 - 2026-04-28T00:00Z [USER] IN_PROGRESS: Keep Stack Browser visible after delete execution and add persistent resizing. Expected affected surfaces/modules: `src/components/StackPopupSurface.svelte`, `src/components/StackPopupSurface.css`, `src/lib/stackPopup.ts`, `src/ipc/commands.ts`, `src-tauri/src/stack_popup.rs` or split modules, `src-tauri/src/main.rs`, `src-tauri/src/contracts.rs`, stack-popup capability files if command scope changes, related tests, and `master_spec.md`. Requirements: deleting a file should refresh the visible folder in real time without closing the Stack Browser; the popup should remain until the user clicks away from it or presses Escape; users should be able to resize the Stack Browser and have that size persist so empty-space paste targets can be made available.
 - 2026-04-28T00:00Z [CODE] IMPLEMENTED: Stack Browser confirmed delete now keeps `stack-popup` visible through delete execution by guarding Rust focus-loss hiding inside `delete_stack_item`, refreshing the source folder after the delete loop, and refocusing the popup if an internal delete operation stole focus. Added persisted Stack Browser resizing through a Svelte `.stack-resize-grip`, `resizeStackPopup()` frontend wrapper, `resize_stack_popup` Rust command, monitor-clamped logical sizing in `src-tauri/src/stack_popup/popup_window.rs`, and `stack-popup-geometry-v1.json` under app-local data. Updated Stack Browser command contracts, source-wiring tests, Rust geometry tests, and durable spec sections.
 - 2026-04-28T00:00Z [TOOL] VALIDATED: Worker 1 used loaded relevant skills (`senior-frontend`, `rust-skills`, `tdd-guide`). Validation passed: `npm run check` 0 errors/0 warnings, `npm run test:node` passed 142/142 Node tests including Stack Browser delete/resize wiring coverage, `npm run build` passed, focused `cargo test --manifest-path src-tauri/Cargo.toml stack_popup` passed 28/28 Stack Browser Rust tests, `cargo test --manifest-path src-tauri/Cargo.toml core_event_contracts_are_stable` passed 1/1 focused contract test, `cargo check --manifest-path src-tauri/Cargo.toml` passed, `cargo fmt --manifest-path src-tauri/Cargo.toml --check` passed, and in-scope `git diff --check -- ...` exited 0 with CRLF conversion warnings only. Full `git diff --check` is blocked by pre-existing out-of-scope `src/components/TopBar.svelte` trailing whitespace from earlier dirty search-overlay edits. Residual risk: live WebView2 smoke is still useful for exact drag-resize feel and real Recycle Bin focus timing.
@@ -1164,6 +1213,13 @@ Use this checklist before touching major shell surfaces:
 - 2026-04-26 `[TOOL]` VALIDATED: Ran `cargo fmt --manifest-path src-tauri/Cargo.toml`; `npm run test:search` passed 85 Node tests including new process-manager sort/wiring coverage; `npm run check` passed with 0 errors/0 warnings; `npm run build` passed; `npm run cargo:test` passed 80 Rust tests including process-manager CPU/kill-guard tests; `npm run cargo:check` passed; final `npm run validate` passed the full bundle.
 - 2026-04-26 `[USER]` IN_PROGRESS: Perform independent QA review of the newly implemented bottom-bar Task Manager-like `process-manager` popup. Scope: inspect changed Rust/Svelte/TypeScript/test/spec files, verify window routing/IPC registration, process enumeration performance/concurrency behavior, kill guardrails, sortable helper coverage, non-Windows fallback, durable `master_spec.md` updates, and run focused validation where feasible. Constraints: preserve unrelated worktree changes, do not commit, only fix clear safe in-scope defects.
 - 2026-04-26 `[TOOL]` VALIDATED: Independent QA inspected process-manager Rust/Svelte/TypeScript/test/spec wiring and ran `npm run check`, focused process-manager Node tests, focused `cargo test --manifest-path src-tauri/Cargo.toml process_manager`, and `cargo check --manifest-path src-tauri/Cargo.toml`; all commands passed. QA found in-scope follow-up needs: expose/test the claimed Start Time sortable column in the UI, and expand `master_spec.md` functional sections/maps from five surfaces/windows to include `process-manager` durably rather than only ledger/invariant/risk notes.
+- 2026-04-28T11:45:32-05:00 `[USER]` IN_PROGRESS: Add Stack Browser background/margin right-click directory actions, change bottom-bar active task tiles from uniform width to content-sized tiles with a minimum width, and make Process Manager more Task Manager-like by prioritizing taskbar-active processes, preserving guarded kill actions, and preventing automatic refresh from constantly reordering volatile sorts such as CPU. Expected affected surfaces/modules: `src/components/StackPopupSurface.svelte`, `src/components/StackPopupSurface.css`, Stack Browser context-menu helpers/tests, `src/components/BottomBar.svelte`, `src/components/BottomBar.css`, taskbar window grouping/state helpers/tests, `src/components/ProcessManagerSurface.svelte`, `src/components/ProcessManagerSurface.css`, `src/lib/processManagerState.ts`, `src/features/process-manager/processManagerUxState.ts`, `src/lib/processManager.ts`, Rust process/task-window command helpers if active-task metadata is needed, related tests, live smoke notes, and this spec.
+- 2026-04-28T12:05:11-05:00 `[CODE]` IMPLEMENTED: Worker 1 added Stack Browser background/margin context-menu handling in `src/components/StackPopupSurface.svelte`; row menus still stop propagation, and background menus now expose Paste/New Folder plus selected-item Copy/Cut/Rename/Delete/Reveal actions while ignoring toolbar/editor/dialog/resize controls. Bottom-bar task buttons in `src/components/BottomBar.css` now use content-sized flex sizing with a 6.2rem minimum, 14rem maximum, and ellipsis truncation. Added focused regressions in `tests/stackPopupContextMenu.test.mjs` and `tests/taskbarUxState.test.mjs`.
+- 2026-04-28T12:05:11-05:00 `[TOOL]` VALIDATED: Worker 1 ran `npm run test:node` and it passed 150 Node tests after concurrent Process Manager changes, then ran `npm run check` and Svelte check passed with 0 errors and 0 warnings. Live Tauri smoke remains useful for exact WebView right-click/focus behavior and visual task-tile sizing.
+- 2026-04-28T12:22:00-05:00 `[CODE]` IMPLEMENTED: Worker 2 made Process Manager prioritize taskbar-active processes by adding `process_id`/`processId` to task-window metadata, enriching process rows with taskbar badges/counts/titles in `src/features/process-manager/processManagerUxState.ts`, and ordering rows through `src/lib/processManagerState.ts`. Automatic refreshes for volatile metric sorts now preserve existing relative row order while updating metric values; explicit sort, manual refresh, popup open, and post-kill refresh reapply ordering. Kill actions still use existing two-step confirmation and Rust guardrails.
+- 2026-04-28T12:22:00-05:00 `[TOOL]` VALIDATED: Worker 2 ran focused `npx tsc -p tsconfig.test.json; node --test tests/processManagerState.test.mjs tests/processManagerUxState.test.mjs tests/processManagerWiring.test.mjs` with 17/17 tests passing; `npm run check` passed with 0 errors/0 warnings; `cargo test --manifest-path src-tauri/Cargo.toml process_manager` passed 12/12; `cargo test --manifest-path src-tauri/Cargo.toml task_windows` passed 18/18; `npm run test:node` passed 150/150; and `cargo check --manifest-path src-tauri/Cargo.toml` passed. Live Tauri smoke remains useful to visually confirm badge placement and active-window prioritization with real Windows taskbar data.
+- 2026-04-28T12:35:00-05:00 `[TOOL]` VALIDATED: Orchestration integration added top-level promoted process-tree rows for taskbar-active processes, ran `npm run validate`, and passed Svelte check, production build, 151 Node tests, 151 Rust tests with one ignored live tray diagnostic, and Cargo check. A bounded live smoke first confirmed `npm run tauri dev` could compile/launch `jason-shell.exe` against the already-running Vite server while a second dev server could not bind ports 1420/1421; after cleanup, a direct debug-binary smoke confirmed `target/debug/jason-shell.exe` stayed running, responded to Windows, and exposed the `JasonShell Bottom Bar` window title before it was stopped.
+- 2026-04-28T12:45:00-05:00 `[TOOL]` VALIDATED: Adversarial QA reviewed the integrated diff and returned CONCERNS rather than BLOCK. Follow-up fixes added lightweight `list_taskbar_process_windows` so Process Manager no longer polls full icon/activity taskbar window data every second, tightened Process Manager name/badge flex shrinking, exported and tested Stack Browser background-context ignore selectors, and reran final `npm run validate`; Svelte check, production build, 152 Node tests, 151 Rust tests with one ignored live tray diagnostic, and Cargo check all passed.
 
 ## Maintenance instructions for keeping the spec accurate
 

@@ -5,7 +5,9 @@ import {
   formatProcessMemory,
   formatProcessPorts,
   formatProcessStartTime,
+  isVolatileProcessSortColumn,
   nextProcessSortState,
+  orderProcessRefresh,
   processDeveloperSummary,
   sortProcesses
 } from '../dist-tests/lib/processManagerState.js';
@@ -28,6 +30,61 @@ test('sortProcesses sorts metrics descending and pushes unknown values last', ()
     sortProcesses(processes, { column: 'cpuPercent', direction: 'desc' }).map((process) => process.pid),
     [10, 20, 30]
   );
+});
+
+test('sortProcesses prioritizes taskbar-active processes before column ordering', () => {
+  assert.deepEqual(
+    sortProcesses(processes, { column: 'cpuPercent', direction: 'desc' }, { taskbarActivePids: [20] }).map((process) => process.pid),
+    [20, 10, 30]
+  );
+});
+
+test('orderProcessRefresh preserves volatile metric reading order while refreshing row values', () => {
+  const previous = [
+    { pid: 10, name: 'Alpha', cpuPercent: 50, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: true },
+    { pid: 20, name: 'zeta', cpuPercent: 10, memoryBytes: 200, threadCount: 1, status: 'running', isKillable: true }
+  ];
+  const refreshed = [
+    { pid: 10, name: 'Alpha', cpuPercent: 1, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: true },
+    { pid: 20, name: 'zeta', cpuPercent: 99, memoryBytes: 200, threadCount: 1, status: 'running', isKillable: true },
+    { pid: 30, name: 'beta', cpuPercent: 70, memoryBytes: 300, threadCount: 1, status: 'running', isKillable: true }
+  ];
+
+  const ordered = orderProcessRefresh(previous, refreshed, { column: 'cpuPercent', direction: 'desc' }, {
+    preserveExistingOrder: true
+  });
+
+  assert.deepEqual(ordered.map((process) => [process.pid, process.cpuPercent]), [
+    [10, 1],
+    [20, 99],
+    [30, 70]
+  ]);
+});
+
+test('orderProcessRefresh still promotes taskbar-active processes during stable refreshes', () => {
+  const previous = [
+    { pid: 10, name: 'Alpha', cpuPercent: 50, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: true },
+    { pid: 20, name: 'zeta', cpuPercent: 10, memoryBytes: 200, threadCount: 1, status: 'running', isKillable: true }
+  ];
+  const refreshed = [
+    { pid: 10, name: 'Alpha', cpuPercent: 50, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: true },
+    { pid: 20, name: 'zeta', cpuPercent: 10, memoryBytes: 200, threadCount: 1, status: 'running', isKillable: true, taskbarActive: true }
+  ];
+
+  assert.deepEqual(
+    orderProcessRefresh(previous, refreshed, { column: 'cpuPercent', direction: 'desc' }, {
+      preserveExistingOrder: true,
+      taskbarActivePids: [20]
+    }).map((process) => process.pid),
+    [20, 10]
+  );
+});
+
+test('detects volatile process sort columns', () => {
+  assert.equal(isVolatileProcessSortColumn('cpuPercent'), true);
+  assert.equal(isVolatileProcessSortColumn('memoryBytes'), true);
+  assert.equal(isVolatileProcessSortColumn('threadCount'), true);
+  assert.equal(isVolatileProcessSortColumn('name'), false);
 });
 
 test('sortProcesses sorts process start time with unknown values last by default', () => {

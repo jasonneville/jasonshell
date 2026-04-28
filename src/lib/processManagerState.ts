@@ -8,6 +8,10 @@ export type ProcessSortState = {
   direction: SortDirection;
 };
 
+export type ProcessOrderOptions = {
+  taskbarActivePids?: Iterable<number>;
+};
+
 const STRING_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: 'base'
@@ -29,15 +33,65 @@ export function nextProcessSortState(
 
 export function sortProcesses(
   processes: readonly ProcessInfo[],
-  sort: ProcessSortState
+  sort: ProcessSortState,
+  options: ProcessOrderOptions = {}
 ): ProcessInfo[] {
+  const taskbarActivePids = new Set(options.taskbarActivePids ?? []);
   return [...processes].sort((left, right) => {
+    const leftTaskbarActive = taskbarActivePids.has(left.pid) || left.taskbarActive === true;
+    const rightTaskbarActive = taskbarActivePids.has(right.pid) || right.taskbarActive === true;
+    if (leftTaskbarActive !== rightTaskbarActive) {
+      return leftTaskbarActive ? -1 : 1;
+    }
+
     const comparison = compareProcessValues(left, right, sort.column);
     if (comparison !== 0) {
       return sort.direction === 'asc' ? comparison : -comparison;
     }
     return left.pid - right.pid;
   });
+}
+
+export function orderProcessRefresh(
+  previousProcesses: readonly ProcessInfo[],
+  nextProcesses: readonly ProcessInfo[],
+  sort: ProcessSortState,
+  options: ProcessOrderOptions & { preserveExistingOrder?: boolean } = {}
+): ProcessInfo[] {
+  const sortedNextProcesses = sortProcesses(nextProcesses, sort, options);
+  if (!options.preserveExistingOrder || previousProcesses.length === 0) {
+    return sortedNextProcesses;
+  }
+
+  const previousIndexByPid = new Map(previousProcesses.map((process, index) => [process.pid, index]));
+  const sortedIndexByPid = new Map(sortedNextProcesses.map((process, index) => [process.pid, index]));
+  const taskbarActivePids = new Set(options.taskbarActivePids ?? []);
+
+  return [...sortedNextProcesses].sort((left, right) => {
+    const leftTaskbarActive = taskbarActivePids.has(left.pid) || left.taskbarActive === true;
+    const rightTaskbarActive = taskbarActivePids.has(right.pid) || right.taskbarActive === true;
+    if (leftTaskbarActive !== rightTaskbarActive) {
+      return leftTaskbarActive ? -1 : 1;
+    }
+
+    const leftPreviousIndex = previousIndexByPid.get(left.pid);
+    const rightPreviousIndex = previousIndexByPid.get(right.pid);
+    if (typeof leftPreviousIndex === 'number' && typeof rightPreviousIndex === 'number') {
+      return leftPreviousIndex - rightPreviousIndex;
+    }
+    if (typeof leftPreviousIndex === 'number') {
+      return -1;
+    }
+    if (typeof rightPreviousIndex === 'number') {
+      return 1;
+    }
+
+    return (sortedIndexByPid.get(left.pid) ?? 0) - (sortedIndexByPid.get(right.pid) ?? 0);
+  });
+}
+
+export function isVolatileProcessSortColumn(column: ProcessSortColumn): boolean {
+  return column === 'cpuPercent' || column === 'memoryBytes' || column === 'threadCount';
 }
 
 export function formatProcessCpu(cpuPercent: number | null | undefined): string {

@@ -12,6 +12,7 @@ mod providers;
 mod search_panel;
 mod search_sources;
 mod settings;
+mod settings_panel;
 mod shell_paths;
 mod shell_windows;
 mod stack_popup;
@@ -62,6 +63,7 @@ fn main() {
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
             task_windows::list_open_task_windows,
+            task_windows::list_taskbar_process_windows,
             task_windows::activate_task_window,
             task_windows::maximize_task_window,
             task_preview::show_task_window_preview,
@@ -77,6 +79,8 @@ fn main() {
             process_manager::hide_process_manager,
             control_plane::show_control_plane,
             control_plane::hide_control_plane,
+            settings_panel::show_settings_panel,
+            settings_panel::hide_settings_panel,
             process_manager::list_processes,
             process_manager::kill_process,
             search_sources::search_system,
@@ -160,6 +164,13 @@ fn main() {
                 && matches!(event, WindowEvent::Focused(false))
             {
                 let _ = window.emit(process_manager::PROCESS_MANAGER_CLOSED_EVENT, ());
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::SETTINGS_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
                 let _ = window.hide();
                 return;
             }

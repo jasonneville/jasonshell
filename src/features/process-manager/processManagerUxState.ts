@@ -1,9 +1,14 @@
 import type { ProcessInfo } from '../../lib/processManager';
+import type { TaskbarProcessWindow } from '../../lib/taskbarWindows';
 
 export type ProcessTreeRow = {
   process: ProcessInfo;
   depth: number;
   childCount: number;
+};
+
+export type ProcessTreeRowOptions = {
+  promotedRootPids?: Iterable<number>;
 };
 
 export type SafeKillButtonState = {
@@ -22,6 +27,52 @@ export type ProcessKillPlan = {
   requiresSecondConfirmation: boolean;
   canExecute: boolean;
 };
+
+export function enrichProcessesWithTaskbarWindows(
+  processes: readonly ProcessInfo[],
+  taskbarWindows: readonly TaskbarProcessWindow[]
+): ProcessInfo[] {
+  const windowsByPid = new Map<number, TaskbarProcessWindow[]>();
+  for (const window of taskbarWindows) {
+    if (typeof window.processId !== 'number') {
+      continue;
+    }
+    const windows = windowsByPid.get(window.processId) ?? [];
+    windows.push(window);
+    windowsByPid.set(window.processId, windows);
+  }
+
+  return processes.map((process) => {
+    const windows = windowsByPid.get(process.pid) ?? [];
+    if (!windows.length) {
+      return {
+        ...process,
+        taskbarWindowCount: 0,
+        taskbarActive: false,
+        taskbarForeground: false,
+        taskbarTitles: []
+      };
+    }
+
+    return {
+      ...process,
+      taskbarWindowCount: windows.length,
+      taskbarActive: true,
+      taskbarForeground: windows.some((window) => window.isActive),
+      taskbarTitles: windows.map((window) => window.title).filter((title) => title.trim().length > 0)
+    };
+  });
+}
+
+export function taskbarActiveProcessIds(taskbarWindows: readonly TaskbarProcessWindow[]): number[] {
+  return Array.from(
+    new Set(
+      taskbarWindows
+        .map((window) => window.processId)
+        .filter((processId): processId is number => typeof processId === 'number')
+    )
+  );
+}
 
 export function filterProcesses(processes: readonly ProcessInfo[], query: string): ProcessInfo[] {
   const tokens = normalize(query).split(' ').filter(Boolean);
@@ -46,13 +97,21 @@ export function filterProcesses(processes: readonly ProcessInfo[], query: string
   });
 }
 
-export function buildProcessTreeRows(processes: readonly ProcessInfo[]): ProcessTreeRow[] {
+export function buildProcessTreeRows(
+  processes: readonly ProcessInfo[],
+  options: ProcessTreeRowOptions = {}
+): ProcessTreeRow[] {
   const byPid = new Map(processes.map((process) => [process.pid, process]));
   const childrenByParent = new Map<number, ProcessInfo[]>();
   const order = new Map(processes.map((process, index) => [process.pid, index]));
+  const promotedRootPids = new Set(options.promotedRootPids ?? []);
 
   for (const process of processes) {
-    if (typeof process.parentPid !== 'number' || !byPid.has(process.parentPid)) {
+    if (
+      promotedRootPids.has(process.pid)
+      || typeof process.parentPid !== 'number'
+      || !byPid.has(process.parentPid)
+    ) {
       continue;
     }
     const children = childrenByParent.get(process.parentPid) ?? [];
@@ -67,7 +126,9 @@ export function buildProcessTreeRows(processes: readonly ProcessInfo[]): Process
   const rows: ProcessTreeRow[] = [];
   const visited = new Set<number>();
   const roots = processes.filter(
-    (process) => typeof process.parentPid !== 'number' || !byPid.has(process.parentPid)
+    (process) => promotedRootPids.has(process.pid)
+      || typeof process.parentPid !== 'number'
+      || !byPid.has(process.parentPid)
   );
 
   function visit(process: ProcessInfo, depth: number) {

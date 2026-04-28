@@ -78,6 +78,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
         TaskbarWindow {
             hwnd: "42".to_string(),
             title: "Third".to_string(),
+            process_id: 42,
             process_name: "third".to_string(),
             icon_data_url: String::new(),
             is_active: true,
@@ -87,6 +88,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
         TaskbarWindow {
             hwnd: "7".to_string(),
             title: "First".to_string(),
+            process_id: 7,
             process_name: "first".to_string(),
             icon_data_url: String::new(),
             is_active: false,
@@ -96,6 +98,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
         TaskbarWindow {
             hwnd: "15".to_string(),
             title: "Second".to_string(),
+            process_id: 15,
             process_name: "second".to_string(),
             icon_data_url: String::new(),
             is_active: false,

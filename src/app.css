@@ -1,45 +1,360 @@
+@font-face {
+  font-family: 'Open Sans';
+  font-display: swap;
+  font-stretch: 100%;
+  font-style: normal;
+  font-weight: 400 800;
+  src: url('./assets/fonts/open-sans/open-sans-10.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Open Sans';
+  font-display: swap;
+  font-stretch: 100%;
+  font-style: normal;
+  font-weight: 400 800;
+  src: url('./assets/fonts/open-sans/open-sans-9.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   color-scheme: dark;
-  --js-font-sans: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --js-color-text: #f0f4ff;
-  --js-color-text-strong: #f6f8ff;
-  --js-color-text-muted: rgba(218, 226, 248, 0.64);
-  --js-color-text-subtle: rgba(218, 226, 248, 0.46);
-  --js-color-surface: rgba(13, 16, 24, 0.98);
-  --js-color-surface-raised: rgba(23, 28, 39, 0.98);
-  --js-color-surface-sunken: rgba(7, 9, 14, 0.72);
-  --js-color-border: rgba(255, 255, 255, 0.1);
-  --js-color-border-soft: rgba(255, 255, 255, 0.06);
-  --js-color-accent: #7ca0ff;
-  --js-color-accent-soft: rgba(77, 124, 254, 0.16);
-  --js-color-accent-border: rgba(124, 160, 255, 0.36);
-  --js-color-info: rgba(77, 124, 254, 0.16);
+  --js-font-sans: 'Open Sans', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --js-color-bg: #090c13;
+  --js-color-text: #eef3ff;
+  --js-color-text-strong: #fbfdff;
+  --js-color-text-muted: rgba(222, 230, 248, 0.7);
+  --js-color-text-subtle: rgba(222, 230, 248, 0.5);
+  --js-color-surface: rgba(13, 17, 27, 0.985);
+  --js-color-surface-raised: rgba(24, 30, 43, 0.985);
+  --js-color-surface-sunken: rgba(7, 10, 17, 0.82);
+  --js-color-surface-overlay: rgba(255, 255, 255, 0.055);
+  --js-color-control: rgba(255, 255, 255, 0.07);
+  --js-color-control-hover: rgba(138, 167, 255, 0.16);
+  --js-color-control-active: rgba(138, 167, 255, 0.24);
+  --js-color-border: rgba(227, 235, 255, 0.14);
+  --js-color-border-soft: rgba(227, 235, 255, 0.08);
+  --js-color-accent: #8aa7ff;
+  --js-color-accent-soft: rgba(91, 130, 255, 0.18);
+  --js-color-accent-border: rgba(138, 167, 255, 0.44);
+  --js-color-selected: rgba(91, 130, 255, 0.2);
+  --js-color-success: rgba(92, 214, 149, 0.18);
+  --js-color-success-border: rgba(92, 214, 149, 0.42);
+  --js-color-info: rgba(91, 130, 255, 0.16);
   --js-color-warning: rgba(245, 191, 92, 0.18);
-  --js-color-error: rgba(255, 84, 84, 0.14);
-  --js-color-error-border: rgba(255, 119, 137, 0.42);
+  --js-color-warning-border: rgba(245, 191, 92, 0.44);
+  --js-color-error: rgba(255, 84, 104, 0.15);
+  --js-color-error-border: rgba(255, 119, 137, 0.46);
+  --js-color-error-text: #ffdfe4;
   --js-radius-xs: 0.18rem;
-  --js-radius-sm: 0.26rem;
-  --js-radius-md: 0.38rem;
-  --js-radius-lg: 0.5rem;
+  --js-radius-sm: 0.28rem;
+  --js-radius-md: 0.42rem;
+  --js-radius-lg: 0.56rem;
   --js-space-1: 0.18rem;
   --js-space-2: 0.35rem;
   --js-space-3: 0.55rem;
-  --js-space-4: 0.7rem;
-  --js-shadow-raised: 0 18px 42px rgba(0, 0, 0, 0.42);
-  --js-shadow-panel: 0 22px 46px rgba(0, 0, 0, 0.44);
-  --js-focus-ring: 0 0 0 2px rgba(150, 184, 255, 0.66);
+  --js-space-4: 0.72rem;
+  --js-shadow-raised: 0 18px 46px rgba(0, 0, 0, 0.42);
+  --js-shadow-panel: 0 24px 56px rgba(0, 0, 0, 0.48);
+  --js-focus-ring: 0 0 0 2px rgba(160, 190, 255, 0.7);
+  --js-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.065);
+  --js-gradient-surface: linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
+  --js-gradient-bar: linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
+  --js-gradient-control: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035));
+  --js-gradient-active: linear-gradient(180deg, rgba(138, 167, 255, 0.3), rgba(91, 130, 255, 0.16));
   --js-motion-fast: 140ms;
   --js-motion-medium: 220ms;
-  --js-scrollbar-thumb: rgba(124, 160, 255, 0.45);
+  --js-scrollbar-thumb: rgba(138, 167, 255, 0.48);
   --js-scrollbar-track: rgba(255, 255, 255, 0.06);
-  font-family:
-    var(--js-font-sans);
+  font-family: var(--js-font-sans);
   line-height: 1.4;
   font-synthesis: none;
   font-weight: 400;
   text-rendering: optimizeLegibility;
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
+}
+
+:root[data-shell-density='compact'] {
+  --js-space-2: 0.28rem;
+  --js-space-3: 0.46rem;
+  --js-space-4: 0.58rem;
+}
+
+:root[data-shell-focus='strong'] {
+  --js-focus-ring: 0 0 0 2px var(--js-color-accent), 0 0 0 4px rgba(255, 255, 255, 0.24);
+}
+
+:root[data-shell-transparency='reduced'] {
+  --js-color-surface-overlay: var(--js-color-control);
+  --js-gradient-surface: linear-gradient(180deg, var(--js-color-surface-raised), var(--js-color-surface));
+  --js-gradient-bar: linear-gradient(180deg, var(--js-color-surface-raised), var(--js-color-surface));
+}
+
+:root[data-theme='base-dark'] {
+  color-scheme: dark;
+}
+
+:root[data-theme='base-light'] {
+  color-scheme: light;
+  --js-color-bg: #eef2f8;
+  --js-color-text: #1e293b;
+  --js-color-text-strong: #0f172a;
+  --js-color-text-muted: rgba(45, 55, 72, 0.72);
+  --js-color-text-subtle: rgba(71, 85, 105, 0.55);
+  --js-color-surface: rgba(247, 250, 255, 0.985);
+  --js-color-surface-raised: rgba(255, 255, 255, 0.99);
+  --js-color-surface-sunken: rgba(226, 232, 240, 0.74);
+  --js-color-surface-overlay: rgba(15, 23, 42, 0.045);
+  --js-color-control: rgba(15, 23, 42, 0.055);
+  --js-color-control-hover: rgba(37, 99, 235, 0.1);
+  --js-color-control-active: rgba(37, 99, 235, 0.17);
+  --js-color-border: rgba(30, 41, 59, 0.16);
+  --js-color-border-soft: rgba(30, 41, 59, 0.09);
+  --js-color-accent: #2563eb;
+  --js-color-accent-soft: rgba(37, 99, 235, 0.12);
+  --js-color-accent-border: rgba(37, 99, 235, 0.34);
+  --js-color-selected: rgba(37, 99, 235, 0.13);
+  --js-color-error-text: #7f1d1d;
+  --js-shadow-raised: 0 18px 46px rgba(15, 23, 42, 0.18);
+  --js-shadow-panel: 0 24px 58px rgba(15, 23, 42, 0.22);
+  --js-focus-ring: 0 0 0 2px rgba(37, 99, 235, 0.42);
+  --js-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --js-scrollbar-thumb: rgba(37, 99, 235, 0.38);
+  --js-scrollbar-track: rgba(15, 23, 42, 0.08);
+}
+
+:root[data-theme='monokai'] {
+  --js-color-bg: #1f1f1c;
+  --js-color-text: #f8f8f2;
+  --js-color-text-strong: #fffef6;
+  --js-color-text-muted: rgba(248, 248, 242, 0.68);
+  --js-color-text-subtle: rgba(248, 248, 242, 0.48);
+  --js-color-surface: rgba(39, 40, 34, 0.985);
+  --js-color-surface-raised: rgba(52, 53, 45, 0.985);
+  --js-color-surface-sunken: rgba(25, 26, 22, 0.82);
+  --js-color-accent: #a6e22e;
+  --js-color-accent-soft: rgba(166, 226, 46, 0.16);
+  --js-color-accent-border: rgba(166, 226, 46, 0.42);
+  --js-color-selected: rgba(166, 226, 46, 0.16);
+  --js-scrollbar-thumb: rgba(166, 226, 46, 0.42);
+}
+
+:root[data-theme='atom-one-dark'] {
+  --js-color-bg: #1d2028;
+  --js-color-text: #dbe2f1;
+  --js-color-text-strong: #f1f5ff;
+  --js-color-text-muted: rgba(171, 178, 191, 0.76);
+  --js-color-text-subtle: rgba(171, 178, 191, 0.52);
+  --js-color-surface: rgba(33, 37, 43, 0.985);
+  --js-color-surface-raised: rgba(42, 47, 56, 0.985);
+  --js-color-surface-sunken: rgba(24, 27, 32, 0.84);
+  --js-color-accent: #61afef;
+  --js-color-accent-soft: rgba(97, 175, 239, 0.16);
+  --js-color-accent-border: rgba(97, 175, 239, 0.42);
+  --js-color-selected: rgba(97, 175, 239, 0.16);
+  --js-scrollbar-thumb: rgba(97, 175, 239, 0.44);
+}
+
+:root[data-theme='atom-one-light'] {
+  color-scheme: light;
+  --js-color-bg: #eef0f4;
+  --js-color-text: #383a42;
+  --js-color-text-strong: #20232a;
+  --js-color-text-muted: rgba(56, 58, 66, 0.72);
+  --js-color-text-subtle: rgba(56, 58, 66, 0.5);
+  --js-color-surface: rgba(250, 250, 250, 0.99);
+  --js-color-surface-raised: rgba(255, 255, 255, 0.99);
+  --js-color-surface-sunken: rgba(228, 231, 237, 0.78);
+  --js-color-accent: #4078f2;
+  --js-color-accent-soft: rgba(64, 120, 242, 0.12);
+  --js-color-accent-border: rgba(64, 120, 242, 0.34);
+  --js-color-selected: rgba(64, 120, 242, 0.13);
+  --js-color-error-text: #7f1d1d;
+  --js-shadow-raised: 0 18px 46px rgba(56, 58, 66, 0.16);
+  --js-shadow-panel: 0 24px 58px rgba(56, 58, 66, 0.18);
+}
+
+:root[data-theme='nord'] {
+  --js-color-bg: #242933;
+  --js-color-text: #eceff4;
+  --js-color-text-strong: #ffffff;
+  --js-color-text-muted: rgba(216, 222, 233, 0.72);
+  --js-color-text-subtle: rgba(216, 222, 233, 0.5);
+  --js-color-surface: rgba(46, 52, 64, 0.985);
+  --js-color-surface-raised: rgba(59, 66, 82, 0.985);
+  --js-color-surface-sunken: rgba(36, 41, 51, 0.84);
+  --js-color-accent: #88c0d0;
+  --js-color-accent-soft: rgba(136, 192, 208, 0.16);
+  --js-color-accent-border: rgba(136, 192, 208, 0.42);
+  --js-color-selected: rgba(136, 192, 208, 0.16);
+}
+
+:root[data-theme='dracula'] {
+  --js-color-bg: #21222c;
+  --js-color-text: #f8f8f2;
+  --js-color-text-strong: #ffffff;
+  --js-color-text-muted: rgba(248, 248, 242, 0.7);
+  --js-color-text-subtle: rgba(248, 248, 242, 0.48);
+  --js-color-surface: rgba(40, 42, 54, 0.985);
+  --js-color-surface-raised: rgba(52, 55, 70, 0.985);
+  --js-color-surface-sunken: rgba(30, 31, 41, 0.84);
+  --js-color-accent: #bd93f9;
+  --js-color-accent-soft: rgba(189, 147, 249, 0.17);
+  --js-color-accent-border: rgba(189, 147, 249, 0.44);
+  --js-color-selected: rgba(189, 147, 249, 0.18);
+}
+
+:root[data-theme='solarized-dark'] {
+  --js-color-bg: #00212b;
+  --js-color-text: #eee8d5;
+  --js-color-text-strong: #fdf6e3;
+  --js-color-text-muted: rgba(147, 161, 161, 0.82);
+  --js-color-text-subtle: rgba(147, 161, 161, 0.58);
+  --js-color-surface: rgba(0, 43, 54, 0.985);
+  --js-color-surface-raised: rgba(7, 54, 66, 0.985);
+  --js-color-surface-sunken: rgba(0, 32, 41, 0.86);
+  --js-color-accent: #268bd2;
+  --js-color-accent-soft: rgba(38, 139, 210, 0.17);
+  --js-color-accent-border: rgba(38, 139, 210, 0.44);
+  --js-color-selected: rgba(38, 139, 210, 0.17);
+}
+
+:root[data-theme='solarized-light'] {
+  color-scheme: light;
+  --js-color-bg: #eee8d5;
+  --js-color-text: #586e75;
+  --js-color-text-strong: #073642;
+  --js-color-text-muted: rgba(88, 110, 117, 0.74);
+  --js-color-text-subtle: rgba(88, 110, 117, 0.52);
+  --js-color-surface: rgba(253, 246, 227, 0.99);
+  --js-color-surface-raised: rgba(255, 251, 235, 0.99);
+  --js-color-surface-sunken: rgba(238, 232, 213, 0.78);
+  --js-color-accent: #268bd2;
+  --js-color-accent-soft: rgba(38, 139, 210, 0.13);
+  --js-color-accent-border: rgba(38, 139, 210, 0.36);
+  --js-color-selected: rgba(38, 139, 210, 0.13);
+  --js-color-error-text: #7f1d1d;
+  --js-shadow-raised: 0 18px 46px rgba(88, 110, 117, 0.16);
+  --js-shadow-panel: 0 24px 58px rgba(88, 110, 117, 0.18);
+}
+
+:root[data-theme='github-dark'] {
+  --js-color-bg: #0d1117;
+  --js-color-text: #e6edf3;
+  --js-color-text-strong: #f0f6fc;
+  --js-color-text-muted: rgba(125, 133, 144, 0.9);
+  --js-color-text-subtle: rgba(125, 133, 144, 0.66);
+  --js-color-surface: rgba(13, 17, 23, 0.985);
+  --js-color-surface-raised: rgba(22, 27, 34, 0.985);
+  --js-color-surface-sunken: rgba(1, 4, 9, 0.86);
+  --js-color-border: rgba(139, 148, 158, 0.22);
+  --js-color-border-soft: rgba(139, 148, 158, 0.13);
+  --js-color-accent: #2f81f7;
+  --js-color-accent-soft: rgba(47, 129, 247, 0.16);
+  --js-color-accent-border: rgba(47, 129, 247, 0.42);
+  --js-color-selected: rgba(47, 129, 247, 0.16);
+}
+
+:root[data-theme='github-light'] {
+  color-scheme: light;
+  --js-color-bg: #f6f8fa;
+  --js-color-text: #24292f;
+  --js-color-text-strong: #1f2328;
+  --js-color-text-muted: rgba(87, 96, 106, 0.78);
+  --js-color-text-subtle: rgba(87, 96, 106, 0.56);
+  --js-color-surface: rgba(246, 248, 250, 0.99);
+  --js-color-surface-raised: rgba(255, 255, 255, 0.99);
+  --js-color-surface-sunken: rgba(234, 238, 242, 0.78);
+  --js-color-border: rgba(31, 35, 40, 0.16);
+  --js-color-border-soft: rgba(31, 35, 40, 0.1);
+  --js-color-accent: #0969da;
+  --js-color-accent-soft: rgba(9, 105, 218, 0.12);
+  --js-color-accent-border: rgba(9, 105, 218, 0.34);
+  --js-color-selected: rgba(9, 105, 218, 0.12);
+  --js-color-error-text: #7f1d1d;
+  --js-shadow-raised: 0 18px 46px rgba(31, 35, 40, 0.14);
+  --js-shadow-panel: 0 24px 58px rgba(31, 35, 40, 0.16);
+}
+
+:root[data-theme='gruvbox-dark'] {
+  --js-color-bg: #282018;
+  --js-color-text: #ebdbb2;
+  --js-color-text-strong: #fbf1c7;
+  --js-color-text-muted: rgba(213, 196, 161, 0.76);
+  --js-color-text-subtle: rgba(213, 196, 161, 0.54);
+  --js-color-surface: rgba(40, 40, 40, 0.985);
+  --js-color-surface-raised: rgba(60, 56, 54, 0.985);
+  --js-color-surface-sunken: rgba(29, 26, 24, 0.84);
+  --js-color-accent: #fabd2f;
+  --js-color-accent-soft: rgba(250, 189, 47, 0.16);
+  --js-color-accent-border: rgba(250, 189, 47, 0.42);
+  --js-color-selected: rgba(250, 189, 47, 0.15);
+}
+
+:root[data-theme='gruvbox-light'] {
+  color-scheme: light;
+  --js-color-bg: #f2e5bc;
+  --js-color-text: #3c3836;
+  --js-color-text-strong: #282828;
+  --js-color-text-muted: rgba(80, 73, 69, 0.75);
+  --js-color-text-subtle: rgba(80, 73, 69, 0.54);
+  --js-color-surface: rgba(251, 241, 199, 0.99);
+  --js-color-surface-raised: rgba(255, 248, 214, 0.99);
+  --js-color-surface-sunken: rgba(235, 219, 178, 0.78);
+  --js-color-accent: #b57614;
+  --js-color-accent-soft: rgba(181, 118, 20, 0.13);
+  --js-color-accent-border: rgba(181, 118, 20, 0.36);
+  --js-color-selected: rgba(181, 118, 20, 0.13);
+  --js-color-error-text: #7f1d1d;
+  --js-shadow-raised: 0 18px 46px rgba(60, 56, 54, 0.16);
+  --js-shadow-panel: 0 24px 58px rgba(60, 56, 54, 0.18);
+}
+
+:root[data-theme='tokyo-night'] {
+  --js-color-bg: #151826;
+  --js-color-text: #c0caf5;
+  --js-color-text-strong: #e6edff;
+  --js-color-text-muted: rgba(169, 177, 214, 0.76);
+  --js-color-text-subtle: rgba(169, 177, 214, 0.54);
+  --js-color-surface: rgba(26, 27, 38, 0.985);
+  --js-color-surface-raised: rgba(36, 40, 59, 0.985);
+  --js-color-surface-sunken: rgba(17, 19, 29, 0.86);
+  --js-color-accent: #7aa2f7;
+  --js-color-accent-soft: rgba(122, 162, 247, 0.17);
+  --js-color-accent-border: rgba(122, 162, 247, 0.44);
+  --js-color-selected: rgba(122, 162, 247, 0.17);
+}
+
+:root[data-theme='catppuccin-mocha'] {
+  --js-color-bg: #181825;
+  --js-color-text: #cdd6f4;
+  --js-color-text-strong: #f5e0dc;
+  --js-color-text-muted: rgba(186, 194, 222, 0.76);
+  --js-color-text-subtle: rgba(186, 194, 222, 0.54);
+  --js-color-surface: rgba(30, 30, 46, 0.985);
+  --js-color-surface-raised: rgba(49, 50, 68, 0.985);
+  --js-color-surface-sunken: rgba(17, 17, 27, 0.86);
+  --js-color-accent: #cba6f7;
+  --js-color-accent-soft: rgba(203, 166, 247, 0.17);
+  --js-color-accent-border: rgba(203, 166, 247, 0.44);
+  --js-color-selected: rgba(203, 166, 247, 0.17);
+}
+
+:root[data-theme='ayu-dark'] {
+  --js-color-bg: #0f1419;
+  --js-color-text: #e6e1cf;
+  --js-color-text-strong: #fff8df;
+  --js-color-text-muted: rgba(191, 184, 162, 0.74);
+  --js-color-text-subtle: rgba(191, 184, 162, 0.52);
+  --js-color-surface: rgba(15, 20, 25, 0.985);
+  --js-color-surface-raised: rgba(25, 31, 38, 0.985);
+  --js-color-surface-sunken: rgba(10, 14, 18, 0.86);
+  --js-color-accent: #ffcc66;
+  --js-color-accent-soft: rgba(255, 204, 102, 0.16);
+  --js-color-accent-border: rgba(255, 204, 102, 0.42);
+  --js-color-selected: rgba(255, 204, 102, 0.15);
 }
 
 html,
@@ -53,25 +368,79 @@ body,
 }
 
 body {
+  color: var(--js-color-text);
   user-select: none;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  height: 0.6rem;
+  width: 0.6rem;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--js-scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--js-scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+button,
+input,
+select {
+  font: inherit;
 }
 
 button {
   background: none;
   border: 0;
   color: inherit;
-  font: inherit;
   margin: 0;
   padding: 0;
 }
 
-:where(button, [role='button'], [tabindex], input):focus-visible {
+button:not(:disabled),
+select:not(:disabled) {
+  cursor: pointer;
+}
+
+:where(button, input, select, [role='button'], [tabindex]) {
+  transition:
+    background var(--js-motion-fast) ease,
+    border-color var(--js-motion-fast) ease,
+    box-shadow var(--js-motion-fast) ease,
+    color var(--js-motion-fast) ease,
+    opacity var(--js-motion-fast) ease;
+}
+
+:where(button, [role='button'], [tabindex], input, select):focus-visible {
   outline: 0;
   box-shadow: var(--js-focus-ring);
+}
+
+:where(input, select) {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+}
+
+:where(input, select):focus {
+  border-color: var(--js-color-accent-border);
+  outline: 0;
+}
+
+:where(input, select)::placeholder {
+  color: var(--js-color-text-subtle);
 }
 
 .surface-state {
@@ -90,13 +459,13 @@ button {
 
 .surface-state.warning {
   background: var(--js-color-warning);
-  border-color: rgba(245, 191, 92, 0.42);
+  border-color: var(--js-color-warning-border);
 }
 
 .surface-state.error {
   background: var(--js-color-error);
   border-color: var(--js-color-error-border);
-  color: #ffdfe4;
+  color: var(--js-color-error-text);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -117,6 +486,7 @@ button {
 
 @media (prefers-contrast: more), (forced-colors: active) {
   :root {
+    --js-color-bg: Canvas;
     --js-color-text: CanvasText;
     --js-color-text-strong: CanvasText;
     --js-color-text-muted: CanvasText;
@@ -124,13 +494,22 @@ button {
     --js-color-surface: Canvas;
     --js-color-surface-raised: Canvas;
     --js-color-surface-sunken: Canvas;
+    --js-color-surface-overlay: Canvas;
+    --js-color-control: Canvas;
+    --js-color-control-hover: Highlight;
+    --js-color-control-active: Highlight;
     --js-color-border: CanvasText;
     --js-color-border-soft: CanvasText;
     --js-color-accent: Highlight;
     --js-color-accent-soft: Highlight;
     --js-color-accent-border: Highlight;
+    --js-color-selected: Highlight;
     --js-focus-ring: 0 0 0 2px Highlight;
     --js-shadow-raised: none;
     --js-shadow-panel: none;
+    --js-gradient-surface: Canvas;
+    --js-gradient-bar: Canvas;
+    --js-gradient-control: Canvas;
+    --js-gradient-active: Highlight;
   }
 }

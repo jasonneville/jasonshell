@@ -1,0 +1,197 @@
+.settings-panel {
+  background:
+    radial-gradient(circle at 14% 0%, var(--js-color-accent-soft), transparent 34%),
+    var(--js-gradient-surface);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-lg);
+  box-shadow: var(--js-shadow-panel), var(--js-inset-highlight);
+  color: var(--js-color-text);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--js-font-sans);
+  gap: 0.72rem;
+  height: 100%;
+  overflow: hidden;
+  padding: 0.8rem;
+  width: 100%;
+}
+
+.settings-panel-header,
+.settings-panel-footer {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.settings-panel-header p,
+.settings-panel-header h1 {
+  margin: 0;
+}
+
+.settings-panel-header p {
+  color: var(--js-color-accent);
+  font-size: 0.62rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.settings-panel-header h1 {
+  color: var(--js-color-text-strong);
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+.settings-panel-header button,
+.settings-panel-footer button,
+.settings-chip-row button {
+  background: var(--js-gradient-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  min-height: 1.55rem;
+  padding: 0 0.55rem;
+}
+
+.settings-panel-header button {
+  min-width: 1.55rem;
+  padding: 0;
+}
+
+.settings-panel-header button:hover,
+.settings-panel-footer button:hover,
+.settings-chip-row button:hover {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
+}
+
+.settings-section {
+  background: var(--js-color-surface-overlay);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-md);
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 0.55rem;
+  padding: 0.66rem;
+}
+
+.settings-section h2 {
+  color: var(--js-color-text-strong);
+  font-size: 0.76rem;
+  margin: 0;
+}
+
+.settings-section > label {
+  display: grid;
+  gap: 0.26rem;
+}
+
+.settings-section label span,
+.settings-help {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.settings-section select,
+.settings-section input[type='text'],
+.settings-section input:not([type]) {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font-size: 0.7rem;
+  min-height: 1.65rem;
+  min-width: 0;
+  padding: 0 0.48rem;
+}
+
+.settings-section select {
+  appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--js-color-text-muted) 50%) right 0.46rem center / 0.38rem 0.38rem no-repeat,
+    var(--js-color-surface-sunken);
+  padding-right: 1.2rem;
+}
+
+.settings-help {
+  margin: -0.2rem 0 0;
+}
+
+.settings-toggle-grid {
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-toggle-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-toggle-grid label {
+  align-items: center;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  display: flex;
+  gap: 0.36rem;
+  min-width: 0;
+  padding: 0.42rem;
+}
+
+.settings-toggle-grid input {
+  accent-color: var(--js-color-accent);
+  flex: 0 0 auto;
+}
+
+.settings-toggle-grid span {
+  color: var(--js-color-text);
+  font-size: 0.62rem;
+  min-width: 0;
+}
+
+.settings-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.settings-preview {
+  align-items: center;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-md);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  min-height: 2.1rem;
+  padding: 0 0.62rem;
+}
+
+.settings-preview strong {
+  color: var(--js-color-text-strong);
+  font-size: 0.82rem;
+}
+
+.settings-preview span {
+  color: var(--js-color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-panel-footer {
+  margin-top: auto;
+}
+
+.settings-panel-footer button:last-child {
+  background: var(--js-gradient-active);
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text-strong);
+}

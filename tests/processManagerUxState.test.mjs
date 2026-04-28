@@ -3,9 +3,11 @@ import { test } from 'node:test';
 import {
   buildProcessKillPlan,
   buildProcessTreeRows,
+  enrichProcessesWithTaskbarWindows,
   filterProcesses,
   processMetricPercent,
-  safeKillButtonState
+  safeKillButtonState,
+  taskbarActiveProcessIds
 } from '../dist-tests/features/process-manager/processManagerUxState.js';
 
 const processes = [
@@ -32,6 +34,56 @@ test('builds tree-aware process rows while preserving supplied sibling order', (
     [30, 2, 0],
     [40, 0, 0]
   ]);
+});
+
+test('promotes taskbar-active processes to readable top-level rows', () => {
+  const rows = buildProcessTreeRows(processes, { promotedRootPids: [30] });
+
+  assert.deepEqual(rows.map((row) => [row.process.pid, row.depth, row.childCount]), [
+    [1, 0, 1],
+    [20, 1, 0],
+    [30, 0, 0],
+    [40, 0, 0]
+  ]);
+});
+
+test('enriches processes with taskbar-active window metadata', () => {
+  const enriched = enrichProcessesWithTaskbarWindows(processes, [
+    {
+      hwnd: '100',
+      processId: 20,
+      title: 'JasonShell - Code',
+      processName: 'Code Helper',
+      iconDataUrl: '',
+      isActive: true,
+      isMinimized: false,
+      activityState: 'idle'
+    },
+    {
+      hwnd: '200',
+      processId: 20,
+      title: 'Preview',
+      processName: 'Code Helper',
+      iconDataUrl: '',
+      isActive: false,
+      isMinimized: true,
+      activityState: 'busy'
+    }
+  ]);
+
+  assert.equal(enriched.find((process) => process.pid === 20)?.taskbarActive, true);
+  assert.equal(enriched.find((process) => process.pid === 20)?.taskbarForeground, true);
+  assert.equal(enriched.find((process) => process.pid === 20)?.taskbarWindowCount, 2);
+  assert.deepEqual(enriched.find((process) => process.pid === 20)?.taskbarTitles, ['JasonShell - Code', 'Preview']);
+  assert.equal(enriched.find((process) => process.pid === 1)?.taskbarActive, false);
+});
+
+test('extracts unique taskbar-active process ids', () => {
+  assert.deepEqual(taskbarActiveProcessIds([
+    { hwnd: '100', processId: 20, title: 'A', processName: 'a', iconDataUrl: '', isActive: false, isMinimized: false, activityState: 'idle' },
+    { hwnd: '200', processId: 20, title: 'B', processName: 'a', iconDataUrl: '', isActive: true, isMinimized: false, activityState: 'idle' },
+    { hwnd: '300', processId: null, title: 'C', processName: 'c', iconDataUrl: '', isActive: false, isMinimized: false, activityState: 'idle' }
+  ]), [20]);
 });
 
 test('normalizes metric bars and safe kill confirmation state', () => {

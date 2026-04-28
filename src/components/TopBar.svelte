@@ -38,6 +38,14 @@
   import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
   import { buildSearchCatalog } from '../lib/searchCatalog';
   import { rankSearchResults, recordSearchUsage } from '../lib/searchRanking';
+  import {
+    addShellPreferencesChangeListener,
+    formatShellDate,
+    formatShellTime,
+    getInitialShellPreferences,
+    type ShellPreferences
+  } from '../lib/shellPreferences';
+  import { showSettingsPanel } from '../lib/settingsPanel';
   import { isSystemPathResult, searchSystem, SEARCH_INDEX_REFRESHED_EVENT } from '../lib/systemSearch';
   import {
     showTopBarPinContextMenu,
@@ -52,19 +60,8 @@
   } from '../lib/systemSearchState';
   import { topBarIdentityState } from '../features/top-bar/topBarUxState';
 
-  const timeFormatter = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-
-  const dateFormatter = new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    month: 'short',
-    weekday: 'short'
-  });
-
   let now = new Date();
+  let shellPreferences: ShellPreferences = getInitialShellPreferences();
   let launchers: PinnedTaskbarLauncher[] = [];
   let openWindows: TaskbarWindow[] = [];
   let stackPins: StackPin[] = [];
@@ -107,6 +104,8 @@
     statusMessage: searchStatus
   };
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
+  $: shellTime = formatShellTime(now, shellPreferences);
+  $: shellDate = formatShellDate(now, shellPreferences.dateFormat);
   $: if (searchOpen) {
     void publishSearchResults(searchPanelPayload);
   }
@@ -236,6 +235,21 @@
       return;
     }
     void closePanel();
+  }
+
+  async function openSettingsPanel(target: EventTarget | null) {
+    const button = target instanceof HTMLElement ? target : null;
+    const rect = button?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    await closePanel();
+    await showSettingsPanel({
+      anchorLeft: rect.left,
+      anchorWidth: rect.width
+    }).catch((error) => {
+      console.error('Failed to show settings panel', error);
+    });
   }
 
   async function openStackFromPin(pin: StackPin, target: EventTarget | null) {
@@ -689,6 +703,9 @@
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    unlisteners.push(addShellPreferencesChangeListener((preferences) => {
+      shellPreferences = preferences;
+    }));
 
     return () => {
       window.clearInterval(timer);
@@ -718,11 +735,9 @@
   <button
     class="shell-home-button"
     type="button"
-    aria-label="JasonShell Home: open command search"
-    on:click={() => {
-      searchInput?.focus();
-      void openPanel();
-    }}
+    aria-haspopup="dialog"
+    aria-label="Open JasonShell settings"
+    on:click={(event) => void openSettingsPanel(event.currentTarget)}
   >
     jasonshell
   </button>
@@ -777,10 +792,10 @@
   </div>
   <div
     class="time-pill"
-    aria-label={`Current time ${timeFormatter.format(now)} on ${dateFormatter.format(now)}`}
+    aria-label={`Current time ${shellTime} on ${shellDate}`}
   >
-    <strong>{timeFormatter.format(now)}</strong>
-    <span>{dateFormatter.format(now)}</span>
+    <strong>{shellTime}</strong>
+    <span>{shellDate}</span>
   </div>
   <div class="search-control" bind:this={searchControl}>
     <input
@@ -796,6 +811,8 @@
       on:input={handleSearchInput}
       on:keydown={handleSearchKeydown}
     />
-    <span aria-hidden="true">Ctrl K</span>
+    {#if shellPreferences.showSearchShortcutHint}
+      <span aria-hidden="true">Ctrl K</span>
+    {/if}
   </div>
 </div>

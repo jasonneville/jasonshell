@@ -1,11 +1,10 @@
 .preview-surface {
-  background:
-    linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
+  background: var(--js-gradient-surface);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
   box-shadow:
     var(--js-shadow-raised),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    var(--js-inset-highlight);
   color: var(--js-color-text);
   cursor: pointer;
   display: grid;

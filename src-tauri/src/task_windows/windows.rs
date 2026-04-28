@@ -1,6 +1,6 @@
 use super::{
     icons::{window_icon_data_url, EMPTY_ICON_DATA_URL},
-    TaskbarWindow, TaskbarWindowActivityState,
+    TaskbarProcessWindow, TaskbarWindow, TaskbarWindowActivityState,
 };
 use std::collections::HashMap;
 use std::mem::size_of;
@@ -99,6 +99,7 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
         windows.push(TaskbarWindow {
             hwnd,
             title: candidate.title,
+            process_id: candidate.process_id,
             process_name: candidate.process_name,
             icon_data_url,
             is_active: candidate.is_active,
@@ -109,6 +110,45 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
 
     sort_windows_stably(&mut windows);
     retain_activity_snapshots(windows.iter().map(|window| window.hwnd.as_str()));
+    Ok(windows)
+}
+
+pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {
+    let current_process_id = std::process::id();
+    let foreground = unsafe { GetForegroundWindow() };
+    let primary_monitor =
+        unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+    let mut handles = Vec::new();
+
+    unsafe {
+        EnumWindows(
+            Some(enum_windows_callback),
+            LPARAM((&mut handles as *mut Vec<HWND>) as isize),
+        )
+        .map_err(|error| format!("Failed to enumerate top-level windows: {error}"))?;
+    }
+
+    let mut windows = Vec::new();
+    for hwnd in handles {
+        let Some(candidate) =
+            build_window_candidate(hwnd, foreground, primary_monitor, current_process_id)?
+        else {
+            continue;
+        };
+
+        if !is_taskbar_candidate(&candidate, current_process_id) {
+            continue;
+        }
+
+        windows.push(TaskbarProcessWindow {
+            hwnd: candidate.hwnd_string(),
+            title: candidate.title,
+            process_id: candidate.process_id,
+            is_active: candidate.is_active,
+        });
+    }
+
+    windows.sort_by(|left, right| compare_window_handles(&left.hwnd, &right.hwnd));
     Ok(windows)
 }
 

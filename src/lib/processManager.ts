@@ -19,6 +19,10 @@ export type ProcessInfo = {
   childProcessCount?: number;
   descendantProcessCount?: number;
   workspaceHint?: ProcessWorkspaceHint | null;
+  taskbarWindowCount?: number;
+  taskbarActive?: boolean;
+  taskbarForeground?: boolean;
+  taskbarTitles?: string[];
   status: string;
   isKillable: boolean;
 };

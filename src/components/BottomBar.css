@@ -1,12 +1,9 @@
 .bottom-bar.surface {
   align-items: stretch;
-  background:
-    linear-gradient(180deg, rgba(13, 16, 24, 0.98) 0%, rgba(7, 10, 16, 0.99) 100%);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    0 -12px 30px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  color: #f2f5ff;
+  background: var(--js-gradient-bar);
+  border-top: 1px solid var(--js-color-border-soft);
+  box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
+  color: var(--js-color-text);
   display: flex;
   height: 100%;
   padding: 0;
@@ -26,10 +23,10 @@
 .bottom-bar .process-manager-button {
   align-items: center;
   align-self: stretch;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--js-color-surface-overlay);
   border: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(236, 241, 255, 0.84);
+  border-left: 1px solid var(--js-color-border);
+  color: var(--js-color-text-muted);
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 1.72rem;
@@ -43,13 +40,13 @@
 }
 
 .bottom-bar .process-manager-button:hover {
-  background: rgba(112, 148, 235, 0.16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  color: #f7f9ff;
+  background: var(--js-color-control-hover);
+  box-shadow: var(--js-inset-highlight);
+  color: var(--js-color-text-strong);
 }
 
 .bottom-bar .process-manager-button:focus-visible {
-  outline: 2px solid rgba(144, 181, 255, 0.65);
+  outline: 2px solid var(--js-color-accent-border);
   outline-offset: -2px;
 }
 
@@ -63,7 +60,7 @@
 }
 
 .bottom-bar .launcher-strip::after {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--js-color-border);
   content: '';
   height: 100%;
   position: absolute;
@@ -90,22 +87,22 @@
 }
 
 .bottom-bar .launcher-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(144, 181, 255, 0.18);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-inset-highlight);
 }
 
 .bottom-bar .launcher-button:active:not(:disabled) {
-  background: rgba(120, 148, 213, 0.14);
+  background: var(--js-color-control-active);
 }
 
 .bottom-bar .launcher-button:focus-visible {
-  outline: 2px solid rgba(144, 181, 255, 0.65);
+  outline: 2px solid var(--js-color-accent-border);
   outline-offset: 2px;
 }
 
 .bottom-bar .task-button:focus-visible {
-  outline: 2px solid rgba(144, 181, 255, 0.65);
+  outline: 2px solid var(--js-color-accent-border);
   outline-offset: -2px;
 }
 
@@ -135,7 +132,7 @@
 }
 
 .bottom-bar .task-strip::after {
-  background: linear-gradient(90deg, transparent, rgba(7, 10, 16, 0.92));
+  background: linear-gradient(90deg, transparent, var(--js-color-surface));
   content: '';
   display: none;
   inset: 0 0 0 auto;
@@ -151,7 +148,7 @@
 .bottom-bar .task-group {
   align-items: stretch;
   align-self: stretch;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--js-color-border-soft);
   border-radius: 0;
   border-top: 0;
   border-bottom: 0;
@@ -172,12 +169,12 @@
 }
 
 .bottom-bar .task-group-active {
-  background: rgba(72, 102, 191, 0.12);
-  border-color: rgba(150, 186, 255, 0.18);
+  background: var(--js-color-selected);
+  border-color: var(--js-color-accent-border);
 }
 
 .bottom-bar .task-group-active::before {
-  background: linear-gradient(180deg, #9db8ff, rgba(124, 160, 255, 0.4));
+  background: linear-gradient(180deg, var(--js-color-accent), var(--js-color-accent-border));
   content: '';
   inset: 0 auto 0 0;
   pointer-events: none;
@@ -198,8 +195,8 @@
 }
 
 .bottom-bar .task-group-drop-target {
-  background: rgba(144, 181, 255, 0.1);
-  border-color: rgba(144, 181, 255, 0.38);
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .bottom-bar .task-group-busy::after {
@@ -227,10 +224,10 @@
 
 .bottom-bar .task-count {
   align-items: center;
-  background: rgba(144, 181, 255, 0.24);
-  border: 1px solid rgba(144, 181, 255, 0.34);
+  background: var(--js-color-accent-soft);
+  border: 1px solid var(--js-color-accent-border);
   border-radius: 999px;
-  color: #f5f7ff;
+  color: var(--js-color-text-strong);
   display: inline-flex;
   font-size: 0.54rem;
   font-weight: 800;
@@ -247,21 +244,22 @@
 .bottom-bar .task-button {
   align-items: center;
   align-self: stretch;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--js-color-control);
   border: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 1px solid var(--js-color-border-soft);
   border-radius: 0;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  color: #f2f5ff;
+  box-shadow: var(--js-inset-highlight);
+  color: var(--js-color-text);
   cursor: pointer;
   display: inline-flex;
-  flex: 0 1 12rem;
+  flex: 0 1 auto;
   font-size: 0.62rem;
   font-weight: 600;
   gap: 0.28rem;
   height: 100%;
   min-height: 0;
-  min-width: 0;
+  max-width: 14rem;
+  min-width: 6.2rem;
   padding: 0 0.38rem;
   transition:
     border-color 140ms ease,
@@ -270,25 +268,22 @@
 }
 
 .bottom-bar .task-button:hover:not(:disabled) {
-  background: rgba(100, 131, 211, 0.14);
-  border-color: rgba(144, 181, 255, 0.18);
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
 }
 
 .bottom-bar .task-button:active:not(:disabled) {
-  background: rgba(100, 131, 211, 0.22);
+  background: var(--js-color-control-active);
 }
 
 .bottom-bar .task-button-active {
-  background:
-    linear-gradient(180deg, rgba(72, 102, 191, 0.36), rgba(40, 56, 104, 0.3));
-  border-color: rgba(150, 186, 255, 0.26);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    inset 0 0 0 1px rgba(112, 148, 235, 0.08);
+  background: var(--js-gradient-active);
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
 }
 
 .bottom-bar .task-button-minimized {
-  color: rgba(226, 232, 250, 0.72);
+  color: var(--js-color-text-muted);
 }
 
 .bottom-bar .task-icon {
@@ -300,14 +295,17 @@
 }
 
 .bottom-bar .task-label {
-  letter-spacing: 0.01em;
+  display: block;
+  flex: 1 1 auto;
+  letter-spacing: 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .bottom-bar .strip-fallback {
-  color: rgba(214, 223, 255, 0.68);
+  color: var(--js-color-text-muted);
   font-size: 0.62rem;
   font-weight: 600;
   padding: 0 0.2rem;
@@ -316,14 +314,14 @@
 
 .bottom-bar .taskbar-overflow-status {
   align-items: center;
-  background: rgba(7, 10, 16, 0.88);
-  border-left: 1px solid rgba(144, 181, 255, 0.22);
-  color: rgba(226, 234, 255, 0.72);
+  background: var(--js-color-surface);
+  border-left: 1px solid var(--js-color-accent-border);
+  color: var(--js-color-text-muted);
   display: none;
   font-size: 0.54rem;
   font-weight: 800;
   height: 100%;
-  letter-spacing: 0.03em;
+  letter-spacing: 0;
   padding: 0 0.42rem;
   pointer-events: none;
   position: absolute;

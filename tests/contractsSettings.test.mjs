@@ -30,6 +30,7 @@ const tauriConfigSource = readFileSync(new URL('../src-tauri/tauri.conf.json', i
 const wrapperSources = [
   'runtimeMetrics.ts',
   'controlPlane.ts',
+  'settingsPanel.ts',
   'devTools.ts',
   'searchPanel.ts',
   'systemSearch.ts',
@@ -158,12 +159,30 @@ test('backend settings and diagnostics commands are registered with hardened app
     assert.match(mainSource, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 
-  for (const surface of ['top-bar', 'bottom-bar', 'task-preview', 'search-panel', 'stack-popup', 'process-manager', 'control-plane']) {
+  for (const surface of [
+    'top-bar',
+    'bottom-bar',
+    'task-preview',
+    'search-panel',
+    'stack-popup',
+    'process-manager',
+    'control-plane',
+    'settings-panel'
+  ]) {
     assert.match(capabilitySource, new RegExp(surface));
   }
   assert.deepEqual(
     Object.values(capabilitySources).map((source) => JSON.parse(source).windows).sort((a, b) => a[0].localeCompare(b[0])),
-    [['bottom-bar'], ['control-plane'], ['process-manager'], ['search-panel'], ['stack-popup'], ['task-preview'], ['top-bar']]
+    [
+      ['bottom-bar'],
+      ['control-plane'],
+      ['process-manager'],
+      ['search-panel'],
+      ['settings-panel'],
+      ['stack-popup'],
+      ['task-preview'],
+      ['top-bar']
+    ]
   );
 
   assert.doesNotMatch(tauriConfigSource, /"csp": null/);

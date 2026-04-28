@@ -11,7 +11,9 @@ test('process manager surface and commands are routed through app and Rust comma
   const processSurface = readFileSync('src/components/ProcessManagerSurface.svelte', 'utf8');
   const processState = readFileSync('src/lib/processManagerState.ts', 'utf8');
   const processWrapper = readFileSync('src/lib/processManager.ts', 'utf8');
+  const taskbarWindows = readFileSync('src/lib/taskbarWindows.ts', 'utf8');
   const processManager = readFileSync('src-tauri/src/process_manager.rs', 'utf8');
+  const taskWindowsMod = readFileSync('src-tauri/src/task_windows/mod.rs', 'utf8');
 
   assert.match(app, /ProcessManagerSurface/);
   assert.match(surfaces, /'process-manager'/);
@@ -24,12 +26,21 @@ test('process manager surface and commands are routed through app and Rust comma
   assert.match(processSurface, /sortBy\('startTimeMs'\)/);
   assert.match(processSurface, /formatProcessStartTime\(process\.startTimeMs\)/);
   assert.match(processSurface, /processDeveloperSummary\(process\)/);
+  assert.match(processSurface, /listTaskbarProcessWindows/);
+  assert.match(processSurface, /orderProcessRefresh/);
+  assert.match(processSurface, /preserveVolatileOrder/);
+  assert.match(processSurface, /process\.taskbarActive/);
   assert.match(processSurface, /buildProcessKillPlan\(processes, process, false\)/);
   assert.match(processSurface, /killConfirmationFromPlan\(killPlan\)/);
   assert.match(processState, /startTimeMs/);
   assert.match(processState, /formatProcessPorts/);
   assert.match(processWrapper, /type ProcessKillConfirmation/);
+  assert.match(processWrapper, /taskbarActive/);
   assert.match(processWrapper, /invoke\(IPC_COMMANDS\.killProcess, \{ pid, confirmation \}\)/);
+  assert.match(taskbarWindows, /processId/);
+  assert.match(taskbarWindows, /listTaskbarProcessWindows/);
+  assert.match(taskWindowsMod, /pub process_id: u32/);
+  assert.match(taskWindowsMod, /list_taskbar_process_windows/);
   assert.match(processManager, /start_time_ms: process_handle\.and_then\(process_start_time_ms\)/);
   assert.match(processManager, /let command_line = process_handle\.and_then\(process_command_line\)/);
   assert.match(processManager, /command_line,/);

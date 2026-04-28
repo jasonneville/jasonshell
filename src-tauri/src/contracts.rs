@@ -8,6 +8,7 @@ pub mod surfaces {
     pub const STACK_POPUP: &str = "stack-popup";
     pub const PROCESS_MANAGER: &str = "process-manager";
     pub const CONTROL_PLANE: &str = "control-plane";
+    pub const SETTINGS_PANEL: &str = "settings-panel";
 
     pub const ALL: &[&str] = &[
         TOP_BAR,
@@ -17,6 +18,7 @@ pub mod surfaces {
         STACK_POPUP,
         PROCESS_MANAGER,
         CONTROL_PLANE,
+        SETTINGS_PANEL,
     ];
 }
 
@@ -24,6 +26,7 @@ pub mod commands {
     pub const LIST_PINNED_TASKBAR_APPS: &str = "list_pinned_taskbar_apps";
     pub const LAUNCH_PINNED_TASKBAR_APP: &str = "launch_pinned_taskbar_app";
     pub const LIST_OPEN_TASK_WINDOWS: &str = "list_open_task_windows";
+    pub const LIST_TASKBAR_PROCESS_WINDOWS: &str = "list_taskbar_process_windows";
     pub const ACTIVATE_TASK_WINDOW: &str = "activate_task_window";
     pub const MAXIMIZE_TASK_WINDOW: &str = "maximize_task_window";
     pub const SHOW_TASK_WINDOW_PREVIEW: &str = "show_task_window_preview";
@@ -39,6 +42,8 @@ pub mod commands {
     pub const HIDE_PROCESS_MANAGER: &str = "hide_process_manager";
     pub const SHOW_CONTROL_PLANE: &str = "show_control_plane";
     pub const HIDE_CONTROL_PLANE: &str = "hide_control_plane";
+    pub const SHOW_SETTINGS_PANEL: &str = "show_settings_panel";
+    pub const HIDE_SETTINGS_PANEL: &str = "hide_settings_panel";
     pub const LIST_PROCESSES: &str = "list_processes";
     pub const KILL_PROCESS: &str = "kill_process";
     pub const SEARCH_SYSTEM: &str = "search_system";
@@ -90,6 +95,7 @@ pub mod commands {
         LIST_PINNED_TASKBAR_APPS,
         LAUNCH_PINNED_TASKBAR_APP,
         LIST_OPEN_TASK_WINDOWS,
+        LIST_TASKBAR_PROCESS_WINDOWS,
         ACTIVATE_TASK_WINDOW,
         MAXIMIZE_TASK_WINDOW,
         SHOW_TASK_WINDOW_PREVIEW,
@@ -105,6 +111,8 @@ pub mod commands {
         HIDE_PROCESS_MANAGER,
         SHOW_CONTROL_PLANE,
         HIDE_CONTROL_PLANE,
+        SHOW_SETTINGS_PANEL,
+        HIDE_SETTINGS_PANEL,
         LIST_PROCESSES,
         KILL_PROCESS,
         SEARCH_SYSTEM,
@@ -192,6 +200,7 @@ mod tests {
                 "stack-popup",
                 "process-manager",
                 "control-plane",
+                "settings-panel",
             ]
         );
     }
@@ -221,6 +230,8 @@ mod tests {
         assert!(unique.contains("resolve_provider_registry"));
         assert!(unique.contains("show_control_plane"));
         assert!(unique.contains("hide_control_plane"));
+        assert!(unique.contains("show_settings_panel"));
+        assert!(unique.contains("hide_settings_panel"));
     }
 
     #[test]

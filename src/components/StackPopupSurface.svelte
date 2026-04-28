@@ -49,6 +49,7 @@
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
   import { positionContextMenuInViewport } from '../lib/contextMenuPosition';
   import {
+    STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
     stackBrowserBreadcrumbOverflow,
     stackBrowserDeletePrompt,
     stackBrowserScrollTopForIndex,
@@ -652,8 +653,17 @@
     void positionOpenMenus();
   }
 
+  function shouldIgnoreBackgroundContextMenu(event: MouseEvent) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    return !!target?.closest(STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS.join(','));
+  }
+
   function handleBackgroundContextMenu(event: MouseEvent) {
+    if (shouldIgnoreBackgroundContextMenu(event)) {
+      return;
+    }
     event.preventDefault();
+    event.stopPropagation();
     rowMenu = null;
     backgroundMenu = { x: event.clientX, y: event.clientY };
     void positionOpenMenus();
@@ -955,7 +965,13 @@
   on:resize={updateDetailsViewport}
 />
 
-<section class:resizing={!!resizeDrag} class="stack-popup" aria-label="Stack browser" aria-busy={loadingPath ? 'true' : 'false'}>
+<section
+  class:resizing={!!resizeDrag}
+  class="stack-popup"
+  aria-label="Stack browser"
+  aria-busy={loadingPath ? 'true' : 'false'}
+  on:contextmenu={handleBackgroundContextMenu}
+>
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>
       {#if currentPath}
@@ -1117,6 +1133,7 @@
       tabindex="-1"
       bind:this={rowMenuElement}
       on:click|stopPropagation
+      on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
       <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => selectedEntry && void activateEntry(selectedEntry)}>Open</button>
@@ -1143,8 +1160,14 @@
       tabindex="-1"
       bind:this={backgroundMenuElement}
       on:click|stopPropagation
+      on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
+      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
+      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
+      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
+      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
+      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
       <button type="button" role="menuitem" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
       <button type="button" role="menuitem" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
     </div>

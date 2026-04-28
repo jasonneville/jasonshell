@@ -1,17 +1,21 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { onMount } from 'svelte';
   import BottomBar from './components/BottomBar.svelte';
   import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
   import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
   import SearchPanelSurface from './components/SearchPanelSurface.svelte';
+  import SettingsPanelSurface from './components/SettingsPanelSurface.svelte';
   import StackPopupSurface from './components/StackPopupSurface.svelte';
   import TaskPreviewSurface from './components/TaskPreviewSurface.svelte';
   import TopBar from './components/TopBar.svelte';
+  import { installShellPreferencesSync } from './lib/shellPreferences';
   import {
     resolveSurfaceFromLabel,
     shellSurfaceMetadata,
     type ShellSurface
   } from './lib/shellSurface';
+  import { installShellThemeSync } from './lib/themes';
 
   let label = 'bottom-bar';
 
@@ -27,6 +31,15 @@
   function suppressNativeContextMenu(event: MouseEvent) {
     event.preventDefault();
   }
+
+  onMount(() => {
+    const uninstallThemeSync = installShellThemeSync();
+    const uninstallPreferencesSync = installShellPreferencesSync();
+    return () => {
+      uninstallThemeSync();
+      uninstallPreferencesSync();
+    };
+  });
 </script>
 
 <svelte:head>
@@ -49,6 +62,8 @@
   <ProcessManagerSurface />
 {:else if surface === 'control-plane'}
   <ControlPlaneSurface />
+{:else if surface === 'settings-panel'}
+  <SettingsPanelSurface />
 {:else}
   <main class="unsupported-surface">
     <div class="panel">

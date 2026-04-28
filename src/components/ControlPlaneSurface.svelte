@@ -14,6 +14,13 @@
   import type { GitWorkspaceStatus, TaskHistoryEntry, TaskProcessMetadata } from '../lib/devTools';
   import type { ProcessInfo } from '../lib/processManager';
   import type { ShellSettings } from '../lib/settings';
+  import {
+    getInitialShellThemeId,
+    normalizeShellThemeId,
+    setShellTheme,
+    shellThemeOptions,
+    type ShellThemeId
+  } from '../lib/themes';
   import type { DeveloperSearchResponse } from '../features/search/developerProviders';
   import type { WorkspaceProfile } from '../lib/workspaces';
 
@@ -30,6 +37,8 @@
 
   let activeSectionId: ControlPlaneSectionId = 'settings';
   let filterQuery = '';
+  let selectedThemeId: ShellThemeId = getInitialShellThemeId();
+  const themeOptions = shellThemeOptions();
 
   $: viewModel = buildControlPlaneViewModel({
     settings,
@@ -74,6 +83,12 @@
       event.preventDefault();
       activeSectionId = visibleSections.at(-1)!.id;
     }
+  }
+
+  function handleThemeChange(event: Event) {
+    const target = event.currentTarget instanceof HTMLSelectElement ? event.currentTarget : null;
+    selectedThemeId = normalizeShellThemeId(target?.value);
+    setShellTheme(selectedThemeId);
   }
 </script>
 
@@ -120,6 +135,14 @@
     <p id="control-plane-filter-hint">
       Use arrow keys on section tabs to move, Home/End for edges, and Ctrl+R for refresh intent.
     </p>
+    <label class="theme-picker">
+      <span>Theme</span>
+      <select bind:value={selectedThemeId} on:change={handleThemeChange} aria-label="Shell theme">
+        {#each themeOptions as theme}
+          <option value={theme.id}>{theme.label}</option>
+        {/each}
+      </select>
+    </label>
   </div>
 
   <div

@@ -2,11 +2,23 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
   stackBrowserBreadcrumbOverflow,
   stackBrowserDeletePrompt,
   stackBrowserScrollTopForIndex,
   stackBrowserVirtualWindow
 } from '../dist-tests/lib/stackPopupViewModel.js';
+
+test('declares background context menu ignore selectors for interactive stack chrome', () => {
+  assert.deepEqual([...STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS], [
+    '[role="row"]',
+    '.context-menu',
+    '.delete-confirm-dialog',
+    '.inline-editor',
+    '.stack-toolbar',
+    '.stack-resize-grip'
+  ]);
+});
 
 function entry(name, entryType = 'File') {
   return {

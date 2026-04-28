@@ -1,9 +1,9 @@
 .process-manager-surface {
   background:
-    radial-gradient(circle at top right, rgba(82, 119, 209, 0.18), transparent 34%),
-    linear-gradient(180deg, var(--js-color-surface), rgba(6, 8, 13, 0.99));
+    radial-gradient(circle at top right, var(--js-color-accent-soft), transparent 34%),
+    var(--js-gradient-surface);
   border: 1px solid var(--js-color-border);
-  box-shadow: var(--js-shadow-raised), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
   box-sizing: border-box;
   color: var(--js-color-text);
   display: flex;
@@ -32,7 +32,7 @@
 
 .process-manager-header strong {
   font-size: 0.78rem;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -50,7 +50,7 @@
 
 .process-filter {
   align-items: center;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--js-color-surface-overlay);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-md);
   display: inline-flex;
@@ -63,7 +63,7 @@
   color: var(--js-color-text-muted);
   font-size: 0.56rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   margin: 0;
   text-transform: uppercase;
 }
@@ -81,7 +81,7 @@
 .process-manager-actions button,
 .process-row-head button,
 .kill-button {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--js-gradient-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-md);
   color: var(--js-color-text);
@@ -96,7 +96,7 @@
 .process-manager-actions button:hover:not(:disabled),
 .process-row-head button:hover,
 .kill-button:hover:not(:disabled) {
-  background: rgba(112, 148, 235, 0.18);
+  background: var(--js-color-control-hover);
   border-color: var(--js-color-accent-border);
 }
 
@@ -124,12 +124,12 @@
 }
 
 .process-row-head {
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--js-color-surface-overlay);
   color: var(--js-color-text-muted);
   flex: 0 0 auto;
   font-size: 0.58rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   min-height: 1.85rem;
   text-transform: uppercase;
 }
@@ -150,11 +150,11 @@
 }
 
 .process-table-body .process-row:hover {
-  background: rgba(112, 148, 235, 0.09);
+  background: var(--js-color-selected);
 }
 
 .process-row-armed {
-  background: rgba(255, 84, 84, 0.08);
+  background: var(--js-color-error);
   box-shadow: inset 2px 0 0 var(--js-color-error-border);
 }
 
@@ -179,6 +179,7 @@
   font-size: 0.66rem;
   font-weight: 700;
   gap: 0.26rem;
+  min-width: 0;
 }
 
 .process-tree-indent {
@@ -187,13 +188,16 @@
 }
 
 .process-name-copy {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .process-child-count {
   align-items: center;
-  background: rgba(124, 160, 255, 0.18);
+  background: var(--js-color-accent-soft);
   border: 1px solid var(--js-color-accent-border);
   border-radius: 999px;
   color: var(--js-color-text);
@@ -207,7 +211,8 @@
 
 .process-workspace,
 .process-tree-guard,
-.process-port-count {
+.process-port-count,
+.process-taskbar-active {
   align-items: center;
   border: 1px solid var(--js-color-border);
   border-radius: 999px;
@@ -225,19 +230,29 @@
 }
 
 .process-workspace {
-  background: rgba(92, 214, 149, 0.14);
-  border-color: rgba(92, 214, 149, 0.34);
+  background: var(--js-color-success);
+  border-color: var(--js-color-success-border);
 }
 
 .process-tree-guard {
-  background: rgba(255, 84, 84, 0.1);
+  background: var(--js-color-error);
   border-color: var(--js-color-error-border);
-  color: #ffd7d7;
+  color: var(--js-color-error-text);
 }
 
 .process-port-count {
-  background: rgba(245, 191, 92, 0.12);
-  border-color: rgba(245, 191, 92, 0.35);
+  background: var(--js-color-warning);
+  border-color: var(--js-color-warning-border);
+}
+
+.process-taskbar-active {
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
+}
+
+.process-taskbar-active.foreground {
+  background: var(--js-color-success);
+  border-color: var(--js-color-success-border);
 }
 
 .process-meta {
@@ -270,7 +285,7 @@
 }
 
 .process-meter > span {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--js-color-surface-overlay);
   border-radius: 999px;
   height: 0.28rem;
   overflow: hidden;
@@ -278,7 +293,7 @@
 }
 
 .process-meter > span::before {
-  background: linear-gradient(90deg, rgba(92, 214, 149, 0.68), rgba(124, 160, 255, 0.88));
+  background: linear-gradient(90deg, var(--js-color-success-border), var(--js-color-accent));
   border-radius: inherit;
   content: '';
   inset: 0 auto 0 0;
@@ -287,7 +302,7 @@
 }
 
 .process-meter.memory > span::before {
-  background: linear-gradient(90deg, rgba(124, 160, 255, 0.68), rgba(245, 191, 92, 0.84));
+  background: linear-gradient(90deg, var(--js-color-accent), var(--js-color-warning-border));
   width: var(--memory-fill, 0%);
 }
 
@@ -296,14 +311,14 @@
 }
 
 .kill-button {
-  background: rgba(255, 84, 84, 0.08);
+  background: var(--js-color-error);
   border-color: var(--js-color-error-border);
-  color: #ffd7d7;
+  color: var(--js-color-error-text);
 }
 
 .process-row-armed .kill-button {
-  background: rgba(255, 84, 84, 0.2);
-  box-shadow: 0 0 0 1px rgba(255, 119, 137, 0.2);
+  background: var(--js-color-error);
+  box-shadow: 0 0 0 1px var(--js-color-error-border);
 }
 
 .process-action {

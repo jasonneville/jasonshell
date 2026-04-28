@@ -16,18 +16,23 @@
     formatProcessMemory,
     formatProcessPorts,
     formatProcessStartTime,
+    isVolatileProcessSortColumn,
     nextProcessSortState,
+    orderProcessRefresh,
     processDeveloperSummary,
     sortProcesses,
     type ProcessSortColumn,
     type ProcessSortState
   } from '../lib/processManagerState';
+  import { listTaskbarProcessWindows } from '../lib/taskbarWindows';
   import {
     buildProcessKillPlan,
     buildProcessTreeRows,
+    enrichProcessesWithTaskbarWindows,
     filterProcesses,
     processMetricPercent,
-    safeKillButtonState
+    safeKillButtonState,
+    taskbarActiveProcessIds
   } from '../features/process-manager/processManagerUxState';
 
   const REFRESH_INTERVAL_MS = 1_000;
@@ -42,14 +47,15 @@
   let armedKillPid: number | null = null;
   let processFilter = '';
   let inFlightRequest = 0;
+  let taskbarProcessPids: number[] = [];
 
-  $: sortedProcesses = sortProcesses(processes, sortState);
-  $: visibleProcesses = filterProcesses(sortedProcesses, processFilter);
-  $: processRows = buildProcessTreeRows(visibleProcesses);
+  $: visibleProcesses = filterProcesses(processes, processFilter);
+  $: processRows = buildProcessTreeRows(visibleProcesses, { promotedRootPids: taskbarProcessPids });
   $: totalMemoryBytes = processes.reduce((total, process) => total + (process.memoryBytes ?? 0), 0);
 
   function sortBy(column: ProcessSortColumn) {
     sortState = nextProcessSortState(sortState, column);
+    processes = sortProcesses(processes, sortState, { taskbarActivePids: taskbarProcessPids });
   }
 
   function sortIndicator(column: ProcessSortColumn) {
@@ -66,19 +72,35 @@
     return sortState.direction === 'asc' ? 'ascending' : 'descending';
   }
 
-  async function refreshProcesses() {
+  async function refreshProcesses(options: { preserveVolatileOrder?: boolean } = {}) {
     if (isLoading) {
       return;
     }
 
     const requestId = ++inFlightRequest;
     isLoading = true;
+    const previousProcesses = processes;
+    const shouldPreserveOrder = options.preserveVolatileOrder !== false
+      && isVolatileProcessSortColumn(sortState.column)
+      && previousProcesses.length > 0;
     try {
-      const nextProcesses = await listProcesses();
+      const [nextProcesses, taskbarWindows] = await Promise.all([
+        listProcesses(),
+        listTaskbarProcessWindows().catch((error) => {
+          console.warn('Failed to load taskbar process metadata', error);
+          return [];
+        })
+      ]);
       if (requestId !== inFlightRequest) {
         return;
       }
-      processes = nextProcesses;
+      const nextTaskbarProcessPids = taskbarActiveProcessIds(taskbarWindows);
+      const enrichedProcesses = enrichProcessesWithTaskbarWindows(nextProcesses, taskbarWindows);
+      taskbarProcessPids = nextTaskbarProcessPids;
+      processes = orderProcessRefresh(previousProcesses, enrichedProcesses, sortState, {
+        preserveExistingOrder: shouldPreserveOrder,
+        taskbarActivePids: nextTaskbarProcessPids
+      });
       if (armedKillPid !== null && !nextProcesses.some((process) => process.pid === armedKillPid)) {
         armedKillPid = null;
       }
@@ -116,7 +138,7 @@
   function openSurface() {
     isOpen = true;
     startRefreshTimer();
-    void refreshProcesses();
+    void refreshProcesses({ preserveVolatileOrder: false });
   }
 
   function closeSurface() {
@@ -155,11 +177,11 @@
     try {
       await killProcess(process.pid, killConfirmationFromPlan(killPlan));
       statusMessage = `Killed ${process.name} (${process.pid})`;
-      await refreshProcesses();
+      await refreshProcesses({ preserveVolatileOrder: false });
     } catch (error) {
       console.error(`Failed to kill process ${process.pid}`, error);
       statusMessage = `Could not kill ${process.name} (${process.pid})`;
-      await refreshProcesses();
+      await refreshProcesses({ preserveVolatileOrder: false });
     } finally {
       killingPid = null;
     }
@@ -237,8 +259,8 @@
           on:input={() => { armedKillPid = null; }}
         />
       </label>
-      <button type="button" on:click={() => void refreshProcesses()} disabled={isLoading}>
-        {isLoading ? 'Refreshing…' : 'Refresh'}
+      <button type="button" on:click={() => void refreshProcesses({ preserveVolatileOrder: false })} disabled={isLoading}>
+        Refresh
       </button>
       <button type="button" on:click={() => void requestClose()}>Close</button>
     </div>
@@ -279,6 +301,14 @@
                 {/if}
                 {#if row.childCount}
                   <span class="process-child-count" aria-label={`${row.childCount} visible child processes`}>{row.childCount}</span>
+                {/if}
+                {#if process.taskbarActive}
+                  <span
+                    class:foreground={process.taskbarForeground}
+                    class="process-taskbar-active"
+                    aria-label={`${process.taskbarWindowCount ?? 1} taskbar window${(process.taskbarWindowCount ?? 1) === 1 ? '' : 's'}${process.taskbarForeground ? ', foreground window' : ''}`}
+                    title={process.taskbarTitles?.join('\n') || 'Taskbar-active process'}
+                  >taskbar</span>
                 {/if}
                 {#if (process.descendantProcessCount ?? 0) > 0}
                   <span class="process-tree-guard" aria-label={`${process.descendantProcessCount} descendant processes; tree kill is guarded`}>tree</span>
