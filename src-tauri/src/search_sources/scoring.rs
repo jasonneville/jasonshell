@@ -77,20 +77,47 @@ pub fn score_result(result: &SystemSearchResult, tokens: &[String]) -> Option<i3
         return None;
     }
 
-    let mut score = result.priority + 20;
+    let mut score = result
+        .priority
+        .saturating_add(20)
+        .saturating_add(result_type_priority(&result.kind))
+        .saturating_add(provider_priority(result));
     for token in tokens {
         if title == *token {
-            score += 80;
+            score = score.saturating_add(120);
         } else if title.starts_with(token) {
-            score += 46;
+            score = score.saturating_add(56);
         } else if title.contains(token) {
-            score += 24;
+            score = score.saturating_add(28);
         } else {
-            score += 8;
+            score = score.saturating_add(8);
         }
     }
 
     Some(score)
+}
+
+fn provider_priority(result: &SystemSearchResult) -> i32 {
+    if result.terms.contains("everything") || result.terms.contains("voidtools") {
+        60
+    } else if result.terms.contains("windows search") || result.terms.contains("systemindex") {
+        -20
+    } else {
+        0
+    }
+}
+
+fn result_type_priority(kind: &str) -> i32 {
+    match kind {
+        "app" => 35,
+        "window" => 30,
+        "folder" => 26,
+        "file" => 20,
+        "command" | "setting" => 16,
+        "calculator" => 14,
+        "web" | "bookmark" => 8,
+        _ => 0,
+    }
 }
 
 pub fn display_name(path: &Path) -> String {
@@ -154,17 +181,41 @@ mod tests {
     fn ranks_cached_results_without_touching_filesystem() {
         let result = SystemSearchResult {
             id: "system:file:C:\\Users\\me\\Documents\\Quarterly Plan.docx".to_string(),
+            provider_id: Some("warmedCache".to_string()),
             kind: "file".to_string(),
             title: "Quarterly Plan".to_string(),
             subtitle: "File - Documents".to_string(),
             terms: "quarterly plan document".to_string(),
             priority: 76,
             path: "C:\\Users\\me\\Documents\\Quarterly Plan.docx".to_string(),
+            record_key: Some("file:c:\\users\\me\\documents\\quarterly plan.docx".to_string()),
+            run_count: None,
+            top_most: None,
         };
 
         let results = search_ranked_results(&[result], "quarter plan", 8);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].priority > 76);
+    }
+
+    #[test]
+    fn everything_provider_and_type_boosts_are_saturating() {
+        let result = SystemSearchResult {
+            id: "system:file:C:\\Docs\\Plan.txt".to_string(),
+            provider_id: Some("everything".to_string()),
+            kind: "file".to_string(),
+            title: "Plan".to_string(),
+            subtitle: "File".to_string(),
+            terms: "plan everything voidtools".to_string(),
+            priority: i32::MAX - 10,
+            path: "C:\\Docs\\Plan.txt".to_string(),
+            record_key: Some("file:c:\\docs\\plan.txt".to_string()),
+            run_count: Some(10),
+            top_most: None,
+        };
+        let tokens = query_tokens("plan");
+
+        assert_eq!(score_result(&result, &tokens), Some(i32::MAX));
     }
 }

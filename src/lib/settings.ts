@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { WorkspaceProfile } from './workspaces';
+import { defaultSearchSettings } from './searchSettings.js';
+import type { SearchMode, SearchSettingsContract } from './searchSettings';
 
 export const SETTINGS_SCHEMA = 'jasonshell.settings';
 export const CURRENT_SETTINGS_VERSION = 1;
@@ -7,6 +9,7 @@ export const CURRENT_SETTINGS_VERSION = 1;
 export interface ShellUiSettings {
   activeWorkspaceId: string | null;
   enableDiagnosticsExport: boolean;
+  searchMode: SearchMode;
 }
 
 export type ShellTaskHistoryEntry = Record<string, unknown>;
@@ -15,6 +18,7 @@ export interface ShellSettings {
   schema: typeof SETTINGS_SCHEMA;
   version: typeof CURRENT_SETTINGS_VERSION;
   ui: ShellUiSettings;
+  search: SearchSettingsContract['search'];
   workspaces: WorkspaceProfile[];
   taskHistory: ShellTaskHistoryEntry[];
 }
@@ -25,13 +29,16 @@ export const SETTINGS_COMMANDS = {
 } as const;
 
 export function defaultShellSettings(): ShellSettings {
+  const searchSettings = defaultSearchSettings();
   return {
     schema: SETTINGS_SCHEMA,
     version: CURRENT_SETTINGS_VERSION,
     ui: {
       activeWorkspaceId: null,
-      enableDiagnosticsExport: false
+      enableDiagnosticsExport: false,
+      searchMode: searchSettings.ui.searchMode
     },
+    search: searchSettings.search,
     workspaces: [],
     taskHistory: []
   };

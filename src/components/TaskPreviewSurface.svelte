@@ -5,6 +5,7 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     hideTaskWindowPreview,
+    isNativeLiveTaskPreviewPayload,
     type TaskPreviewPayload
   } from '../lib/taskbarPreview';
   import {
@@ -14,6 +15,8 @@
   import { maximizeTaskWindow } from '../lib/taskbarWindows';
 
   let preview: TaskPreviewPayload | null = null;
+  $: isNativeLivePreview = preview ? isNativeLiveTaskPreviewPayload(preview) : false;
+  $: previewSurfaceClass = `surface preview-surface${isNativeLivePreview ? ' preview-surface-native' : ''}`;
 
   async function hidePreviewSurface() {
     preview = null;
@@ -69,7 +72,7 @@
 </script>
 
 <MeltActionButton
-  class="surface preview-surface"
+  class={previewSurfaceClass}
   ariaDisabled={!preview}
   ariaLabel={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
   onClick={() => void handlePreviewActivate()}
@@ -86,7 +89,9 @@
       </div>
     </div>
 
-    {#if preview.imageDataUrl}
+    {#if isNativeLivePreview}
+      <div class="preview-frame preview-frame-native" aria-hidden="true"></div>
+    {:else if preview.imageDataUrl}
       <div class="preview-frame">
         <img
           class="preview-image"

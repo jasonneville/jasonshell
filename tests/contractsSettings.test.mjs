@@ -8,6 +8,7 @@ import {
   assertNoSecretSettingKeys,
   defaultShellSettings
 } from '../dist-tests/lib/settings.js';
+import { defaultSearchSettings } from '../dist-tests/lib/searchSettings.js';
 import {
   createDiagnosticsRingBuffer,
   redactDiagnosticFields,
@@ -82,6 +83,8 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
 });
 
 test('settings wrapper declares versioned schema and stable command names', () => {
+  const searchSettings = defaultSearchSettings();
+
   assert.equal(SETTINGS_SCHEMA, 'jasonshell.settings');
   assert.equal(CURRENT_SETTINGS_VERSION, 1);
   assert.deepEqual(SETTINGS_COMMANDS, {
@@ -93,8 +96,10 @@ test('settings wrapper declares versioned schema and stable command names', () =
     version: 1,
     ui: {
       activeWorkspaceId: null,
-      enableDiagnosticsExport: false
+      enableDiagnosticsExport: false,
+      searchMode: searchSettings.ui.searchMode
     },
+    search: searchSettings.search,
     workspaces: [],
     taskHistory: []
   });

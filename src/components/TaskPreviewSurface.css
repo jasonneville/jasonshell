@@ -23,6 +23,24 @@
     var(--js-focus-ring);
 }
 
+.preview-surface-native {
+  background: transparent;
+  box-shadow: none;
+}
+
+.preview-surface-native .preview-header {
+  background: var(--js-bg-surface);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  box-shadow: var(--js-inset-highlight);
+  padding: 0.35rem 0.45rem;
+}
+
+.preview-surface-native:focus-visible .preview-header {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
+}
+
 .preview-header {
   align-items: center;
   display: flex;
@@ -70,6 +88,10 @@
   justify-content: center;
   min-height: 0;
   overflow: hidden;
+}
+
+.preview-frame-native {
+  background: transparent;
 }
 
 .preview-image {

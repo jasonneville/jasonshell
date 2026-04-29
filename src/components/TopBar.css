@@ -178,8 +178,8 @@
 
 .top-bar .time-pill {
   align-items: flex-end;
-  background: var(--js-color-surface-sunken);
-  border: 1px solid var(--js-color-border-soft);
+  background: transparent;
+  border: transparent;
   border-radius: var(--js-radius-sm);
   box-shadow: var(--js-inset-highlight);
   display: flex;
@@ -191,8 +191,8 @@
 }
 
 .top-bar .time-pill strong {
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: 0.8rem;
+  font-weight: 600;
   letter-spacing: 0;
 }
 

@@ -13,6 +13,14 @@ const folderResults: SearchPanelResult[] = [
 
 const commandResults: SearchPanelResult[] = [
   {
+    id: 'command:open-control-plane',
+    kind: 'command',
+    priority: 92,
+    subtitle: 'Open settings and developer dashboard',
+    terms: 'developer dashboard settings control plane git changes task history providers diagnostics',
+    title: 'Open developer dashboard'
+  },
+  {
     id: 'command:refresh-search',
     kind: 'command',
     priority: 86,
@@ -41,7 +49,9 @@ export function buildSearchCatalog(
     id: `app:${launcher.shortcutPath}`,
     kind: 'app' as const,
     path: launcher.shortcutPath,
+    providerId: 'apps',
     priority: 100,
+    recordKey: `app:${launcher.shortcutPath.toLocaleLowerCase()}`,
     subtitle: 'Pinned app',
     terms: `${launcher.name} ${launcher.shortcutPath} application launch pinned`,
     title: launcher.name
@@ -50,10 +60,13 @@ export function buildSearchCatalog(
     iconDataUrl: taskWindow.iconDataUrl,
     id: `window:${taskWindow.hwnd}`,
     kind: 'window' as const,
+    providerId: 'openWindows',
     priority: taskWindow.isActive ? 96 : 92,
+    recordKey: `window:${taskWindow.hwnd}`,
     subtitle: taskWindow.isMinimized ? 'Minimized window' : taskWindow.processName,
     terms: `${taskWindow.title} ${taskWindow.processName} window focus task`,
-    title: taskWindow.title || taskWindow.processName
+    title: taskWindow.title || taskWindow.processName,
+    topMost: taskWindow.isActive
   }));
   return applyWorkspaceSearchBias(
     [
@@ -82,7 +95,9 @@ function folderResult(
     id: `folder:${path}`,
     kind: 'folder',
     path,
+    providerId: 'warmedCache',
     priority,
+    recordKey: `folder:${path.toLocaleLowerCase()}`,
     subtitle,
     terms: `${title} ${path} folder explorer`,
     title

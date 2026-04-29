@@ -16,8 +16,13 @@ const SETTINGS_FILE: &str = "jasonshell-settings-v1.json";
 pub struct ShellSettings {
     pub schema: String,
     pub version: u32,
+    #[serde(default)]
     pub ui: ShellUiSettings,
+    #[serde(default)]
+    pub search: SearchSettings,
+    #[serde(default)]
     pub workspaces: Vec<WorkspaceProfile>,
+    #[serde(default)]
     pub task_history: Vec<Value>,
 }
 
@@ -26,6 +31,71 @@ pub struct ShellSettings {
 pub struct ShellUiSettings {
     pub active_workspace_id: Option<String>,
     pub enable_diagnostics_export: bool,
+    #[serde(default)]
+    pub search_mode: SearchMode,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSettings {
+    #[serde(default = "default_search_result_limit")]
+    pub result_limit: usize,
+    #[serde(default)]
+    pub everything: EverythingSearchSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EverythingSearchSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub install_mode: EverythingInstallMode,
+    #[serde(default)]
+    pub sdk_source: EverythingSdkSource,
+    #[serde(default = "default_everything_max_results")]
+    pub max_results: usize,
+    #[serde(default = "default_true")]
+    pub full_path_search: bool,
+    #[serde(default)]
+    pub sort: EverythingSortMode,
+    #[serde(default)]
+    pub content_search_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchMode {
+    #[default]
+    TopRight,
+    CenteredHotkey,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum EverythingInstallMode {
+    #[default]
+    Ask,
+    Disabled,
+    Managed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum EverythingSdkSource {
+    Bundled,
+    #[default]
+    System,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum EverythingSortMode {
+    #[default]
+    NameAsc,
+    PathAsc,
+    DateModifiedDesc,
+    RunCountDesc,
 }
 
 impl Default for ShellSettings {
@@ -33,14 +103,57 @@ impl Default for ShellSettings {
         Self {
             schema: SETTINGS_SCHEMA.to_string(),
             version: SETTINGS_VERSION,
-            ui: ShellUiSettings {
-                active_workspace_id: None,
-                enable_diagnostics_export: false,
-            },
+            ui: ShellUiSettings::default(),
+            search: SearchSettings::default(),
             workspaces: Vec::new(),
             task_history: Vec::new(),
         }
     }
+}
+
+impl Default for ShellUiSettings {
+    fn default() -> Self {
+        Self {
+            active_workspace_id: None,
+            enable_diagnostics_export: false,
+            search_mode: SearchMode::TopRight,
+        }
+    }
+}
+
+impl Default for SearchSettings {
+    fn default() -> Self {
+        Self {
+            result_limit: default_search_result_limit(),
+            everything: EverythingSearchSettings::default(),
+        }
+    }
+}
+
+impl Default for EverythingSearchSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            install_mode: EverythingInstallMode::Ask,
+            sdk_source: EverythingSdkSource::System,
+            max_results: default_everything_max_results(),
+            full_path_search: default_true(),
+            sort: EverythingSortMode::NameAsc,
+            content_search_enabled: false,
+        }
+    }
+}
+
+fn default_search_result_limit() -> usize {
+    50
+}
+
+fn default_everything_max_results() -> usize {
+    100
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[tauri::command]
@@ -127,6 +240,12 @@ fn save_settings_to_path(
 }
 
 fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, String> {
+    settings.search.result_limit = settings.search.result_limit.clamp(1, 100);
+    settings.search.everything.max_results = settings.search.everything.max_results.clamp(1, 200);
+    if settings.search.everything.content_search_enabled {
+        settings.search.everything.content_search_enabled = false;
+    }
+
     let mut workspaces = Vec::with_capacity(settings.workspaces.len());
     for workspace in settings.workspaces {
         workspaces.push(normalize_workspace(workspace)?);
@@ -276,6 +395,60 @@ mod tests {
         );
         assert!(settings.workspaces.is_empty());
         assert!(settings.task_history.is_empty());
+        assert_eq!(settings.ui.search_mode, SearchMode::TopRight);
+        assert_eq!(settings.search, SearchSettings::default());
+    }
+
+    #[test]
+    fn default_settings_include_search_settings_without_bumping_v1() {
+        let value = serde_json::to_value(ShellSettings::default()).unwrap();
+
+        assert_eq!(value["version"], SETTINGS_VERSION);
+        assert_eq!(value["ui"]["searchMode"], "topRight");
+        assert_eq!(value["search"]["resultLimit"], 50);
+        assert_eq!(value["search"]["everything"]["enabled"], true);
+        assert_eq!(value["search"]["everything"]["installMode"], "ask");
+        assert_eq!(value["search"]["everything"]["sdkSource"], "system");
+        assert_eq!(value["search"]["everything"]["contentSearchEnabled"], false);
+    }
+
+    #[test]
+    fn clamps_search_result_limits_and_forces_content_search_off() {
+        let mut settings = ShellSettings::default();
+        settings.search.result_limit = 10_000;
+        settings.search.everything.max_results = 10_000;
+        settings.search.everything.content_search_enabled = true;
+
+        let settings = validate_settings(settings).unwrap();
+
+        assert_eq!(settings.search.result_limit, 100);
+        assert_eq!(settings.search.everything.max_results, 200);
+        assert!(!settings.search.everything.content_search_enabled);
+    }
+
+    #[test]
+    fn partial_nested_search_settings_default_missing_fields() {
+        let path = test_dir("partial-search").join(SETTINGS_FILE);
+        fs::write(
+            &path,
+            json!({
+                "schema": SETTINGS_SCHEMA,
+                "version": SETTINGS_VERSION,
+                "ui": { "activeWorkspaceId": null, "enableDiagnosticsExport": false },
+                "search": { "everything": { "enabled": false } },
+                "workspaces": [],
+                "taskHistory": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let settings = load_settings_from_path(&path).unwrap();
+
+        assert_eq!(settings.search.result_limit, 50);
+        assert!(!settings.search.everything.enabled);
+        assert_eq!(settings.search.everything.max_results, 100);
+        assert!(settings.search.everything.full_path_search);
     }
 
     #[test]

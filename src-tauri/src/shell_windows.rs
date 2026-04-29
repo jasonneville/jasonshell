@@ -1,6 +1,16 @@
 use crate::layout::build_shell_preview_rects;
+#[cfg(windows)]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::error::Error;
 use tauri::{App, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+#[cfg(windows)]
+use windows::Win32::Foundation::{GetLastError, SetLastError, ERROR_SUCCESS, HWND, WIN32_ERROR};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINDOW_EX_STYLE, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+};
 
 pub const TOP_BAR_LABEL: &str = "top-bar";
 pub const BOTTOM_BAR_LABEL: &str = "bottom-bar";
@@ -87,24 +97,26 @@ fn build_shell_window(
     logical_width: f64,
     logical_height: f64,
 ) -> AppResult<WebviewWindow> {
-    Ok(
-        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-            .always_on_top(true)
-            .devtools(false)
-            .decorations(false)
-            .focused(false)
-            .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
-            .inner_size(logical_width, logical_height)
-            .maximizable(false)
-            .minimizable(false)
-            .resizable(false)
-            .shadow(false)
-            .skip_taskbar(true)
-            .theme(Some(Theme::Dark))
-            .title(title)
-            .visible(false)
-            .build()?,
-    )
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .always_on_top(true)
+        .devtools(false)
+        .decorations(false)
+        .focused(false)
+        .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+        .inner_size(logical_width, logical_height)
+        .maximizable(false)
+        .minimizable(false)
+        .resizable(false)
+        .shadow(false)
+        .skip_taskbar(true)
+        .theme(Some(Theme::Dark))
+        .title(title)
+        .visible(false)
+        .build()?;
+
+    apply_no_alt_tab_shell_style(&window)?;
+
+    Ok(window)
 }
 
 fn build_preview_window(app: &App) -> AppResult<WebviewWindow> {
@@ -126,6 +138,7 @@ fn build_preview_window(app: &App) -> AppResult<WebviewWindow> {
     .skip_taskbar(true)
     .theme(Some(Theme::Dark))
     .title("JasonShell Task Preview")
+    .transparent(true)
     .visible(false)
     .build()?)
 }
@@ -269,4 +282,111 @@ fn build_audio_panel_window(app: &App) -> AppResult<WebviewWindow> {
 
 pub fn to_physical_height(logical_height: f64, scale_factor: f64) -> i32 {
     (logical_height * scale_factor).round() as i32
+}
+
+#[cfg(windows)]
+fn apply_no_alt_tab_shell_style(window: &WebviewWindow) -> AppResult<()> {
+    let hwnd = hwnd_from_tauri_window(window)?;
+    apply_no_alt_tab_shell_style_to_hwnd(hwnd, window.label())
+}
+
+#[cfg(windows)]
+pub(crate) fn apply_no_alt_tab_shell_style_to_hwnd(hwnd: HWND, context: &str) -> AppResult<()> {
+    let current_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 };
+    let desired_style = desired_shell_ex_style(current_style);
+
+    if desired_style != current_style {
+        unsafe {
+            SetLastError(WIN32_ERROR(0));
+            let previous_style = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired_style as isize);
+            let last_error = GetLastError();
+
+            if previous_style == 0 && last_error != ERROR_SUCCESS {
+                return Err(format!(
+                    "failed to apply shell Alt+Tab exclusion style to {context} {:?}: {:?}",
+                    hwnd.0, last_error,
+                )
+                .into());
+            }
+        }
+    }
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn apply_no_alt_tab_shell_style(_window: &WebviewWindow) -> AppResult<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn hwnd_from_tauri_window(window: &WebviewWindow) -> AppResult<HWND> {
+    let handle = window.window_handle()?;
+    match handle.as_raw() {
+        RawWindowHandle::Win32(handle) => Ok(HWND(handle.hwnd.get() as *mut _)),
+        other => Err(format!("unsupported window handle: {other:?}").into()),
+    }
+}
+
+#[cfg(windows)]
+fn desired_shell_ex_style(existing: u32) -> u32 {
+    let shell_style = WINDOW_EX_STYLE(WS_EX_TOOLWINDOW.0);
+    (existing | shell_style.0) & !(WS_EX_APPWINDOW.0 | WS_EX_NOACTIVATE.0)
+}
+
+#[cfg(all(test, windows))]
+fn shell_ex_style_is_alt_tab_excluded(style: u32) -> bool {
+    (style & WS_EX_TOOLWINDOW.0) != 0
+        && (style & WS_EX_APPWINDOW.0) == 0
+        && (style & WS_EX_NOACTIVATE.0) == 0
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desired_shell_ex_style_hides_from_alt_tab() {
+        let existing = WINDOW_EX_STYLE(WS_EX_APPWINDOW.0);
+
+        let desired = desired_shell_ex_style(existing.0);
+
+        assert!(shell_ex_style_is_alt_tab_excluded(desired));
+    }
+
+    #[test]
+    fn desired_shell_ex_style_preserves_unrelated_bits() {
+        let unrelated_style = 0x0000_0200;
+
+        let desired = desired_shell_ex_style(unrelated_style);
+
+        assert_eq!(desired & unrelated_style, unrelated_style);
+        assert_eq!(desired & WS_EX_TOOLWINDOW.0, WS_EX_TOOLWINDOW.0);
+        assert_eq!(desired & WS_EX_NOACTIVATE.0, 0);
+    }
+
+    #[test]
+    fn alt_tab_exclusion_rejects_task_switcher_bits() {
+        let toolwindow_only = WS_EX_TOOLWINDOW.0;
+        let forced_appwindow = WS_EX_TOOLWINDOW.0 | WS_EX_APPWINDOW.0;
+        let noactivate_helper = WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0;
+        let regular_window = 0;
+
+        assert!(shell_ex_style_is_alt_tab_excluded(toolwindow_only));
+        assert!(!shell_ex_style_is_alt_tab_excluded(forced_appwindow));
+        assert!(!shell_ex_style_is_alt_tab_excluded(noactivate_helper));
+        assert!(!shell_ex_style_is_alt_tab_excluded(regular_window));
+    }
 }

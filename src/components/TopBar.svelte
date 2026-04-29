@@ -23,6 +23,7 @@
     SEARCH_PANEL_INTERACTION_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
     SEARCH_PANEL_SELECT_EVENT,
+    showCenteredSearchPanel,
     showSearchPanel,
     type SearchPanelResult
   } from '../lib/searchPanel';
@@ -37,7 +38,7 @@
   } from '../lib/stackPopup';
   import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
   import { buildSearchCatalog } from '../lib/searchCatalog';
-  import { rankSearchResults, recordSearchUsage } from '../lib/searchRanking';
+  import { rankSearchResults, recordSearchResultUsage } from '../lib/searchRanking';
   import {
     addShellPreferencesChangeListener,
     formatShellDate,
@@ -51,6 +52,9 @@
     showAudioPanel
   } from '../lib/audio';
   import { showSettingsPanel } from '../lib/settingsPanel';
+  import { loadShellSettings } from '../lib/settings';
+  import type { SearchMode } from '../lib/searchSettings';
+  import { showControlPlane } from '../lib/controlPlane';
   import { isSystemPathResult, searchSystem, SEARCH_INDEX_REFRESHED_EVENT } from '../lib/systemSearch';
   import {
     showTopBarPinContextMenu,
@@ -61,9 +65,21 @@
   import {
     shouldApplySystemSearchResponse,
     shouldRefreshSystemSearchAfterIndexUpdate,
-    shouldRetryIndexedSearch
+    shouldRetryIndexedSearch,
+    searchPanelAnchorState,
+    searchPanelPayloadSignature,
+    shouldPublishSearchPanelPayload,
+    shouldShowSearchPanelForAnchor,
+    type SearchPanelAnchorState
   } from '../lib/systemSearchState';
   import { topBarIdentityState } from '../features/top-bar/topBarUxState';
+  import {
+    ctrlKSearchAction,
+    nextSearchResultRefreshRequest,
+    searchModeFromSettings,
+    searchPanelKeyboardAction,
+    shouldApplySearchResultRefresh
+  } from '../features/search/searchUxState';
   import MeltActionButton from './melt/MeltActionButton.svelte';
 
   let now = new Date();
@@ -72,6 +88,7 @@
   let openWindows: TaskbarWindow[] = [];
   let stackPins: StackPin[] = [];
   let systemResults: SearchPanelResult[] = [];
+  let searchResults: SearchPanelResult[] = [];
   let searchQuery = '';
   let searchOpen = false;
   let selectedIndex = 0;
@@ -87,7 +104,13 @@
   let focusedPinIndex: number | null = null;
   let systemSearchTimer: number | null = null;
   let systemSearchRefreshTimer: number | null = null;
+  let searchRenderTimer: number | null = null;
+  let searchRenderSequence = 0;
   let systemSearchSequence = 0;
+  let searchPanelPayloadSequence = 0;
+  let searchMode: SearchMode = 'topRight';
+  let searchPanelAnchor: SearchPanelAnchorState | null = null;
+  let lastSearchPanelPayloadSignature: string | null = null;
   let pinDropStatus = '';
   let pinDropStatusKind: 'info' | 'error' = 'info';
   let pinDropStatusTimer: number | null = null;
@@ -104,20 +127,10 @@
   const SOUND_PANEL_ID = 'audio-panel';
 
   $: allResults = buildSearchCatalog(launchers, openWindows, systemResults);
-  $: searchResults = rankSearchResults(allResults, searchQuery);
   $: selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
-  $: searchPanelPayload = {
-    query: searchQuery,
-    results: searchResults,
-    selectedIndex,
-    statusMessage: searchStatus
-  };
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
   $: shellTime = formatShellTime(now, shellPreferences);
   $: shellDate = formatShellDate(now, shellPreferences.dateFormat);
-  $: if (searchOpen) {
-    void publishSearchResults(searchPanelPayload);
-  }
 
   async function loadSearchCatalog() {
     try {
@@ -128,11 +141,23 @@
       searchStatus = launchers.length || openWindows.length
         ? 'Type to search apps, windows, files, folders, and commands'
         : 'Type to search installed apps, files, folders, and commands';
+      scheduleSearchRender();
     } catch (error) {
       console.error('Failed to load search catalog', error);
       launchers = [];
       openWindows = [];
       searchStatus = 'Search catalog unavailable';
+      scheduleSearchRender();
+    }
+  }
+
+  async function loadSearchMode() {
+    try {
+      const settings = await loadShellSettings();
+      searchMode = searchModeFromSettings(settings.ui.searchMode);
+    } catch (error) {
+      console.error('Failed to load search mode', error);
+      searchMode = 'topRight';
     }
   }
 
@@ -196,18 +221,44 @@
 
   async function openPanel() {
     cancelSearchBlurClose();
-    searchOpen = true;
     const rect = searchControl.getBoundingClientRect();
-    await showSearchPanel({
-      anchorLeft: rect.left,
-      anchorWidth: rect.width
+    const nextAnchor = searchPanelAnchorState(rect);
+    const needsNativeShow = shouldShowSearchPanelForAnchor(searchOpen, searchPanelAnchor, nextAnchor);
+    searchOpen = true;
+    searchPanelAnchor = nextAnchor;
+    queueSearchPanelPublish();
+    if (needsNativeShow) {
+      await showSearchPanel({
+        anchorLeft: rect.left,
+        anchorWidth: rect.width
+      });
+    }
+    scheduleSearchRender();
+  }
+
+  async function openCenteredPanel() {
+    cancelSearchBlurClose();
+    searchOpen = true;
+    searchPanelAnchor = null;
+    queueSearchPanelPublish();
+    await showCenteredSearchPanel().catch((error) => {
+      console.error('Failed to show centered search panel', error);
     });
-    await publishSearchResults();
+    scheduleSearchRender();
   }
 
   async function closePanel() {
     cancelSearchBlurClose();
     searchOpen = false;
+    searchPanelAnchor = null;
+    lastSearchPanelPayloadSignature = null;
+    await publishSearchPanel({
+      query: '',
+      results: [],
+      selectedIndex: 0,
+      statusMessage: 'Search is ready',
+      sequence: ++searchPanelPayloadSequence
+    }).catch(() => undefined);
     await hideSearchPanel().catch((error) => {
       console.error('Failed to hide search panel', error);
     });
@@ -526,10 +577,48 @@
     });
   }
 
-  async function publishSearchResults(payload = searchPanelPayload) {
-    await publishSearchPanel(payload).catch((error) => {
+  function currentSearchPanelPayload() {
+    return {
+      query: searchQuery,
+      results: searchResults,
+      selectedIndex,
+      statusMessage: searchStatus
+    };
+  }
+
+  function queueSearchPanelPublish(payload = currentSearchPanelPayload()) {
+    const signature = searchPanelPayloadSignature(payload);
+    if (!shouldPublishSearchPanelPayload(lastSearchPanelPayloadSignature, payload)) {
+      return;
+    }
+    lastSearchPanelPayloadSignature = signature;
+    const sequencedPayload = {
+      ...payload,
+      sequence: ++searchPanelPayloadSequence
+    };
+    void publishSearchPanel(sequencedPayload).catch((error) => {
       console.error('Failed to update search panel', error);
+      lastSearchPanelPayloadSignature = null;
     });
+  }
+
+  function scheduleSearchRender(query = searchQuery) {
+    const request = nextSearchResultRefreshRequest(searchRenderSequence, query);
+    searchRenderSequence = request.sequence;
+    if (searchRenderTimer !== null) {
+      window.clearTimeout(searchRenderTimer);
+    }
+    searchRenderTimer = window.setTimeout(() => {
+      searchRenderTimer = null;
+      if (!shouldApplySearchResultRefresh(request, searchQuery, searchRenderSequence)) {
+        return;
+      }
+      searchResults = rankSearchResults(allResults, query);
+      selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
+      if (searchOpen) {
+        queueSearchPanelPublish();
+      }
+    }, 0);
   }
 
   function scheduleSystemSearch(query: string) {
@@ -546,6 +635,7 @@
     systemSearchSequence += 1;
     if (trimmedQuery.length < 2) {
       systemResults = [];
+      scheduleSearchRender(query);
       return;
     }
 
@@ -570,6 +660,7 @@
       searchStatus = results.length
         ? 'Showing apps, windows, files, folders, and commands'
         : 'No installed apps or files matched';
+      scheduleSearchRender();
       if (shouldRetryIndexedSearch(results.length, refreshAttempt)) {
         systemSearchRefreshTimer = window.setTimeout(() => {
           systemSearchRefreshTimer = null;
@@ -581,6 +672,7 @@
       if (sequence === systemSearchSequence) {
         systemResults = [];
         searchStatus = 'Installed app and file search unavailable';
+        scheduleSearchRender();
       }
     }
   }
@@ -590,7 +682,7 @@
       return;
     }
 
-    recordSearchUsage(result.id);
+    recordSearchResultUsage(result);
     if (isSystemPathResult(result)) {
       await openShellPath(result.path as string);
     } else if (result.kind === 'app') {
@@ -605,6 +697,8 @@
     } else if (result.id === 'command:refresh-search') {
       await loadSearchCatalog();
       scheduleSystemSearch(searchQuery);
+    } else if (result.id === 'command:open-control-plane') {
+      await showControlPlane();
     } else if (result.id === 'command:hide-search') {
       await closePanel();
       return;
@@ -619,21 +713,26 @@
   function handleSearchInput(event: Event) {
     searchQuery = (event.currentTarget as HTMLInputElement).value;
     selectedIndex = 0;
+    queueSearchPanelPublish();
+    scheduleSearchRender(searchQuery);
     scheduleSystemSearch(searchQuery);
     void openPanel();
   }
 
   function handleSearchKeydown(event: KeyboardEvent) {
-    if (event.key === 'ArrowDown') {
+    const action = searchPanelKeyboardAction(event.key);
+    if (action === 'selectNext') {
       event.preventDefault();
       selectedIndex = Math.min(selectedIndex + 1, Math.max(searchResults.length - 1, 0));
-    } else if (event.key === 'ArrowUp') {
+      queueSearchPanelPublish();
+    } else if (action === 'selectPrevious') {
       event.preventDefault();
       selectedIndex = Math.max(selectedIndex - 1, 0);
-    } else if (event.key === 'Enter') {
+      queueSearchPanelPublish();
+    } else if (action === 'activate') {
       event.preventDefault();
       void activateResult(searchResults[selectedIndex]);
-    } else if (event.key === 'Escape') {
+    } else if (action === 'close') {
       event.preventDefault();
       void closePanel();
     }
@@ -644,7 +743,8 @@
       event.preventDefault();
       searchInput.focus();
       scheduleSystemSearch(searchQuery);
-      void openPanel();
+      const action = ctrlKSearchAction(searchMode);
+      void (action === 'openCentered' ? openCenteredPanel() : openPanel());
     }
   }
 
@@ -671,6 +771,7 @@
       });
     }, 250);
     void loadSearchCatalog();
+    void loadSearchMode();
     void loadStackPins();
     void listen<string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
@@ -700,6 +801,8 @@
     void listen(SEARCH_PANEL_CLOSED_EVENT, () => {
       cancelSearchBlurClose();
       searchOpen = false;
+      searchPanelAnchor = null;
+      lastSearchPanelPayloadSignature = null;
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -744,6 +847,7 @@
 
         systemSearchSequence += 1;
         void loadSystemSearchResults(searchQuery.trim(), systemSearchSequence, 1);
+        scheduleSearchRender();
       }
     }).then((unlisten) => {
       unlisteners.push(unlisten);
@@ -761,6 +865,9 @@
       }
       if (systemSearchRefreshTimer !== null) {
         window.clearTimeout(systemSearchRefreshTimer);
+      }
+      if (searchRenderTimer !== null) {
+        window.clearTimeout(searchRenderTimer);
       }
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);

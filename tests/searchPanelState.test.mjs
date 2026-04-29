@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import {
   applySearchPanelPayload,
   defaultSearchPanelViewState,
@@ -9,7 +10,11 @@ import { buildSearchCatalog } from '../dist-tests/lib/searchCatalog.js';
 import {
   shouldRefreshSystemSearchAfterIndexUpdate,
   shouldApplySystemSearchResponse,
-  shouldRetryIndexedSearch
+  shouldRetryIndexedSearch,
+  searchPanelAnchorState,
+  searchPanelPayloadSignature,
+  shouldPublishSearchPanelPayload,
+  shouldShowSearchPanelForAnchor
 } from '../dist-tests/lib/systemSearchState.js';
 
 test('applies a typed search payload with visible results and selection', () => {
@@ -105,4 +110,44 @@ test('refreshes current system search after an index event', () => {
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 'spotify'), true);
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 's'), false);
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(false, 'spotify'), false);
+});
+
+test('keeps search panel show and publish idempotent for realtime typing', () => {
+  const anchor = searchPanelAnchorState({ left: 10.4, width: 220.2 });
+  assert.deepEqual(anchor, { left: 10, width: 220 });
+  assert.equal(shouldShowSearchPanelForAnchor(false, null, anchor), true);
+  assert.equal(shouldShowSearchPanelForAnchor(true, anchor, anchor), false);
+  assert.equal(shouldShowSearchPanelForAnchor(true, anchor, { left: 11, width: 220 }), true);
+
+  const payload = {
+    query: 'dev',
+    results: [{ id: 'command:open-control-plane', kind: 'command', title: 'Open developer dashboard', subtitle: 'Developer dashboard', terms: 'dev', priority: 92 }],
+    selectedIndex: 0,
+    statusMessage: 'Showing apps, windows, files, folders, and commands'
+  };
+  const signature = searchPanelPayloadSignature(payload);
+  assert.equal(shouldPublishSearchPanelPayload(null, payload), true);
+  assert.equal(shouldPublishSearchPanelPayload(signature, payload), false);
+});
+
+test('top-bar defers expensive search render work out of the input handler', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(inputHandler, /searchQuery = \(event\.currentTarget as HTMLInputElement\)\.value/);
+  assert.match(inputHandler, /scheduleSearchRender\(searchQuery\)/);
+  assert.doesNotMatch(inputHandler, /rankSearchResults\(/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{[\s\S]*rankSearchResults\(allResults, query\)/);
+  assert.doesNotMatch(source, /\$:\s*searchResults\s*=\s*rankSearchResults\(allResults, searchQuery\)/);
+  assert.match(source, /function queueSearchPanelPublish/);
+  assert.match(source, /lastSearchPanelPayloadSignature = signature/);
+  assert.match(source, /sequence: \+\+searchPanelPayloadSequence/);
+  assert.doesNotMatch(source, /await publishSearchPanel\(sequencedPayload\)/);
+});
+
+test('search-panel fallback fetches cannot overwrite newer event payloads', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  assert.match(source, /let fallbackGeneration = 0/);
+  assert.match(source, /SEARCH_PANEL_UPDATE_EVENT[\s\S]*fallbackGeneration \+= 1/);
+  assert.match(source, /const generation = fallbackGeneration[\s\S]*getSearchPanelPayload\(\)\.then/);
+  assert.match(source, /if \(generation !== fallbackGeneration\) \{[\s\S]*return;[\s\S]*\}[\s\S]*applyPayload\(payload\)/);
 });

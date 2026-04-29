@@ -2,7 +2,8 @@
 
 use crate::explorer;
 use crate::shell_windows::{
-    AppResult, CreatedShellWindows, BOTTOM_BAR_HEIGHT_LOGICAL, TOP_BAR_HEIGHT_LOGICAL,
+    apply_no_alt_tab_shell_style_to_hwnd, AppResult, CreatedShellWindows,
+    BOTTOM_BAR_HEIGHT_LOGICAL, TOP_BAR_HEIGHT_LOGICAL,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::ffi::c_void;
@@ -224,6 +225,8 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
 
         windows.top.show()?;
         windows.bottom.show()?;
+        apply_no_alt_tab_shell_style_to_hwnd(top_hwnd, super::shell_windows::TOP_BAR_LABEL)?;
+        apply_no_alt_tab_shell_style_to_hwnd(bottom_hwnd, super::shell_windows::BOTTOM_BAR_LABEL)?;
 
         stabilize_runtime_window_rect(
             top_hwnd,
@@ -872,10 +875,12 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
     move_window_to_rect(bottom_hwnd, layout.bottom_rect)?;
 
     if let Some(window) = app_handle.get_webview_window(super::shell_windows::TOP_BAR_LABEL) {
-        let _ = window.show();
+        window.show()?;
+        apply_no_alt_tab_shell_style_to_hwnd(top_hwnd, super::shell_windows::TOP_BAR_LABEL)?;
     }
     if let Some(window) = app_handle.get_webview_window(super::shell_windows::BOTTOM_BAR_LABEL) {
-        let _ = window.show();
+        window.show()?;
+        apply_no_alt_tab_shell_style_to_hwnd(bottom_hwnd, super::shell_windows::BOTTOM_BAR_LABEL)?;
     }
 
     Ok(())

@@ -1,5 +1,5 @@
 use super::scoring::{normalize, search_ranked_results};
-use super::{apps, files, windows_search, SystemSearchResult};
+use super::{apps, files, provider, SystemSearchResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -12,16 +12,28 @@ use tauri::{AppHandle, Emitter, Manager};
 const CACHE_VERSION: u32 = 1;
 const INDEX_LIMIT: usize = 40;
 const REFRESH_TTL: Duration = Duration::from_secs(300);
+const PROVIDER_EMPTY_TTL: Duration = Duration::from_secs(5);
+const PROVIDER_RESULTS_TTL: Duration = Duration::from_secs(60);
+const MAX_PROVIDER_CACHE_QUERIES: usize = 64;
+const MAX_PROVIDER_IN_FLIGHT: usize = 4;
 const SEARCH_INDEX_REFRESHED_EVENT: &str = "search-index:refreshed";
 
 #[derive(Default)]
 pub struct SearchIndexRuntimeState {
     entries: Vec<SystemSearchResult>,
-    provider_results_by_query: HashMap<String, Vec<SystemSearchResult>>,
+    provider_results_by_query: HashMap<String, CachedProviderResults>,
     provider_queries_in_flight: HashSet<String>,
+    latest_provider_generation: u64,
+    next_provider_generation: u64,
     loaded_cache: bool,
     refreshing: bool,
     refreshed_at: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedProviderResults {
+    results: Vec<SystemSearchResult>,
+    stored_at: SystemTime,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -129,35 +141,54 @@ fn ensure_provider_search(app_handle: &AppHandle, query: &str) {
         let Ok(mut guard) = state.lock() else {
             return;
         };
-        if guard.provider_results_by_query.contains_key(&key)
-            || guard.provider_queries_in_flight.contains(&key)
+        prune_provider_cache(&mut guard.provider_results_by_query, SystemTime::now());
+        if guard.provider_queries_in_flight.contains(&key)
+            || guard.provider_queries_in_flight.len() >= MAX_PROVIDER_IN_FLIGHT
+            || guard
+                .provider_results_by_query
+                .get(&key)
+                .map(|cached| provider_cache_is_fresh(cached, SystemTime::now()))
+                .unwrap_or(false)
         {
-            false
+            None
         } else {
+            guard.next_provider_generation = guard.next_provider_generation.saturating_add(1);
+            let generation = guard.next_provider_generation;
+            guard.latest_provider_generation = generation;
             guard.provider_queries_in_flight.insert(key.clone());
-            true
+            Some(generation)
         }
     };
 
-    if !should_search {
+    let Some(generation) = should_search else {
         return;
-    }
+    };
 
     let app_handle = app_handle.clone();
     let query = query.trim().to_string();
     thread::spawn(move || {
-        let results = match windows_search::search_windows(&query, INDEX_LIMIT) {
-            windows_search::ProviderSearchOutcome::Results(results) => results,
-            windows_search::ProviderSearchOutcome::Fallback { reason } => {
-                let _ = reason;
-                Vec::new()
-            }
-        };
+        let settings = crate::settings::load_shell_settings_for_app(&app_handle)
+            .unwrap_or_else(|_| crate::settings::ShellSettings::default());
+        let batch = provider::search_provider_results(&query, &settings);
+        let results = batch.results;
         let entry_count = results.len();
         let state = app_handle.state::<Mutex<SearchIndexRuntimeState>>();
         if let Ok(mut guard) = state.lock() {
             guard.provider_queries_in_flight.remove(&key);
-            guard.provider_results_by_query.insert(key, results);
+            if !provider::should_apply_provider_generation(
+                generation,
+                guard.latest_provider_generation,
+            ) {
+                return;
+            }
+            prune_provider_cache(&mut guard.provider_results_by_query, SystemTime::now());
+            guard.provider_results_by_query.insert(
+                key,
+                CachedProviderResults {
+                    results,
+                    stored_at: SystemTime::now(),
+                },
+            );
         }
 
         if entry_count > 0 {
@@ -171,7 +202,7 @@ fn ensure_provider_search(app_handle: &AppHandle, query: &str) {
 
 fn search_ranked_snapshot(
     entries: &[SystemSearchResult],
-    provider_results: Option<&Vec<SystemSearchResult>>,
+    provider_results: Option<&CachedProviderResults>,
     query: &str,
     limit: usize,
 ) -> Vec<SystemSearchResult> {
@@ -180,7 +211,7 @@ fn search_ranked_snapshot(
         return local_results;
     };
 
-    merge_provider_and_local_results(provider_results, local_results, limit)
+    merge_provider_and_local_results(&provider_results.results, local_results, limit)
 }
 
 fn merge_provider_and_local_results(
@@ -192,7 +223,7 @@ fn merge_provider_and_local_results(
     let mut merged = Vec::new();
 
     for result in provider_results.iter().cloned().chain(local_results) {
-        if seen.insert(result.id.to_lowercase()) {
+        if seen.insert(result_identity_key(&result)) {
             merged.push(result);
         }
     }
@@ -207,8 +238,44 @@ fn merge_provider_and_local_results(
     merged
 }
 
+fn result_identity_key(result: &SystemSearchResult) -> String {
+    if !result.path.trim().is_empty() {
+        return format!(
+            "{}:{}",
+            result.kind,
+            normalize(&result.path.replace('/', r"\"))
+        );
+    }
+    normalize(&result.id)
+}
+
 fn provider_query_key(query: &str) -> String {
     normalize(query)
+}
+
+fn provider_cache_is_fresh(cached: &CachedProviderResults, now: SystemTime) -> bool {
+    let ttl = if cached.results.is_empty() {
+        PROVIDER_EMPTY_TTL
+    } else {
+        PROVIDER_RESULTS_TTL
+    };
+    now.duration_since(cached.stored_at)
+        .map(|age| age < ttl)
+        .unwrap_or(true)
+}
+
+fn prune_provider_cache(cache: &mut HashMap<String, CachedProviderResults>, now: SystemTime) {
+    cache.retain(|_, cached| provider_cache_is_fresh(cached, now));
+    while cache.len() >= MAX_PROVIDER_CACHE_QUERIES {
+        let Some(oldest_key) = cache
+            .iter()
+            .min_by_key(|(_, cached)| cached.stored_at)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        cache.remove(&oldest_key);
+    }
 }
 
 fn load_cache_for_refresh(app_handle: &AppHandle) -> Option<usize> {
@@ -319,21 +386,29 @@ mod tests {
         let entries = vec![
             SystemSearchResult {
                 id: "system:app:C:\\Tools\\DevBox.lnk".to_string(),
+                provider_id: Some("apps".to_string()),
                 kind: "app".to_string(),
                 title: "DevBox".to_string(),
                 subtitle: "Installed app - Start Menu".to_string(),
                 terms: "devbox installed program".to_string(),
                 priority: 112,
                 path: "C:\\Tools\\DevBox.lnk".to_string(),
+                record_key: Some("app:c:\\tools\\devbox.lnk".to_string()),
+                run_count: None,
+                top_most: None,
             },
             SystemSearchResult {
                 id: "system:folder:C:\\Users\\me\\Documents\\Plans".to_string(),
+                provider_id: Some("warmedCache".to_string()),
                 kind: "folder".to_string(),
                 title: "Plans".to_string(),
                 subtitle: "Folder - Documents".to_string(),
                 terms: "plans folder".to_string(),
                 priority: 76,
                 path: "C:\\Users\\me\\Documents\\Plans".to_string(),
+                record_key: Some("folder:c:\\users\\me\\documents\\plans".to_string()),
+                run_count: None,
+                top_most: None,
             },
         ];
 
@@ -350,12 +425,16 @@ mod tests {
     fn query_uses_cached_entries() {
         let entries = vec![SystemSearchResult {
             id: "system:file:C:\\Users\\me\\Downloads\\Invoice.pdf".to_string(),
+            provider_id: Some("warmedCache".to_string()),
             kind: "file".to_string(),
             title: "Invoice".to_string(),
             subtitle: "File - Downloads".to_string(),
             terms: "invoice pdf downloads".to_string(),
             priority: 76,
             path: "C:\\Users\\me\\Downloads\\Invoice.pdf".to_string(),
+            record_key: Some("file:c:\\users\\me\\downloads\\invoice.pdf".to_string()),
+            run_count: None,
+            top_most: None,
         }];
 
         let results = search_ranked_results(&entries, "invoice", 8);
@@ -366,16 +445,19 @@ mod tests {
 
     #[test]
     fn provider_results_merge_with_local_snapshot_without_duplicates() {
-        let provider_results = vec![
-            search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 118),
-            search_result("system:file:C:\\Docs\\Plan.docx", "file", "Plan", 80),
-        ];
+        let provider_results = CachedProviderResults {
+            results: vec![
+                search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 118),
+                search_result("system:file:C:\\Docs\\Plan.docx", "file", "Plan", 80),
+            ],
+            stored_at: SystemTime::now(),
+        };
         let local_results = vec![
             search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 150),
             search_result("system:file:C:\\Docs\\Notes.txt", "file", "Notes", 90),
         ];
 
-        let results = merge_provider_and_local_results(&provider_results, local_results, 8);
+        let results = merge_provider_and_local_results(&provider_results.results, local_results, 8);
 
         assert_eq!(results.len(), 3);
         assert_eq!(
@@ -389,11 +471,106 @@ mod tests {
     }
 
     #[test]
+    fn provider_results_collapse_same_path_with_different_id_shapes() {
+        let provider_results = vec![search_result(
+            "system:file:C:\\Docs\\Plan.docx",
+            "file",
+            "Plan",
+            120,
+        )];
+        let local_results = vec![search_result(
+            "system:file:c:/docs/plan.docx",
+            "file",
+            "Plan Local",
+            90,
+        )];
+
+        let results = merge_provider_and_local_results(&provider_results, local_results, 8);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Plan");
+    }
+
+    #[test]
     fn provider_query_key_matches_cairo_style_normalization() {
         assert_eq!(
             provider_query_key("  Visual-Studio.Code  "),
             "visual studio code"
         );
+    }
+
+    #[test]
+    fn provider_empty_results_expire_quickly_for_retry() {
+        let now = SystemTime::now();
+        let fresh_empty = CachedProviderResults {
+            results: Vec::new(),
+            stored_at: now - Duration::from_secs(2),
+        };
+        let stale_empty = CachedProviderResults {
+            results: Vec::new(),
+            stored_at: now - Duration::from_secs(6),
+        };
+
+        assert!(provider_cache_is_fresh(&fresh_empty, now));
+        assert!(!provider_cache_is_fresh(&stale_empty, now));
+    }
+
+    #[test]
+    fn provider_positive_results_have_longer_ttl() {
+        let now = SystemTime::now();
+        let fresh_positive = CachedProviderResults {
+            results: vec![search_result(
+                "system:file:C:\\Docs\\Plan.docx",
+                "file",
+                "Plan",
+                80,
+            )],
+            stored_at: now - Duration::from_secs(45),
+        };
+        let stale_positive = CachedProviderResults {
+            results: vec![search_result(
+                "system:file:C:\\Docs\\Notes.txt",
+                "file",
+                "Notes",
+                80,
+            )],
+            stored_at: now - Duration::from_secs(61),
+        };
+
+        assert!(provider_cache_is_fresh(&fresh_positive, now));
+        assert!(!provider_cache_is_fresh(&stale_positive, now));
+    }
+
+    #[test]
+    fn provider_cache_prunes_expired_and_bounds_query_count() {
+        let now = SystemTime::now();
+        let mut cache = HashMap::new();
+        cache.insert(
+            "expired".to_string(),
+            CachedProviderResults {
+                results: Vec::new(),
+                stored_at: now - Duration::from_secs(10),
+            },
+        );
+        for index in 0..MAX_PROVIDER_CACHE_QUERIES {
+            cache.insert(
+                format!("query-{index}"),
+                CachedProviderResults {
+                    results: vec![search_result(
+                        &format!("system:file:C:\\Docs\\File{index}.txt"),
+                        "file",
+                        &format!("File{index}"),
+                        80,
+                    )],
+                    stored_at: now - Duration::from_secs(index as u64),
+                },
+            );
+        }
+
+        prune_provider_cache(&mut cache, now);
+
+        assert!(!cache.contains_key("expired"));
+        assert!(cache.len() < MAX_PROVIDER_CACHE_QUERIES);
     }
 
     #[test]
@@ -407,12 +584,16 @@ mod tests {
     fn search_result(id: &str, kind: &str, title: &str, priority: i32) -> SystemSearchResult {
         SystemSearchResult {
             id: id.to_string(),
+            provider_id: Some("everything".to_string()),
             kind: kind.to_string(),
             title: title.to_string(),
             subtitle: title.to_string(),
             terms: title.to_string(),
             priority,
             path: id.replace(&format!("system:{kind}:"), ""),
+            record_key: None,
+            run_count: None,
+            top_most: None,
         }
     }
 

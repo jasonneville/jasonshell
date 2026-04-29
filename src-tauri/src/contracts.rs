@@ -61,6 +61,8 @@ pub mod commands {
     pub const SET_DEFAULT_AUDIO_INPUT_DEVICE: &str = "set_default_audio_input_device";
     pub const SET_DEFAULT_AUDIO_OUTPUT_DEVICE: &str = "set_default_audio_output_device";
     pub const SEARCH_SYSTEM: &str = "search_system";
+    pub const GET_SEARCH_PROVIDER_HEALTH: &str = "get_search_provider_health";
+    pub const REQUEST_EVERYTHING_SETUP: &str = "request_everything_setup";
     pub const OPEN_SHELL_PATH: &str = "open_shell_path";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
     pub const PIN_STACK_FOLDER: &str = "pin_stack_folder";
@@ -149,6 +151,8 @@ pub mod commands {
         SET_DEFAULT_AUDIO_INPUT_DEVICE,
         SET_DEFAULT_AUDIO_OUTPUT_DEVICE,
         SEARCH_SYSTEM,
+        GET_SEARCH_PROVIDER_HEALTH,
+        REQUEST_EVERYTHING_SETUP,
         OPEN_SHELL_PATH,
         LIST_PINNED_STACK_FOLDERS,
         PIN_STACK_FOLDER,
@@ -287,6 +291,8 @@ mod tests {
         assert!(unique.contains("set_default_audio_device"));
         assert!(unique.contains("set_default_audio_input_device"));
         assert!(unique.contains("set_default_audio_output_device"));
+        assert!(unique.contains("get_search_provider_health"));
+        assert!(unique.contains("request_everything_setup"));
     }
 
     #[test]

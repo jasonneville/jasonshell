@@ -41,7 +41,7 @@ test('process manager surface and commands are routed through app and Rust comma
   assert.match(processSurface, /ariaExpanded=\{groupExpanded\}/);
   assert.match(processSurface, /ariaControls=\{processGroupBodyId\(group\.id\)\}/);
   assert.match(processSurface, /hidden=\{!groupExpanded\}/);
-  assert.match(processSurface, /process\.taskbarActive/);
+  assert.match(processSurface, /taskbarActivePids/);
   assert.match(processSurface, /buildProcessKillPlan\(processes, process, false\)/);
   assert.match(processSurface, /killConfirmationFromPlan\(killPlan\)/);
   assert.match(processState, /PROCESS_GROUPS/);

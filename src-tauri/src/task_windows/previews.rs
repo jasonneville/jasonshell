@@ -22,26 +22,10 @@ const MAX_CAPTURE_DIMENSION: u32 = 8192;
 const MAX_CAPTURE_PIXELS: u64 = 33_554_432;
 
 pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
-    let hwnd = parse_hwnd(&hwnd)?;
-
-    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
-        return Err("Preview unavailable because the target window no longer exists".to_string());
-    }
-
-    if unsafe { IsHungAppWindow(hwnd).as_bool() } {
-        return Err("Preview unavailable because the target window is not responding".to_string());
-    }
+    let hwnd = validate_task_window_preview_source(&hwnd)?;
 
     if unsafe { IsIconic(hwnd).as_bool() } {
         return Err("Preview unavailable for minimized windows".to_string());
-    }
-
-    if !unsafe { IsWindowVisible(hwnd).as_bool() } {
-        return Err("Preview unavailable because the target window is hidden".to_string());
-    }
-
-    if is_window_cloaked(hwnd) {
-        return Err("Preview unavailable because the target window is cloaked".to_string());
     }
 
     let (width, height, pixels) = capture_window_rgba(hwnd)?;
@@ -55,6 +39,28 @@ pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPrev
         width: scaled_width,
         height: scaled_height,
     })
+}
+
+pub(crate) fn validate_task_window_preview_source(hwnd: &str) -> Result<HWND, String> {
+    let hwnd = parse_hwnd(hwnd)?;
+
+    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+        return Err("Preview unavailable because the target window no longer exists".to_string());
+    }
+
+    if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+        return Err("Preview unavailable because the target window is not responding".to_string());
+    }
+
+    if !unsafe { IsWindowVisible(hwnd).as_bool() } {
+        return Err("Preview unavailable because the target window is hidden".to_string());
+    }
+
+    if is_window_cloaked(hwnd) {
+        return Err("Preview unavailable because the target window is cloaked".to_string());
+    }
+
+    Ok(hwnd)
 }
 
 fn capture_window_rgba(hwnd: HWND) -> Result<(u32, u32, Vec<u8>), String> {

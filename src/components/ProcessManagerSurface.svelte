@@ -373,9 +373,6 @@
                         {#if row.childCount}
                           <span class="process-child-count" aria-label={`${row.childCount} visible child processes`}>{row.childCount}</span>
                         {/if}
-                        {#if portsLabel !== '—'}
-                          <span class="process-port-count" aria-label={`Listening ports ${portsLabel}`}>{portsLabel}</span>
-                        {/if}
                       </span>
                       {#if developerSummary}
                         <span class="process-meta">{developerSummary}</span>

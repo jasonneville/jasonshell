@@ -136,7 +136,8 @@ test('search panel and task-preview safe action buttons use Melt-backed real but
   assert.doesNotMatch(searchPanelSource, /<button[\s\S]*class="pin-folder"/);
 
   assert.match(taskPreviewSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
-  assert.match(taskPreviewSource, /<MeltActionButton[\s\S]*class="surface preview-surface"[\s\S]*ariaDisabled=\{!preview\}[\s\S]*ariaLabel=\{preview \? `Activate \$\{preview\.title \|\| preview\.processName\}` : 'Task preview unavailable'\}/);
+  assert.match(taskPreviewSource, /previewSurfaceClass = `surface preview-surface/);
+  assert.match(taskPreviewSource, /<MeltActionButton[\s\S]*class=\{previewSurfaceClass\}[\s\S]*ariaDisabled=\{!preview\}[\s\S]*ariaLabel=\{preview \? `Activate \$\{preview\.title \|\| preview\.processName\}` : 'Task preview unavailable'\}/);
   assert.match(taskPreviewSource, /onClick=\{\(\) => void handlePreviewActivate\(\)\}/);
   assert.match(taskPreviewSource, /onKeyDown=\{\(event\) => void handlePreviewKeydown\(event\)\}/);
   assert.match(taskPreviewSource, /onMouseEnter=\{\(\) => void emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)\}/);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import {
@@ -6,6 +7,7 @@ import {
   buildDeveloperSearchProviders,
   filterSavedSearchesForScope
 } from '../dist-tests/features/search/developerProviders.js';
+import { buildSearchCatalog } from '../dist-tests/lib/searchCatalog.js';
 
 const activeContext = {
   activeWorkspaceId: 'workspace-a',
@@ -157,4 +159,15 @@ test('exposes saved-search persistence and scope contracts', () => {
 
   assert.deepEqual(response.results.map((result) => result.id), ['developer:saved-searches:active-tests']);
   assert.equal(response.results[0].persistedScope, 'workspace');
+});
+
+test('static developer dashboard command is active through top-bar activation', () => {
+  const catalog = buildSearchCatalog([], [], []);
+  const command = catalog.find((result) => result.id === 'command:open-control-plane');
+  const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+
+  assert.equal(command?.kind, 'command');
+  assert.match(command?.terms ?? '', /developer dashboard settings control plane git changes task history/);
+  assert.match(topBarSource, /showControlPlane/);
+  assert.match(topBarSource, /result\.id === 'command:open-control-plane'/);
 });

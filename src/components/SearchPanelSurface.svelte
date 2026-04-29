@@ -22,13 +22,18 @@
   import { setFolderDragPayload } from '../lib/folderDrag';
   import {
     groupSearchResults,
-    searchResultActionHints
+    nextSearchPanelFallbackDelay,
+    searchResultActionHints,
+    shouldContinueSearchPanelFallbackPolling
   } from '../features/search/searchUxState';
 
   let panelState = defaultSearchPanelViewState;
   let resultRows: Array<HTMLDivElement | undefined> = [];
   let panelElement: HTMLElement | null = null;
   let lastRevealedSelection = '';
+  let fallbackTimer: number | null = null;
+  let fallbackAttempt = 0;
+  let fallbackGeneration = 0;
   $: query = panelState.query;
   $: results = panelState.results;
   $: selectedIndex = panelState.selectedIndex;
@@ -43,22 +48,71 @@
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     void getCurrentWindow().listen<SearchPanelPayload>(SEARCH_PANEL_UPDATE_EVENT, (event) => {
+      fallbackGeneration += 1;
+      stopFallbackPolling();
+      fallbackAttempt = 0;
       applyPayload(event.payload);
+      scheduleFallbackPoll();
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
-    void getSearchPanelPayload().then(applyPayload);
-    const refreshTimer = window.setInterval(() => {
-      void getSearchPanelPayload().then(applyPayload);
-    }, 120);
+    scheduleFallbackPoll(0);
 
     return () => {
-      window.clearInterval(refreshTimer);
+      fallbackGeneration += 1;
+      stopFallbackPolling();
       for (const unlisten of unlisteners) {
         unlisten();
       }
     };
   });
+
+  function scheduleFallbackPoll(delay: number | null = nextSearchPanelFallbackDelay(fallbackAttempt)) {
+    if (delay === null || fallbackTimer !== null) {
+      return;
+    }
+    fallbackTimer = window.setTimeout(() => {
+      fallbackTimer = null;
+      const attempt = fallbackAttempt;
+      const generation = fallbackGeneration;
+      fallbackAttempt += 1;
+      void getSearchPanelPayload().then((payload) => {
+        if (generation !== fallbackGeneration) {
+          return;
+        }
+        applyPayload(payload);
+        if (
+          shouldContinueSearchPanelFallbackPolling(
+            attempt,
+            Boolean(payload),
+            Boolean(panelState.query || panelState.results.length)
+          )
+        ) {
+          scheduleFallbackPoll();
+        }
+      }).catch(() => {
+        if (generation !== fallbackGeneration) {
+          return;
+        }
+        if (
+          shouldContinueSearchPanelFallbackPolling(
+            attempt,
+            false,
+            Boolean(panelState.query || panelState.results.length)
+          )
+        ) {
+          scheduleFallbackPoll();
+        }
+      });
+    }, delay);
+  }
+
+  function stopFallbackPolling() {
+    if (fallbackTimer !== null) {
+      window.clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
+  }
 
   function activateResult(result: SearchPanelResult) {
     markPanelInteraction();

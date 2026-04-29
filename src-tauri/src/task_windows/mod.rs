@@ -129,6 +129,13 @@ pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPrev
     previews::capture_task_window_preview(hwnd)
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn validate_task_window_preview_source(
+    hwnd: &str,
+) -> Result<::windows::Win32::Foundation::HWND, String> {
+    previews::validate_task_window_preview_source(hwnd)
+}
+
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
     let _ = hwnd;

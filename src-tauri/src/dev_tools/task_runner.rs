@@ -690,7 +690,9 @@ mod tests {
             ui: ShellUiSettings {
                 active_workspace_id: Some("workspace-a".to_string()),
                 enable_diagnostics_export: false,
+                search_mode: Default::default(),
             },
+            search: Default::default(),
             workspaces: vec![crate::workspaces::WorkspaceProfile {
                 id: "workspace-a".to_string(),
                 name: "Workspace A".to_string(),
