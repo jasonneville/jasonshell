@@ -2,6 +2,7 @@
   import './BottomBar.css';
   import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import { showProcessManager } from '../lib/processManager';
   import {
@@ -520,17 +521,17 @@
     <div class="launcher-strip" aria-label="Pinned Explorer taskbar apps">
       {#if launchers.length}
         {#each launchers as launcher (launcher.id)}
-          <button
+          <MeltActionButton
             class="launcher-button"
             type="button"
             title={launcher.name}
-            aria-label={`Launch ${launcher.name}`}
+            ariaLabel={`Launch ${launcher.name}`}
             disabled={launchingShortcutPath === launcher.shortcutPath}
-            on:click={() => void launchApp(launcher)}
-            on:contextmenu={(event) => void openLauncherMenu(launcher, event)}
+            onClick={() => void launchApp(launcher)}
+            onContextMenu={(event) => void openLauncherMenu(launcher, event)}
           >
             <img class="launcher-icon" src={launcher.iconDataUrl} alt="" draggable="false" />
-          </button>
+          </MeltActionButton>
         {/each}
       {:else}
         <div class="strip-fallback">{launcherMessage}</div>
@@ -572,23 +573,21 @@
               <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
             {/if}
             {#each group.windows as taskWindow (taskWindow.hwnd)}
-              <button
-                class:task-button-active={taskWindow.isActive}
-                class:task-button-minimized={taskWindow.isMinimized}
-                class="task-button"
+              <MeltActionButton
+                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}`}
                 type="button"
                 title={taskWindowLabel(taskWindow)}
-                aria-label={taskWindowActionLabel(taskWindow)}
+                ariaLabel={taskWindowActionLabel(taskWindow)}
                 disabled={activatingHwnd === taskWindow.hwnd}
-                on:pointerdown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
-                on:click={(event) => handleTaskWindowClick(taskWindow, event)}
-                on:mouseenter={(event) => queuePreview(taskWindow, event)}
-                on:mouseleave={schedulePreviewHide}
-                on:contextmenu={(event) => void openTaskMenu(taskWindow, event)}
+                onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
+                onClick={(event) => handleTaskWindowClick(taskWindow, event)}
+                onMouseEnter={(event) => queuePreview(taskWindow, event)}
+                onMouseLeave={schedulePreviewHide}
+                onContextMenu={(event) => void openTaskMenu(taskWindow, event)}
               >
                 <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
                 <span class="task-label">{taskWindowLabel(taskWindow)}</span>
-              </button>
+              </MeltActionButton>
             {/each}
           </div>
         {/each}
@@ -606,13 +605,13 @@
       </div>
     </div>
   </section>
-  <button
+  <MeltActionButton
     class="process-manager-button"
     type="button"
     title="Processes"
-    aria-label="Open process manager"
-    on:click={(event) => void openProcessManager(event)}
+    ariaLabel="Open process manager"
+    onClick={(event) => void openProcessManager(event)}
   >
     ▦
-  </button>
+  </MeltActionButton>
 </div>

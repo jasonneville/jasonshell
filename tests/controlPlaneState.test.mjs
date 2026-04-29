@@ -196,8 +196,9 @@ test('filters sections and exposes keyboard navigation actions for accessible co
 
 test('control-plane component includes semantic settings and dashboard regions without adding IPC authority', () => {
   assert.match(componentSource, /aria-labelledby="control-plane-title"/);
-  assert.match(componentSource, /role="tablist"/);
-  assert.match(componentSource, /aria-selected=/);
+  assert.match(componentSource, /\{\.\.\.sectionTabs\.triggerList\}/);
+  assert.match(componentSource, /\{\.\.\.sectionTabs\.getTrigger\(section\.id\)\}/);
+  assert.match(componentSource, /sectionTabs\.getContent\(section\.id\)/);
   assert.match(componentSource, /Control-plane summaries never render persisted secret values|Secrets and unbounded source lists/);
   assert.doesNotMatch(componentSource, /invoke\(/);
   assert.doesNotMatch(componentSource, /loadShellSettings\(/);

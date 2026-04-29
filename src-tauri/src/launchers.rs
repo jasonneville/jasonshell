@@ -19,6 +19,26 @@ pub fn launch_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
     imp::launch_pinned_taskbar_app(shortcut_path)
 }
 
+pub fn run_pinned_taskbar_app_as_admin(shortcut_path: String) -> Result<(), String> {
+    imp::run_pinned_taskbar_app_as_admin(shortcut_path)
+}
+
+pub fn open_pinned_shortcut_properties(shortcut_path: String) -> Result<(), String> {
+    imp::open_pinned_shortcut_properties(shortcut_path)
+}
+
+pub fn reveal_pinned_shortcut(shortcut_path: String) -> Result<(), String> {
+    imp::reveal_pinned_shortcut(shortcut_path)
+}
+
+pub fn reveal_pinned_shortcut_target(shortcut_path: String) -> Result<(), String> {
+    imp::reveal_pinned_shortcut_target(shortcut_path)
+}
+
+pub fn copy_pinned_shortcut_path(shortcut_path: String) -> Result<(), String> {
+    imp::copy_pinned_shortcut_path(shortcut_path)
+}
+
 #[cfg(target_os = "windows")]
 mod imp {
     use super::PinnedTaskbarLauncher;
@@ -125,6 +145,126 @@ mod imp {
                 Ok(())
             }
         })
+    }
+
+    pub fn run_pinned_taskbar_app_as_admin(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        shell_execute_shortcut(
+            shortcut_path,
+            Some("runas"),
+            "run pinned shortcut as administrator",
+        )
+    }
+
+    pub fn open_pinned_shortcut_properties(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        shell_execute_shortcut(
+            shortcut_path,
+            Some("properties"),
+            "open pinned shortcut properties",
+        )
+    }
+
+    pub fn reveal_pinned_shortcut(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        reveal_path_in_explorer(&shortcut_path, "pinned shortcut")
+    }
+
+    pub fn reveal_pinned_shortcut_target(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        run_in_sta({
+            let shortcut_path = shortcut_path.clone();
+            move || {
+                let shell_link = load_shell_link(&shortcut_path)?;
+                let target_path = resolved_shortcut_target(&shell_link)?.ok_or_else(|| {
+                    format!(
+                        "Pinned shortcut target is unavailable: {}",
+                        shortcut_path.display()
+                    )
+                })?;
+                if !target_path.exists() {
+                    return Err(format!(
+                        "Pinned shortcut target no longer exists: {}",
+                        target_path.display()
+                    ));
+                }
+                reveal_path_in_explorer(&target_path, "pinned shortcut target")
+            }
+        })
+    }
+
+    pub fn copy_pinned_shortcut_path(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        copy_text_to_clipboard(&shortcut_path.to_string_lossy())
+    }
+
+    fn shell_execute_shortcut(
+        shortcut_path: PathBuf,
+        verb: Option<&str>,
+        context: &str,
+    ) -> Result<(), String> {
+        run_in_sta({
+            let shortcut_path = shortcut_path.clone();
+            let verb = verb.map(str::to_string);
+            let context = context.to_string();
+            move || {
+                if !shortcut_resolves(&shortcut_path) {
+                    return Err(format!(
+                        "Pinned shortcut is no longer launchable: {}",
+                        shortcut_path.display()
+                    ));
+                }
+
+                let shortcut_wide = to_wide(&shortcut_path);
+                let verb_wide = verb.as_deref().map(|value| to_wide(OsStr::new(value)));
+                let result = unsafe {
+                    ShellExecuteW(
+                        Some(HWND::default()),
+                        verb_wide
+                            .as_ref()
+                            .map(|value| PCWSTR(value.as_ptr()))
+                            .unwrap_or(PCWSTR::null()),
+                        PCWSTR(shortcut_wide.as_ptr()),
+                        None,
+                        None,
+                        SW_SHOWNORMAL,
+                    )
+                };
+                let code = result.0 as isize;
+
+                if code <= 32 {
+                    return Err(format!(
+                        "ShellExecuteW failed to {context} {} with code {code}",
+                        shortcut_path.display()
+                    ));
+                }
+
+                Ok(())
+            }
+        })
+    }
+
+    fn reveal_path_in_explorer(path: &Path, context: &str) -> Result<(), String> {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map_err(|error| format!("Failed to reveal {context}: {error}"))?;
+
+        Ok(())
+    }
+
+    fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
+        std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Set-Clipboard -Value $env:JASONSHELL_CLIPBOARD_TEXT",
+            ])
+            .env("JASONSHELL_CLIPBOARD_TEXT", text)
+            .spawn()
+            .map_err(|error| format!("Failed to copy launcher path: {error}"))?;
+
+        Ok(())
     }
 
     fn run_in_sta<T, F>(operation: F) -> Result<T, String>
@@ -537,5 +677,25 @@ mod imp {
 
     pub fn launch_pinned_taskbar_app(_shortcut_path: String) -> Result<(), String> {
         Err("Pinned taskbar launchers are only supported on Windows".to_string())
+    }
+
+    pub fn run_pinned_taskbar_app_as_admin(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launchers are only supported on Windows".to_string())
+    }
+
+    pub fn open_pinned_shortcut_properties(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher properties are only supported on Windows".to_string())
+    }
+
+    pub fn reveal_pinned_shortcut(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher reveal is only supported on Windows".to_string())
+    }
+
+    pub fn reveal_pinned_shortcut_target(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher target reveal is only supported on Windows".to_string())
+    }
+
+    pub fn copy_pinned_shortcut_path(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher path copy is only supported on Windows".to_string())
     }
 }

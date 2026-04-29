@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  buildProcessGroups,
   buildProcessKillPlan,
   buildProcessTreeRows,
   enrichProcessesWithTaskbarWindows,
   filterProcesses,
+  isProcessGroupExpanded,
   processMetricPercent,
   safeKillButtonState,
-  taskbarActiveProcessIds
+  taskbarActiveProcessIds,
+  toggleProcessGroupExpansion
 } from '../dist-tests/features/process-manager/processManagerUxState.js';
 
 const processes = [
@@ -45,6 +48,41 @@ test('promotes taskbar-active processes to readable top-level rows', () => {
     [30, 0, 0],
     [40, 0, 0]
   ]);
+});
+
+test('builds Task Manager process groups in stable visual order', () => {
+  const groups = buildProcessGroups([
+    { pid: 10, parentPid: null, name: 'node.exe', executablePath: 'C:/dev/node.exe', cpuPercent: 1, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: true },
+    { pid: 20, parentPid: null, name: 'Code.exe', executablePath: 'C:/Code/Code.exe', cpuPercent: 1, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: true, taskbarActive: true },
+    { pid: 4, parentPid: null, name: 'System', executablePath: null, cpuPercent: 1, memoryBytes: 100, threadCount: 1, status: 'running', isKillable: false }
+  ]);
+
+  assert.deepEqual(groups.map((group) => group.label), ['Applications', 'Background processes', 'Windows processes']);
+  assert.deepEqual(groups.map((group) => group.rows.map((row) => row.process.pid)), [[20], [10], [4]]);
+});
+
+test('filtering keeps all process groups visible while rows are scoped to matches', () => {
+  const filtered = filterProcesses(processes, 'orphan');
+  const groups = buildProcessGroups(filtered);
+
+  assert.deepEqual(groups.map((group) => group.id), ['applications', 'background', 'windows']);
+  assert.deepEqual(groups.map((group) => group.rows.map((row) => row.process.pid)), [[], [40], []]);
+});
+
+test('process group expansion defaults open and toggles per group independently', () => {
+  let expansionState = {};
+
+  assert.equal(isProcessGroupExpanded('applications', expansionState), true);
+  assert.equal(isProcessGroupExpanded('background', expansionState), true);
+  assert.equal(isProcessGroupExpanded('windows', expansionState), true);
+
+  expansionState = toggleProcessGroupExpansion('background', expansionState);
+  assert.equal(isProcessGroupExpanded('applications', expansionState), true);
+  assert.equal(isProcessGroupExpanded('background', expansionState), false);
+  assert.equal(isProcessGroupExpanded('windows', expansionState), true);
+
+  expansionState = toggleProcessGroupExpansion('background', expansionState);
+  assert.equal(isProcessGroupExpanded('background', expansionState), true);
 });
 
 test('enriches processes with taskbar-active window metadata', () => {

@@ -1,8 +1,5 @@
 .control-plane-surface {
-  background:
-    radial-gradient(circle at 18% 10%, var(--js-color-accent-soft), transparent 30%),
-    radial-gradient(circle at 82% 4%, var(--js-color-success), transparent 26%),
-    var(--js-gradient-surface);
+  background: var(--js-bg-surface);
   color: var(--js-color-text);
   display: flex;
   flex-direction: column;
@@ -115,14 +112,23 @@
 }
 
 .control-plane-toolbar .theme-picker {
+  display: grid;
+  gap: 0.22rem;
   min-width: min(18rem, 100%);
 }
 
-.control-plane-toolbar select {
-  appearance: none;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--js-color-text-muted) 50%) right 0.35rem center / 0.38rem 0.38rem no-repeat;
-  padding-right: 1rem;
+:global(.control-plane-toolbar .theme-picker .melt-select-label) {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+:global(.control-plane-toolbar .theme-picker .melt-select-trigger) {
+  background: var(--js-color-surface-overlay);
+  border-radius: 999px;
+  min-height: 2rem;
 }
 
 .control-plane-toolbar p {
@@ -219,7 +225,7 @@
 }
 
 .section-actions button {
-  background: var(--js-gradient-control);
+  background: var(--js-bg-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-md);
   color: var(--js-color-text);

@@ -1,12 +1,13 @@
 <script lang="ts">
   import './ControlPlaneSurface.css';
+  import { Tabs } from 'melt/builders';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MeltSelect from './melt/MeltSelect.svelte';
   import {
     buildControlPlaneViewModel,
     controlPlaneActionLabel,
-    controlPlaneKeyActionFromEvent,
     controlPlaneSectionTabLabel,
     filterControlPlaneSections,
-    nextControlPlaneSectionId,
     type ControlPlaneLoadState,
     type ControlPlaneProviderBudget,
     type ControlPlaneSectionId
@@ -39,6 +40,16 @@
   let filterQuery = '';
   let selectedThemeId: ShellThemeId = getInitialShellThemeId();
   const themeOptions = shellThemeOptions();
+  const themeSelectOptions = themeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
+  const sectionTabs = new Tabs<ControlPlaneSectionId>({
+    value: () => activeSectionId,
+    onValueChange: (sectionId) => {
+      activeSectionId = sectionId;
+    },
+    orientation: 'horizontal',
+    loop: true,
+    selectWhenFocused: true
+  });
 
   $: viewModel = buildControlPlaneViewModel({
     settings,
@@ -57,37 +68,8 @@
     activeSectionId = visibleSections[0].id;
   }
 
-  function handleSectionKeydown(event: KeyboardEvent) {
-    const action = controlPlaneKeyActionFromEvent(event);
-    if (action === 'none') {
-      return;
-    }
-
-    if (action === 'focus-next-section' || action === 'focus-previous-section') {
-      event.preventDefault();
-      activeSectionId = nextControlPlaneSectionId(
-        visibleSections,
-        activeSectionId,
-        action === 'focus-next-section' ? 'next' : 'previous'
-      );
-      return;
-    }
-
-    if (action === 'focus-first-section' && visibleSections[0]) {
-      event.preventDefault();
-      activeSectionId = visibleSections[0].id;
-      return;
-    }
-
-    if (action === 'focus-last-section' && visibleSections.at(-1)) {
-      event.preventDefault();
-      activeSectionId = visibleSections.at(-1)!.id;
-    }
-  }
-
-  function handleThemeChange(event: Event) {
-    const target = event.currentTarget instanceof HTMLSelectElement ? event.currentTarget : null;
-    selectedThemeId = normalizeShellThemeId(target?.value);
+  function handleThemeChange(value: string) {
+    selectedThemeId = normalizeShellThemeId(value);
     setShellTheme(selectedThemeId);
   }
 </script>
@@ -135,32 +117,27 @@
     <p id="control-plane-filter-hint">
       Use arrow keys on section tabs to move, Home/End for edges, and Ctrl+R for refresh intent.
     </p>
-    <label class="theme-picker">
-      <span>Theme</span>
-      <select bind:value={selectedThemeId} on:change={handleThemeChange} aria-label="Shell theme">
-        {#each themeOptions as theme}
-          <option value={theme.id}>{theme.label}</option>
-        {/each}
-      </select>
-    </label>
+    <MeltSelect
+      class="theme-picker"
+      label="Theme"
+      value={selectedThemeId}
+      options={themeSelectOptions}
+      placeholder="Shell theme"
+      onChange={handleThemeChange}
+    />
   </div>
 
   <div
     class="control-plane-tabs"
     aria-label="Control-plane sections"
-    role="tablist"
+    {...sectionTabs.triggerList}
   >
     {#each visibleSections as section}
       <button
+        {...sectionTabs.getTrigger(section.id)}
         type="button"
-        role="tab"
-        aria-selected={section.id === activeSectionId}
-        aria-controls={`control-plane-section-${section.id}`}
-        tabindex={section.id === activeSectionId ? 0 : -1}
         class:active={section.id === activeSectionId}
         aria-label={controlPlaneSectionTabLabel(section, section.id === activeSectionId)}
-        on:keydown={handleSectionKeydown}
-        on:click={() => activeSectionId = section.id}
       >
         <strong>{section.label}</strong>
         <span>{section.count}</span>
@@ -170,10 +147,12 @@
 
   <div class="control-plane-grid">
     {#each visibleSections as section}
+      {@const tabContent = sectionTabs.getContent(section.id)}
       <section
-        id={`control-plane-section-${section.id}`}
+        {...tabContent}
+        hidden={false}
         class:active-card={section.id === activeSectionId}
-        aria-labelledby={`control-plane-heading-${section.id}`}
+        aria-describedby={`control-plane-heading-${section.id}`}
       >
         <div class="section-head">
           <div>
@@ -185,14 +164,13 @@
 
         <div class="section-actions" aria-label={`${section.label} actions`}>
           {#each section.actions as action}
-            <button
-              type="button"
+            <MeltActionButton
               disabled={action.disabled}
-              aria-label={action.ariaLabel}
+              ariaLabel={action.ariaLabel}
               title={controlPlaneActionLabel(section, action)}
             >
               {action.label}
-            </button>
+            </MeltActionButton>
           {/each}
         </div>
 

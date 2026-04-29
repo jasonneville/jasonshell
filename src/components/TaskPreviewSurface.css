@@ -1,5 +1,5 @@
 .preview-surface {
-  background: var(--js-gradient-surface);
+  background: var(--js-bg-surface);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
   box-shadow:

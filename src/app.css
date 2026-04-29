@@ -59,10 +59,10 @@
   --js-shadow-panel: 0 24px 56px rgba(0, 0, 0, 0.48);
   --js-focus-ring: 0 0 0 2px rgba(160, 190, 255, 0.7);
   --js-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.065);
-  --js-gradient-surface: linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
-  --js-gradient-bar: linear-gradient(180deg, var(--js-color-surface-raised) 0%, var(--js-color-surface) 100%);
-  --js-gradient-control: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035));
-  --js-gradient-active: linear-gradient(180deg, rgba(138, 167, 255, 0.3), rgba(91, 130, 255, 0.16));
+  --js-bg-surface: var(--js-color-surface-raised);
+  --js-bg-bar: var(--js-color-surface-raised);
+  --js-bg-control: var(--js-color-control);
+  --js-bg-active: var(--js-color-control-active);
   --js-motion-fast: 140ms;
   --js-motion-medium: 220ms;
   --js-scrollbar-thumb: rgba(138, 167, 255, 0.48);
@@ -88,8 +88,8 @@
 
 :root[data-shell-transparency='reduced'] {
   --js-color-surface-overlay: var(--js-color-control);
-  --js-gradient-surface: linear-gradient(180deg, var(--js-color-surface-raised), var(--js-color-surface));
-  --js-gradient-bar: linear-gradient(180deg, var(--js-color-surface-raised), var(--js-color-surface));
+  --js-bg-surface: var(--js-color-surface-raised);
+  --js-bg-bar: var(--js-color-surface-raised);
 }
 
 :root[data-theme='base-dark'] {
@@ -507,9 +507,9 @@ select:not(:disabled) {
     --js-focus-ring: 0 0 0 2px Highlight;
     --js-shadow-raised: none;
     --js-shadow-panel: none;
-    --js-gradient-surface: Canvas;
-    --js-gradient-bar: Canvas;
-    --js-gradient-control: Canvas;
-    --js-gradient-active: Highlight;
+    --js-bg-surface: Canvas;
+    --js-bg-bar: Canvas;
+    --js-bg-control: Canvas;
+    --js-bg-active: Highlight;
   }
 }

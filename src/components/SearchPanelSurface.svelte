@@ -3,6 +3,7 @@
   import { emit } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     getSearchPanelPayload,
     SEARCH_PANEL_ACTIVATE_EVENT,
@@ -183,14 +184,13 @@
               <span class="result-actions">
                 <span class="result-action-primary">{hints.primary}</span>
                 {#if hints.secondary === 'Pin' && result.kind === 'folder' && result.path}
-                  <button
+                  <MeltActionButton
                     class="pin-folder"
-                    type="button"
-                    aria-label={`Pin ${result.title} to the top bar`}
-                    on:click={(event) => pinFolderResult(event, result)}
+                    ariaLabel={`Pin ${result.title} to the top bar`}
+                    onClick={(event) => pinFolderResult(event, result)}
                   >
                     Pin
-                  </button>
+                  </MeltActionButton>
                 {:else if hints.secondary}
                   <span class="result-kind">{hints.secondary}</span>
                 {:else}

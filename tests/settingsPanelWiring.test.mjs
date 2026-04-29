@@ -28,8 +28,9 @@ test('settings panel is routed as an anchored auxiliary shell surface', () => {
 
 test('top-left JasonShell button opens settings instead of search', () => {
   assert.match(topBarSource, /showSettingsPanel/);
-  assert.match(topBarSource, /aria-label="Open JasonShell settings"/);
-  assert.match(topBarSource, /aria-haspopup="dialog"/);
+  assert.match(topBarSource, /ariaLabel="Open JasonShell settings"/);
+  assert.match(topBarSource, /ariaHaspopup="dialog"/);
+  assert.match(topBarSource, /MeltActionButton/);
   assert.doesNotMatch(topBarSource, /JasonShell Home: open command search/);
   assert.match(wrapperSource, /invoke\(IPC_COMMANDS\.showSettingsPanel/);
   assert.match(ipcCommandsSource, /showSettingsPanel: 'show_settings_panel'/);
@@ -54,6 +55,13 @@ test('settings panel exposes live theme, font, date, clock, and useful UI prefer
   assert.match(settingsPanelSource, /formatShellDate/);
   assert.match(settingsPanelSource, /formatShellTime/);
   assert.match(settingsPanelCss, /settings-panel/);
+});
+
+test('settings panel scrolls vertically so lower controls remain reachable', () => {
+  const rootBlock = settingsPanelCss.match(/\.settings-panel \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(rootBlock, /overflow-y: auto;/);
+  assert.match(rootBlock, /scrollbar-color: var\(--js-scrollbar-thumb\) var\(--js-scrollbar-track\)/);
+  assert.doesNotMatch(rootBlock, /overflow: hidden;/);
 });
 
 test('settings panel Rust placement clamps to the top-bar host bounds', () => {

@@ -2,6 +2,7 @@
   import './TaskPreviewSurface.css';
   import { onMount } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     hideTaskWindowPreview,
     type TaskPreviewPayload
@@ -67,15 +68,14 @@
   });
 </script>
 
-<button
-  type="button"
+<MeltActionButton
   class="surface preview-surface"
-  aria-disabled={!preview}
-  aria-label={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
-  on:click={() => void handlePreviewActivate()}
-  on:keydown={(event) => void handlePreviewKeydown(event)}
-  on:mouseenter={() => void emit(TASK_PREVIEW_HOVER_ENTER_EVENT)}
-  on:mouseleave={() => void hidePreviewSurface()}
+  ariaDisabled={!preview}
+  ariaLabel={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
+  onClick={() => void handlePreviewActivate()}
+  onKeyDown={(event) => void handlePreviewKeydown(event)}
+  onMouseEnter={() => void emit(TASK_PREVIEW_HOVER_ENTER_EVENT)}
+  onMouseLeave={() => void hidePreviewSurface()}
 >
   {#if preview}
     <div class="preview-header">
@@ -101,4 +101,4 @@
       </div>
     {/if}
   {/if}
-</button>
+</MeltActionButton>

@@ -21,11 +21,14 @@ pub struct ProcessInfo {
     pub parent_pid: Option<u32>,
     pub parent_name: Option<String>,
     pub name: String,
+    pub icon_data_url: Option<String>,
     pub executable_path: Option<String>,
     pub command_line: Option<String>,
     pub listening_ports: Vec<u16>,
     pub cpu_percent: Option<f64>,
     pub memory_bytes: Option<u64>,
+    pub memory_percent: Option<f64>,
+    pub gpu_percent: Option<f64>,
     pub thread_count: Option<u32>,
     pub start_time_ms: Option<u64>,
     pub child_process_count: u32,
@@ -461,6 +464,19 @@ fn cpu_percent_from_snapshots(
     Some(((cpu_delta / wall_ticks) * 100.0).clamp(0.0, 100.0))
 }
 
+fn memory_percent_from_bytes(
+    memory_bytes: Option<u64>,
+    total_memory_bytes: Option<u64>,
+) -> Option<f64> {
+    let memory_bytes = memory_bytes?;
+    let total_memory_bytes = total_memory_bytes?;
+    if total_memory_bytes == 0 {
+        return None;
+    }
+
+    Some(((memory_bytes as f64 / total_memory_bytes as f64) * 100.0).clamp(0.0, 100.0))
+}
+
 fn retain_process_snapshots(pids: impl Iterator<Item = u32>) {
     let snapshots = PROCESS_CPU_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()));
     let Ok(mut snapshots) = snapshots.lock() else {
@@ -493,8 +509,10 @@ mod windows_impl {
     use std::collections::HashMap;
     use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
-    use std::time::Instant;
-    use windows::core::PWSTR;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    use windows::core::{PCWSTR, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, NTSTATUS};
     use windows::Win32::NetworkManagement::IpHelper::{
         GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_LISTEN,
@@ -506,12 +524,21 @@ mod windows_impl {
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
+    use windows::Win32::System::Performance::{
+        PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
+        PdhOpenQueryW, PDH_CSTATUS_VALID_DATA, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE,
+        PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
+    };
     use windows::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     use windows::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, TerminateProcess, PEB,
         PROCESS_BASIC_INFORMATION, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
         PROCESS_TERMINATE, PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
     };
+
+    static PROCESS_ICON_DATA_URLS: OnceLock<Mutex<HashMap<String, Option<String>>>> =
+        OnceLock::new();
 
     pub(super) fn list_processes() -> Result<Vec<ProcessInfo>, String> {
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
@@ -523,9 +550,18 @@ mod windows_impl {
         let mut processes = Vec::new();
         let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry).is_ok() };
         let listening_ports = listening_ports_by_pid();
+        let gpu_percent = gpu_percent_by_pid();
+        let observed_at = Instant::now();
+        let total_memory_bytes = total_physical_memory_bytes();
 
         while has_entry {
-            processes.push(process_info_from_entry(&entry, &listening_ports));
+            processes.push(process_info_from_entry(
+                &entry,
+                &listening_ports,
+                &gpu_percent,
+                observed_at,
+                total_memory_bytes,
+            ));
             has_entry = unsafe { Process32NextW(snapshot, &mut entry).is_ok() };
         }
 
@@ -558,6 +594,9 @@ mod windows_impl {
     fn process_info_from_entry(
         entry: &PROCESSENTRY32W,
         listening_ports: &HashMap<u32, Vec<u16>>,
+        gpu_percent: &HashMap<u32, f64>,
+        observed_at: Instant,
+        total_memory_bytes: Option<u64>,
     ) -> ProcessInfo {
         let pid = entry.th32ProcessID;
         let process_handle = unsafe {
@@ -572,10 +611,12 @@ mod windows_impl {
         let process_name = wide_c_string(&entry.szExeFile)
             .trim_end_matches(".exe")
             .to_string();
-        let cpu_percent = process_cpu_snapshot(process_handle)
+        let cpu_percent = process_cpu_snapshot(process_handle, observed_at)
             .and_then(|snapshot| record_cpu_snapshot(pid, snapshot));
+        let memory_bytes = process_handle.and_then(process_memory_bytes);
         let current_pid = std::process::id();
         let executable_path = process_handle.and_then(process_image_path);
+        let icon_data_url = process_icon_data_url(executable_path.as_deref());
         let command_line = process_handle.and_then(process_command_line);
         let workspace_hint =
             workspace_hint_from_metadata(executable_path.as_deref(), command_line.as_deref());
@@ -588,11 +629,14 @@ mod windows_impl {
             } else {
                 process_name
             },
+            icon_data_url,
             executable_path,
             command_line,
             listening_ports: listening_ports.get(&pid).cloned().unwrap_or_default(),
             cpu_percent,
-            memory_bytes: process_handle.and_then(process_memory_bytes),
+            memory_bytes,
+            memory_percent: super::memory_percent_from_bytes(memory_bytes, total_memory_bytes),
+            gpu_percent: gpu_percent.get(&pid).copied(),
             thread_count: Some(entry.cntThreads),
             start_time_ms: process_handle.and_then(process_start_time_ms),
             child_process_count: 0,
@@ -613,6 +657,126 @@ mod windows_impl {
 
     fn non_zero_parent_pid(pid: u32) -> Option<u32> {
         (pid != 0).then_some(pid)
+    }
+
+    fn process_icon_data_url(executable_path: Option<&str>) -> Option<String> {
+        let executable_path = executable_path?.trim();
+        if executable_path.is_empty() {
+            return None;
+        }
+
+        let cache = PROCESS_ICON_DATA_URLS.get_or_init(|| Mutex::new(HashMap::new()));
+        let Ok(mut cache) = cache.lock() else {
+            return crate::task_windows::shell_file_icon_data_url(Path::new(executable_path)).ok();
+        };
+        if let Some(cached) = cache.get(executable_path) {
+            return cached.clone();
+        }
+
+        let icon_data_url =
+            crate::task_windows::shell_file_icon_data_url(Path::new(executable_path)).ok();
+        cache.insert(executable_path.to_string(), icon_data_url.clone());
+        icon_data_url
+    }
+
+    fn gpu_percent_by_pid() -> HashMap<u32, f64> {
+        let mut query = PDH_HQUERY::default();
+        if unsafe { PdhOpenQueryW(PCWSTR::null(), 0, &mut query) } != 0 || query.is_invalid() {
+            return HashMap::new();
+        }
+
+        let result = collect_gpu_percent_by_pid(query);
+        unsafe {
+            let _ = PdhCloseQuery(query);
+        }
+        result
+    }
+
+    fn collect_gpu_percent_by_pid(query: PDH_HQUERY) -> HashMap<u32, f64> {
+        let counter_path = wide_null(r"\GPU Engine(*)\Utilization Percentage");
+        let mut counter = PDH_HCOUNTER::default();
+        if unsafe { PdhAddEnglishCounterW(query, PCWSTR(counter_path.as_ptr()), 0, &mut counter) }
+            != 0
+        {
+            return HashMap::new();
+        }
+
+        if unsafe { PdhCollectQueryData(query) } != 0 {
+            return HashMap::new();
+        }
+        std::thread::sleep(Duration::from_millis(60));
+        if unsafe { PdhCollectQueryData(query) } != 0 {
+            return HashMap::new();
+        }
+
+        formatted_gpu_counter_array(counter)
+    }
+
+    fn formatted_gpu_counter_array(counter: PDH_HCOUNTER) -> HashMap<u32, f64> {
+        let mut buffer_size = 0_u32;
+        let mut item_count = 0_u32;
+        let sizing = unsafe {
+            PdhGetFormattedCounterArrayW(
+                counter,
+                PDH_FMT_DOUBLE,
+                &mut buffer_size,
+                &mut item_count,
+                None,
+            )
+        };
+        if sizing != PDH_MORE_DATA || buffer_size == 0 || item_count == 0 {
+            return HashMap::new();
+        }
+
+        let mut buffer = vec![0_u8; buffer_size as usize];
+        let result = unsafe {
+            PdhGetFormattedCounterArrayW(
+                counter,
+                PDH_FMT_DOUBLE,
+                &mut buffer_size,
+                &mut item_count,
+                Some(buffer.as_mut_ptr().cast::<PDH_FMT_COUNTERVALUE_ITEM_W>()),
+            )
+        };
+        if result != 0 {
+            return HashMap::new();
+        }
+
+        let items = unsafe {
+            std::slice::from_raw_parts(
+                buffer.as_ptr().cast::<PDH_FMT_COUNTERVALUE_ITEM_W>(),
+                item_count as usize,
+            )
+        };
+        let mut by_pid = HashMap::<u32, f64>::new();
+        for item in items {
+            if item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA {
+                continue;
+            }
+            let instance_name = unsafe { wide_ptr_string(item.szName.0) };
+            let Some(pid) = pid_from_gpu_engine_instance(&instance_name) else {
+                continue;
+            };
+            let value = unsafe { item.FmtValue.Anonymous.doubleValue };
+            if !value.is_finite() || value <= 0.0 {
+                continue;
+            }
+            by_pid
+                .entry(pid)
+                .and_modify(|current| *current = (*current + value).clamp(0.0, 100.0))
+                .or_insert(value.clamp(0.0, 100.0));
+        }
+        by_pid
+    }
+
+    fn pid_from_gpu_engine_instance(instance_name: &str) -> Option<u32> {
+        let lower = instance_name.to_ascii_lowercase();
+        let tail = lower.split("pid_").nth(1)?;
+        let digits = tail
+            .chars()
+            .take_while(|character| character.is_ascii_digit())
+            .collect::<String>();
+        (!digits.is_empty()).then(|| digits.parse::<u32>().ok())?
     }
 
     fn listening_ports_by_pid() -> HashMap<u32, Vec<u16>> {
@@ -748,7 +912,10 @@ mod windows_impl {
         ) -> NTSTATUS;
     }
 
-    fn process_cpu_snapshot(process_handle: Option<HANDLE>) -> Option<ProcessCpuSnapshot> {
+    fn process_cpu_snapshot(
+        process_handle: Option<HANDLE>,
+        observed_at: Instant,
+    ) -> Option<ProcessCpuSnapshot> {
         let process_handle = process_handle?;
         let mut creation_time = FILETIME::default();
         let mut exit_time = FILETIME::default();
@@ -765,7 +932,7 @@ mod windows_impl {
             .ok()?;
         }
         Some(ProcessCpuSnapshot {
-            observed_at: Instant::now(),
+            observed_at,
             cpu_time_ticks: filetime_ticks(kernel_time) + filetime_ticks(user_time),
         })
     }
@@ -805,6 +972,15 @@ mod windows_impl {
         Some(counters.WorkingSetSize as u64)
     }
 
+    fn total_physical_memory_bytes() -> Option<u64> {
+        let mut status = MEMORYSTATUSEX {
+            dwLength: size_of::<MEMORYSTATUSEX>() as u32,
+            ..Default::default()
+        };
+        unsafe { GlobalMemoryStatusEx(&mut status).ok()? };
+        (status.ullTotalPhys > 0).then_some(status.ullTotalPhys)
+    }
+
     fn process_image_path(process_handle: HANDLE) -> Option<String> {
         let mut buffer = vec![0_u16; 1024];
         let mut size = buffer.len() as u32;
@@ -828,6 +1004,21 @@ mod windows_impl {
         String::from_utf16_lossy(&buffer[..length])
     }
 
+    fn wide_null(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    unsafe fn wide_ptr_string(value: *const u16) -> String {
+        if value.is_null() {
+            return String::new();
+        }
+        let mut length = 0_usize;
+        while unsafe { *value.add(length) } != 0 {
+            length += 1;
+        }
+        String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(value, length) }.as_ref())
+    }
+
     fn filetime_ticks(filetime: FILETIME) -> u64 {
         ((filetime.dwHighDateTime as u64) << 32) | filetime.dwLowDateTime as u64
     }
@@ -845,9 +1036,9 @@ mod windows_impl {
 mod tests {
     use super::{
         build_kill_guardrail_plan, cpu_percent_from_snapshots, dev_workspace_from_text,
-        enrich_process_tree, is_pid_killable, validate_kill_guardrail_execution,
-        workspace_hint_from_metadata, ProcessCpuSnapshot, ProcessInfo, ProcessKillConfirmation,
-        ProcessWorkspaceHint,
+        enrich_process_tree, is_pid_killable, memory_percent_from_bytes,
+        validate_kill_guardrail_execution, workspace_hint_from_metadata, ProcessCpuSnapshot,
+        ProcessInfo, ProcessKillConfirmation, ProcessWorkspaceHint,
     };
     use std::time::{Duration, Instant};
 
@@ -863,18 +1054,26 @@ mod tests {
         let now = Instant::now();
         let previous = ProcessCpuSnapshot {
             observed_at: now,
-            cpu_time_ticks: 1_000,
+            cpu_time_ticks: 1_000_000,
         };
         let current = ProcessCpuSnapshot {
             observed_at: now + Duration::from_secs(1),
-            cpu_time_ticks: 2_000_000,
+            cpu_time_ticks: 6_000_000,
         };
 
         let percent = cpu_percent_from_snapshots(Some(&previous), &current, 4)
             .expect("cpu percentage should be computed");
 
-        assert!(percent > 0.0);
-        assert!(percent < 100.0);
+        assert_eq!(percent, 12.5);
+    }
+
+    #[test]
+    fn computes_memory_percent_from_total_memory() {
+        let percent = memory_percent_from_bytes(Some(512), Some(2048))
+            .expect("memory percentage should be computed");
+        assert_eq!(percent, 25.0);
+        assert_eq!(memory_percent_from_bytes(Some(512), Some(0)), None);
+        assert_eq!(memory_percent_from_bytes(None, Some(2048)), None);
     }
 
     #[test]
@@ -1046,11 +1245,14 @@ mod tests {
             parent_pid,
             parent_name: None,
             name: name.to_string(),
+            icon_data_url: None,
             executable_path: None,
             command_line: None,
             listening_ports: Vec::new(),
             cpu_percent: None,
             memory_bytes: None,
+            memory_percent: None,
+            gpu_percent: None,
             thread_count: None,
             start_time_ms: None,
             child_process_count: 0,

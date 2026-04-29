@@ -27,8 +27,10 @@ const EXCLUDED_CLASSES: &[&str] = &[
     "Shell_SecondaryTrayWnd",
     "Progman",
     "WorkerW",
+    "Dwm",
 ];
 const EXCLUDED_PROCESS_NAMES: &[&str] = &["dwm"];
+const EXCLUDED_TITLES: &[&str] = &["DWM Notification Window"];
 const CPU_TIME_BUSY_DELTA_TICKS: u64 = 200_000;
 
 #[derive(Clone, Debug)]
@@ -209,7 +211,9 @@ pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_
     let is_tool_window = (candidate.ex_style.0 & WS_EX_TOOLWINDOW.0) != 0
         && (candidate.ex_style.0 & WS_EX_APPWINDOW.0) == 0;
     let is_no_activate_window = (candidate.ex_style.0 & WS_EX_NOACTIVATE.0) != 0;
-    let has_identity = !candidate.title.trim().is_empty() || !candidate.process_name.is_empty();
+    let forces_taskbar = (candidate.ex_style.0 & WS_EX_APPWINDOW.0) != 0;
+    let has_taskbar_identity = !candidate.title.trim().is_empty()
+        || (forces_taskbar && !candidate.process_name.is_empty());
 
     (candidate.is_visible || candidate.is_minimized)
         && candidate.is_primary_monitor
@@ -219,13 +223,29 @@ pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_
         && !candidate.is_cloaked
         && !is_tool_window
         && !is_no_activate_window
-        && has_identity
+        && has_taskbar_identity
+        && !is_internal_notification_window(candidate)
         && !EXCLUDED_PROCESS_NAMES
             .iter()
             .any(|process_name| candidate.process_name.eq_ignore_ascii_case(process_name))
         && !EXCLUDED_CLASSES
             .iter()
             .any(|class_name| candidate.class_name.eq_ignore_ascii_case(class_name))
+}
+
+pub(super) fn is_internal_notification_window(candidate: &WindowCandidate) -> bool {
+    let title = candidate.title.trim();
+    if EXCLUDED_TITLES
+        .iter()
+        .any(|excluded| title.eq_ignore_ascii_case(excluded))
+    {
+        return true;
+    }
+
+    title.eq_ignore_ascii_case("Notification")
+        && (candidate.process_name.is_empty()
+            || candidate.process_name.eq_ignore_ascii_case("dwm")
+            || candidate.class_name.to_ascii_lowercase().contains("dwm"))
 }
 
 pub(super) fn sort_windows_stably(windows: &mut [TaskbarWindow]) {

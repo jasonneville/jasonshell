@@ -1,5 +1,7 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
+mod audio;
+mod audio_panel;
 mod automation;
 mod contracts;
 mod control_plane;
@@ -81,8 +83,22 @@ fn main() {
             control_plane::hide_control_plane,
             settings_panel::show_settings_panel,
             settings_panel::hide_settings_panel,
+            audio_panel::show_audio_panel,
+            audio_panel::hide_audio_panel,
             process_manager::list_processes,
             process_manager::kill_process,
+            audio::get_audio_state,
+            audio::list_audio_devices,
+            audio::list_audio_sessions,
+            audio::set_master_volume,
+            audio::set_master_volume_percent,
+            audio::set_master_mute,
+            audio::set_app_volume,
+            audio::set_app_session_volume_percent,
+            audio::set_app_session_mute,
+            audio::set_default_audio_device,
+            audio::set_default_audio_input_device,
+            audio::set_default_audio_output_device,
             search_sources::search_system,
             shell_paths::open_shell_path,
             stack_popup::list_pinned_stack_folders,
@@ -98,12 +114,17 @@ fn main() {
             stack_popup::read_stack_folder,
             stack_popup::open_stack_item,
             stack_popup::open_stack_item_with_picker,
+            stack_popup::list_stack_open_with_candidates,
+            stack_popup::open_stack_item_with_app,
             stack_popup::rename_stack_item,
             stack_popup::copy_stack_items,
+            stack_popup::prepare_stack_file_drag,
             stack_popup::cut_stack_items,
             stack_popup::paste_stack_items,
             stack_popup::delete_stack_item,
             stack_popup::new_stack_folder,
+            stack_popup::new_stack_text_file,
+            stack_popup::open_stack_terminal_here,
             stack_popup::reveal_stack_item,
             automation::parse_automation_cli,
             automation::validate_automation_request,
@@ -171,6 +192,18 @@ fn main() {
             if window.label() == shell_windows::SETTINGS_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::AUDIO_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = window.app_handle().emit_to(
+                    shell_windows::TOP_BAR_LABEL,
+                    audio_panel::AUDIO_PANEL_CLOSED_EVENT,
+                    (),
+                );
                 let _ = window.hide();
                 return;
             }

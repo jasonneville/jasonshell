@@ -9,11 +9,14 @@ export type ProcessInfo = {
   parentPid?: number | null;
   parentName?: string | null;
   name: string;
+  iconDataUrl?: string | null;
   executablePath?: string | null;
   commandLine?: string | null;
   listeningPorts?: number[];
   cpuPercent?: number | null;
   memoryBytes?: number | null;
+  memoryPercent?: number | null;
+  gpuPercent?: number | null;
   threadCount?: number | null;
   startTimeMs?: number | null;
   childProcessCount?: number;

@@ -2,6 +2,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
   import BottomBar from './components/BottomBar.svelte';
+  import AudioPanelSurface from './components/AudioPanelSurface.svelte';
   import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
   import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
   import SearchPanelSurface from './components/SearchPanelSurface.svelte';
@@ -64,6 +65,8 @@
   <ControlPlaneSurface />
 {:else if surface === 'settings-panel'}
   <SettingsPanelSurface />
+{:else if surface === 'audio-panel'}
+  <AudioPanelSurface />
 {:else}
   <main class="unsupported-surface">
     <div class="panel">
@@ -76,7 +79,7 @@
 <style>
   .unsupported-surface {
     align-items: center;
-    background: linear-gradient(180deg, #0d1118, #06080d);
+    background: #0d1118;
     color: #f3f5ff;
     display: grid;
     height: 100%;

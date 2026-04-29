@@ -29,6 +29,7 @@ const capabilitySource = Object.values(capabilitySources).join('\n');
 const tauriConfigSource = readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8');
 const wrapperSources = [
   'runtimeMetrics.ts',
+  'audio.ts',
   'controlPlane.ts',
   'settingsPanel.ts',
   'devTools.ts',
@@ -48,6 +49,11 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'stack_popup',
     'load_shell_settings',
     'save_shell_settings',
+    'get_audio_state',
+    'set_master_volume',
+    'set_app_volume',
+    'set_default_audio_input_device',
+    'set_default_audio_output_device',
     'list_workspaces',
     'activate_workspace',
     'build_terminal_launch_plan',

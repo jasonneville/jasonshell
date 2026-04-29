@@ -1,6 +1,6 @@
 .top-bar.surface {
   align-items: center;
-  background: var(--js-gradient-bar);
+  background: var(--js-bg-bar);
   border-bottom: 1px solid var(--js-color-border-soft);
   box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
   color: var(--js-color-text);
@@ -14,7 +14,7 @@
 
 .top-bar .shell-home-button {
   align-items: center;
-  background: var(--js-gradient-active);
+  background: var(--js-bg-active);
   border: 1px solid var(--js-color-accent-border);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text-strong);
@@ -152,7 +152,7 @@
 }
 
 .top-bar .stack-pins button {
-  background: var(--js-gradient-control);
+  background: var(--js-bg-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text);
@@ -218,6 +218,52 @@
 .top-bar .search-control:focus-within {
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-focus-ring);
+}
+
+.top-bar .sound-control {
+  flex: 0 0 auto;
+}
+
+.top-bar .sound-button {
+  align-items: center;
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.55rem;
+  justify-content: center;
+  padding: 0;
+  width: 1.7rem;
+}
+
+.top-bar .sound-button:hover,
+.top-bar .sound-button[aria-expanded='true'] {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
+}
+
+.top-bar .sound-icon {
+  border-bottom: 0.34rem solid transparent;
+  border-right: 0.52rem solid currentColor;
+  border-top: 0.34rem solid transparent;
+  display: inline-block;
+  height: 0.18rem;
+  position: relative;
+  width: 0.28rem;
+}
+
+.top-bar .sound-icon::after {
+  border: 1px solid currentColor;
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  content: '';
+  height: 0.68rem;
+  left: 0.36rem;
+  position: absolute;
+  top: -0.34rem;
+  width: 0.34rem;
 }
 
 .top-bar .search-control input {

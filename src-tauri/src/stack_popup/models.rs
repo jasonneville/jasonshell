@@ -79,6 +79,23 @@ pub struct StackPasteResult {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StackOpenWithCandidate {
+    pub id: String,
+    pub label: String,
+    pub executable: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackNativeDragPreparation {
+    pub paths: Vec<String>,
+    pub effect: String,
+    pub mechanism: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackPasteFailure {
     pub path: String,
     pub message: String,

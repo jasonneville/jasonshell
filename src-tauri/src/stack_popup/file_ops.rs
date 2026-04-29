@@ -39,6 +39,78 @@ pub(crate) fn new_stack_folder_path(parent: String, name: String) -> Result<Stac
     stack_item_from_path(destination)
 }
 
+pub(crate) fn new_stack_text_file_path(parent: String) -> Result<StackItem, String> {
+    let parent = PathBuf::from(normalize_existing_dir(&parent)?);
+    let destination = next_new_text_document_path(&parent)?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)
+        .map_err(|error| format!("Failed to create text file: {error}"))?;
+    stack_item_from_path(destination)
+}
+
+pub(crate) fn open_terminal_here_path(path: String) -> Result<(), String> {
+    let directory = PathBuf::from(normalize_existing_dir(&path)?);
+    launch_terminal_at_dir(&directory)
+}
+
+pub(crate) fn next_new_text_document_path(parent: &Path) -> Result<PathBuf, String> {
+    let first = parent.join("New Text Document.txt");
+    if !first.exists() {
+        return Ok(first);
+    }
+
+    for index in 2..1000 {
+        let candidate = parent.join(format!("New Text Document ({index}).txt"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err("Could not choose a New Text Document name".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn launch_terminal_at_dir(directory: &Path) -> Result<(), String> {
+    use std::process::Command;
+
+    if Command::new("wt.exe")
+        .arg("-d")
+        .arg(directory)
+        .spawn()
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    if Command::new("powershell.exe")
+        .arg("-NoExit")
+        .arg("-NoLogo")
+        .arg("-Command")
+        .arg("Set-Location -LiteralPath $args[0]")
+        .arg(directory)
+        .spawn()
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    Command::new("cmd.exe")
+        .arg("/K")
+        .arg("cd")
+        .arg("/d")
+        .arg(directory)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to open terminal here: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn launch_terminal_at_dir(_directory: &Path) -> Result<(), String> {
+    Err("Open Terminal Here is only available on Windows".to_string())
+}
+
 pub(crate) fn reveal_stack_item_path(path: String) -> Result<(), String> {
     let path = normalize_existing_path(&path)?;
     #[cfg(target_os = "windows")]

@@ -1,6 +1,6 @@
 .bottom-bar.surface {
   align-items: stretch;
-  background: var(--js-gradient-bar);
+  background: var(--js-bg-bar);
   border-top: 1px solid var(--js-color-border-soft);
   box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
   color: var(--js-color-text);
@@ -132,7 +132,7 @@
 }
 
 .bottom-bar .task-strip::after {
-  background: linear-gradient(90deg, transparent, var(--js-color-surface));
+  background: var(--js-color-surface);
   content: '';
   display: none;
   inset: 0 0 0 auto;
@@ -174,7 +174,7 @@
 }
 
 .bottom-bar .task-group-active::before {
-  background: linear-gradient(180deg, var(--js-color-accent), var(--js-color-accent-border));
+  background: var(--js-color-accent);
   content: '';
   inset: 0 auto 0 0;
   pointer-events: none;
@@ -201,7 +201,7 @@
 
 .bottom-bar .task-group-busy::after {
   animation: taskbar-activity-slide 1.15s linear infinite;
-  background: linear-gradient(90deg, transparent, rgba(37, 211, 102, 0.96), transparent);
+  background: rgba(37, 211, 102, 0.96);
   bottom: 0;
   content: '';
   height: 2px;
@@ -277,7 +277,7 @@
 }
 
 .bottom-bar .task-button-active {
-  background: var(--js-gradient-active);
+  background: var(--js-bg-active);
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
 }

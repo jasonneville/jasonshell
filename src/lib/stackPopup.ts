@@ -49,6 +49,19 @@ type StackPasteResult = {
   failures?: StackPasteFailure[];
 };
 
+export type StackOpenWithCandidate = {
+  id: string;
+  label: string;
+  executable: string;
+  source: string;
+};
+
+export type StackNativeDragPreparation = {
+  paths: string[];
+  effect: 'copy';
+  mechanism: string;
+};
+
 export type StackPasteFailure = {
   path: string;
   message: string;
@@ -233,6 +246,10 @@ export function newStackFolder(parent: string, name: string): Promise<StackEntry
   return invoke<StackItem>(IPC_COMMANDS.newStackFolder, { parent, name }).then(stackEntryFromItem);
 }
 
+export function newStackTextFile(parent: string): Promise<StackEntry> {
+  return invoke<StackItem>(IPC_COMMANDS.newStackTextFile, { parent }).then(stackEntryFromItem);
+}
+
 export function revealStackItem(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.revealStackItem, { path });
 }
@@ -243,6 +260,22 @@ export function openStackItem(path: string): Promise<void> {
 
 export function openStackItemWithPicker(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openStackItemWithPicker, { path });
+}
+
+export function listStackOpenWithCandidates(path: string): Promise<StackOpenWithCandidate[]> {
+  return invoke<StackOpenWithCandidate[]>(IPC_COMMANDS.listStackOpenWithCandidates, { path });
+}
+
+export function openStackItemWithApp(path: string, appId: string): Promise<void> {
+  return invoke(IPC_COMMANDS.openStackItemWithApp, { path, appId });
+}
+
+export function prepareStackFileDrag(paths: string[]): Promise<StackNativeDragPreparation> {
+  return invoke<StackNativeDragPreparation>(IPC_COMMANDS.prepareStackFileDrag, { paths });
+}
+
+export function openStackTerminalHere(path: string): Promise<void> {
+  return invoke(IPC_COMMANDS.openStackTerminalHere, { path });
 }
 
 function stackEntryFromItem(item: StackItem): StackEntry {

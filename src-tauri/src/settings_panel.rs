@@ -1,9 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, PhysicalPosition};
 
-use crate::shell_windows::{
-    SETTINGS_PANEL_LABEL, SETTINGS_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL,
-};
+use crate::shell_windows::{SETTINGS_PANEL_LABEL, SETTINGS_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 const SETTINGS_PANEL_MARGIN_PHYSICAL: i32 = 6;
 const SETTINGS_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;

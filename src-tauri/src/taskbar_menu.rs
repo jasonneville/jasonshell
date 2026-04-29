@@ -4,8 +4,6 @@ use crate::task_windows::{self, TaskWindowAction};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use base64::Engine;
 use serde::Deserialize;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::{AppHandle, Emitter, LogicalPosition, Manager};
 
@@ -118,8 +116,50 @@ pub fn show_launcher_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build launcher reveal item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&launch_item, &reveal_item])
-        .map_err(|error| format!("Failed to build launcher context menu: {error}"))?;
+    let admin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:runas:{encoded_shortcut}"),
+        "Run as administrator",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher administrator item: {error}"))?;
+    let properties_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:properties:{encoded_shortcut}"),
+        "Properties",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher properties item: {error}"))?;
+    let reveal_target_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:reveal-target:{encoded_shortcut}"),
+        "Open target location",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher target reveal item: {error}"))?;
+    let copy_path_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:copy-path:{encoded_shortcut}"),
+        "Copy shortcut path",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher copy path item: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[
+            &launch_item,
+            &admin_item,
+            &properties_item,
+            &reveal_item,
+            &reveal_target_item,
+            &copy_path_item,
+        ],
+    )
+    .map_err(|error| format!("Failed to build launcher context menu: {error}"))?;
 
     bottom_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -196,7 +236,11 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
 
         let result = match action {
             "launch" => launchers::launch_pinned_taskbar_app(shortcut_path.clone()),
-            "reveal" => reveal_pinned_shortcut(&shortcut_path),
+            "runas" => launchers::run_pinned_taskbar_app_as_admin(shortcut_path.clone()),
+            "properties" => launchers::open_pinned_shortcut_properties(shortcut_path.clone()),
+            "reveal" => launchers::reveal_pinned_shortcut(shortcut_path.clone()),
+            "reveal-target" => launchers::reveal_pinned_shortcut_target(shortcut_path.clone()),
+            "copy-path" => launchers::copy_pinned_shortcut_path(shortcut_path.clone()),
             _ => return,
         };
 
@@ -242,57 +286,4 @@ fn decode_shortcut_path(encoded_shortcut: &str) -> Result<String, String> {
 
     String::from_utf8(decoded)
         .map_err(|error| format!("Launcher payload was not valid UTF-8: {error}"))
-}
-
-fn reveal_pinned_shortcut(shortcut_path: &str) -> Result<(), String> {
-    let shortcut_path = validate_shortcut_path(shortcut_path)?;
-
-    std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{}", shortcut_path.display()))
-        .spawn()
-        .map_err(|error| format!("Failed to reveal pinned shortcut: {error}"))?;
-
-    Ok(())
-}
-
-fn validate_shortcut_path(shortcut_path: &str) -> Result<PathBuf, String> {
-    let requested_path = PathBuf::from(shortcut_path);
-    if !has_lnk_extension(&requested_path) {
-        return Err("Only pinned .lnk shortcuts may be revealed".to_string());
-    }
-
-    let canonical_dir = fs::canonicalize(pinned_taskbar_dir()?)
-        .map_err(|error| format!("Failed to resolve pinned taskbar directory: {error}"))?;
-    let canonical_shortcut = fs::canonicalize(&requested_path)
-        .map_err(|error| format!("Failed to resolve pinned shortcut path: {error}"))?;
-    let Some(parent) = canonical_shortcut.parent() else {
-        return Err("Pinned shortcut parent directory is unavailable".to_string());
-    };
-
-    if parent != canonical_dir {
-        return Err("Pinned shortcut path is outside the taskbar pin directory".to_string());
-    }
-
-    Ok(canonical_shortcut)
-}
-
-fn pinned_taskbar_dir() -> Result<PathBuf, String> {
-    let Some(appdata) = std::env::var_os("APPDATA") else {
-        return Err("APPDATA is unavailable".to_string());
-    };
-
-    Ok(PathBuf::from(appdata).join(
-        Path::new("Microsoft")
-            .join("Internet Explorer")
-            .join("Quick Launch")
-            .join("User Pinned")
-            .join("TaskBar"),
-    ))
-}
-
-fn has_lnk_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case("lnk"))
-        .unwrap_or(false)
 }

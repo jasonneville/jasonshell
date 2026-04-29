@@ -44,8 +44,22 @@ pub mod commands {
     pub const HIDE_CONTROL_PLANE: &str = "hide_control_plane";
     pub const SHOW_SETTINGS_PANEL: &str = "show_settings_panel";
     pub const HIDE_SETTINGS_PANEL: &str = "hide_settings_panel";
+    pub const SHOW_AUDIO_PANEL: &str = "show_audio_panel";
+    pub const HIDE_AUDIO_PANEL: &str = "hide_audio_panel";
     pub const LIST_PROCESSES: &str = "list_processes";
     pub const KILL_PROCESS: &str = "kill_process";
+    pub const GET_AUDIO_STATE: &str = "get_audio_state";
+    pub const LIST_AUDIO_DEVICES: &str = "list_audio_devices";
+    pub const LIST_AUDIO_SESSIONS: &str = "list_audio_sessions";
+    pub const SET_MASTER_VOLUME: &str = "set_master_volume";
+    pub const SET_MASTER_VOLUME_PERCENT: &str = "set_master_volume_percent";
+    pub const SET_MASTER_MUTE: &str = "set_master_mute";
+    pub const SET_APP_VOLUME: &str = "set_app_volume";
+    pub const SET_APP_SESSION_VOLUME_PERCENT: &str = "set_app_session_volume_percent";
+    pub const SET_APP_SESSION_MUTE: &str = "set_app_session_mute";
+    pub const SET_DEFAULT_AUDIO_DEVICE: &str = "set_default_audio_device";
+    pub const SET_DEFAULT_AUDIO_INPUT_DEVICE: &str = "set_default_audio_input_device";
+    pub const SET_DEFAULT_AUDIO_OUTPUT_DEVICE: &str = "set_default_audio_output_device";
     pub const SEARCH_SYSTEM: &str = "search_system";
     pub const OPEN_SHELL_PATH: &str = "open_shell_path";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
@@ -61,12 +75,17 @@ pub mod commands {
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
     pub const OPEN_STACK_ITEM_WITH_PICKER: &str = "open_stack_item_with_picker";
+    pub const LIST_STACK_OPEN_WITH_CANDIDATES: &str = "list_stack_open_with_candidates";
+    pub const OPEN_STACK_ITEM_WITH_APP: &str = "open_stack_item_with_app";
     pub const RENAME_STACK_ITEM: &str = "rename_stack_item";
     pub const COPY_STACK_ITEMS: &str = "copy_stack_items";
+    pub const PREPARE_STACK_FILE_DRAG: &str = "prepare_stack_file_drag";
     pub const CUT_STACK_ITEMS: &str = "cut_stack_items";
     pub const PASTE_STACK_ITEMS: &str = "paste_stack_items";
     pub const DELETE_STACK_ITEM: &str = "delete_stack_item";
     pub const NEW_STACK_FOLDER: &str = "new_stack_folder";
+    pub const NEW_STACK_TEXT_FILE: &str = "new_stack_text_file";
+    pub const OPEN_STACK_TERMINAL_HERE: &str = "open_stack_terminal_here";
     pub const REVEAL_STACK_ITEM: &str = "reveal_stack_item";
     pub const REPORT_SHELL_SURFACE_RUNTIME_METRICS: &str = "report_shell_surface_runtime_metrics";
     pub const LOAD_SHELL_SETTINGS: &str = "load_shell_settings";
@@ -113,8 +132,22 @@ pub mod commands {
         HIDE_CONTROL_PLANE,
         SHOW_SETTINGS_PANEL,
         HIDE_SETTINGS_PANEL,
+        SHOW_AUDIO_PANEL,
+        HIDE_AUDIO_PANEL,
         LIST_PROCESSES,
         KILL_PROCESS,
+        GET_AUDIO_STATE,
+        LIST_AUDIO_DEVICES,
+        LIST_AUDIO_SESSIONS,
+        SET_MASTER_VOLUME,
+        SET_MASTER_VOLUME_PERCENT,
+        SET_MASTER_MUTE,
+        SET_APP_VOLUME,
+        SET_APP_SESSION_VOLUME_PERCENT,
+        SET_APP_SESSION_MUTE,
+        SET_DEFAULT_AUDIO_DEVICE,
+        SET_DEFAULT_AUDIO_INPUT_DEVICE,
+        SET_DEFAULT_AUDIO_OUTPUT_DEVICE,
         SEARCH_SYSTEM,
         OPEN_SHELL_PATH,
         LIST_PINNED_STACK_FOLDERS,
@@ -130,12 +163,17 @@ pub mod commands {
         READ_STACK_FOLDER,
         OPEN_STACK_ITEM,
         OPEN_STACK_ITEM_WITH_PICKER,
+        LIST_STACK_OPEN_WITH_CANDIDATES,
+        OPEN_STACK_ITEM_WITH_APP,
         RENAME_STACK_ITEM,
         COPY_STACK_ITEMS,
+        PREPARE_STACK_FILE_DRAG,
         CUT_STACK_ITEMS,
         PASTE_STACK_ITEMS,
         DELETE_STACK_ITEM,
         NEW_STACK_FOLDER,
+        NEW_STACK_TEXT_FILE,
+        OPEN_STACK_TERMINAL_HERE,
         REVEAL_STACK_ITEM,
         REPORT_SHELL_SURFACE_RUNTIME_METRICS,
         LOAD_SHELL_SETTINGS,
@@ -218,6 +256,11 @@ mod tests {
         assert!(unique.contains("end_stack_popup_focus_loss_hold"));
         assert!(unique.contains("resize_stack_popup"));
         assert!(unique.contains("read_stack_folder"));
+        assert!(unique.contains("list_stack_open_with_candidates"));
+        assert!(unique.contains("open_stack_item_with_app"));
+        assert!(unique.contains("prepare_stack_file_drag"));
+        assert!(unique.contains("new_stack_text_file"));
+        assert!(unique.contains("open_stack_terminal_here"));
         assert!(unique.contains("record_diagnostic"));
         assert!(unique.contains("export_diagnostics"));
         assert!(unique.contains("build_terminal_launch_plan"));
@@ -232,6 +275,18 @@ mod tests {
         assert!(unique.contains("hide_control_plane"));
         assert!(unique.contains("show_settings_panel"));
         assert!(unique.contains("hide_settings_panel"));
+        assert!(unique.contains("show_audio_panel"));
+        assert!(unique.contains("hide_audio_panel"));
+        assert!(unique.contains("get_audio_state"));
+        assert!(unique.contains("list_audio_devices"));
+        assert!(unique.contains("list_audio_sessions"));
+        assert!(unique.contains("set_master_volume"));
+        assert!(unique.contains("set_master_volume_percent"));
+        assert!(unique.contains("set_app_volume"));
+        assert!(unique.contains("set_app_session_volume_percent"));
+        assert!(unique.contains("set_default_audio_device"));
+        assert!(unique.contains("set_default_audio_input_device"));
+        assert!(unique.contains("set_default_audio_output_device"));
     }
 
     #[test]

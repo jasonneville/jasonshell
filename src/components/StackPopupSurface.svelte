@@ -2,6 +2,7 @@
   import './StackPopupSurface.css';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     beginStackPopupFocusLossHold,
     copyStackItems,
@@ -9,24 +10,31 @@
     endStackPopupFocusLossHold,
     getStackPopupRequest,
     hideStackPopup,
+    listStackOpenWithCandidates,
     listStackFolder,
     newStackFolder,
+    newStackTextFile,
     openStackItem,
+    openStackItemWithApp,
     openStackItemWithPicker,
+    openStackTerminalHere,
     pinStackFolder,
     pasteStackItems,
+    prepareStackFileDrag,
     renameStackItem,
     resizeStackPopup,
     revealStackItem,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
-    type StackFolderListing
+    type StackFolderListing,
+    type StackOpenWithCandidate
   } from '../lib/stackPopup';
-  import { folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
+  import { folderPathToUri, folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
   import {
     applyStackFolderListing,
     canNavigateStackBack,
     canNavigateStackForward,
+    commitValidatedStackFolderListing,
     mergeStackFolderListings,
     defaultStackPopupViewState,
     findTypeToSelectPath,
@@ -42,7 +50,10 @@
     stackBreadcrumbSegments,
     stackPopupOpenPath,
     stackPopupRequestKey,
+    stackOpenWithSuggestions,
+    stackSortHeaderState,
     updateStackSort,
+    type StackOpenWithSuggestion,
     type StackPopupOpenPayload,
     type StackSortColumn
   } from '../lib/stackPopupState';
@@ -96,6 +107,11 @@
   let pendingResize: { width: number; height: number; persist: boolean } | null = null;
   let resizeFrame: number | null = null;
   let resizeRequestChain: Promise<void> = Promise.resolve();
+  let pathDraft = '';
+  let pathDraftBase = '';
+  let pathInputFocused = false;
+  let openWithCandidates: StackOpenWithCandidate[] = [];
+  let openWithCandidatePath: string | null = null;
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -108,6 +124,11 @@
   $: breadcrumbOverflow = stackBrowserBreadcrumbOverflow(breadcrumbs, 5);
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
   $: virtualEntries = stackBrowserVirtualWindow(entries, detailsBodyScrollTop, detailsBodyHeight);
+  $: openWithSuggestions = openWithCandidates.length ? openWithCandidates : stackOpenWithSuggestions(selectedEntry);
+  $: if (currentPath !== pathDraftBase && (!pathInputFocused || pathDraft === pathDraftBase)) {
+    pathDraft = currentPath;
+    pathDraftBase = currentPath;
+  }
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
@@ -201,6 +222,52 @@
     await loadFolder(stackState.currentPath);
   }
 
+  async function submitPathDraft() {
+    const folderPath = pathDraft.trim();
+    if (!folderPath) {
+      resetPathDraft();
+      return;
+    }
+
+    closeMenus();
+    const loadSequence = ++folderLoadSequence;
+    loadingPath = folderPath;
+    errorMessage = '';
+    try {
+      const listing = await listStackFolder(folderPath);
+      if (loadSequence !== folderLoadSequence) {
+        return;
+      }
+      stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
+      pathDraft = stackState.currentPath;
+      pathDraftBase = stackState.currentPath;
+      updateDetailsViewport();
+      focusDetailsGrid();
+    } catch (error) {
+      console.error('Failed to open typed stack folder path', error);
+      if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
+        errorMessage = operationErrorMessage(error, `Folder unavailable: ${folderPath}`);
+      }
+    } finally {
+      if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
+        loadingPath = null;
+      }
+    }
+  }
+
+  function resetPathDraft() {
+    pathDraft = currentPath;
+    pathDraftBase = currentPath;
+  }
+
+  function handlePathKeydown(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      resetPathDraft();
+    }
+  }
+
   async function loadFolder(folderPath: string) {
     if (!folderPath) {
       return;
@@ -265,6 +332,37 @@
     } catch (error) {
       console.error('Failed to open stack item with picker', error);
       errorMessage = operationErrorMessage(error, 'Open with unavailable');
+    }
+  }
+
+  async function loadOpenWithCandidates(entry: StackEntry) {
+    openWithCandidatePath = entry.path;
+    openWithCandidates = [];
+    if (entry.entryType !== 'File') {
+      return;
+    }
+
+    try {
+      const candidates = await listStackOpenWithCandidates(entry.path);
+      if (openWithCandidatePath === entry.path) {
+        openWithCandidates = candidates;
+      }
+    } catch (error) {
+      console.error('Failed to load Open With candidates', error);
+    }
+  }
+
+  async function openSelectedWithSuggestedApp(app: StackOpenWithSuggestion | StackOpenWithCandidate) {
+    closeMenus();
+    if (!selectedEntry || selectedEntry.entryType !== 'File') {
+      return;
+    }
+    try {
+      await openStackItemWithApp(selectedEntry.path, app.id);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open stack item with app', error);
+      errorMessage = operationErrorMessage(error, `Open with ${app.label} unavailable`);
     }
   }
 
@@ -377,6 +475,63 @@
     renameDraft = null;
     createFolderDraft = 'New Folder';
     focusEditorInput();
+  }
+
+  async function beginCreateTextFile() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      const created = await newStackTextFile(currentPath);
+      const listing = await listStackFolder(currentPath);
+      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      stackState = selectStackEntry(stackState, created.path);
+      errorMessage = '';
+      updateDetailsViewport();
+      focusDetailsGrid();
+    } catch (error) {
+      console.error('Failed to create text file', error);
+      errorMessage = operationErrorMessage(error, 'New Text File unavailable');
+    }
+  }
+
+  async function openTerminalHere() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      await openStackTerminalHere(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open terminal here', error);
+      errorMessage = operationErrorMessage(error, 'Open Terminal Here unavailable');
+    }
+  }
+
+  async function copyTextToClipboard(text: string, fallback: string) {
+    closeMenus();
+    if (!text) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to copy stack browser text', error);
+      errorMessage = operationErrorMessage(error, fallback);
+    }
+  }
+
+  function selectedDirectoryPath() {
+    if (!selectedEntry) {
+      return currentPath;
+    }
+    if (selectedEntry.entryType === 'Folder') {
+      return selectedEntry.path;
+    }
+    return parentStackPath(selectedEntry.path) || currentPath;
   }
 
   async function createFolder() {
@@ -567,18 +722,8 @@
     focusDetailsGrid();
   }
 
-  function ariaSort(column: StackSortColumn) {
-    if (stackState.sortColumn !== column) {
-      return 'none';
-    }
-    return stackState.sortDirection === 'asc' ? 'ascending' : 'descending';
-  }
-
-  function sortIndicator(column: StackSortColumn) {
-    if (stackState.sortColumn !== column) {
-      return '';
-    }
-    return stackState.sortDirection === 'asc' ? ' ▲' : ' ▼';
+  function sortHeader(column: StackSortColumn) {
+    return stackSortHeaderState(stackState, column);
   }
 
   function stackAttributeLabels(entry: StackEntry) {
@@ -648,6 +793,7 @@
     if (!stackState.selectedPaths.includes(entry.path)) {
       stackState = selectStackEntry(stackState, entry.path);
     }
+    void loadOpenWithCandidates(entry);
     rowMenu = { x: event.clientX, y: event.clientY, path: entry.path };
     backgroundMenu = null;
     void positionOpenMenus();
@@ -682,13 +828,18 @@
     if (!stackState.selectedPaths.includes(entry.path)) {
       stackState = selectStackEntry(stackState, entry.path);
     }
+    void prepareStackFileDrag(paths).catch((error) => {
+      console.error('Failed to prepare native Stack Browser file drag', error);
+    });
     event.dataTransfer?.setData(STACK_PATHS_DRAG_TYPE, JSON.stringify(paths));
     event.dataTransfer?.setData('text/plain', paths.join('\n'));
     if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'copyMove';
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('text/uri-list', paths.map((path) => folderPathToUri(path)).join('\r\n'));
+      event.dataTransfer.setData('DownloadURL', paths.map((path) => `application/octet-stream:${path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'file'}:${folderPathToUri(path)}`).join('\n'));
       const folderPaths = paths.filter((path) => entries.some((item) => item.path === path && item.entryType === 'Folder'));
       if (folderPaths.length) {
-        setFolderDragPayload(event.dataTransfer, folderPaths, 'copyMove');
+        setFolderDragPayload(event.dataTransfer, folderPaths, 'copy');
       }
     }
   }
@@ -974,34 +1125,56 @@
 >
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>
-      {#if currentPath}
-        <nav class="breadcrumbs" aria-label="Path breadcrumbs">
-          {#each breadcrumbOverflow.visibleSegments as crumb, i (crumb.path)}
-            <button type="button" class="crumb" aria-current={crumb.path === currentPath ? 'page' : undefined} on:click={() => void openFolder(crumb.path)}>{crumb.name}</button>
-            {#if i === 0 && breadcrumbOverflow.hiddenCount}
-              <span class="crumb-sep">/</span>
-              <span class="crumb-overflow" title={breadcrumbOverflow.hiddenTitle} aria-label={`${breadcrumbOverflow.hiddenCount} collapsed path segments`}>...</span>
-            {/if}
-            {#if i < breadcrumbOverflow.visibleSegments.length - 1}
-              <span class="crumb-sep">/</span>
-            {/if}
-          {/each}
-        </nav>
-      {:else}
-        Stack Browser
-      {/if}
+      <form
+        class="stack-path-editor"
+        aria-label="Current folder path"
+        on:submit|preventDefault={() => void submitPathDraft()}
+      >
+        <input
+          aria-label="Current folder path"
+          value={pathDraft}
+          placeholder="Stack Browser"
+          spellcheck="false"
+          autocomplete="off"
+          on:focus={() => {
+            pathInputFocused = true;
+          }}
+          on:blur={() => {
+            pathInputFocused = false;
+            resetPathDraft();
+          }}
+          on:input={(event) => {
+            pathDraft = event.currentTarget.value;
+          }}
+          on:keydown={handlePathKeydown}
+        />
+        {#if currentPath}
+          <nav class="path-segments" aria-label="Path segments">
+            {#each breadcrumbOverflow.visibleSegments as crumb, i (crumb.path)}
+              <MeltActionButton class="path-segment" ariaCurrent={crumb.path === currentPath ? 'page' : undefined} title={crumb.path} onClick={() => void openFolder(crumb.path)}>{crumb.name}</MeltActionButton>
+              {#if i === 0 && breadcrumbOverflow.hiddenCount}
+                <span class="crumb-sep">/</span>
+                <span class="crumb-overflow" title={breadcrumbOverflow.hiddenTitle} aria-label={`${breadcrumbOverflow.hiddenCount} collapsed path segments`}>...</span>
+              {/if}
+              {#if i < breadcrumbOverflow.visibleSegments.length - 1}
+                <span class="crumb-sep">/</span>
+              {/if}
+            {/each}
+          </nav>
+        {/if}
+      </form>
     </div>
     <div class="stack-actions">
-      <button type="button" disabled={!canGoBack} on:click={() => void navigateHistory(-1)}>Back</button>
-      <button type="button" disabled={!canGoForward} on:click={() => void navigateHistory(1)}>Forward</button>
-      <button type="button" on:click={() => void loadFolder(currentPath)}>Refresh</button>
-      <button type="button" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
-      <button type="button" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
-      <button type="button" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
-      <button type="button" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
-      <button type="button" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
-      <button type="button" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
-      <button type="button" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
+      <MeltActionButton disabled={!canGoBack} onClick={() => void navigateHistory(-1)}>Back</MeltActionButton>
+      <MeltActionButton disabled={!canGoForward} onClick={() => void navigateHistory(1)}>Forward</MeltActionButton>
+      <MeltActionButton onClick={() => void loadFolder(currentPath)}>Refresh</MeltActionButton>
+      <MeltActionButton disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+      <MeltActionButton disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+      <MeltActionButton disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</MeltActionButton>
+      <MeltActionButton disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+      <MeltActionButton disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+      <MeltActionButton disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
+      <MeltActionButton disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
     </div>
   </header>
 
@@ -1033,8 +1206,8 @@
         on:click|stopPropagation
         on:mousedown|stopPropagation
       />
-      <button type="submit">OK</button>
-      <button type="button" on:click={cancelInlineEditor}>Cancel</button>
+      <MeltActionButton type="submit">OK</MeltActionButton>
+      <MeltActionButton onClick={cancelInlineEditor}>Cancel</MeltActionButton>
     </form>
   {/if}
 
@@ -1052,10 +1225,10 @@
     on:drop={(event) => void handleDrop(event, currentPath)}
   >
     <div class="details-header" role="row" aria-rowindex="1">
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="1" aria-sort={ariaSort('name')} on:click={() => sortBy('name')}>Name{sortIndicator('name')}</button>
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="2" aria-sort={ariaSort('type')} on:click={() => sortBy('type')}>Type{sortIndicator('type')}</button>
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="3" aria-sort={ariaSort('size')} on:click={() => sortBy('size')}>Size{sortIndicator('size')}</button>
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="4" aria-sort={ariaSort('modified')} on:click={() => sortBy('modified')}>Modified{sortIndicator('modified')}</button>
+      <MeltActionButton class={sortHeader('name').className} role="columnheader" ariaColindex={1} ariaSort={sortHeader('name').ariaSort} onClick={() => sortBy('name')}><span>Name</span><span class="sort-indicator" aria-hidden="true">{sortHeader('name').indicator}</span></MeltActionButton>
+      <MeltActionButton class={sortHeader('type').className} role="columnheader" ariaColindex={2} ariaSort={sortHeader('type').ariaSort} onClick={() => sortBy('type')}><span>Type</span><span class="sort-indicator" aria-hidden="true">{sortHeader('type').indicator}</span></MeltActionButton>
+      <MeltActionButton class={sortHeader('size').className} role="columnheader" ariaColindex={3} ariaSort={sortHeader('size').ariaSort} onClick={() => sortBy('size')}><span>Size</span><span class="sort-indicator" aria-hidden="true">{sortHeader('size').indicator}</span></MeltActionButton>
+      <MeltActionButton class={sortHeader('modified').className} role="columnheader" ariaColindex={4} ariaSort={sortHeader('modified').ariaSort} onClick={() => sortBy('modified')}><span>Modified</span><span class="sort-indicator" aria-hidden="true">{sortHeader('modified').indicator}</span></MeltActionButton>
     </div>
 
     {#if entries.length}
@@ -1136,19 +1309,25 @@
       on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => selectedEntry && void activateEntry(selectedEntry)}>Open</button>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</MeltActionButton>
       <div class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
-        <button type="button" class="submenu-trigger" role="menuitem" aria-haspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</button>
+        <MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</MeltActionButton>
         <div class="context-menu context-submenu-panel" role="menu">
-          <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'File'} on:click={() => void openSelectedWithPicker()}>Choose app...</button>
+          {#each openWithSuggestions as app (app.id)}
+            <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</MeltActionButton>
+          {/each}
+          <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</MeltActionButton>
         </div>
       </div>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
-      <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} on:click={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
     </div>
   {/if}
 
@@ -1163,13 +1342,16 @@
       on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
-      <button type="button" role="menuitem" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
-      <button type="button" role="menuitem" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void beginCreateTextFile()}>New Text File</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openTerminalHere()}>Open Terminal Here</MeltActionButton>
     </div>
   {/if}
 
@@ -1187,7 +1369,7 @@
         <p id="stack-delete-confirm-message">{deleteConfirmation.message}</p>
         <div class="delete-confirm-actions">
           <button type="button" bind:this={deleteCancelButton} on:click={cancelDeleteConfirmation}>Cancel</button>
-          <button type="button" class="danger" on:click={() => void confirmDeleteSelection()}>Delete</button>
+          <MeltActionButton class="danger" onClick={() => void confirmDeleteSelection()}>Delete</MeltActionButton>
         </div>
       </div>
     </div>

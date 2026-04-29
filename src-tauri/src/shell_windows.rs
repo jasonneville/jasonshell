@@ -10,6 +10,7 @@ pub const STACK_POPUP_LABEL: &str = "stack-popup";
 pub const PROCESS_MANAGER_LABEL: &str = "process-manager";
 pub const CONTROL_PLANE_LABEL: &str = "control-plane";
 pub const SETTINGS_PANEL_LABEL: &str = "settings-panel";
+pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
 pub const TOP_BAR_HEIGHT_LOGICAL: f64 = 26.0;
 pub const BOTTOM_BAR_HEIGHT_LOGICAL: f64 = 36.0;
 pub const TASK_PREVIEW_WIDTH_LOGICAL: f64 = 332.0;
@@ -24,6 +25,8 @@ pub const CONTROL_PLANE_WIDTH_LOGICAL: f64 = 860.0;
 pub const CONTROL_PLANE_HEIGHT_LOGICAL: f64 = 620.0;
 pub const SETTINGS_PANEL_WIDTH_LOGICAL: f64 = 440.0;
 pub const SETTINGS_PANEL_HEIGHT_LOGICAL: f64 = 520.0;
+pub const AUDIO_PANEL_WIDTH_LOGICAL: f64 = 320.0;
+pub const AUDIO_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
 const DISABLE_NATIVE_CONTEXT_MENU_SCRIPT: &str =
     "window.addEventListener('contextmenu', (event) => event.preventDefault());";
 
@@ -72,6 +75,7 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _process_manager = build_process_manager_window(app)?;
     let _control_plane = build_control_plane_window(app)?;
     let _settings_panel = build_settings_panel_window(app)?;
+    let _audio_panel = build_audio_panel_window(app)?;
 
     Ok(CreatedShellWindows { top, bottom })
 }
@@ -240,6 +244,27 @@ fn build_settings_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .title("JasonShell Settings")
     .visible(false)
     .build()?)
+}
+
+fn build_audio_panel_window(app: &App) -> AppResult<WebviewWindow> {
+    Ok(
+        WebviewWindowBuilder::new(app, AUDIO_PANEL_LABEL, WebviewUrl::App("index.html".into()))
+            .always_on_top(true)
+            .devtools(false)
+            .decorations(false)
+            .focused(false)
+            .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+            .inner_size(AUDIO_PANEL_WIDTH_LOGICAL, AUDIO_PANEL_HEIGHT_LOGICAL)
+            .maximizable(false)
+            .minimizable(false)
+            .resizable(false)
+            .shadow(true)
+            .skip_taskbar(true)
+            .theme(Some(Theme::Dark))
+            .title("JasonShell Sound")
+            .visible(false)
+            .build()?,
+    )
 }
 
 pub fn to_physical_height(logical_height: f64, scale_factor: f64) -> i32 {

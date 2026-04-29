@@ -5,6 +5,7 @@ import {
   applyStackFolderListing,
   canNavigateStackBack,
   canNavigateStackForward,
+  commitValidatedStackFolderListing,
   defaultStackPopupViewState,
   findTypeToSelectPath,
   formatStackSize,
@@ -18,6 +19,8 @@ import {
   selectedStackEntry,
   selectedStackPaths,
   sortStackEntries,
+  stackOpenWithSuggestions,
+  stackSortHeaderState,
   stackBreadcrumbSegments,
   stackPopupHasRetainedRows,
   stackListingStatus,
@@ -138,6 +141,46 @@ test('retains previous entries while a different folder is loading', () => {
   assert.equal(state.selectedPath, null);
   assert.equal(state.statusMessage, 'Loading folder...');
   assert.equal(stackPopupHasRetainedRows(state), true);
+});
+
+test('typed path validation success commits current path history and listing together', () => {
+  const entries = [stackEntry('alpha.txt')];
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [stackEntry('old.txt')]);
+
+  state = commitValidatedStackFolderListing(state, downloads, {
+    path: downloads,
+    entries,
+    total: 1,
+    warnings: []
+  });
+
+  assert.equal(state.currentPath, downloads);
+  assert.equal(state.entriesPath, downloads);
+  assert.deepEqual(state.history, [documents, downloads]);
+  assert.equal(stackPopupHasRetainedRows(state), false);
+  assert.deepEqual(state.entries.map((entry) => entry.name), ['alpha.txt']);
+});
+
+test('typed path validation failure leaves previous folder state non-retained', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [stackEntry('old.txt')]);
+  const before = state;
+  const missing = 'Z:\\Missing';
+
+  // If typed validation fails, no commit happens; stale data for the typed path cannot move state.
+  state = applyStackFolderListing(state, missing, {
+    path: missing,
+    entries: [stackEntry('bad.txt')],
+    total: 1,
+    warnings: []
+  });
+
+  assert.equal(state.currentPath, documents);
+  assert.equal(state.entriesPath, documents);
+  assert.deepEqual(state.history, [documents]);
+  assert.equal(stackPopupHasRetainedRows(state), false);
+  assert.deepEqual(state.entries.map((entry) => entry.name), ['old.txt']);
 });
 
 test('retains previous entries while navigating history loads another folder', () => {
@@ -276,6 +319,46 @@ test('updates stack sort column and toggles direction', () => {
   state = updateStackSort(state, 'type');
   assert.equal(state.sortColumn, 'type');
   assert.equal(state.sortDirection, 'asc');
+});
+
+test('reports stack sort header aria state and active indicator', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+
+  assert.deepEqual(stackSortHeaderState(state, 'name'), {
+    active: true,
+    ariaSort: 'ascending',
+    className: 'details-sort active asc',
+    indicator: '↑'
+  });
+  assert.deepEqual(stackSortHeaderState(state, 'size'), {
+    active: false,
+    ariaSort: 'none',
+    className: 'details-sort',
+    indicator: ''
+  });
+
+  state = updateStackSort(state, 'name');
+  assert.deepEqual(stackSortHeaderState(state, 'name'), {
+    active: true,
+    ariaSort: 'descending',
+    className: 'details-sort active desc',
+    indicator: '↓'
+  });
+});
+
+test('suggests useful Open With apps for developer text files', () => {
+  assert.deepEqual(
+    stackOpenWithSuggestions(stackEntry('notes.txt')).map((app) => [
+      app.label,
+      app.commandContract
+    ]),
+    [
+      ['Notepad', 'open_stack_item_with_app'],
+      ['Notepad++', 'open_stack_item_with_app'],
+      ['Visual Studio Code', 'open_stack_item_with_app']
+    ]
+  );
+  assert.deepEqual(stackOpenWithSuggestions(stackEntry('Projects', 'Folder')), []);
 });
 
 test('ignores stale folder entry payloads', () => {

@@ -2,6 +2,8 @@ mod clipboard;
 mod file_ops;
 mod items;
 mod models;
+mod native_drag;
+mod open_with;
 mod paging;
 mod paths;
 mod pins;
@@ -13,18 +15,26 @@ use std::sync::Mutex;
 use tauri::{AppHandle, State};
 
 pub use models::{
-    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackItem, StackPasteResult,
-    StackPopupLogicalSize, StackPopupRuntimeState,
+    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackItem,
+    StackNativeDragPreparation, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize,
+    StackPopupRuntimeState,
 };
 
 #[cfg(test)]
 pub(crate) use clipboard::{clipboard_mode_from_drop_effect, paste_clipboard_items};
 #[cfg(test)]
-pub(crate) use file_ops::{available_destination_path, copy_dir, copy_path, move_path_with_rename};
+pub(crate) use file_ops::{
+    available_destination_path, copy_dir, copy_path, move_path_with_rename,
+    next_new_text_document_path,
+};
 #[cfg(test)]
 pub(crate) use items::{stack_file_attributes_from_bits, stack_item_from_path};
 #[cfg(test)]
 pub(crate) use models::{ClipboardMode, StackClipboard};
+#[cfg(test)]
+pub(crate) use native_drag::native_drag_mechanism;
+#[cfg(test)]
+pub(crate) use open_with::open_with_candidates_for_extension_with_resolver;
 #[cfg(test)]
 pub(crate) use paging::{read_stack_folder_page, stack_folder_warning};
 #[cfg(test)]
@@ -143,6 +153,26 @@ pub fn open_stack_item_with_picker(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn list_stack_open_with_candidates(
+    path: String,
+) -> Result<Vec<StackOpenWithCandidate>, String> {
+    let path = paths::normalize_existing_path(&path)?;
+    if Path::new(&path).is_dir() {
+        return Err("Open with is only available for files".to_string());
+    }
+    open_with::open_with_candidates_for_path(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn open_stack_item_with_app(path: String, app_id: String) -> Result<(), String> {
+    let path = paths::normalize_existing_path(&path)?;
+    if Path::new(&path).is_dir() {
+        return Err("Open with is only available for files".to_string());
+    }
+    open_with::open_with_app(Path::new(&path), &app_id)
+}
+
+#[tauri::command]
 pub fn rename_stack_item(path: String, new_name: String) -> Result<StackItem, String> {
     file_ops::rename_stack_item_path(path, new_name)
 }
@@ -153,6 +183,11 @@ pub fn copy_stack_items(
     paths: Vec<String>,
 ) -> Result<(), String> {
     clipboard::set_stack_clipboard(&state, models::ClipboardMode::Copy, paths)
+}
+
+#[tauri::command]
+pub fn prepare_stack_file_drag(paths: Vec<String>) -> Result<StackNativeDragPreparation, String> {
+    native_drag::start_stack_file_drag(paths)
 }
 
 #[tauri::command]
@@ -189,6 +224,16 @@ pub fn new_stack_folder(parent: String, name: String) -> Result<StackItem, Strin
 }
 
 #[tauri::command]
+pub fn new_stack_text_file(parent: String) -> Result<StackItem, String> {
+    file_ops::new_stack_text_file_path(parent)
+}
+
+#[tauri::command]
+pub fn open_stack_terminal_here(path: String) -> Result<(), String> {
+    file_ops::open_terminal_here_path(path)
+}
+
+#[tauri::command]
 pub fn reveal_stack_item(path: String) -> Result<(), String> {
     file_ops::reveal_stack_item_path(path)
 }
@@ -196,11 +241,12 @@ pub fn reveal_stack_item(path: String) -> Result<(), String> {
 mod tests {
     use super::{
         available_destination_path, backup_corrupt_pin_store, clipboard_mode_from_drop_effect,
-        copy_dir, move_path_with_rename, paste_clipboard_items, paths_match_for_unpin,
-        read_stack_folder_page, reorder_pins_by_paths, resolve_stack_alias_with_profile,
-        stack_file_attributes_from_bits, stack_folder_warning, stack_item_from_path,
-        validate_child_name, ClipboardMode, PinnedStackFolder, ShowStackPopupRequest,
-        StackClipboard, StackItem,
+        copy_dir, move_path_with_rename, native_drag_mechanism, next_new_text_document_path,
+        open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
+        paths_match_for_unpin, read_stack_folder_page, reorder_pins_by_paths,
+        resolve_stack_alias_with_profile, stack_file_attributes_from_bits, stack_folder_warning,
+        stack_item_from_path, validate_child_name, ClipboardMode, PinnedStackFolder,
+        ShowStackPopupRequest, StackClipboard, StackItem,
     };
     use std::fs;
     use std::io;
@@ -225,6 +271,54 @@ mod tests {
             validate_child_name("Project Notes.txt").unwrap(),
             "Project Notes.txt"
         );
+    }
+
+    #[test]
+    fn chooses_next_new_text_document_name_without_overwrite() {
+        let root = test_dir("new-text-document");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("New Text Document.txt"), b"one").unwrap();
+        fs::write(root.join("New Text Document (2).txt"), b"two").unwrap();
+
+        let next = next_new_text_document_path(&root).unwrap();
+
+        assert_eq!(next.file_name().unwrap(), "New Text Document (3).txt");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn suggests_developer_open_with_apps_for_text_extensions() {
+        let candidates =
+            open_with_candidates_for_extension_with_resolver(Some("txt"), |candidate| {
+                match candidate {
+                    "notepad.exe" => Some(PathBuf::from(r"C:\Windows\System32\notepad.exe")),
+                    r"%ProgramFiles%\Notepad++\notepad++.exe" => {
+                        Some(PathBuf::from(r"C:\Program Files\Notepad++\notepad++.exe"))
+                    }
+                    r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe" => Some(PathBuf::from(
+                        r"C:\Users\dev\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+                    )),
+                    _ => None,
+                }
+            })
+            .unwrap();
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Notepad", "Notepad++", "Visual Studio Code"]
+        );
+    }
+
+    #[test]
+    fn stack_file_drag_uses_native_drag_mechanism() {
+        #[cfg(windows)]
+        assert_eq!(native_drag_mechanism(), "ole-do-drag-drop");
+
+        #[cfg(not(windows))]
+        assert_eq!(native_drag_mechanism(), "unsupported");
     }
 
     #[test]

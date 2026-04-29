@@ -45,6 +45,11 @@
     getInitialShellPreferences,
     type ShellPreferences
   } from '../lib/shellPreferences';
+  import {
+    AUDIO_PANEL_CLOSED_EVENT,
+    hideAudioPanel,
+    showAudioPanel
+  } from '../lib/audio';
   import { showSettingsPanel } from '../lib/settingsPanel';
   import { isSystemPathResult, searchSystem, SEARCH_INDEX_REFRESHED_EVENT } from '../lib/systemSearch';
   import {
@@ -59,6 +64,7 @@
     shouldRetryIndexedSearch
   } from '../lib/systemSearchState';
   import { topBarIdentityState } from '../features/top-bar/topBarUxState';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
 
   let now = new Date();
   let shellPreferences: ShellPreferences = getInitialShellPreferences();
@@ -75,6 +81,7 @@
   // Pin rail UI
   let pinRailHover = false;
   let pinRailEl: HTMLDivElement | null = null;
+  let soundControl: HTMLDivElement | null = null;
   let showRailScrollLeft = false;
   let showRailScrollRight = false;
   let focusedPinIndex: number | null = null;
@@ -89,10 +96,12 @@
   let draggingPinPath: string | null = null;
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
+  let audioOpen = false;
 
   const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
   const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
+  const SOUND_PANEL_ID = 'audio-panel';
 
   $: allResults = buildSearchCatalog(launchers, openWindows, systemResults);
   $: searchResults = rankSearchResults(allResults, searchQuery);
@@ -227,10 +236,13 @@
   }
 
   function handleTopBarPointerDown(event: MouseEvent) {
+    const target = event.target instanceof Node ? event.target : null;
+    if (audioOpen && (!target || !soundControl?.contains(target))) {
+      void closeAudioPanel();
+    }
     if (!searchOpen || !searchControl) {
       return;
     }
-    const target = event.target instanceof Node ? event.target : null;
     if (target && searchControl.contains(target)) {
       return;
     }
@@ -249,6 +261,34 @@
       anchorWidth: rect.width
     }).catch((error) => {
       console.error('Failed to show settings panel', error);
+    });
+  }
+
+  async function closeAudioPanel() {
+    audioOpen = false;
+    await hideAudioPanel().catch((error) => {
+      console.error('Failed to hide audio panel', error);
+    });
+  }
+
+  async function toggleSoundPanel(target: EventTarget | null) {
+    if (audioOpen) {
+      await closeAudioPanel();
+      return;
+    }
+    const button = target instanceof HTMLElement ? target : null;
+    const rect = button?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    await closePanel();
+    audioOpen = true;
+    await showAudioPanel({
+      anchorLeft: rect.left,
+      anchorWidth: rect.width
+    }).catch((error) => {
+      audioOpen = false;
+      console.error('Failed to show audio panel', error);
     });
   }
 
@@ -679,6 +719,11 @@
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen(AUDIO_PANEL_CLOSED_EVENT, () => {
+      audioOpen = false;
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop') {
         void pinAndOpenDroppedFolders(event.payload.paths, pinRailEl);
@@ -722,6 +767,7 @@
       }
       cancelSearchBlurClose();
       void hideSearchPanel().catch(() => undefined);
+      void hideAudioPanel().catch(() => undefined);
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -732,18 +778,18 @@
 <svelte:window on:keydown={handleGlobalKeydown} on:pointerdown={handleTopBarPointerDown} />
 
 <div class="surface top-bar">
-  <button
+  <MeltActionButton
     class="shell-home-button"
-    type="button"
-    aria-haspopup="dialog"
-    aria-label="Open JasonShell settings"
-    on:click={(event) => void openSettingsPanel(event.currentTarget)}
+    ariaHaspopup="dialog"
+    ariaLabel="Open JasonShell settings"
+    tooltip="Open JasonShell settings"
+    onClick={(event) => void openSettingsPanel(event.currentTarget)}
   >
     jasonshell
-  </button>
+  </MeltActionButton>
   <div class="rail-wrap">
     {#if showRailScrollLeft}
-      <button type="button" class="rail-scroll left" aria-label="Scroll pinned folders left" on:click={scrollRailLeft}>&lsaquo;</button>
+      <MeltActionButton class="rail-scroll left" ariaLabel="Scroll pinned folders left" tooltip="Scroll pinned folders left" onClick={() => scrollRailLeft()}>&lsaquo;</MeltActionButton>
     {/if}
     <div
       class="stack-pins"
@@ -761,23 +807,23 @@
       on:keydown={handlePinRailKeydown}
     >
       {#each stackPins as pin, index (pin.id)}
-        <button
-          type="button"
+        <MeltActionButton
           title={pin.path}
-          data-path={pin.path}
+          tooltip={pin.path}
+          dataPath={pin.path}
           draggable="true"
-          aria-label={`Open pinned folder ${pin.name}`}
-          aria-haspopup="dialog"
-          class:dragging={draggingPinPath === pin.path}
-          on:click={(event) => handlePinClick(event, pin, index)}
-          on:contextmenu={(event) => handlePinContextMenu(event, pin)}
-          on:dragstart={(event) => handlePinDragStart(event, pin)}
-          on:dragend={handlePinDragEnd}
-          on:dragover={(event) => handlePinDragOver(event, pin)}
-          on:drop={(event) => void handlePinDrop(event, pin)}
+          ariaLabel={`Open pinned folder ${pin.name}`}
+          ariaHaspopup="dialog"
+          class={draggingPinPath === pin.path ? 'dragging' : ''}
+          onClick={(event) => handlePinClick(event, pin, index)}
+          onContextMenu={(event) => handlePinContextMenu(event, pin)}
+          onDragStart={(event) => handlePinDragStart(event, pin)}
+          onDragEnd={handlePinDragEnd}
+          onDragOver={(event) => handlePinDragOver(event, pin)}
+          onDrop={(event) => void handlePinDrop(event, pin)}
         >
           {pin.name}
-        </button>
+        </MeltActionButton>
       {/each}
       {#if pinRailHover}
         <div class="pin-drop-overlay" aria-hidden="true">Drop to pin folder</div>
@@ -787,15 +833,27 @@
       {/if}
     </div>
     {#if showRailScrollRight}
-      <button type="button" class="rail-scroll right" aria-label="Scroll pinned folders right" on:click={scrollRailRight}>&rsaquo;</button>
+      <MeltActionButton class="rail-scroll right" ariaLabel="Scroll pinned folders right" tooltip="Scroll pinned folders right" onClick={() => scrollRailRight()}>&rsaquo;</MeltActionButton>
     {/if}
+  </div>
+  <div class="sound-control" bind:this={soundControl}>
+    <MeltActionButton
+      class="sound-button"
+      ariaLabel="Open sound controls"
+      ariaHaspopup="dialog"
+      ariaExpanded={audioOpen}
+      ariaControls={SOUND_PANEL_ID}
+      tooltip="Sound controls"
+      onClick={(event) => void toggleSoundPanel(event.currentTarget)}
+    >
+      <span class="sound-icon" aria-hidden="true"></span>
+    </MeltActionButton>
   </div>
   <div
     class="time-pill"
     aria-label={`Current time ${shellTime} on ${shellDate}`}
   >
-    <strong>{shellTime}</strong>
-    <span>{shellDate}</span>
+    <strong>{shellTime} {shellDate}</strong>
   </div>
   <div class="search-control" bind:this={searchControl}>
     <input

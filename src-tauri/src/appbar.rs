@@ -6,6 +6,7 @@ use crate::shell_windows::{
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::ffi::c_void;
+use std::mem::size_of;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -15,13 +16,18 @@ use std::time::Duration;
 use tauri::{App, AppHandle, Manager};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, RegisterWindowMessageW, SetWindowPos, SystemParametersInfoW, HWND_TOPMOST,
-    SPIF_SENDCHANGE, SPI_GETWORKAREA, SPI_SETWORKAREA, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOOWNERZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+    IsIconic, IsWindowVisible, RegisterWindowMessageW, SetWindowPos, SystemParametersInfoW,
+    GWL_STYLE, HWND_TOPMOST, SPIF_SENDCHANGE, SPI_GETWORKAREA, SPI_SETWORKAREA, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOOWNERZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_CAPTION,
+    WS_THICKFRAME,
 };
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -61,6 +67,10 @@ pub struct ShellRuntimeState {
     pub hidden_explorer_taskbar: Option<explorer::ExplorerTaskbarSnapshot>,
     pub baseline_work_area: Option<RECT>,
     pub registered_appbars: Vec<isize>,
+    shell_layout: Option<ShellSurfaceLayout>,
+    fullscreen_hidden: bool,
+    fullscreen_guard_stop: Option<Arc<AtomicBool>>,
+    fullscreen_guard: Option<JoinHandle<()>>,
     pub taskbar_guard_stop: Option<Arc<AtomicBool>>,
     pub taskbar_guard: Option<JoinHandle<()>>,
 }
@@ -70,11 +80,35 @@ const WORK_AREA_RETRY_DELAY: Duration = Duration::from_millis(50);
 const STARTUP_STABILIZATION_POLLS: usize = 15;
 const STARTUP_STABILIZATION_DELAY: Duration = Duration::from_millis(100);
 const REQUIRED_STABLE_POLLS: usize = 3;
+const FULLSCREEN_GUARD_POLL_DELAY: Duration = Duration::from_millis(250);
+const FULLSCREEN_RECT_TOLERANCE: i32 = 2;
 
 #[derive(Clone, Copy)]
 enum AppBarEdge {
     Top,
     Bottom,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ShellSurfaceLayout {
+    monitor_rect: RECT,
+    top_hwnd: isize,
+    bottom_hwnd: isize,
+    top_rect: RECT,
+    bottom_rect: RECT,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FullscreenWindowCandidate {
+    window_rect: RECT,
+    monitor_rect: RECT,
+    work_area_rect: RECT,
+    is_shell_process: bool,
+    is_desktop_shell_window: bool,
+    is_visible: bool,
+    is_minimized: bool,
+    is_cloaked: bool,
+    has_window_frame: bool,
 }
 
 impl AppBarEdge {
@@ -109,6 +143,8 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
     state.cleaned_up = false;
     state.baseline_work_area = None;
     state.hidden_explorer_taskbar = None;
+    state.shell_layout = None;
+    state.fullscreen_hidden = false;
     state.registered_appbars.clear();
 
     let activation_result = (|| -> AppResult<()> {
@@ -178,6 +214,13 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
 
         move_window_to_rect(top_hwnd, resolved_top_rect)?;
         move_window_to_rect(bottom_hwnd, resolved_bottom_rect)?;
+        state.shell_layout = Some(ShellSurfaceLayout {
+            monitor_rect,
+            top_hwnd: top_hwnd.0 as isize,
+            bottom_hwnd: bottom_hwnd.0 as isize,
+            top_rect: resolved_top_rect,
+            bottom_rect: resolved_bottom_rect,
+        });
 
         windows.top.show()?;
         windows.bottom.show()?;
@@ -200,6 +243,8 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
                 );
             }
         }
+
+        start_fullscreen_guard(app.handle().clone(), &mut state);
 
         Ok(())
     })();
@@ -600,6 +645,7 @@ pub fn capture_shell_surface_runtime_metrics(
 }
 
 fn cleanup_runtime_state(state: &mut ShellRuntimeState) -> AppResult<()> {
+    stop_fullscreen_guard(state);
     stop_taskbar_guard(state);
 
     cleanup_runtime_state_with(
@@ -650,12 +696,304 @@ where
     }
 
     state.cleaned_up = true;
+    state.fullscreen_hidden = false;
+    state.shell_layout = None;
 
     if cleanup_errors.is_empty() {
         Ok(())
     } else {
         Err(cleanup_errors.join("; ").into())
     }
+}
+
+fn start_fullscreen_guard(app_handle: AppHandle, state: &mut ShellRuntimeState) {
+    stop_fullscreen_guard(state);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_signal = Arc::clone(&stop);
+    let guard = thread::spawn(move || {
+        while !stop_signal.load(Ordering::Relaxed) {
+            if let Err(error) = sync_fullscreen_shell_surfaces(&app_handle) {
+                eprintln!("fullscreen shell sync failed: {error}");
+            }
+            thread::sleep(FULLSCREEN_GUARD_POLL_DELAY);
+        }
+    });
+
+    state.fullscreen_guard_stop = Some(stop);
+    state.fullscreen_guard = Some(guard);
+}
+
+fn stop_fullscreen_guard(state: &mut ShellRuntimeState) {
+    if let Some(stop) = state.fullscreen_guard_stop.take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    if let Some(guard) = state.fullscreen_guard.take() {
+        let _ = guard.join();
+    }
+}
+
+fn sync_fullscreen_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
+    let (layout, work_area_rect, cleaned_up) = {
+        let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+        let Ok(state) = state.try_lock() else {
+            return Ok(());
+        };
+        (
+            state.shell_layout,
+            state.baseline_work_area.unwrap_or_else(|| {
+                state
+                    .shell_layout
+                    .map(|layout| layout.monitor_rect)
+                    .unwrap_or_default()
+            }),
+            state.cleaned_up,
+        )
+    };
+
+    if cleaned_up {
+        return Ok(());
+    }
+
+    let Some(layout) = layout else {
+        return Ok(());
+    };
+
+    let should_hide =
+        foreground_fullscreen_candidate(layout.monitor_rect, work_area_rect, std::process::id())
+            .is_some_and(should_hide_shell_for_fullscreen_window);
+
+    if should_hide {
+        hide_shell_for_fullscreen(app_handle)
+    } else {
+        restore_shell_after_fullscreen(app_handle)
+    }
+}
+
+fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
+    let layout = {
+        let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+        let Ok(mut state) = state.try_lock() else {
+            return Ok(());
+        };
+        if state.cleaned_up || state.fullscreen_hidden {
+            return Ok(());
+        }
+
+        let Some(layout) = state.shell_layout else {
+            return Ok(());
+        };
+
+        let mut release_errors = Vec::new();
+        for hwnd_value in state.registered_appbars.iter().rev().copied() {
+            if let Err(error) = unregister_appbar(HWND(hwnd_value as *mut _)) {
+                release_errors.push(error.to_string());
+            }
+        }
+        state.registered_appbars.clear();
+
+        if let Err(error) = set_work_area_with_retry(
+            layout.monitor_rect,
+            "primary monitor work area while fullscreen foreground app is active",
+        ) {
+            release_errors.push(error.to_string());
+        }
+
+        if !release_errors.is_empty() {
+            return Err(release_errors.join("; ").into());
+        }
+
+        state.fullscreen_hidden = true;
+        layout
+    };
+
+    if let Some(window) = app_handle.get_webview_window(super::shell_windows::TOP_BAR_LABEL) {
+        let _ = window.hide();
+    }
+    if let Some(window) = app_handle.get_webview_window(super::shell_windows::BOTTOM_BAR_LABEL) {
+        let _ = window.hide();
+    }
+
+    // Keep rects warm even if WebView hide/show briefly perturbs HWND placement.
+    move_window_to_rect(HWND(layout.top_hwnd as *mut _), layout.top_rect)?;
+    move_window_to_rect(HWND(layout.bottom_hwnd as *mut _), layout.bottom_rect)?;
+    Ok(())
+}
+
+fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
+    let layout = {
+        let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+        let Ok(mut state) = state.try_lock() else {
+            return Ok(());
+        };
+        if state.cleaned_up || !state.fullscreen_hidden {
+            return Ok(());
+        }
+
+        let Some(layout) = state.shell_layout else {
+            return Ok(());
+        };
+
+        let top_hwnd = HWND(layout.top_hwnd as *mut _);
+        let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
+        state.registered_appbars.clear();
+
+        let restore_result = (|| -> AppResult<()> {
+            let top_rect =
+                register_tracked_appbar(&mut state, top_hwnd, register_appbar, |hwnd| {
+                    reserve_appbar(hwnd, AppBarEdge::Top, layout.top_rect)
+                })?;
+            let bottom_rect =
+                register_tracked_appbar(&mut state, bottom_hwnd, register_appbar, |hwnd| {
+                    reserve_appbar(hwnd, AppBarEdge::Bottom, layout.bottom_rect)
+                })?;
+            set_work_area_with_retry(
+                reserved_work_area(layout.monitor_rect, top_rect, bottom_rect),
+                "reserved shell work area after fullscreen foreground app exits",
+            )
+        })();
+
+        if let Err(error) = restore_result {
+            for hwnd_value in state.registered_appbars.iter().rev().copied() {
+                let _ = unregister_appbar(HWND(hwnd_value as *mut _));
+            }
+            state.registered_appbars.clear();
+            return Err(error);
+        }
+
+        state.fullscreen_hidden = false;
+        layout
+    };
+
+    let top_hwnd = HWND(layout.top_hwnd as *mut _);
+    let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
+    move_window_to_rect(top_hwnd, layout.top_rect)?;
+    move_window_to_rect(bottom_hwnd, layout.bottom_rect)?;
+
+    if let Some(window) = app_handle.get_webview_window(super::shell_windows::TOP_BAR_LABEL) {
+        let _ = window.show();
+    }
+    if let Some(window) = app_handle.get_webview_window(super::shell_windows::BOTTOM_BAR_LABEL) {
+        let _ = window.show();
+    }
+
+    Ok(())
+}
+
+fn foreground_fullscreen_candidate(
+    monitor_rect: RECT,
+    work_area_rect: RECT,
+    current_process_id: u32,
+) -> Option<FullscreenWindowCandidate> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return None;
+    }
+
+    let mut process_id = 0;
+    unsafe {
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    }
+    if process_id == 0 {
+        return None;
+    }
+
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 };
+    let has_window_frame = (style & WS_CAPTION.0) != 0 || (style & WS_THICKFRAME.0) != 0;
+    let window_rect = window_bounds_for_fullscreen(hwnd)?;
+
+    Some(FullscreenWindowCandidate {
+        window_rect,
+        monitor_rect,
+        work_area_rect,
+        is_shell_process: process_id == current_process_id,
+        is_desktop_shell_window: is_desktop_shell_class(&window_class_name(hwnd)),
+        is_visible: unsafe { IsWindowVisible(hwnd).as_bool() },
+        is_minimized: unsafe { IsIconic(hwnd).as_bool() },
+        is_cloaked: is_window_cloaked(hwnd),
+        has_window_frame,
+    })
+}
+
+fn should_hide_shell_for_fullscreen_window(candidate: FullscreenWindowCandidate) -> bool {
+    if candidate.is_shell_process
+        || candidate.is_desktop_shell_window
+        || !candidate.is_visible
+        || candidate.is_minimized
+        || candidate.is_cloaked
+    {
+        return false;
+    }
+
+    rect_covers_target(candidate.window_rect, candidate.monitor_rect)
+        || (!candidate.has_window_frame
+            && rect_covers_target(candidate.window_rect, candidate.work_area_rect))
+}
+
+fn rect_covers_target(window_rect: RECT, target_rect: RECT) -> bool {
+    rect_has_area(window_rect)
+        && rect_has_area(target_rect)
+        && window_rect.left <= target_rect.left + FULLSCREEN_RECT_TOLERANCE
+        && window_rect.top <= target_rect.top + FULLSCREEN_RECT_TOLERANCE
+        && window_rect.right >= target_rect.right - FULLSCREEN_RECT_TOLERANCE
+        && window_rect.bottom >= target_rect.bottom - FULLSCREEN_RECT_TOLERANCE
+}
+
+fn is_desktop_shell_class(class_name: &str) -> bool {
+    matches!(
+        class_name.to_ascii_lowercase().as_str(),
+        "progman" | "workerw" | "shelldll_defview"
+    )
+}
+
+fn window_class_name(hwnd: HWND) -> String {
+    let mut buffer = [0_u16; 256];
+    let length = unsafe { GetClassNameW(hwnd, &mut buffer) };
+    if length <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buffer[..length as usize])
+}
+
+fn window_bounds_for_fullscreen(hwnd: HWND) -> Option<RECT> {
+    extended_frame_bounds(hwnd).or_else(|| {
+        let mut rect = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut rect).ok()? };
+        rect_has_area(rect).then_some(rect)
+    })
+}
+
+fn extended_frame_bounds(hwnd: HWND) -> Option<RECT> {
+    let mut rect = RECT::default();
+    let result = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut rect as *mut RECT).cast(),
+            size_of::<RECT>() as u32,
+        )
+    };
+
+    result.ok().filter(|_| rect_has_area(rect)).map(|_| rect)
+}
+
+fn is_window_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0_u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            (&mut cloaked as *mut u32).cast(),
+            size_of::<u32>() as u32,
+        )
+    }
+    .is_ok()
+        && cloaked != 0
+}
+
+fn rect_has_area(rect: RECT) -> bool {
+    rect.right > rect.left && rect.bottom > rect.top
 }
 
 fn start_taskbar_guard(state: &mut ShellRuntimeState) {
@@ -692,8 +1030,10 @@ fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
 mod tests {
     use super::{
         apply_requested_thickness, cleanup_runtime_state_with, normalize_rect_thickness,
-        register_tracked_appbar, reserved_work_area, resolve_baseline_work_area,
-        stabilize_runtime_window_rect_with, ShellRuntimeState, WindowRectSnapshot,
+        rect_covers_target, register_tracked_appbar, reserved_work_area,
+        resolve_baseline_work_area, should_hide_shell_for_fullscreen_window,
+        stabilize_runtime_window_rect_with, FullscreenWindowCandidate, ShellRuntimeState,
+        WindowRectSnapshot,
     };
     use crate::explorer::ExplorerTaskbarSnapshot;
     use windows::Win32::Foundation::{HWND, RECT};
@@ -754,6 +1094,10 @@ mod tests {
             hidden_explorer_taskbar: Some(hidden_taskbar),
             baseline_work_area: Some(baseline_work_area),
             registered_appbars: Vec::new(),
+            shell_layout: None,
+            fullscreen_hidden: false,
+            fullscreen_guard_stop: None,
+            fullscreen_guard: None,
             taskbar_guard_stop: None,
             taskbar_guard: None,
         };
@@ -973,5 +1317,172 @@ mod tests {
 
         assert_eq!(rect.top, 1032);
         assert_eq!(rect.bottom, 1080);
+    }
+
+    #[test]
+    fn fullscreen_candidate_covering_monitor_hides_shell() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let work_area = RECT {
+            left: 0,
+            top: 26,
+            right: 1920,
+            bottom: 1044,
+        };
+
+        assert!(should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                window_rect: monitor,
+                monitor_rect: monitor,
+                work_area_rect: work_area,
+                is_shell_process: false,
+                is_desktop_shell_window: false,
+                is_visible: true,
+                is_minimized: false,
+                is_cloaked: false,
+                has_window_frame: true,
+            }
+        ));
+    }
+
+    #[test]
+    fn framed_work_area_candidate_does_not_hide_shell() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let work_area = RECT {
+            left: 0,
+            top: 26,
+            right: 1920,
+            bottom: 1044,
+        };
+
+        assert!(!should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                window_rect: work_area,
+                monitor_rect: monitor,
+                work_area_rect: work_area,
+                is_shell_process: false,
+                is_desktop_shell_window: false,
+                is_visible: true,
+                is_minimized: false,
+                is_cloaked: false,
+                has_window_frame: true,
+            }
+        ));
+    }
+
+    #[test]
+    fn borderless_work_area_candidate_hides_shell() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let work_area = RECT {
+            left: 0,
+            top: 26,
+            right: 1920,
+            bottom: 1044,
+        };
+
+        assert!(should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                window_rect: work_area,
+                monitor_rect: monitor,
+                work_area_rect: work_area,
+                is_shell_process: false,
+                is_desktop_shell_window: false,
+                is_visible: true,
+                is_minimized: false,
+                is_cloaked: false,
+                has_window_frame: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn shell_or_hidden_candidates_do_not_hide_shell() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let base = FullscreenWindowCandidate {
+            window_rect: monitor,
+            monitor_rect: monitor,
+            work_area_rect: monitor,
+            is_shell_process: false,
+            is_desktop_shell_window: false,
+            is_visible: true,
+            is_minimized: false,
+            is_cloaked: false,
+            has_window_frame: false,
+        };
+
+        assert!(!should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                is_shell_process: true,
+                ..base
+            }
+        ));
+        assert!(!should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                is_visible: false,
+                ..base
+            }
+        ));
+        assert!(!should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                is_minimized: true,
+                ..base
+            }
+        ));
+        assert!(!should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                is_cloaked: true,
+                ..base
+            }
+        ));
+        assert!(!should_hide_shell_for_fullscreen_window(
+            FullscreenWindowCandidate {
+                is_desktop_shell_window: true,
+                ..base
+            }
+        ));
+    }
+
+    #[test]
+    fn fullscreen_rect_cover_tolerates_small_dwm_offsets() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let almost_monitor = RECT {
+            left: 1,
+            top: 1,
+            right: 1919,
+            bottom: 1079,
+        };
+        let too_small = RECT {
+            left: 4,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+
+        assert!(rect_covers_target(almost_monitor, monitor));
+        assert!(!rect_covers_target(too_small, monitor));
     }
 }

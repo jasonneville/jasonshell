@@ -1,4 +1,10 @@
 import type { ProcessInfo } from '../../lib/processManager';
+import {
+  classifyProcessGroup,
+  PROCESS_GROUPS,
+  type ProcessGroupId,
+  type ProcessOrderOptions
+} from '../../lib/processManagerState.js';
 import type { TaskbarProcessWindow } from '../../lib/taskbarWindows';
 
 export type ProcessTreeRow = {
@@ -10,6 +16,15 @@ export type ProcessTreeRow = {
 export type ProcessTreeRowOptions = {
   promotedRootPids?: Iterable<number>;
 };
+
+export type ProcessGroupRows = {
+  id: ProcessGroupId;
+  label: string;
+  emptyMessage: string;
+  rows: ProcessTreeRow[];
+};
+
+export type ProcessGroupExpansionState = Partial<Record<ProcessGroupId, boolean>>;
 
 export type SafeKillButtonState = {
   disabled: boolean;
@@ -151,6 +166,44 @@ export function buildProcessTreeRows(
   }
 
   return rows;
+}
+
+export function buildProcessGroups(
+  processes: readonly ProcessInfo[],
+  options: ProcessOrderOptions = {}
+): ProcessGroupRows[] {
+  const processesByGroup = new Map<ProcessGroupId, ProcessInfo[]>(
+    PROCESS_GROUPS.map((group) => [group.id, []])
+  );
+
+  for (const process of processes) {
+    processesByGroup.get(classifyProcessGroup(process, options))?.push(process);
+  }
+
+  const taskbarActivePids = new Set(options.taskbarActivePids ?? []);
+  return PROCESS_GROUPS.map((group) => ({
+    ...group,
+    rows: buildProcessTreeRows(processesByGroup.get(group.id) ?? [], {
+      promotedRootPids: group.id === 'applications' ? taskbarActivePids : []
+    })
+  }));
+}
+
+export function isProcessGroupExpanded(
+  groupId: ProcessGroupId,
+  expansionState: ProcessGroupExpansionState
+): boolean {
+  return expansionState[groupId] !== false;
+}
+
+export function toggleProcessGroupExpansion(
+  groupId: ProcessGroupId,
+  expansionState: ProcessGroupExpansionState
+): ProcessGroupExpansionState {
+  return {
+    ...expansionState,
+    [groupId]: !isProcessGroupExpanded(groupId, expansionState)
+  };
 }
 
 export function processMetricPercent(

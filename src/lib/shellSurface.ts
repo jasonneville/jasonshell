@@ -7,6 +7,7 @@ export type ShellSurface =
   | 'process-manager'
   | 'control-plane'
   | 'settings-panel'
+  | 'audio-panel'
   | 'unknown';
 
 type SurfaceMeta = {
@@ -47,6 +48,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Quick shell preferences',
     title: 'JasonShell Settings'
   },
+  'audio-panel': {
+    subtitle: 'Quick audio controls',
+    title: 'JasonShell Sound'
+  },
   unknown: {
     subtitle: 'Surface route unavailable',
     title: 'JasonShell'
@@ -63,6 +68,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'process-manager'
     || label === 'control-plane'
     || label === 'settings-panel'
+    || label === 'audio-panel'
   ) {
     return label;
   }
