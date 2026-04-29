@@ -152,8 +152,8 @@
 }
 
 .top-bar .stack-pins button {
-  background: var(--js-bg-control);
-  border: 1px solid var(--js-color-border);
+  background: transparent;
+  border: transparent;
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text);
   font-size: 0.64rem;
@@ -226,8 +226,8 @@
 
 .top-bar .sound-button {
   align-items: center;
-  background: var(--js-bg-control);
-  border: 1px solid var(--js-color-border);
+  background: transparent;
+  border: transparent;
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text);
   cursor: pointer;
@@ -240,7 +240,7 @@
 
 .top-bar .sound-button:hover,
 .top-bar .sound-button[aria-expanded='true'] {
-  background: var(--js-color-control-hover);
+  background: transparent;
   border-color: var(--js-color-accent-border);
 }
 
