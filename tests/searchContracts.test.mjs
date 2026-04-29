@@ -69,7 +69,7 @@ test('provider health contract reports safe Everything setup states', () => {
       providerId: 'everything',
       state: 'degraded',
       reasonCode: 'sdkMissing',
-      message: 'Everything SDK unavailable; fallback active',
+      message: 'Everything SDK unavailable; search unavailable',
       canRequestSetup: true,
       checkedAtIso: '2026-04-29T20:00:00.000Z'
     }),

@@ -22,7 +22,7 @@ export function shouldRefreshSystemSearchAfterIndexUpdate(
   searchOpen: boolean,
   currentQuery: string
 ) {
-  return searchOpen && currentQuery.trim().length >= 2;
+  return searchOpen && currentQuery.trim().length > 0;
 }
 
 export function searchPanelAnchorState(rect: Pick<DOMRect, 'left' | 'width'>): SearchPanelAnchorState {
@@ -46,17 +46,24 @@ export function shouldShowSearchPanelForAnchor(
 export function searchPanelPayloadSignature(payload: SearchPanelPayload): string {
   return JSON.stringify({
     query: payload.query,
+    presentation: payload.presentation ?? null,
     selectedIndex: payload.selectedIndex,
     statusMessage: payload.statusMessage,
     results: payload.results.map((result) => ({
       id: result.id,
+      providerId: result.providerId ?? null,
       kind: result.kind,
       title: result.title,
       subtitle: result.subtitle,
       terms: result.terms,
       priority: result.priority,
       iconDataUrl: result.iconDataUrl ?? null,
-      path: result.path ?? null
+      path: result.path ?? null,
+      url: result.url ?? null,
+      actionId: result.actionId ?? null,
+      recordKey: result.recordKey ?? null,
+      runCount: result.runCount ?? null,
+      topMost: result.topMost ?? null
     }))
   });
 }

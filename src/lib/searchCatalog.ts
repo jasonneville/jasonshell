@@ -17,7 +17,7 @@ const commandResults: SearchPanelResult[] = [
     kind: 'command',
     priority: 92,
     subtitle: 'Open settings and developer dashboard',
-    terms: 'developer dashboard settings control plane git changes task history providers diagnostics',
+    terms: 'developer dashboard settings control plane git changes task history control panel providers diagnostics',
     title: 'Open developer dashboard'
   },
   {
@@ -35,6 +35,31 @@ const commandResults: SearchPanelResult[] = [
     subtitle: 'Close the search panel',
     terms: 'close hide dismiss search panel escape',
     title: 'Hide search panel'
+  }
+];
+
+const settingResults: SearchPanelResult[] = [
+  {
+    id: 'setting:windows-settings',
+    kind: 'setting',
+    path: 'ms-settings:',
+    providerId: 'commands',
+    priority: 118,
+    recordKey: 'setting:windows-settings',
+    subtitle: 'Open Windows Settings',
+    terms: 'windows settings system settings display bluetooth network apps privacy update personalization control panel',
+    title: 'Windows Settings'
+  },
+  {
+    id: 'setting:control-panel',
+    kind: 'setting',
+    path: 'control.exe',
+    providerId: 'commands',
+    priority: 116,
+    recordKey: 'setting:control-panel',
+    subtitle: 'Open classic Control Panel',
+    terms: 'control panel classic settings windows system applets devices programs network power',
+    title: 'Control Panel'
   }
 ];
 
@@ -75,6 +100,7 @@ export function buildSearchCatalog(
       ...appResults,
       ...systemResults,
       ...folderResults,
+      ...settingResults,
       ...commandResults
     ],
     workspacePlan

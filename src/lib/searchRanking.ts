@@ -5,6 +5,9 @@ const USAGE_STORAGE_KEY = 'jasonshell.search.usage';
 const MAX_SCORE = 1_000_000;
 const MAX_USAGE_BOOST = 80;
 const TOP_MOST_BOOST = 10_000;
+const EXACT_APP_MATCH_BOOST = 220;
+const EXACT_LAUNCH_INTENT_BOOST = 2_000;
+const SYSTEM_CONTROL_INTENT_BOOST = 2_200;
 
 type UsageMap = Record<string, number>;
 type RankableSearchPanelResult = SearchPanelResult & {
@@ -79,11 +82,17 @@ export function scoreSearchResult(
   usage: UsageMap
 ): number {
   const rankable = result as RankableSearchPanelResult;
+  const matchScore = scoreMatch(result, tokens);
+  if (tokens.length > 0 && matchScore === 0) {
+    return 0;
+  }
+
   return capScore(
     result.priority +
-      scoreMatch(result, tokens) +
+      matchScore +
       providerPriority(result.providerId) +
       resultTypePriority(result.kind) +
+      intentPriority(result, tokens) +
       usageBoost(result, usage) +
       everythingRunCountBoost(rankable) +
       (rankable.topMost ? TOP_MOST_BOOST : 0)
@@ -95,19 +104,42 @@ function scoreMatch(result: SearchPanelResult, tokens: string[]) {
     return 1;
   }
 
-  const haystack = normalize(`${result.title} ${result.subtitle} ${result.terms} ${result.path ?? ''}`);
-  if (!tokens.every((token) => haystack.includes(token))) {
-    return 0;
-  }
-
   const title = normalize(result.title);
   const queryText = tokens.join(' ');
   const titleNoExtension = normalize(stripKnownExtension(result.title));
-  const exactBoost = title === queryText || titleNoExtension === queryText ? 120 : 0;
+  const haystack = searchableText(result);
+  if (!tokens.every((token) => searchTokenMatches(token, haystack, title, titleNoExtension))) {
+    return 0;
+  }
+
+  const isExactTitle = title === queryText || titleNoExtension === queryText;
+  const isLaunchAlias = tokens.length > 1 && haystack.includes(queryText);
+  const isFuzzyTitle = tokens.some((token) => fuzzyTokenMatch(titleNoExtension, token));
+  const exactBoost = isExactTitle ? 120 : 0;
+  const appExactBoost = result.kind === 'app' && isExactTitle ? EXACT_APP_MATCH_BOOST : 0;
+  const launchIntentBoost = isLaunchIntentKind(result.kind)
+    && (isExactTitle || isLaunchAlias || (result.kind === 'app' && isFuzzyTitle))
+    ? EXACT_LAUNCH_INTENT_BOOST
+    : 0;
   const tokenExactBoost = tokens.some((token) => title === token || titleNoExtension === token) ? 60 : 0;
   const prefixBoost = title.startsWith(queryText) || titleNoExtension.startsWith(queryText) ? 48 : 0;
   const containsBoost = tokens.some((token) => title.includes(token)) ? 20 : 0;
-  return 20 + exactBoost + tokenExactBoost + prefixBoost + containsBoost;
+  const fuzzyBoost = isFuzzyTitle ? 16 : 0;
+  return 20 + exactBoost + appExactBoost + launchIntentBoost + tokenExactBoost + prefixBoost + containsBoost + fuzzyBoost;
+}
+
+function searchTokenMatches(token: string, haystack: string, title: string, titleNoExtension: string): boolean {
+  return haystack.includes(token)
+    || fuzzyTokenMatch(title, token)
+    || fuzzyTokenMatch(titleNoExtension, token);
+}
+
+function searchableText(result: SearchPanelResult): string {
+  let text = normalize(`${result.id} ${result.title} ${result.subtitle} ${result.terms} ${result.path ?? ''}`);
+  if (isSystemControlResult(result)) {
+    text += ' windows settings system settings control panel control pane settings app';
+  }
+  return text;
 }
 
 function queryTokens(query: string): string[] {
@@ -136,7 +168,7 @@ function providerPriority(providerId: string | undefined): number {
 function resultTypePriority(kind: SearchPanelResult['kind']): number {
   switch (kind) {
     case 'app':
-      return 35;
+      return 180;
     case 'window':
       return 30;
     case 'folder':
@@ -145,13 +177,46 @@ function resultTypePriority(kind: SearchPanelResult['kind']): number {
       return 20;
     case 'command':
     case 'setting':
-      return 16;
+      return 150;
     case 'calculator':
       return 14;
     case 'web':
     case 'bookmark':
       return 8;
   }
+}
+
+function isLaunchIntentKind(kind: SearchPanelResult['kind']): boolean {
+  return kind === 'app' || kind === 'setting' || kind === 'command';
+}
+
+function intentPriority(result: SearchPanelResult, tokens: string[]): number {
+  if (isSystemControlResult(result) && isSystemControlQuery(tokens)) {
+    return SYSTEM_CONTROL_INTENT_BOOST;
+  }
+  return 0;
+}
+
+function isSystemControlQuery(tokens: string[]): boolean {
+  const queryText = tokens.join(' ');
+  return queryText === 'settings'
+    || queryText === 'windows settings'
+    || queryText === 'system settings'
+    || queryText === 'control panel'
+    || queryText === 'control pane'
+    || tokens.includes('settings')
+    || (tokens.includes('control') && (tokens.includes('panel') || tokens.includes('pane')));
+}
+
+function isSystemControlResult(result: SearchPanelResult): boolean {
+  if (!['app', 'command', 'setting'].includes(result.kind)) {
+    return false;
+  }
+  const text = normalize(`${result.id} ${result.title} ${result.subtitle} ${result.terms}`);
+  return text.includes('settings')
+    || text.includes('control panel')
+    || text.includes('control plane')
+    || text.includes('system settings');
 }
 
 function usageBoost(result: SearchPanelResult, usage: UsageMap): number {
@@ -211,6 +276,22 @@ function normalizePath(value: string): string {
 
 function normalize(value: string) {
   return value.trim().toLocaleLowerCase().replace(/[_\-.]+/gu, ' ').replace(/\s+/gu, ' ');
+}
+
+function fuzzyTokenMatch(value: string, token: string): boolean {
+  if (token.length < 3 || token.length > value.length) {
+    return false;
+  }
+  let index = 0;
+  for (const char of value) {
+    if (char === token[index]) {
+      index += 1;
+      if (index === token.length) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 let usageCache: UsageMap | null = null;

@@ -7,6 +7,8 @@ export const SEARCH_PANEL_LABEL = 'search-panel';
 export const SEARCH_PANEL_UPDATE_EVENT = 'search-panel:update';
 export const SEARCH_PANEL_ACTIVATE_EVENT = 'search-panel:activate';
 export const SEARCH_PANEL_SELECT_EVENT = 'search-panel:select';
+export const SEARCH_PANEL_QUERY_EVENT = 'search-panel:query';
+export const SEARCH_PANEL_KEY_EVENT = 'search-panel:key';
 export const SEARCH_PANEL_PIN_FOLDER_EVENT = 'search-panel:pin-folder';
 export const SEARCH_PANEL_INTERACTION_EVENT = 'search-panel:interaction';
 export const SEARCH_PANEL_CLOSED_EVENT = 'search-panel:closed';
@@ -150,6 +152,7 @@ export type SearchPanelPayload = {
   results: SearchPanelResult[];
   selectedIndex: number;
   statusMessage: string;
+  presentation?: 'anchored' | 'centered';
   sequence?: number;
 };
 
@@ -158,12 +161,23 @@ export type ShowSearchPanelRequest = {
   anchorWidth: number;
 };
 
+export type CenteredSearchPanelSize = {
+  width: number;
+  height: number;
+};
+
+export type ShowCenteredSearchPanelRequest = CenteredSearchPanelSize;
+
 export function showSearchPanel(request: ShowSearchPanelRequest): Promise<void> {
   return invoke(IPC_COMMANDS.showSearchPanel, { request });
 }
 
-export function showCenteredSearchPanel(): Promise<void> {
-  return invoke(IPC_COMMANDS.showCenteredSearchPanel);
+export function showCenteredSearchPanel(request: ShowCenteredSearchPanelRequest): Promise<void> {
+  return invoke(IPC_COMMANDS.showCenteredSearchPanel, { request });
+}
+
+export function resizeSearchPanel(request: CenteredSearchPanelSize): Promise<void> {
+  return invoke(IPC_COMMANDS.resizeSearchPanel, { request });
 }
 
 export function hideSearchPanel(): Promise<void> {
@@ -273,6 +287,57 @@ export function isCenteredSearchSurfaceContract(
 
 export { isEverythingSetupConsentAllowed };
 
+export const CENTERED_SEARCH_PANEL_SIZE_STORAGE_KEY = 'jasonshell.search.centeredPanelSize';
+export const DEFAULT_CENTERED_SEARCH_PANEL_SIZE: CenteredSearchPanelSize = {
+  width: 720,
+  height: 560
+};
+const CENTERED_SEARCH_PANEL_MIN_WIDTH = 420;
+const CENTERED_SEARCH_PANEL_MIN_HEIGHT = 320;
+const CENTERED_SEARCH_PANEL_MAX_WIDTH = 1_200;
+const CENTERED_SEARCH_PANEL_MAX_HEIGHT = 900;
+
+export function clampCenteredSearchPanelSize(size: CenteredSearchPanelSize): CenteredSearchPanelSize {
+  return {
+    width: clampInteger(size.width, CENTERED_SEARCH_PANEL_MIN_WIDTH, CENTERED_SEARCH_PANEL_MAX_WIDTH),
+    height: clampInteger(size.height, CENTERED_SEARCH_PANEL_MIN_HEIGHT, CENTERED_SEARCH_PANEL_MAX_HEIGHT)
+  };
+}
+
+export function readCenteredSearchPanelSize(): CenteredSearchPanelSize {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return DEFAULT_CENTERED_SEARCH_PANEL_SIZE;
+    }
+    const raw = window.localStorage.getItem(CENTERED_SEARCH_PANEL_SIZE_STORAGE_KEY);
+    if (!raw) {
+      return DEFAULT_CENTERED_SEARCH_PANEL_SIZE;
+    }
+    const record = asRecord(JSON.parse(raw));
+    if (typeof record?.width !== 'number' || typeof record?.height !== 'number') {
+      return DEFAULT_CENTERED_SEARCH_PANEL_SIZE;
+    }
+    return clampCenteredSearchPanelSize({
+      width: record.width,
+      height: record.height
+    });
+  } catch (_error) {
+    return DEFAULT_CENTERED_SEARCH_PANEL_SIZE;
+  }
+}
+
+export function writeCenteredSearchPanelSize(size: CenteredSearchPanelSize): CenteredSearchPanelSize {
+  const clamped = clampCenteredSearchPanelSize(size);
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(CENTERED_SEARCH_PANEL_SIZE_STORAGE_KEY, JSON.stringify(clamped));
+    }
+  } catch (_error) {
+    // Best-effort UI geometry preference; search keeps working without storage.
+  }
+  return clamped;
+}
+
 function enumValue<const T extends readonly string[]>(values: T, value: unknown): value is T[number] {
   return typeof value === 'string' && values.includes(value);
 }
@@ -291,4 +356,8 @@ function isActivationPayload(value: unknown): value is Record<string, string | n
         (item) => typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'
       )
   );
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Number.isFinite(value) ? Math.round(Math.max(min, Math.min(value, max))) : min;
 }

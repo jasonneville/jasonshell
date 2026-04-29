@@ -75,6 +75,7 @@ fn main() {
             taskbar_menu::show_top_bar_pin_context_menu,
             search_panel::show_search_panel,
             search_panel::show_centered_search_panel,
+            search_panel::resize_search_panel,
             search_panel::hide_search_panel,
             search_panel::publish_search_panel,
             search_panel::get_search_panel_payload,

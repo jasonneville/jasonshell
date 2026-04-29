@@ -66,8 +66,8 @@ pub struct EverythingSearchSettings {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SearchMode {
-    #[default]
     TopRight,
+    #[default]
     CenteredHotkey,
 }
 
@@ -116,7 +116,7 @@ impl Default for ShellUiSettings {
         Self {
             active_workspace_id: None,
             enable_diagnostics_export: false,
-            search_mode: SearchMode::TopRight,
+            search_mode: SearchMode::CenteredHotkey,
         }
     }
 }
@@ -395,7 +395,7 @@ mod tests {
         );
         assert!(settings.workspaces.is_empty());
         assert!(settings.task_history.is_empty());
-        assert_eq!(settings.ui.search_mode, SearchMode::TopRight);
+        assert_eq!(settings.ui.search_mode, SearchMode::CenteredHotkey);
         assert_eq!(settings.search, SearchSettings::default());
     }
 
@@ -404,7 +404,7 @@ mod tests {
         let value = serde_json::to_value(ShellSettings::default()).unwrap();
 
         assert_eq!(value["version"], SETTINGS_VERSION);
-        assert_eq!(value["ui"]["searchMode"], "topRight");
+        assert_eq!(value["ui"]["searchMode"], "centeredHotkey");
         assert_eq!(value["search"]["resultLimit"], 50);
         assert_eq!(value["search"]["everything"]["enabled"], true);
         assert_eq!(value["search"]["everything"]["installMode"], "ask");

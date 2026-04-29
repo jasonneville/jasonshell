@@ -89,6 +89,26 @@ test('includes backend app and file results in the visible catalog', () => {
   assert.equal(catalog.some((result) => result.kind === 'file'), true);
 });
 
+test('catalog exposes system settings intents before incidental filesystem matches', () => {
+  const catalog = buildSearchCatalog([], [], [
+    {
+      id: 'system:folder:C:\\Docs\\Control Panel',
+      providerId: 'everything',
+      kind: 'folder',
+      path: 'C:\\Docs\\Control Panel',
+      title: 'Control Panel',
+      subtitle: 'Folder',
+      terms: 'control panel folder',
+      priority: 999
+    }
+  ]);
+
+  assert.equal(catalog.some((result) => result.id === 'setting:windows-settings'), true);
+  assert.equal(catalog.some((result) => result.id === 'setting:control-panel'), true);
+  assert.equal(catalog.find((result) => result.id === 'setting:windows-settings')?.path, 'ms-settings:');
+  assert.equal(catalog.find((result) => result.id === 'setting:control-panel')?.path, 'control.exe');
+});
+
 test('ignores stale system search responses while keeping latest query live', () => {
   assert.equal(shouldApplySystemSearchResponse('spot', 3, 'spotify', 4), false);
   assert.equal(shouldApplySystemSearchResponse('spotify', 4, 'spotify', 4), true);
@@ -108,7 +128,8 @@ test('reveals only valid selected search rows', () => {
 
 test('refreshes current system search after an index event', () => {
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 'spotify'), true);
-  assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 's'), false);
+  assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 's'), true);
+  assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, '   '), false);
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(false, 'spotify'), false);
 });
 
@@ -130,11 +151,41 @@ test('keeps search panel show and publish idempotent for realtime typing', () =>
   assert.equal(shouldPublishSearchPanelPayload(signature, payload), false);
 });
 
+test('search panel payload signature includes presentation and ranking metadata', () => {
+  const basePayload = {
+    query: 'spotify',
+    presentation: 'centered',
+    results: [{
+      id: 'system:app:C:\\Spotify.exe',
+      providerId: 'everything',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Application',
+      terms: 'spotify',
+      priority: 100,
+      path: 'C:\\Spotify.exe',
+      recordKey: 'app:c:\\spotify.exe',
+      runCount: 2,
+      topMost: false
+    }],
+    selectedIndex: 0,
+    statusMessage: 'Showing ranked search results'
+  };
+  const changedPayload = {
+    ...basePayload,
+    presentation: 'anchored',
+    results: [{ ...basePayload.results[0], topMost: true, runCount: 5 }]
+  };
+
+  assert.notEqual(searchPanelPayloadSignature(basePayload), searchPanelPayloadSignature(changedPayload));
+});
+
 test('top-bar defers expensive search render work out of the input handler', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
-  assert.match(inputHandler, /searchQuery = \(event\.currentTarget as HTMLInputElement\)\.value/);
-  assert.match(inputHandler, /scheduleSearchRender\(searchQuery\)/);
+  assert.match(inputHandler, /applySearchQuery\(\(event\.currentTarget as HTMLInputElement\)\.value\)/);
+  assert.match(source, /function applySearchQuery\(nextQuery: string\)[\s\S]*scheduleSearchRender\(searchQuery\)/);
+  assert.match(source, /buildSearchCatalog\(launchers, openWindows, systemResults\)/);
   assert.doesNotMatch(inputHandler, /rankSearchResults\(/);
   assert.match(source, /window\.setTimeout\(\(\) => \{[\s\S]*rankSearchResults\(allResults, query\)/);
   assert.doesNotMatch(source, /\$:\s*searchResults\s*=\s*rankSearchResults\(allResults, searchQuery\)/);
@@ -142,6 +193,10 @@ test('top-bar defers expensive search render work out of the input handler', () 
   assert.match(source, /lastSearchPanelPayloadSignature = signature/);
   assert.match(source, /sequence: \+\+searchPanelPayloadSequence/);
   assert.doesNotMatch(source, /await publishSearchPanel\(sequencedPayload\)/);
+  assert.match(source, /result\.kind === 'setting' && result\.path/);
+  assert.match(source, /await openShellPath\(result\.path\)/);
+  assert.match(source, /const needsNativeShow = !searchOpen \|\| searchPresentation !== 'centered'/);
+  assert.match(source, /if \(needsNativeShow\) \{[\s\S]*showCenteredSearchPanel\(readCenteredSearchPanelSize\(\)\)/);
 });
 
 test('search-panel fallback fetches cannot overwrite newer event payloads', () => {

@@ -61,7 +61,7 @@ export type EverythingSetupResult = {
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettingsContract = {
     ui: {
-      searchMode: 'topRight'
+      searchMode: 'centeredHotkey'
     },
     search: {
     resultLimit: 50,

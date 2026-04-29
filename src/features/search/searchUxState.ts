@@ -1,7 +1,7 @@
 import type { SearchPanelResult } from '../../lib/searchPanel';
 import type { SearchMode } from '../../lib/searchSettings';
 
-export type SearchResultGroupId = 'apps' | 'windows' | 'places' | 'files' | 'commands';
+export type SearchResultGroupId = 'everything' | 'apps' | 'windows' | 'places' | 'files' | 'commands';
 
 export type GroupedSearchResult = {
   result: SearchPanelResult;
@@ -33,7 +33,7 @@ export type SearchKeyboardAction =
   | 'selectPrevious'
   | 'selectNext';
 
-const GROUP_ORDER: SearchResultGroupId[] = ['apps', 'windows', 'places', 'files', 'commands'];
+const GROUP_ORDER: SearchResultGroupId[] = ['everything', 'apps', 'windows', 'places', 'files', 'commands'];
 
 export function groupSearchResults(results: readonly SearchPanelResult[]): SearchResultGroup[] {
   const groups = new Map<SearchResultGroupId, SearchResultGroup>();
@@ -133,10 +133,10 @@ export function shouldApplySearchResultRefresh(
 }
 
 export function searchModeFromSettings(value: unknown): SearchMode {
-  return value === 'centeredHotkey' ? 'centeredHotkey' : 'topRight';
+  return value === 'topRight' ? 'topRight' : 'centeredHotkey';
 }
 
-export function ctrlKSearchAction(mode: SearchMode): SearchKeyboardAction {
+export function configuredSearchOpenAction(mode: SearchMode): SearchKeyboardAction {
   return mode === 'centeredHotkey' ? 'openCentered' : 'openTopRight';
 }
 
@@ -167,5 +167,7 @@ function searchResultGroupLabel(id: SearchResultGroupId): string {
       return 'Files';
     case 'commands':
       return 'Commands';
+    case 'everything':
+      return 'Everything';
   }
 }

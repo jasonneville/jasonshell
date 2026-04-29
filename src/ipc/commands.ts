@@ -12,6 +12,7 @@ export const IPC_COMMANDS = {
   showTopBarPinContextMenu: 'show_top_bar_pin_context_menu',
   showSearchPanel: 'show_search_panel',
   showCenteredSearchPanel: 'show_centered_search_panel',
+  resizeSearchPanel: 'resize_search_panel',
   hideSearchPanel: 'hide_search_panel',
   publishSearchPanel: 'publish_search_panel',
   getSearchPanelPayload: 'get_search_panel_payload',

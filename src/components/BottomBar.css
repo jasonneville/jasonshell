@@ -201,7 +201,7 @@
 
 .bottom-bar .task-group-busy::after {
   animation: taskbar-activity-slide 1.15s linear infinite;
-  background: rgba(37, 211, 102, 0.96);
+  background: rgba(147, 202, 249, 0.96);
   bottom: 0;
   content: '';
   height: 2px;
@@ -212,7 +212,7 @@
   width: 62%;
 }
 
-@keyframes taskbar-activity-slide {
+/* @keyframes taskbar-activity-slide {
   from {
     transform: translateX(-100%);
   }
@@ -220,7 +220,27 @@
   to {
     transform: translateX(162%);
   }
-}
+} */
+ @keyframes taskbar-activity-slide {
+  0% {
+    transform: translateX(-100%) scaleX(1);
+    filter: blur(2px);
+    opacity: 0.5;
+  }
+  20% {
+    opacity: 1;
+    filter: blur(0px);
+  }
+  80% {
+    opacity: 1;
+    filter: blur(0px);
+  }
+  100% {
+    transform: translateX(162%) scaleX(1.1);
+    filter: blur(2px);
+    opacity: 0;
+  }
+} 
 
 .bottom-bar .task-count {
   align-items: center;

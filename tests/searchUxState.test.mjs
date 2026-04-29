@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   groupSearchResults,
-  ctrlKSearchAction,
+  configuredSearchOpenAction,
   nextSearchPanelFallbackDelay,
   nextSearchResultRefreshRequest,
   searchModeFromSettings,
@@ -31,6 +31,17 @@ test('groups search results into keyboard-scan sections without changing result 
 
   assert.deepEqual(groups.map((group) => group.id), ['apps', 'windows', 'places', 'files', 'commands']);
   assert.deepEqual(groups.map((group) => group.items[0].index), [4, 1, 2, 3, 0]);
+});
+
+test('Everything results are grouped by useful result type', () => {
+  const groups = groupSearchResults([
+    { id: 'system:app:C:/Spotify.lnk', providerId: 'everything', kind: 'app', title: 'Spotify', subtitle: 'Everything', terms: 'spotify', priority: 170 },
+    { id: 'system:file:C:/B.txt', providerId: 'everything', kind: 'file', title: 'B', subtitle: 'Everything', terms: 'b', priority: 1 },
+    { id: 'system:folder:C:/A', providerId: 'everything', kind: 'folder', title: 'A', subtitle: 'Everything', terms: 'a', priority: 999 }
+  ]);
+
+  assert.deepEqual(groups.map((group) => group.id), ['apps', 'places', 'files']);
+  assert.deepEqual(groups.map((group) => group.items[0].result.title), ['Spotify', 'A', 'B']);
 });
 
 test('labels primary and secondary actions by result kind', () => {
@@ -130,12 +141,12 @@ test('search input state can advance while expensive result refresh is deferred 
   assert.equal(shouldApplySearchResultRefresh(requests[3], displayedQuery, sequence), true);
 });
 
-test('search mode routes Ctrl+K while preserving top-right default', () => {
-  assert.equal(searchModeFromSettings(undefined), 'topRight');
+test('search mode defaults to centered and preserves explicit top-right routing', () => {
+  assert.equal(searchModeFromSettings(undefined), 'centeredHotkey');
   assert.equal(searchModeFromSettings('topRight'), 'topRight');
   assert.equal(searchModeFromSettings('centeredHotkey'), 'centeredHotkey');
-  assert.equal(ctrlKSearchAction('topRight'), 'openTopRight');
-  assert.equal(ctrlKSearchAction('centeredHotkey'), 'openCentered');
+  assert.equal(configuredSearchOpenAction('topRight'), 'openTopRight');
+  assert.equal(configuredSearchOpenAction('centeredHotkey'), 'openCentered');
 });
 
 test('search keyboard actions are shared by top-right and centered modes', () => {

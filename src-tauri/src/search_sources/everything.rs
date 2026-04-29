@@ -9,7 +9,7 @@ use crate::settings::{EverythingSearchSettings, EverythingSortMode};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const EVERYTHING_REQUEST_LIMIT_FALLBACK: usize = 80;
+const EVERYTHING_REQUEST_LIMIT_FALLBACK: usize = 200;
 
 #[derive(Clone, Debug)]
 pub(crate) struct EverythingSearchOutcome {
@@ -78,7 +78,7 @@ where
         &self,
         request: &EverythingSearchRequest,
     ) -> Result<Vec<SystemSearchResult>, EverythingProviderError> {
-        if request.query.trim().len() < 2 {
+        if request.query.trim().is_empty() {
             return Ok(Vec::new());
         }
         if request.content_search_enabled {
@@ -139,9 +139,7 @@ pub(crate) fn search_system_everything(
 
     let request = EverythingSearchRequest {
         query: query.to_string(),
-        max_results: settings
-            .max_results
-            .clamp(1, EVERYTHING_REQUEST_LIMIT_FALLBACK),
+        max_results: bounded_everything_request_limit(settings.max_results),
         full_path_search: settings.full_path_search,
         sort: settings.sort,
         content_search_enabled: settings.content_search_enabled,
@@ -162,6 +160,10 @@ pub(crate) fn search_system_everything(
     }
 }
 
+fn bounded_everything_request_limit(limit: usize) -> usize {
+    limit.clamp(1, EVERYTHING_REQUEST_LIMIT_FALLBACK)
+}
+
 pub(crate) fn current_everything_health(
     settings: &EverythingSearchSettings,
 ) -> ProviderHealthContract {
@@ -176,18 +178,15 @@ pub(crate) fn current_everything_health(
     }
 
     let install = everything_install::detect_everything_installation();
-    if install.installed_exe_path.is_none() {
-        return provider_health(
-            SearchProviderId::Everything,
-            ProviderHealthState::Unavailable,
-            Some(ProviderReasonCode::NotInstalled),
-            "Everything executable was not found in approved install locations",
-            true,
-        );
-    }
-
     let sdk = everything_ffi::detect_system_sdk(install.installed_exe_path.as_deref());
-    if sdk.dll_path.is_none() {
+    everything_health_from_detection(&install, sdk.dll_path.is_some())
+}
+
+fn everything_health_from_detection(
+    install: &everything_install::EverythingInstallationStatus,
+    sdk_available: bool,
+) -> ProviderHealthContract {
+    if !sdk_available {
         return provider_health(
             SearchProviderId::Everything,
             ProviderHealthState::Degraded,
@@ -196,8 +195,16 @@ pub(crate) fn current_everything_health(
             true,
         );
     }
-
     if !install.process_running {
+        if install.installed_exe_path.is_none() {
+            return provider_health(
+                SearchProviderId::Everything,
+                ProviderHealthState::Unavailable,
+                Some(ProviderReasonCode::NotInstalled),
+                "Everything executable was not found in approved install locations and no running Everything process was detected",
+                true,
+            );
+        }
         return provider_health(
             SearchProviderId::Everything,
             ProviderHealthState::Degraded,
@@ -212,7 +219,7 @@ pub(crate) fn current_everything_health(
             SearchProviderId::Everything,
             ProviderHealthState::Degraded,
             Some(ProviderReasonCode::ServiceUnavailable),
-            "Everything service is not reported as running; fallback search remains active",
+            "Everything service is not reported as running; search is unavailable",
             true,
         );
     }
@@ -221,7 +228,7 @@ pub(crate) fn current_everything_health(
         SearchProviderId::Everything,
         ProviderHealthState::Ready,
         None,
-        "Everything process, service, and system SDK DLL were detected",
+        "Everything process, service, and approved SDK DLL were detected",
         false,
     )
 }
@@ -271,6 +278,7 @@ fn map_everything_results(
 
 fn map_everything_result(raw: &EverythingRawResult) -> SystemSearchResult {
     let kind = match raw.kind {
+        EverythingResultKind::File if is_app_candidate(&raw.full_path) => "app",
         EverythingResultKind::File => "file",
         EverythingResultKind::Folder | EverythingResultKind::Volume => "folder",
     };
@@ -323,19 +331,62 @@ fn display_name(path: &Path, kind: &str) -> String {
 }
 
 fn label_for_kind(kind: &str) -> &'static str {
-    if kind == "folder" {
-        "Folder"
-    } else {
-        "File"
+    match kind {
+        "app" => "Application",
+        "folder" => "Folder",
+        _ => "File",
     }
 }
 
 fn base_priority(kind: &str) -> i32 {
-    if kind == "folder" {
-        96
-    } else {
-        90
+    match kind {
+        "app" => 170,
+        "folder" => 82,
+        _ => 90,
     }
+}
+
+fn is_app_candidate(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .map(|value| value.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if extension == "lnk" {
+        return is_start_menu_or_desktop_shortcut(path);
+    }
+    if extension != "exe" {
+        return false;
+    }
+
+    let path_text = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('/', r"\");
+    if path_text.contains(r"\windows\") || path_text.contains(r"\windows.old\") {
+        return false;
+    }
+    if path_text.contains(r"\uninstall")
+        || path_text.contains(r"\installer")
+        || path_text.contains(r"\setup")
+        || path_text.contains(r"\update")
+        || path_text.contains(r"\helper")
+    {
+        return false;
+    }
+
+    path_text.contains(r"\program files\")
+        || path_text.contains(r"\program files (x86)\")
+        || path_text.contains(r"\appdata\local\")
+        || path_text.contains(r"\appdata\roaming\")
+        || path_text.contains(r"\windowsapps\")
+}
+
+fn is_start_menu_or_desktop_shortcut(path: &Path) -> bool {
+    let path_text = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('/', r"\");
+    path_text.contains(r"\start menu\programs\") || path_text.contains(r"\desktop\")
 }
 
 fn reason_for_error(error: &EverythingProviderError) -> Option<ProviderReasonCode> {
@@ -353,10 +404,10 @@ fn message_for_error(error: &EverythingProviderError) -> String {
         EverythingProviderError::Disabled => "Everything search is disabled".to_string(),
         EverythingProviderError::SdkMissing => everything_ffi::sdk_missing_message().to_string(),
         EverythingProviderError::IpcUnavailable => {
-            "Everything IPC is unavailable; fallback search remains active".to_string()
+            "Everything IPC is unavailable; search is unavailable".to_string()
         }
         EverythingProviderError::NotRunning => {
-            "Everything is not running; fallback search remains active".to_string()
+            "Everything is not running; search is unavailable".to_string()
         }
         EverythingProviderError::QueryFailed(message) => message.clone(),
     }
@@ -430,6 +481,29 @@ mod tests {
     }
 
     #[test]
+    fn maps_installed_app_candidates_from_everything_as_apps() {
+        let raw = vec![EverythingRawResult {
+            full_path: PathBuf::from(r"C:\Users\me\AppData\Roaming\Spotify\Spotify.exe"),
+            kind: EverythingResultKind::File,
+            run_count: 3,
+            highlighted_file_name: Some("*Spotify*.exe".to_string()),
+        }];
+
+        let results = map_everything_results(&raw, 10);
+
+        assert_eq!(results[0].kind, "app");
+        assert_eq!(results[0].title, "Spotify");
+        assert!(results[0].priority >= 170);
+    }
+
+    #[test]
+    fn request_limit_allows_larger_everything_result_sets() {
+        assert_eq!(bounded_everything_request_limit(0), 1);
+        assert_eq!(bounded_everything_request_limit(200), 200);
+        assert_eq!(bounded_everything_request_limit(400), 200);
+    }
+
+    #[test]
     fn provider_resets_sdk_after_successful_query() {
         let provider = EverythingProvider::new(MockSdk {
             results: vec![EverythingRawResult {
@@ -446,6 +520,39 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(provider.sdk.lock().unwrap().reset_count, 1);
+    }
+
+    #[test]
+    fn provider_allows_single_character_everything_queries() {
+        let provider = EverythingProvider::new(MockSdk {
+            results: vec![EverythingRawResult {
+                full_path: PathBuf::from(r"C:\Docs\a.txt"),
+                kind: EverythingResultKind::File,
+                run_count: 0,
+                highlighted_file_name: None,
+            }],
+            ..MockSdk::default()
+        });
+        let request = request("a");
+
+        let results = provider.search(&request).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "a");
+    }
+
+    #[test]
+    fn health_accepts_portable_running_everything_with_repo_sdk() {
+        let install = everything_install::EverythingInstallationStatus {
+            installed_exe_path: None,
+            process_running: true,
+            service_running: true,
+        };
+
+        let health = everything_health_from_detection(&install, true);
+
+        assert_eq!(health.state, ProviderHealthState::Ready);
+        assert_eq!(health.reason_code, None);
     }
 
     #[test]

@@ -11,14 +11,25 @@ pub const SEARCH_PANEL_INTERACTION_EVENT: &str = "search-panel:interaction";
 pub const SEARCH_PANEL_CLOSED_EVENT: &str = "search-panel:closed";
 const SEARCH_PANEL_MARGIN_PHYSICAL: i32 = 6;
 const SEARCH_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
-const CENTERED_SEARCH_WIDTH_LOGICAL: f64 = 640.0;
-const CENTERED_SEARCH_HEIGHT_LOGICAL: f64 = 520.0;
+const CENTERED_SEARCH_WIDTH_LOGICAL: f64 = 720.0;
+const CENTERED_SEARCH_HEIGHT_LOGICAL: f64 = 560.0;
+const CENTERED_SEARCH_MIN_WIDTH_LOGICAL: f64 = 420.0;
+const CENTERED_SEARCH_MIN_HEIGHT_LOGICAL: f64 = 320.0;
+const CENTERED_SEARCH_MAX_WIDTH_LOGICAL: f64 = 1_200.0;
+const CENTERED_SEARCH_MAX_HEIGHT_LOGICAL: f64 = 900.0;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShowSearchPanelRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CenteredSearchPanelRequest {
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Default)]
@@ -72,7 +83,10 @@ pub fn show_search_panel(
 }
 
 #[tauri::command]
-pub fn show_centered_search_panel(app_handle: AppHandle) -> Result<(), String> {
+pub fn show_centered_search_panel(
+    app_handle: AppHandle,
+    request: CenteredSearchPanelRequest,
+) -> Result<(), String> {
     let panel = app_handle
         .get_webview_window(SEARCH_PANEL_LABEL)
         .ok_or_else(|| "Search panel window is unavailable".to_string())?;
@@ -86,8 +100,9 @@ pub fn show_centered_search_panel(app_handle: AppHandle) -> Result<(), String> {
     let scale_factor = top_bar
         .scale_factor()
         .map_err(|error| format!("Failed to read the top bar scale factor: {error}"))?;
-    let width = (CENTERED_SEARCH_WIDTH_LOGICAL * scale_factor).round() as u32;
-    let height = (CENTERED_SEARCH_HEIGHT_LOGICAL * scale_factor).round() as u32;
+    let logical_size = bounded_centered_search_size(request);
+    let width = (logical_size.width * scale_factor).round() as u32;
+    let height = (logical_size.height * scale_factor).round() as u32;
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
     let x = monitor_position.x + ((monitor_size.width.saturating_sub(width)) / 2) as i32;
@@ -105,6 +120,26 @@ pub fn show_centered_search_panel(app_handle: AppHandle) -> Result<(), String> {
     panel
         .set_focus()
         .map_err(|error| format!("Failed to focus centered search panel: {error}"))
+}
+
+#[tauri::command]
+pub fn resize_search_panel(
+    app_handle: AppHandle,
+    request: CenteredSearchPanelRequest,
+) -> Result<(), String> {
+    let panel = app_handle
+        .get_webview_window(SEARCH_PANEL_LABEL)
+        .ok_or_else(|| "Search panel window is unavailable".to_string())?;
+    let scale_factor = panel
+        .scale_factor()
+        .map_err(|error| format!("Failed to read the search panel scale factor: {error}"))?;
+    let logical_size = bounded_centered_search_size(request);
+    panel
+        .set_size(PhysicalSize::new(
+            (logical_size.width * scale_factor).round() as u32,
+            (logical_size.height * scale_factor).round() as u32,
+        ))
+        .map_err(|error| format!("Failed to resize search panel: {error}"))
 }
 
 #[tauri::command]
@@ -167,6 +202,31 @@ fn search_panel_payload_sequence(payload: &Value) -> Option<u64> {
     payload.get("sequence").and_then(Value::as_u64)
 }
 
+fn bounded_centered_search_size(request: CenteredSearchPanelRequest) -> CenteredSearchPanelRequest {
+    CenteredSearchPanelRequest {
+        width: bounded_centered_dimension(
+            request.width,
+            CENTERED_SEARCH_MIN_WIDTH_LOGICAL,
+            CENTERED_SEARCH_MAX_WIDTH_LOGICAL,
+            CENTERED_SEARCH_WIDTH_LOGICAL,
+        ),
+        height: bounded_centered_dimension(
+            request.height,
+            CENTERED_SEARCH_MIN_HEIGHT_LOGICAL,
+            CENTERED_SEARCH_MAX_HEIGHT_LOGICAL,
+            CENTERED_SEARCH_HEIGHT_LOGICAL,
+        ),
+    }
+}
+
+fn bounded_centered_dimension(value: f64, min: f64, max: f64, default: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        default
+    }
+}
+
 fn anchored_panel_x(
     host_x: i32,
     host_width: i32,
@@ -184,8 +244,9 @@ fn anchored_panel_x(
 #[cfg(test)]
 mod tests {
     use super::{
-        anchored_panel_x, latest_search_panel_payload, store_search_panel_payload,
-        SearchPanelRuntimeState, CENTERED_SEARCH_HEIGHT_LOGICAL, CENTERED_SEARCH_WIDTH_LOGICAL,
+        anchored_panel_x, bounded_centered_search_size, latest_search_panel_payload,
+        store_search_panel_payload, CenteredSearchPanelRequest, SearchPanelRuntimeState,
+        CENTERED_SEARCH_HEIGHT_LOGICAL, CENTERED_SEARCH_WIDTH_LOGICAL,
     };
     use crate::shell_windows::{SEARCH_PANEL_HEIGHT_LOGICAL, SEARCH_PANEL_WIDTH_LOGICAL};
     use serde_json::json;
@@ -206,8 +267,38 @@ mod tests {
     fn centered_search_uses_larger_keyboard_launcher_size() {
         assert_eq!(SEARCH_PANEL_WIDTH_LOGICAL, 420.0);
         assert_eq!(SEARCH_PANEL_HEIGHT_LOGICAL, 320.0);
-        assert_eq!(CENTERED_SEARCH_WIDTH_LOGICAL, 640.0);
-        assert_eq!(CENTERED_SEARCH_HEIGHT_LOGICAL, 520.0);
+        assert_eq!(CENTERED_SEARCH_WIDTH_LOGICAL, 720.0);
+        assert_eq!(CENTERED_SEARCH_HEIGHT_LOGICAL, 560.0);
+    }
+
+    #[test]
+    fn centered_search_resize_clamps_to_supported_bounds() {
+        assert_eq!(
+            bounded_centered_search_size(CenteredSearchPanelRequest {
+                width: 12.0,
+                height: 9_999.0,
+            })
+            .width,
+            420.0
+        );
+        assert_eq!(
+            bounded_centered_search_size(CenteredSearchPanelRequest {
+                width: 12.0,
+                height: 9_999.0,
+            })
+            .height,
+            900.0
+        );
+        assert_eq!(
+            bounded_centered_search_size(CenteredSearchPanelRequest {
+                width: f64::NAN,
+                height: f64::INFINITY,
+            }),
+            CenteredSearchPanelRequest {
+                width: CENTERED_SEARCH_WIDTH_LOGICAL,
+                height: CENTERED_SEARCH_HEIGHT_LOGICAL,
+            }
+        );
     }
 
     #[test]

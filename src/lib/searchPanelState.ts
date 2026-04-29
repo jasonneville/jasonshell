@@ -5,13 +5,15 @@ export type SearchPanelViewState = {
   results: SearchPanelResult[];
   selectedIndex: number;
   statusMessage: string;
+  presentation: 'anchored' | 'centered';
 };
 
 export const defaultSearchPanelViewState: SearchPanelViewState = {
   query: '',
   results: [],
   selectedIndex: 0,
-  statusMessage: 'Search is ready'
+  statusMessage: 'Search is ready',
+  presentation: 'centered'
 };
 
 export function applySearchPanelPayload(
@@ -26,7 +28,8 @@ export function applySearchPanelPayload(
     query: payload.query,
     results: payload.results,
     selectedIndex: payload.selectedIndex,
-    statusMessage: payload.statusMessage
+    statusMessage: payload.statusMessage,
+    presentation: payload.presentation ?? current.presentation
   };
 }
 

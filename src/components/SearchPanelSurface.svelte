@@ -6,11 +6,16 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     getSearchPanelPayload,
+    readCenteredSearchPanelSize,
+    resizeSearchPanel,
     SEARCH_PANEL_ACTIVATE_EVENT,
     SEARCH_PANEL_INTERACTION_EVENT,
+    SEARCH_PANEL_KEY_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
+    SEARCH_PANEL_QUERY_EVENT,
     SEARCH_PANEL_SELECT_EVENT,
     SEARCH_PANEL_UPDATE_EVENT,
+    writeCenteredSearchPanelSize,
     type SearchPanelPayload,
     type SearchPanelResult
   } from '../lib/searchPanel';
@@ -30,14 +35,23 @@
   let panelState = defaultSearchPanelViewState;
   let resultRows: Array<HTMLDivElement | undefined> = [];
   let panelElement: HTMLElement | null = null;
+  let queryInput: HTMLInputElement | null = null;
   let lastRevealedSelection = '';
   let fallbackTimer: number | null = null;
   let fallbackAttempt = 0;
   let fallbackGeneration = 0;
+  let resizeDrag: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+  } | null = null;
   $: query = panelState.query;
   $: results = panelState.results;
   $: selectedIndex = panelState.selectedIndex;
   $: statusMessage = panelState.statusMessage;
+  $: presentation = panelState.presentation;
   $: resultGroups = groupSearchResults(results);
   $: void revealSelectedResult(selectedIndex, results.length);
 
@@ -52,6 +66,9 @@
       stopFallbackPolling();
       fallbackAttempt = 0;
       applyPayload(event.payload);
+      if (event.payload.presentation === 'centered') {
+        void focusQueryInput();
+      }
       scheduleFallbackPoll();
     }).then((unlisten) => {
       unlisteners.push(unlisten);
@@ -119,6 +136,21 @@
     void emit(SEARCH_PANEL_ACTIVATE_EVENT, result.id);
   }
 
+  function updateQuery(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    announcePanelInteraction();
+    void emit(SEARCH_PANEL_QUERY_EVENT, value);
+  }
+
+  function handleQueryKeydown(event: KeyboardEvent) {
+    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    announcePanelInteraction();
+    void emit(SEARCH_PANEL_KEY_EVENT, event.key);
+  }
+
   function selectResult(result: SearchPanelResult) {
     markPanelInteraction();
     void emit(SEARCH_PANEL_SELECT_EVENT, result.id);
@@ -126,6 +158,10 @@
 
   function markPanelInteraction() {
     panelElement?.focus({ preventScroll: true });
+    announcePanelInteraction();
+  }
+
+  function announcePanelInteraction() {
     void emit(SEARCH_PANEL_INTERACTION_EVENT, null);
   }
 
@@ -185,6 +221,46 @@
     await tick();
     resultRows[index]?.scrollIntoView({ block: 'nearest' });
   }
+
+  async function focusQueryInput() {
+    await tick();
+    queryInput?.focus({ preventScroll: true });
+  }
+
+  function beginResize(event: PointerEvent) {
+    if (presentation !== 'centered') {
+      return;
+    }
+    event.preventDefault();
+    const size = readCenteredSearchPanelSize();
+    resizeDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: size.width,
+      startHeight: size.height
+    };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function updateResize(event: PointerEvent) {
+    if (!resizeDrag || resizeDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    const size = writeCenteredSearchPanelSize({
+      width: resizeDrag.startWidth + event.clientX - resizeDrag.startX,
+      height: resizeDrag.startHeight + event.clientY - resizeDrag.startY
+    });
+    void resizeSearchPanel(size).catch(() => undefined);
+  }
+
+  function endResize(event: PointerEvent) {
+    if (!resizeDrag || resizeDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    updateResize(event);
+    resizeDrag = null;
+  }
 </script>
 
 <svelte:window on:mousedown={markPanelInteraction} />
@@ -196,8 +272,21 @@
   bind:this={panelElement}
 >
   <header class="search-panel-header">
-    <strong>Search</strong>
-    <span>{query || 'Apps, windows, places, files, commands'}</span>
+    {#if presentation === 'centered'}
+      <input
+        bind:this={queryInput}
+        aria-label="Search Everything"
+        autocomplete="off"
+        class="search-panel-query"
+        placeholder="Search Everything"
+        value={query}
+        on:input={updateQuery}
+        on:keydown={handleQueryKeydown}
+      />
+    {:else}
+      <strong>Search</strong>
+      <span>{query || 'Everything files and folders'}</span>
+    {/if}
     <kbd>Enter opens</kbd>
   </header>
 
@@ -258,5 +347,16 @@
     </div>
   {:else}
     <div class="empty-state surface-state info" role="status">{statusMessage}</div>
+  {/if}
+  {#if presentation === 'centered'}
+    <button
+      type="button"
+      class="search-resize-grip"
+      aria-label="Resize search panel"
+      on:pointerdown={beginResize}
+      on:pointermove={updateResize}
+      on:pointerup={endResize}
+      on:pointercancel={endResize}
+    ></button>
   {/if}
 </section>

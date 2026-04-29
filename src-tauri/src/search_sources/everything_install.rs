@@ -180,14 +180,14 @@ fn setup_result(
             SearchProviderId::Everything,
             ProviderHealthState::Degraded,
             Some(ProviderReasonCode::FallbackActive),
-            "User declined Everything setup; fallback search remains active",
+            "User declined Everything setup; search is unavailable",
             true,
         ),
         EverythingSetupStatus::Blocked | EverythingSetupStatus::Failed => provider_health(
             SearchProviderId::Everything,
             ProviderHealthState::Degraded,
             Some(ProviderReasonCode::FallbackActive),
-            "Everything setup did not run; fallback search remains active",
+            "Everything setup did not run; search is unavailable",
             true,
         ),
     };

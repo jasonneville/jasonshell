@@ -15,7 +15,7 @@ import { assertNoSecretSettingKeys, defaultShellSettings } from '../dist-tests/l
 test('search settings defaults match JSON-owned Everything safe defaults', () => {
   assert.deepEqual(defaultSearchSettings(), {
     ui: {
-      searchMode: 'topRight'
+      searchMode: 'centeredHotkey'
     },
     search: {
       resultLimit: 50,
@@ -36,7 +36,7 @@ test('search settings defaults match JSON-owned Everything safe defaults', () =>
 test('shell settings include search settings as behavior source of truth', () => {
   const settings = defaultShellSettings();
 
-  assert.deepEqual(settings.ui.searchMode, 'topRight');
+  assert.deepEqual(settings.ui.searchMode, 'centeredHotkey');
   assert.deepEqual(settings.search, defaultSearchSettings().search);
 });
 
@@ -54,7 +54,7 @@ test('v1 settings without search fields coerce to search defaults', () => {
 
   const normalized = coerceSearchSettings(legacy);
 
-  assert.equal(normalized.ui.searchMode, 'topRight');
+  assert.equal(normalized.ui.searchMode, 'centeredHotkey');
   assert.equal(normalized.search.everything.enabled, true);
   assert.equal(normalized.search.everything.installMode, 'ask');
   assert.equal(normalized.search.everything.contentSearchEnabled, false);
@@ -79,7 +79,7 @@ test('invalid search setting enums and bounds normalize to documented safe defau
     }
   });
 
-  assert.equal(normalized.ui.searchMode, 'topRight');
+  assert.equal(normalized.ui.searchMode, 'centeredHotkey');
   assert.equal(normalized.search.resultLimit, 50);
   assert.equal(normalized.search.everything.installMode, 'ask');
   assert.equal(normalized.search.everything.sdkSource, 'system');

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::SystemSearchResult;
 
 const MAX_WINDOWS_RESULTS: usize = 100;

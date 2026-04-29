@@ -1,7 +1,10 @@
-use super::scoring::{normalize, search_ranked_results};
+use super::scoring::normalize;
+#[cfg(test)]
+use super::scoring::search_ranked_results;
 use super::{apps, files, provider, SystemSearchResult};
+use provider::ProviderHealthState;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -10,30 +13,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
 const CACHE_VERSION: u32 = 1;
-const INDEX_LIMIT: usize = 40;
 const REFRESH_TTL: Duration = Duration::from_secs(300);
-const PROVIDER_EMPTY_TTL: Duration = Duration::from_secs(5);
-const PROVIDER_RESULTS_TTL: Duration = Duration::from_secs(60);
-const MAX_PROVIDER_CACHE_QUERIES: usize = 64;
-const MAX_PROVIDER_IN_FLIGHT: usize = 4;
 const SEARCH_INDEX_REFRESHED_EVENT: &str = "search-index:refreshed";
 
 #[derive(Default)]
 pub struct SearchIndexRuntimeState {
     entries: Vec<SystemSearchResult>,
-    provider_results_by_query: HashMap<String, CachedProviderResults>,
-    provider_queries_in_flight: HashSet<String>,
-    latest_provider_generation: u64,
-    next_provider_generation: u64,
     loaded_cache: bool,
     refreshing: bool,
     refreshed_at: Option<SystemTime>,
-}
-
-#[derive(Clone, Debug)]
-struct CachedProviderResults {
-    results: Vec<SystemSearchResult>,
-    stored_at: SystemTime,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -56,23 +44,25 @@ pub fn warm_search_index(app_handle: AppHandle) {
 
 pub fn search_index(
     app_handle: &AppHandle,
-    state: &Mutex<SearchIndexRuntimeState>,
+    _state: &Mutex<SearchIndexRuntimeState>,
     query: &str,
 ) -> Result<Vec<SystemSearchResult>, String> {
     ensure_refresh(app_handle, false);
-    ensure_provider_search(app_handle, query);
+    if !provider_query_key(query).is_empty() {
+        let settings = crate::settings::load_shell_settings_for_app(app_handle)
+            .unwrap_or_else(|_| crate::settings::ShellSettings::default());
+        let batch = provider::search_provider_results(query, &settings);
+        let everything_ready = batch.health.iter().any(|health| {
+            health.provider_id == provider::SearchProviderId::Everything
+                && health.state == ProviderHealthState::Ready
+        });
+        if everything_ready || !batch.results.is_empty() {
+            return Ok(batch.results);
+        }
+        return Ok(Vec::new());
+    }
 
-    let guard = state
-        .lock()
-        .map_err(|_| "Search index state is unavailable".to_string())?;
-    Ok(search_ranked_snapshot(
-        &guard.entries,
-        guard
-            .provider_results_by_query
-            .get(&provider_query_key(query)),
-        query,
-        INDEX_LIMIT,
-    ))
+    Ok(Vec::new())
 }
 
 fn ensure_refresh(app_handle: &AppHandle, force: bool) {
@@ -130,152 +120,8 @@ fn ensure_refresh(app_handle: &AppHandle, force: bool) {
     });
 }
 
-fn ensure_provider_search(app_handle: &AppHandle, query: &str) {
-    let key = provider_query_key(query);
-    if key.len() < 2 {
-        return;
-    }
-
-    let state = app_handle.state::<Mutex<SearchIndexRuntimeState>>();
-    let should_search = {
-        let Ok(mut guard) = state.lock() else {
-            return;
-        };
-        prune_provider_cache(&mut guard.provider_results_by_query, SystemTime::now());
-        if guard.provider_queries_in_flight.contains(&key)
-            || guard.provider_queries_in_flight.len() >= MAX_PROVIDER_IN_FLIGHT
-            || guard
-                .provider_results_by_query
-                .get(&key)
-                .map(|cached| provider_cache_is_fresh(cached, SystemTime::now()))
-                .unwrap_or(false)
-        {
-            None
-        } else {
-            guard.next_provider_generation = guard.next_provider_generation.saturating_add(1);
-            let generation = guard.next_provider_generation;
-            guard.latest_provider_generation = generation;
-            guard.provider_queries_in_flight.insert(key.clone());
-            Some(generation)
-        }
-    };
-
-    let Some(generation) = should_search else {
-        return;
-    };
-
-    let app_handle = app_handle.clone();
-    let query = query.trim().to_string();
-    thread::spawn(move || {
-        let settings = crate::settings::load_shell_settings_for_app(&app_handle)
-            .unwrap_or_else(|_| crate::settings::ShellSettings::default());
-        let batch = provider::search_provider_results(&query, &settings);
-        let results = batch.results;
-        let entry_count = results.len();
-        let state = app_handle.state::<Mutex<SearchIndexRuntimeState>>();
-        if let Ok(mut guard) = state.lock() {
-            guard.provider_queries_in_flight.remove(&key);
-            if !provider::should_apply_provider_generation(
-                generation,
-                guard.latest_provider_generation,
-            ) {
-                return;
-            }
-            prune_provider_cache(&mut guard.provider_results_by_query, SystemTime::now());
-            guard.provider_results_by_query.insert(
-                key,
-                CachedProviderResults {
-                    results,
-                    stored_at: SystemTime::now(),
-                },
-            );
-        }
-
-        if entry_count > 0 {
-            let _ = app_handle.emit(
-                SEARCH_INDEX_REFRESHED_EVENT,
-                search_index_refreshed_payload(entry_count, current_epoch_secs()),
-            );
-        }
-    });
-}
-
-fn search_ranked_snapshot(
-    entries: &[SystemSearchResult],
-    provider_results: Option<&CachedProviderResults>,
-    query: &str,
-    limit: usize,
-) -> Vec<SystemSearchResult> {
-    let local_results = search_ranked_results(entries, query, limit);
-    let Some(provider_results) = provider_results else {
-        return local_results;
-    };
-
-    merge_provider_and_local_results(&provider_results.results, local_results, limit)
-}
-
-fn merge_provider_and_local_results(
-    provider_results: &[SystemSearchResult],
-    local_results: Vec<SystemSearchResult>,
-    limit: usize,
-) -> Vec<SystemSearchResult> {
-    let mut seen = HashSet::new();
-    let mut merged = Vec::new();
-
-    for result in provider_results.iter().cloned().chain(local_results) {
-        if seen.insert(result_identity_key(&result)) {
-            merged.push(result);
-        }
-    }
-
-    merged.sort_by(|left, right| {
-        right
-            .priority
-            .cmp(&left.priority)
-            .then(left.title.to_lowercase().cmp(&right.title.to_lowercase()))
-    });
-    merged.truncate(limit);
-    merged
-}
-
-fn result_identity_key(result: &SystemSearchResult) -> String {
-    if !result.path.trim().is_empty() {
-        return format!(
-            "{}:{}",
-            result.kind,
-            normalize(&result.path.replace('/', r"\"))
-        );
-    }
-    normalize(&result.id)
-}
-
 fn provider_query_key(query: &str) -> String {
     normalize(query)
-}
-
-fn provider_cache_is_fresh(cached: &CachedProviderResults, now: SystemTime) -> bool {
-    let ttl = if cached.results.is_empty() {
-        PROVIDER_EMPTY_TTL
-    } else {
-        PROVIDER_RESULTS_TTL
-    };
-    now.duration_since(cached.stored_at)
-        .map(|age| age < ttl)
-        .unwrap_or(true)
-}
-
-fn prune_provider_cache(cache: &mut HashMap<String, CachedProviderResults>, now: SystemTime) {
-    cache.retain(|_, cached| provider_cache_is_fresh(cached, now));
-    while cache.len() >= MAX_PROVIDER_CACHE_QUERIES {
-        let Some(oldest_key) = cache
-            .iter()
-            .min_by_key(|(_, cached)| cached.stored_at)
-            .map(|(key, _)| key.clone())
-        else {
-            break;
-        };
-        cache.remove(&oldest_key);
-    }
 }
 
 fn load_cache_for_refresh(app_handle: &AppHandle) -> Option<usize> {
@@ -444,133 +290,11 @@ mod tests {
     }
 
     #[test]
-    fn provider_results_merge_with_local_snapshot_without_duplicates() {
-        let provider_results = CachedProviderResults {
-            results: vec![
-                search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 118),
-                search_result("system:file:C:\\Docs\\Plan.docx", "file", "Plan", 80),
-            ],
-            stored_at: SystemTime::now(),
-        };
-        let local_results = vec![
-            search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 150),
-            search_result("system:file:C:\\Docs\\Notes.txt", "file", "Notes", 90),
-        ];
-
-        let results = merge_provider_and_local_results(&provider_results.results, local_results, 8);
-
-        assert_eq!(results.len(), 3);
-        assert_eq!(
-            results
-                .iter()
-                .filter(|result| result.id == "system:app:C:\\Apps\\Terminal.lnk")
-                .count(),
-            1
-        );
-        assert!(results.iter().any(|result| result.title == "Notes"));
-    }
-
-    #[test]
-    fn provider_results_collapse_same_path_with_different_id_shapes() {
-        let provider_results = vec![search_result(
-            "system:file:C:\\Docs\\Plan.docx",
-            "file",
-            "Plan",
-            120,
-        )];
-        let local_results = vec![search_result(
-            "system:file:c:/docs/plan.docx",
-            "file",
-            "Plan Local",
-            90,
-        )];
-
-        let results = merge_provider_and_local_results(&provider_results, local_results, 8);
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Plan");
-    }
-
-    #[test]
     fn provider_query_key_matches_cairo_style_normalization() {
         assert_eq!(
             provider_query_key("  Visual-Studio.Code  "),
             "visual studio code"
         );
-    }
-
-    #[test]
-    fn provider_empty_results_expire_quickly_for_retry() {
-        let now = SystemTime::now();
-        let fresh_empty = CachedProviderResults {
-            results: Vec::new(),
-            stored_at: now - Duration::from_secs(2),
-        };
-        let stale_empty = CachedProviderResults {
-            results: Vec::new(),
-            stored_at: now - Duration::from_secs(6),
-        };
-
-        assert!(provider_cache_is_fresh(&fresh_empty, now));
-        assert!(!provider_cache_is_fresh(&stale_empty, now));
-    }
-
-    #[test]
-    fn provider_positive_results_have_longer_ttl() {
-        let now = SystemTime::now();
-        let fresh_positive = CachedProviderResults {
-            results: vec![search_result(
-                "system:file:C:\\Docs\\Plan.docx",
-                "file",
-                "Plan",
-                80,
-            )],
-            stored_at: now - Duration::from_secs(45),
-        };
-        let stale_positive = CachedProviderResults {
-            results: vec![search_result(
-                "system:file:C:\\Docs\\Notes.txt",
-                "file",
-                "Notes",
-                80,
-            )],
-            stored_at: now - Duration::from_secs(61),
-        };
-
-        assert!(provider_cache_is_fresh(&fresh_positive, now));
-        assert!(!provider_cache_is_fresh(&stale_positive, now));
-    }
-
-    #[test]
-    fn provider_cache_prunes_expired_and_bounds_query_count() {
-        let now = SystemTime::now();
-        let mut cache = HashMap::new();
-        cache.insert(
-            "expired".to_string(),
-            CachedProviderResults {
-                results: Vec::new(),
-                stored_at: now - Duration::from_secs(10),
-            },
-        );
-        for index in 0..MAX_PROVIDER_CACHE_QUERIES {
-            cache.insert(
-                format!("query-{index}"),
-                CachedProviderResults {
-                    results: vec![search_result(
-                        &format!("system:file:C:\\Docs\\File{index}.txt"),
-                        "file",
-                        &format!("File{index}"),
-                        80,
-                    )],
-                    stored_at: now - Duration::from_secs(index as u64),
-                },
-            );
-        }
-
-        prune_provider_cache(&mut cache, now);
-
-        assert!(!cache.contains_key("expired"));
-        assert!(cache.len() < MAX_PROVIDER_CACHE_QUERIES);
     }
 
     #[test]
@@ -580,23 +304,6 @@ mod tests {
         assert_eq!(payload.entry_count, 42);
         assert_eq!(payload.generated_at_epoch_secs, 1_773_910_800);
     }
-
-    fn search_result(id: &str, kind: &str, title: &str, priority: i32) -> SystemSearchResult {
-        SystemSearchResult {
-            id: id.to_string(),
-            provider_id: Some("everything".to_string()),
-            kind: kind.to_string(),
-            title: title.to_string(),
-            subtitle: title.to_string(),
-            terms: title.to_string(),
-            priority,
-            path: id.replace(&format!("system:{kind}:"), ""),
-            record_key: None,
-            run_count: None,
-            top_most: None,
-        }
-    }
-
     fn test_dir(name: &str) -> PathBuf {
         let id = SystemTime::now()
             .duration_since(UNIX_EPOCH)

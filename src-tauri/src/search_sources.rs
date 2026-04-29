@@ -80,7 +80,7 @@ pub async fn search_system(
     query: String,
 ) -> Result<Vec<SystemSearchResult>, String> {
     let query = query.trim().to_string();
-    if query.len() < 2 {
+    if query.is_empty() {
         return Ok(Vec::new());
     }
 

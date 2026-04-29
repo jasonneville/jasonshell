@@ -1,3 +1,4 @@
+use super::apps;
 use super::everything;
 use super::query;
 use super::windows_search;
@@ -5,6 +6,9 @@ use super::SystemSearchResult;
 use crate::settings::ShellSettings;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const INSTALLED_APP_RESULT_LIMIT: usize = 16;
+const WINDOWS_APP_RESULT_LIMIT: usize = 24;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -65,74 +69,71 @@ pub(crate) struct ProviderSearchBatch {
     pub health: Vec<ProviderHealthContract>,
 }
 
-pub(crate) fn should_apply_provider_generation(
-    completed_generation: u64,
-    latest_generation: u64,
-) -> bool {
-    completed_generation == latest_generation
-}
-
 pub(crate) fn search_provider_results(
     query: &str,
     settings: &ShellSettings,
 ) -> ProviderSearchBatch {
     let mut batch = ProviderSearchBatch::default();
     let parsed_query = query::parse_search_query(query, &["f", "file", "folder"], false);
-    if parsed_query.is_home_query || parsed_query.search.len() < 2 {
+    if parsed_query.is_home_query || parsed_query.search.is_empty() {
         return batch;
     }
+
+    batch.results.extend(apps::search_apps(
+        &parsed_query.search,
+        INSTALLED_APP_RESULT_LIMIT,
+    ));
 
     let everything_outcome =
         everything::search_system_everything(&parsed_query.search, &settings.search.everything);
     batch.health.push(everything_outcome.health);
     batch.results.extend(everything_outcome.results);
 
-    let fallback_needed = batch.results.is_empty();
-    if fallback_needed {
-        match windows_search::search_windows(&parsed_query.search, settings.search.result_limit) {
-            windows_search::ProviderSearchOutcome::Results(results) => {
-                batch.results.extend(results);
-                batch.health.push(provider_health(
-                    SearchProviderId::WindowsSearch,
-                    ProviderHealthState::Ready,
-                    None,
-                    "Windows Search provider returned fallback results",
-                    false,
-                ));
-            }
-            windows_search::ProviderSearchOutcome::Fallback { reason } => {
-                batch.health.push(provider_health(
-                    SearchProviderId::WindowsSearch,
-                    ProviderHealthState::Degraded,
-                    Some(ProviderReasonCode::FallbackActive),
-                    reason,
-                    false,
-                ));
-            }
-        }
+    if !has_app_result(&batch.results) {
+        append_windows_app_results(&mut batch, &parsed_query.search);
     }
 
     batch
 }
 
+fn has_app_result(results: &[SystemSearchResult]) -> bool {
+    results.iter().any(|result| result.kind == "app")
+}
+
+fn append_windows_app_results(batch: &mut ProviderSearchBatch, query: &str) {
+    match windows_search::search_windows(query, WINDOWS_APP_RESULT_LIMIT) {
+        windows_search::ProviderSearchOutcome::Results(results) => {
+            let apps = results
+                .into_iter()
+                .filter(|result| result.kind == "app")
+                .collect::<Vec<_>>();
+            if !apps.is_empty() {
+                batch.results.extend(apps);
+                batch.health.push(provider_health(
+                    SearchProviderId::WindowsSearch,
+                    ProviderHealthState::Ready,
+                    None,
+                    "Windows Search returned supplemental app results",
+                    false,
+                ));
+            }
+        }
+        windows_search::ProviderSearchOutcome::Fallback { reason } => {
+            batch.health.push(provider_health(
+                SearchProviderId::WindowsSearch,
+                ProviderHealthState::Degraded,
+                Some(ProviderReasonCode::FallbackActive),
+                reason,
+                false,
+            ));
+        }
+    }
+}
+
 pub(crate) fn current_provider_health(settings: &ShellSettings) -> Vec<ProviderHealthContract> {
-    vec![
-        everything::current_everything_health(&settings.search.everything),
-        provider_health(
-            SearchProviderId::WindowsSearch,
-            ProviderHealthState::Ready,
-            None,
-            "Windows Search fallback provider is available when SystemIndex responds",
-            false,
-        ),
-        provider_health(
-            SearchProviderId::WarmedCache,
-            ProviderHealthState::Ready,
-            None,
-            "Warmed local app/file cache is available without broad keystroke scans",
-            false,
-        ),
-    ]
+    vec![everything::current_everything_health(
+        &settings.search.everything,
+    )]
 }
 
 pub(crate) fn provider_health(
@@ -182,12 +183,6 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stale_provider_generation_is_rejected() {
-        assert!(!should_apply_provider_generation(1, 2));
-        assert!(should_apply_provider_generation(2, 2));
-    }
 
     #[test]
     fn checked_at_uses_iso_utc_shape() {

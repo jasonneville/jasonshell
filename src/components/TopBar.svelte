@@ -21,8 +21,11 @@
     SEARCH_PANEL_ACTIVATE_EVENT,
     SEARCH_PANEL_CLOSED_EVENT,
     SEARCH_PANEL_INTERACTION_EVENT,
+    SEARCH_PANEL_KEY_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
+    SEARCH_PANEL_QUERY_EVENT,
     SEARCH_PANEL_SELECT_EVENT,
+    readCenteredSearchPanelSize,
     showCenteredSearchPanel,
     showSearchPanel,
     type SearchPanelResult
@@ -37,7 +40,6 @@
     type StackPin
   } from '../lib/stackPopup';
   import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
-  import { buildSearchCatalog } from '../lib/searchCatalog';
   import { rankSearchResults, recordSearchResultUsage } from '../lib/searchRanking';
   import {
     addShellPreferencesChangeListener,
@@ -53,6 +55,7 @@
   } from '../lib/audio';
   import { showSettingsPanel } from '../lib/settingsPanel';
   import { loadShellSettings } from '../lib/settings';
+  import { buildSearchCatalog } from '../lib/searchCatalog';
   import type { SearchMode } from '../lib/searchSettings';
   import { showControlPlane } from '../lib/controlPlane';
   import { isSystemPathResult, searchSystem, SEARCH_INDEX_REFRESHED_EVENT } from '../lib/systemSearch';
@@ -65,7 +68,6 @@
   import {
     shouldApplySystemSearchResponse,
     shouldRefreshSystemSearchAfterIndexUpdate,
-    shouldRetryIndexedSearch,
     searchPanelAnchorState,
     searchPanelPayloadSignature,
     shouldPublishSearchPanelPayload,
@@ -74,7 +76,6 @@
   } from '../lib/systemSearchState';
   import { topBarIdentityState } from '../features/top-bar/topBarUxState';
   import {
-    ctrlKSearchAction,
     nextSearchResultRefreshRequest,
     searchModeFromSettings,
     searchPanelKeyboardAction,
@@ -108,7 +109,8 @@
   let searchRenderSequence = 0;
   let systemSearchSequence = 0;
   let searchPanelPayloadSequence = 0;
-  let searchMode: SearchMode = 'topRight';
+  let searchMode: SearchMode = 'centeredHotkey';
+  let searchPresentation: 'anchored' | 'centered' = 'centered';
   let searchPanelAnchor: SearchPanelAnchorState | null = null;
   let lastSearchPanelPayloadSignature: string | null = null;
   let pinDropStatus = '';
@@ -126,7 +128,9 @@
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
   const SOUND_PANEL_ID = 'audio-panel';
 
-  $: allResults = buildSearchCatalog(launchers, openWindows, systemResults);
+  $: allResults = searchQuery.trim().length > 0
+    ? buildSearchCatalog(launchers, openWindows, systemResults)
+    : [];
   $: selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
   $: shellTime = formatShellTime(now, shellPreferences);
@@ -138,15 +142,13 @@
         listPinnedTaskbarLaunchers(),
         listOpenTaskWindows()
       ]);
-      searchStatus = launchers.length || openWindows.length
-        ? 'Type to search apps, windows, files, folders, and commands'
-        : 'Type to search installed apps, files, folders, and commands';
+      searchStatus = 'Type to search apps, settings, and Everything';
       scheduleSearchRender();
     } catch (error) {
       console.error('Failed to load search catalog', error);
       launchers = [];
       openWindows = [];
-      searchStatus = 'Search catalog unavailable';
+      searchStatus = 'Everything search ready';
       scheduleSearchRender();
     }
   }
@@ -157,7 +159,7 @@
       searchMode = searchModeFromSettings(settings.ui.searchMode);
     } catch (error) {
       console.error('Failed to load search mode', error);
-      searchMode = 'topRight';
+      searchMode = 'centeredHotkey';
     }
   }
 
@@ -221,6 +223,7 @@
 
   async function openPanel() {
     cancelSearchBlurClose();
+    searchPresentation = 'anchored';
     const rect = searchControl.getBoundingClientRect();
     const nextAnchor = searchPanelAnchorState(rect);
     const needsNativeShow = shouldShowSearchPanelForAnchor(searchOpen, searchPanelAnchor, nextAnchor);
@@ -238,13 +241,21 @@
 
   async function openCenteredPanel() {
     cancelSearchBlurClose();
+    const needsNativeShow = !searchOpen || searchPresentation !== 'centered';
+    searchPresentation = 'centered';
     searchOpen = true;
     searchPanelAnchor = null;
     queueSearchPanelPublish();
-    await showCenteredSearchPanel().catch((error) => {
-      console.error('Failed to show centered search panel', error);
-    });
+    if (needsNativeShow) {
+      await showCenteredSearchPanel(readCenteredSearchPanelSize()).catch((error) => {
+        console.error('Failed to show centered search panel', error);
+      });
+    }
     scheduleSearchRender();
+  }
+
+  function openConfiguredPanel() {
+    void (searchMode === 'topRight' ? openPanel() : openCenteredPanel());
   }
 
   async function closePanel() {
@@ -582,7 +593,8 @@
       query: searchQuery,
       results: searchResults,
       selectedIndex,
-      statusMessage: searchStatus
+      statusMessage: searchStatus,
+      presentation: searchPresentation
     };
   }
 
@@ -633,23 +645,23 @@
 
     const trimmedQuery = query.trim();
     systemSearchSequence += 1;
-    if (trimmedQuery.length < 2) {
+    if (trimmedQuery.length === 0) {
       systemResults = [];
       scheduleSearchRender(query);
       return;
     }
 
+    systemResults = [];
+    scheduleSearchRender(query);
     const sequence = systemSearchSequence;
     systemSearchTimer = window.setTimeout(() => {
       systemSearchTimer = null;
       void loadSystemSearchResults(trimmedQuery, sequence, 0);
-    }, 140);
+    }, 0);
   }
 
-  async function loadSystemSearchResults(query: string, sequence: number, refreshAttempt: number) {
-    searchStatus = refreshAttempt
-      ? 'Updating indexed search results...'
-      : 'Searching indexed apps and files...';
+  async function loadSystemSearchResults(query: string, sequence: number, _refreshAttempt: number) {
+    searchStatus = 'Searching Everything...';
     try {
       const results = await searchSystem(query);
       if (!shouldApplySystemSearchResponse(query, sequence, searchQuery, systemSearchSequence)) {
@@ -658,20 +670,14 @@
 
       systemResults = results;
       searchStatus = results.length
-        ? 'Showing apps, windows, files, folders, and commands'
-        : 'No installed apps or files matched';
+        ? 'Showing ranked search results'
+        : 'Showing app and settings matches';
       scheduleSearchRender();
-      if (shouldRetryIndexedSearch(results.length, refreshAttempt)) {
-        systemSearchRefreshTimer = window.setTimeout(() => {
-          systemSearchRefreshTimer = null;
-          void loadSystemSearchResults(query, sequence, refreshAttempt + 1);
-        }, 650);
-      }
     } catch (error) {
       console.error('Failed to search installed apps and files', error);
       if (sequence === systemSearchSequence) {
         systemResults = [];
-        searchStatus = 'Installed app and file search unavailable';
+        searchStatus = 'Everything search unavailable';
         scheduleSearchRender();
       }
     }
@@ -694,6 +700,8 @@
       }
     } else if (result.kind === 'folder' || result.kind === 'file') {
       await openShellPath(result.path ?? result.id.replace('folder:', ''));
+    } else if (result.kind === 'setting' && result.path) {
+      await openShellPath(result.path);
     } else if (result.id === 'command:refresh-search') {
       await loadSearchCatalog();
       scheduleSystemSearch(searchQuery);
@@ -710,41 +718,40 @@
     await loadSearchCatalog();
   }
 
-  function handleSearchInput(event: Event) {
-    searchQuery = (event.currentTarget as HTMLInputElement).value;
+  function applySearchQuery(nextQuery: string) {
+    searchQuery = nextQuery;
     selectedIndex = 0;
     queueSearchPanelPublish();
     scheduleSearchRender(searchQuery);
     scheduleSystemSearch(searchQuery);
-    void openPanel();
+    openConfiguredPanel();
   }
 
-  function handleSearchKeydown(event: KeyboardEvent) {
-    const action = searchPanelKeyboardAction(event.key);
+  function handleSearchInput(event: Event) {
+    applySearchQuery((event.currentTarget as HTMLInputElement).value);
+  }
+
+  function applySearchKeyboardAction(key: string): boolean {
+    const action = searchPanelKeyboardAction(key);
     if (action === 'selectNext') {
-      event.preventDefault();
       selectedIndex = Math.min(selectedIndex + 1, Math.max(searchResults.length - 1, 0));
       queueSearchPanelPublish();
     } else if (action === 'selectPrevious') {
-      event.preventDefault();
       selectedIndex = Math.max(selectedIndex - 1, 0);
       queueSearchPanelPublish();
     } else if (action === 'activate') {
-      event.preventDefault();
       void activateResult(searchResults[selectedIndex]);
     } else if (action === 'close') {
-      event.preventDefault();
       void closePanel();
+    } else {
+      return false;
     }
+    return true;
   }
 
-  function handleGlobalKeydown(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+  function handleSearchKeydown(event: KeyboardEvent) {
+    if (applySearchKeyboardAction(event.key)) {
       event.preventDefault();
-      searchInput.focus();
-      scheduleSystemSearch(searchQuery);
-      const action = ctrlKSearchAction(searchMode);
-      void (action === 'openCentered' ? openCenteredPanel() : openPanel());
     }
   }
 
@@ -782,6 +789,18 @@
     void listen<string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
       markSearchPanelInteraction();
       selectSearchResult(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<string>(SEARCH_PANEL_QUERY_EVENT, (event) => {
+      markSearchPanelInteraction();
+      applySearchQuery(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<string>(SEARCH_PANEL_KEY_EVENT, (event) => {
+      markSearchPanelInteraction();
+      applySearchKeyboardAction(event.payload);
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -882,7 +901,7 @@
   });
 </script>
 
-<svelte:window on:keydown={handleGlobalKeydown} on:pointerdown={handleTopBarPointerDown} />
+<svelte:window on:pointerdown={handleTopBarPointerDown} />
 
 <div class="surface top-bar">
   <MeltActionButton
@@ -971,13 +990,10 @@
       autocomplete="off"
       placeholder="Search"
       value={searchQuery}
-      on:focus={() => void openPanel()}
+      on:focus={openConfiguredPanel}
       on:blur={scheduleSearchBlurClose}
       on:input={handleSearchInput}
       on:keydown={handleSearchKeydown}
     />
-    {#if shellPreferences.showSearchShortcutHint}
-      <span aria-hidden="true">Ctrl K</span>
-    {/if}
   </div>
 </div>
