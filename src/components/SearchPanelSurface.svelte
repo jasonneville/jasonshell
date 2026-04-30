@@ -26,8 +26,10 @@
   } from '../lib/searchPanelState';
   import { setFolderDragPayload } from '../lib/folderDrag';
   import {
-    groupSearchResults,
+    buildVisibleSearchRows,
     nextSearchPanelFallbackDelay,
+    nextVisibleRowIndex,
+    selectedVisibleRowIndex,
     searchResultActionHints,
     shouldContinueSearchPanelFallbackPolling
   } from '../features/search/searchUxState';
@@ -52,8 +54,10 @@
   $: selectedIndex = panelState.selectedIndex;
   $: statusMessage = panelState.statusMessage;
   $: presentation = panelState.presentation;
-  $: resultGroups = groupSearchResults(results);
-  $: void revealSelectedResult(selectedIndex, results.length);
+  $: visibleRows = buildVisibleSearchRows(results);
+  $: selectedRowIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  $: selectedRow = selectedRowIndex >= 0 ? visibleRows[selectedRowIndex] : null;
+  $: void revealSelectedResult(selectedRowIndex, visibleRows.length);
 
   function applyPayload(payload: SearchPanelPayload | null) {
     panelState = applySearchPanelPayload(panelState, payload);
@@ -148,6 +152,20 @@
     }
     event.preventDefault();
     announcePanelInteraction();
+    if (event.key === 'ArrowDown') {
+      selectVisibleOffset(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      selectVisibleOffset(-1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (selectedRow) {
+        activateResult(selectedRow.result);
+        return;
+      }
+    }
     void emit(SEARCH_PANEL_KEY_EVENT, event.key);
   }
 
@@ -184,6 +202,14 @@
     }
   }
 
+  function selectVisibleOffset(direction: -1 | 1) {
+    const nextIndex = nextVisibleRowIndex(visibleRows, selectedRowIndex, direction);
+    if (nextIndex < 0) {
+      return;
+    }
+    selectResult(visibleRows[nextIndex].result);
+  }
+
   function startFolderDrag(event: DragEvent, result: SearchPanelResult) {
     if (result.kind !== 'folder' || !result.path || !event.dataTransfer) {
       return;
@@ -192,7 +218,7 @@
     setFolderDragPayload(event.dataTransfer, [result.path], 'copy');
   }
 
-  function trackResultRow(node: HTMLDivElement, index: number) {
+  function trackVisibleRow(node: HTMLDivElement, index: number) {
     resultRows[index] = node;
 
     return {
@@ -291,57 +317,54 @@
   </header>
 
   {#if results.length}
-    <div class="result-list" role="listbox" tabindex="0" aria-label="Search results" aria-activedescendant={results[selectedIndex]?.id ? `search-result-${selectedIndex}` : undefined}>
-      {#each resultGroups as group (group.id)}
-        <div class="result-group" role="group" aria-label={group.label}>
-          <div class="result-group-label">{group.label}</div>
-          {#each group.items as item (item.result.id)}
-            {@const result = item.result}
-            {@const index = item.index}
-            {@const hints = searchResultActionHints(result)}
-            <div
-              id={`search-result-${index}`}
-              class:result-selected={index === selectedIndex}
-              class="result-row"
-              role="option"
-              tabindex="0"
-              draggable={result.kind === 'folder' && !!result.path}
-              aria-selected={index === selectedIndex}
-              use:trackResultRow={index}
-              on:click={() => selectResult(result)}
-              on:dblclick={() => activateResult(result)}
-              on:keydown={(event) => handleResultKeydown(event, result)}
-              on:dragstart={(event) => startFolderDrag(event, result)}
-            >
-              <span class="result-icon" aria-hidden="true">
-                {#if result.iconDataUrl}
-                  <img src={result.iconDataUrl} alt="" draggable="false" />
-                {:else}
-                  {result.kind.slice(0, 1).toUpperCase()}
-                {/if}
-              </span>
-              <span class="result-copy">
-                <strong>{result.title}</strong>
-                <small>{result.subtitle}</small>
-              </span>
-              <span class="result-actions">
-                <span class="result-action-primary">{hints.primary}</span>
-                {#if hints.secondary === 'Pin' && result.kind === 'folder' && result.path}
-                  <MeltActionButton
-                    class="pin-folder"
-                    ariaLabel={`Pin ${result.title} to the top bar`}
-                    onClick={(event) => pinFolderResult(event, result)}
-                  >
-                    Pin
-                  </MeltActionButton>
-                {:else if hints.secondary}
-                  <span class="result-kind">{hints.secondary}</span>
-                {:else}
-                  <span class="result-kind">{result.kind}</span>
-                {/if}
-              </span>
-            </div>
-          {/each}
+    <div class="result-list" role="listbox" tabindex="0" aria-label="Search results" aria-activedescendant={selectedRow?.domId}>
+      {#each visibleRows as row, index (row.rowKey)}
+        {@const result = row.result}
+        {@const hints = searchResultActionHints(result)}
+        {#if row.showGroupLabel}
+          <div class="result-group-label">{row.groupLabel}</div>
+        {/if}
+        <div
+          id={row.domId}
+          class:result-selected={index === selectedRowIndex}
+          class="result-row"
+          role="option"
+          tabindex="0"
+          draggable={result.kind === 'folder' && !!result.path}
+          aria-selected={index === selectedRowIndex}
+          use:trackVisibleRow={index}
+          on:click={() => selectResult(result)}
+          on:dblclick={() => activateResult(result)}
+          on:keydown={(event) => handleResultKeydown(event, result)}
+          on:dragstart={(event) => startFolderDrag(event, result)}
+        >
+          <span class="result-icon" aria-hidden="true">
+            {#if result.iconDataUrl}
+              <img src={result.iconDataUrl} alt="" draggable="false" />
+            {:else}
+              {result.kind.slice(0, 1).toUpperCase()}
+            {/if}
+          </span>
+          <span class="result-copy">
+            <strong>{result.title}</strong>
+            <small>{result.subtitle}</small>
+          </span>
+          <span class="result-actions">
+            <span class="result-action-primary">{hints.primary}</span>
+            {#if hints.secondary === 'Pin' && result.kind === 'folder' && result.path}
+              <MeltActionButton
+                class="pin-folder"
+                ariaLabel={`Pin ${result.title} to the top bar`}
+                onClick={(event) => pinFolderResult(event, result)}
+              >
+                Pin
+              </MeltActionButton>
+            {:else if hints.secondary}
+              <span class="result-kind">{hints.secondary}</span>
+            {:else}
+              <span class="result-kind">{result.kind}</span>
+            {/if}
+          </span>
         </div>
       {/each}
     </div>

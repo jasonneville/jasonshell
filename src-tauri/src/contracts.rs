@@ -35,6 +35,7 @@ pub mod commands {
     pub const SHOW_LAUNCHER_CONTEXT_MENU: &str = "show_launcher_context_menu";
     pub const SHOW_TOP_BAR_PIN_CONTEXT_MENU: &str = "show_top_bar_pin_context_menu";
     pub const SHOW_SEARCH_PANEL: &str = "show_search_panel";
+    pub const SEARCH_ENGINE: &str = "search_engine";
     pub const HIDE_SEARCH_PANEL: &str = "hide_search_panel";
     pub const PUBLISH_SEARCH_PANEL: &str = "publish_search_panel";
     pub const GET_SEARCH_PANEL_PAYLOAD: &str = "get_search_panel_payload";
@@ -60,10 +61,10 @@ pub mod commands {
     pub const SET_DEFAULT_AUDIO_DEVICE: &str = "set_default_audio_device";
     pub const SET_DEFAULT_AUDIO_INPUT_DEVICE: &str = "set_default_audio_input_device";
     pub const SET_DEFAULT_AUDIO_OUTPUT_DEVICE: &str = "set_default_audio_output_device";
-    pub const SEARCH_SYSTEM: &str = "search_system";
     pub const GET_SEARCH_PROVIDER_HEALTH: &str = "get_search_provider_health";
     pub const REQUEST_EVERYTHING_SETUP: &str = "request_everything_setup";
     pub const OPEN_SHELL_PATH: &str = "open_shell_path";
+    pub const RUN_CONTROL_PANEL: &str = "run_control_panel";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
     pub const PIN_STACK_FOLDER: &str = "pin_stack_folder";
     pub const UNPIN_STACK_FOLDER: &str = "unpin_stack_folder";
@@ -125,6 +126,7 @@ pub mod commands {
         SHOW_LAUNCHER_CONTEXT_MENU,
         SHOW_TOP_BAR_PIN_CONTEXT_MENU,
         SHOW_SEARCH_PANEL,
+        SEARCH_ENGINE,
         HIDE_SEARCH_PANEL,
         PUBLISH_SEARCH_PANEL,
         GET_SEARCH_PANEL_PAYLOAD,
@@ -150,10 +152,10 @@ pub mod commands {
         SET_DEFAULT_AUDIO_DEVICE,
         SET_DEFAULT_AUDIO_INPUT_DEVICE,
         SET_DEFAULT_AUDIO_OUTPUT_DEVICE,
-        SEARCH_SYSTEM,
         GET_SEARCH_PROVIDER_HEALTH,
         REQUEST_EVERYTHING_SETUP,
         OPEN_SHELL_PATH,
+        RUN_CONTROL_PANEL,
         LIST_PINNED_STACK_FOLDERS,
         PIN_STACK_FOLDER,
         UNPIN_STACK_FOLDER,

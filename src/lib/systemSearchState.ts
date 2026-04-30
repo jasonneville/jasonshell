@@ -61,6 +61,7 @@ export function searchPanelPayloadSignature(payload: SearchPanelPayload): string
       path: result.path ?? null,
       url: result.url ?? null,
       actionId: result.actionId ?? null,
+      actionArgs: result.actionArgs ?? null,
       recordKey: result.recordKey ?? null,
       runCount: result.runCount ?? null,
       topMost: result.topMost ?? null

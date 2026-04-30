@@ -4,19 +4,29 @@ use super::provider::{
     provider_health, ProviderHealthContract, ProviderHealthState, ProviderReasonCode,
     SearchProviderId,
 };
+#[cfg(test)]
 use super::SystemSearchResult;
-use crate::settings::{EverythingSearchSettings, EverythingSortMode};
-use std::path::{Path, PathBuf};
+use crate::settings::EverythingSearchSettings;
+#[cfg(test)]
+use crate::settings::EverythingSortMode;
+#[cfg(test)]
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::Mutex;
 
+#[cfg(test)]
 const EVERYTHING_REQUEST_LIMIT_FALLBACK: usize = 200;
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct EverythingSearchOutcome {
     pub results: Vec<SystemSearchResult>,
     pub health: ProviderHealthContract,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EverythingSearchRequest {
     pub query: String,
@@ -26,6 +36,7 @@ pub(crate) struct EverythingSearchRequest {
     pub content_search_enabled: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EverythingRawResult {
     pub full_path: PathBuf,
@@ -34,7 +45,7 @@ pub(crate) struct EverythingRawResult {
     pub highlighted_file_name: Option<String>,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EverythingResultKind {
     File,
@@ -42,7 +53,7 @@ pub(crate) enum EverythingResultKind {
     Volume,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EverythingProviderError {
     Disabled,
@@ -52,6 +63,7 @@ pub(crate) enum EverythingProviderError {
     QueryFailed(String),
 }
 
+#[cfg(test)]
 pub(crate) trait EverythingSdk: Send {
     fn query(
         &mut self,
@@ -60,10 +72,12 @@ pub(crate) trait EverythingSdk: Send {
     fn reset(&mut self);
 }
 
+#[cfg(test)]
 pub(crate) struct EverythingProvider<Sdk> {
     sdk: Mutex<Sdk>,
 }
 
+#[cfg(test)]
 impl<Sdk> EverythingProvider<Sdk>
 where
     Sdk: EverythingSdk,
@@ -96,6 +110,7 @@ where
     }
 }
 
+#[cfg(test)]
 pub(crate) fn search_system_everything(
     query: &str,
     settings: &EverythingSearchSettings,
@@ -144,22 +159,51 @@ pub(crate) fn search_system_everything(
         sort: settings.sort,
         content_search_enabled: settings.content_search_enabled,
     };
-    let provider = EverythingProvider::new(everything_ffi::DynamicEverythingSdk::new(dll_path));
-    match provider.search(&request) {
-        Ok(results) => EverythingSearchOutcome { results, health },
+    let sdk_request = everything_ffi::EverythingSdkRequest {
+        query: request.query.clone(),
+        max_results: request.max_results,
+        full_path_search: request.full_path_search,
+        sort: request.sort,
+        content_search_enabled: request.content_search_enabled,
+    };
+    match everything_ffi::query_everything_sdk(&dll_path, &sdk_request) {
+        Ok(raw_results) => {
+            let old_results = raw_results
+                .into_iter()
+                .map(|result| EverythingRawResult {
+                    full_path: result.full_path,
+                    kind: match result.kind {
+                        everything_ffi::EverythingSdkResultKind::File => EverythingResultKind::File,
+                        everything_ffi::EverythingSdkResultKind::Folder => {
+                            EverythingResultKind::Folder
+                        }
+                        everything_ffi::EverythingSdkResultKind::Volume => {
+                            EverythingResultKind::Volume
+                        }
+                    },
+                    run_count: result.run_count,
+                    highlighted_file_name: result.highlighted_file_name,
+                })
+                .collect::<Vec<_>>();
+            EverythingSearchOutcome {
+                results: map_everything_results(&old_results, request.max_results),
+                health,
+            }
+        }
         Err(error) => EverythingSearchOutcome {
             results: Vec::new(),
             health: provider_health(
                 SearchProviderId::Everything,
                 ProviderHealthState::Degraded,
-                reason_for_error(&error),
-                message_for_error(&error),
+                reason_for_sdk_error(&error),
+                message_for_sdk_error(&error),
                 true,
             ),
         },
     }
 }
 
+#[cfg(test)]
 fn bounded_everything_request_limit(limit: usize) -> usize {
     limit.clamp(1, EVERYTHING_REQUEST_LIMIT_FALLBACK)
 }
@@ -233,6 +277,7 @@ fn everything_health_from_detection(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn parse_everything_highlight_indexes(value: &str) -> Vec<usize> {
     let mut highlighted = Vec::new();
     let mut in_highlight = false;
@@ -265,6 +310,7 @@ pub(crate) fn parse_everything_highlight_indexes(value: &str) -> Vec<usize> {
     highlighted
 }
 
+#[cfg(test)]
 fn map_everything_results(
     raw_results: &[EverythingRawResult],
     limit: usize,
@@ -276,6 +322,7 @@ fn map_everything_results(
         .collect()
 }
 
+#[cfg(test)]
 fn map_everything_result(raw: &EverythingRawResult) -> SystemSearchResult {
     let kind = match raw.kind {
         EverythingResultKind::File if is_app_candidate(&raw.full_path) => "app",
@@ -320,6 +367,7 @@ fn map_everything_result(raw: &EverythingRawResult) -> SystemSearchResult {
     }
 }
 
+#[cfg(test)]
 fn display_name(path: &Path, kind: &str) -> String {
     let name = if kind == "folder" {
         path.file_name()
@@ -330,6 +378,7 @@ fn display_name(path: &Path, kind: &str) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+#[cfg(test)]
 fn label_for_kind(kind: &str) -> &'static str {
     match kind {
         "app" => "Application",
@@ -338,6 +387,7 @@ fn label_for_kind(kind: &str) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn base_priority(kind: &str) -> i32 {
     match kind {
         "app" => 170,
@@ -346,6 +396,7 @@ fn base_priority(kind: &str) -> i32 {
     }
 }
 
+#[cfg(test)]
 fn is_app_candidate(path: &Path) -> bool {
     let extension = path
         .extension()
@@ -381,6 +432,7 @@ fn is_app_candidate(path: &Path) -> bool {
         || path_text.contains(r"\windowsapps\")
 }
 
+#[cfg(test)]
 fn is_start_menu_or_desktop_shortcut(path: &Path) -> bool {
     let path_text = path
         .to_string_lossy()
@@ -389,6 +441,7 @@ fn is_start_menu_or_desktop_shortcut(path: &Path) -> bool {
     path_text.contains(r"\start menu\programs\") || path_text.contains(r"\desktop\")
 }
 
+#[cfg(test)]
 fn reason_for_error(error: &EverythingProviderError) -> Option<ProviderReasonCode> {
     match error {
         EverythingProviderError::Disabled => Some(ProviderReasonCode::UserDisabled),
@@ -399,6 +452,7 @@ fn reason_for_error(error: &EverythingProviderError) -> Option<ProviderReasonCod
     }
 }
 
+#[cfg(test)]
 fn message_for_error(error: &EverythingProviderError) -> String {
     match error {
         EverythingProviderError::Disabled => "Everything search is disabled".to_string(),
@@ -410,6 +464,28 @@ fn message_for_error(error: &EverythingProviderError) -> String {
             "Everything is not running; search is unavailable".to_string()
         }
         EverythingProviderError::QueryFailed(message) => message.clone(),
+    }
+}
+
+#[cfg(test)]
+fn reason_for_sdk_error(error: &everything_ffi::EverythingSdkError) -> Option<ProviderReasonCode> {
+    match error {
+        everything_ffi::EverythingSdkError::IpcUnavailable => {
+            Some(ProviderReasonCode::IpcUnavailable)
+        }
+        everything_ffi::EverythingSdkError::QueryFailed(_) => {
+            Some(ProviderReasonCode::FallbackActive)
+        }
+    }
+}
+
+#[cfg(test)]
+fn message_for_sdk_error(error: &everything_ffi::EverythingSdkError) -> String {
+    match error {
+        everything_ffi::EverythingSdkError::IpcUnavailable => {
+            "Everything IPC is unavailable; search is unavailable".to_string()
+        }
+        everything_ffi::EverythingSdkError::QueryFailed(message) => message.clone(),
     }
 }
 

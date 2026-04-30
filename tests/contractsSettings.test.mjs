@@ -35,7 +35,6 @@ const wrapperSources = [
   'settingsPanel.ts',
   'devTools.ts',
   'searchPanel.ts',
-  'systemSearch.ts',
   'processManager.ts',
   'stackPopup.ts',
   'taskbarLaunchers.ts',
@@ -47,6 +46,7 @@ const wrapperSources = [
 test('frontend IPC contracts expose command, event, and surface constants for future wrappers', () => {
   for (const command of [
     'show_search_panel',
+    'search_engine',
     'stack_popup',
     'load_shell_settings',
     'save_shell_settings',

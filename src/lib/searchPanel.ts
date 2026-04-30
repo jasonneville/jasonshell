@@ -28,6 +28,8 @@ export type SearchPanelResultKind = (typeof SEARCH_RESULT_KINDS)[number];
 
 export const SEARCH_PROVIDER_IDS = [
   'apps',
+  'settings',
+  'local',
   'openWindows',
   'everything',
   'windowsSearch',
@@ -69,6 +71,7 @@ export const SEARCH_ACTIVATION_KINDS = [
   'openFolder',
   'runCommand',
   'openSetting',
+  'runControlPanel',
   'copyCalculatorResult',
   'openWebUrl',
   'openBookmark'
@@ -137,6 +140,7 @@ export type SearchPanelResult = {
   path?: string;
   url?: string;
   actionId?: string;
+  actionArgs?: string[];
   copyText?: string;
   autoCompleteText?: string;
   titleHighlightData?: number[];
@@ -153,6 +157,7 @@ export type SearchPanelPayload = {
   selectedIndex: number;
   statusMessage: string;
   presentation?: 'anchored' | 'centered';
+  phase?: 'typing' | 'local' | 'provider' | 'complete' | 'error';
   sequence?: number;
 };
 
@@ -194,6 +199,10 @@ export function getSearchPanelPayload(): Promise<SearchPanelPayload | null> {
 
 export function openShellPath(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openShellPath, { path });
+}
+
+export function runControlPanel(args?: string[]): Promise<void> {
+  return invoke(IPC_COMMANDS.runControlPanel, { args });
 }
 
 export function getSearchProviderHealth(): Promise<ProviderHealthContract[]> {

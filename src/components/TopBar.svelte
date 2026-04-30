@@ -18,6 +18,7 @@
     hideSearchPanel,
     openShellPath,
     publishSearchPanel,
+    runControlPanel,
     SEARCH_PANEL_ACTIVATE_EVENT,
     SEARCH_PANEL_CLOSED_EVENT,
     SEARCH_PANEL_INTERACTION_EVENT,
@@ -28,6 +29,7 @@
     readCenteredSearchPanelSize,
     showCenteredSearchPanel,
     showSearchPanel,
+    type SearchPanelPayload,
     type SearchPanelResult
   } from '../lib/searchPanel';
   import {
@@ -40,7 +42,11 @@
     type StackPin
   } from '../lib/stackPopup';
   import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
-  import { rankSearchResults, recordSearchResultUsage } from '../lib/searchRanking';
+  import {
+    searchEngine,
+    searchEngineResponseToPanelPayload,
+    type SearchEngineResponse
+  } from '../lib/searchEngine';
   import {
     addShellPreferencesChangeListener,
     formatShellDate,
@@ -55,10 +61,8 @@
   } from '../lib/audio';
   import { showSettingsPanel } from '../lib/settingsPanel';
   import { loadShellSettings } from '../lib/settings';
-  import { buildSearchCatalog } from '../lib/searchCatalog';
   import type { SearchMode } from '../lib/searchSettings';
   import { showControlPlane } from '../lib/controlPlane';
-  import { isSystemPathResult, searchSystem, SEARCH_INDEX_REFRESHED_EVENT } from '../lib/systemSearch';
   import {
     showTopBarPinContextMenu,
     TOP_BAR_PIN_MENU_ACTION_EVENT,
@@ -66,8 +70,6 @@
   } from '../lib/taskbarMenus';
   import { stackPinRevealPath, topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
-    shouldApplySystemSearchResponse,
-    shouldRefreshSystemSearchAfterIndexUpdate,
     searchPanelAnchorState,
     searchPanelPayloadSignature,
     shouldPublishSearchPanelPayload,
@@ -76,10 +78,13 @@
   } from '../lib/systemSearchState';
   import { topBarIdentityState } from '../features/top-bar/topBarUxState';
   import {
-    nextSearchResultRefreshRequest,
+    buildVisibleSearchRows,
+    createLatestSearchQueryController,
+    nextVisibleRowIndex,
     searchModeFromSettings,
     searchPanelKeyboardAction,
-    shouldApplySearchResultRefresh
+    selectedVisibleRowIndex,
+    shouldApplySearchEngineResponse
   } from '../features/search/searchUxState';
   import MeltActionButton from './melt/MeltActionButton.svelte';
 
@@ -88,7 +93,6 @@
   let launchers: PinnedTaskbarLauncher[] = [];
   let openWindows: TaskbarWindow[] = [];
   let stackPins: StackPin[] = [];
-  let systemResults: SearchPanelResult[] = [];
   let searchResults: SearchPanelResult[] = [];
   let searchQuery = '';
   let searchOpen = false;
@@ -103,11 +107,8 @@
   let showRailScrollLeft = false;
   let showRailScrollRight = false;
   let focusedPinIndex: number | null = null;
-  let systemSearchTimer: number | null = null;
-  let systemSearchRefreshTimer: number | null = null;
-  let searchRenderTimer: number | null = null;
-  let searchRenderSequence = 0;
-  let systemSearchSequence = 0;
+  let searchEngineTimer: number | null = null;
+  const searchQueryController = createLatestSearchQueryController();
   let searchPanelPayloadSequence = 0;
   let searchMode: SearchMode = 'centeredHotkey';
   let searchPresentation: 'anchored' | 'centered' = 'centered';
@@ -128,10 +129,10 @@
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
   const SOUND_PANEL_ID = 'audio-panel';
 
-  $: allResults = searchQuery.trim().length > 0
-    ? buildSearchCatalog(launchers, openWindows, systemResults)
-    : [];
   $: selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
+  $: visibleRows = buildVisibleSearchRows(searchResults);
+  $: selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  $: selectedVisibleResult = selectedVisibleIndex >= 0 ? visibleRows[selectedVisibleIndex]?.result : undefined;
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
   $: shellTime = formatShellTime(now, shellPreferences);
   $: shellDate = formatShellDate(now, shellPreferences.dateFormat);
@@ -143,13 +144,11 @@
         listOpenTaskWindows()
       ]);
       searchStatus = 'Type to search apps, settings, and Everything';
-      scheduleSearchRender();
     } catch (error) {
       console.error('Failed to load search catalog', error);
       launchers = [];
       openWindows = [];
       searchStatus = 'Everything search ready';
-      scheduleSearchRender();
     }
   }
 
@@ -236,7 +235,6 @@
         anchorWidth: rect.width
       });
     }
-    scheduleSearchRender();
   }
 
   async function openCenteredPanel() {
@@ -251,7 +249,6 @@
         console.error('Failed to show centered search panel', error);
       });
     }
-    scheduleSearchRender();
   }
 
   function openConfiguredPanel() {
@@ -588,7 +585,7 @@
     });
   }
 
-  function currentSearchPanelPayload() {
+  function currentSearchPanelPayload(): SearchPanelPayload {
     return {
       query: searchQuery,
       results: searchResults,
@@ -598,7 +595,7 @@
     };
   }
 
-  function queueSearchPanelPublish(payload = currentSearchPanelPayload()) {
+  function queueSearchPanelPublish(payload: SearchPanelPayload = currentSearchPanelPayload()) {
     const signature = searchPanelPayloadSignature(payload);
     if (!shouldPublishSearchPanelPayload(lastSearchPanelPayloadSignature, payload)) {
       return;
@@ -614,72 +611,75 @@
     });
   }
 
-  function scheduleSearchRender(query = searchQuery) {
-    const request = nextSearchResultRefreshRequest(searchRenderSequence, query);
-    searchRenderSequence = request.sequence;
-    if (searchRenderTimer !== null) {
-      window.clearTimeout(searchRenderTimer);
-    }
-    searchRenderTimer = window.setTimeout(() => {
-      searchRenderTimer = null;
-      if (!shouldApplySearchResultRefresh(request, searchQuery, searchRenderSequence)) {
-        return;
-      }
-      searchResults = rankSearchResults(allResults, query);
-      selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
-      if (searchOpen) {
-        queueSearchPanelPublish();
-      }
-    }, 0);
+  function publishPendingSearchPayload() {
+    queueSearchPanelPublish({
+      query: searchQuery,
+      results: searchResults,
+      selectedIndex,
+      statusMessage: searchStatus,
+      presentation: searchPresentation,
+      phase: 'typing',
+      sequence: searchPanelPayloadSequence + 1
+    });
   }
 
-  function scheduleSystemSearch(query: string) {
-    if (systemSearchTimer !== null) {
-      window.clearTimeout(systemSearchTimer);
-      systemSearchTimer = null;
-    }
-    if (systemSearchRefreshTimer !== null) {
-      window.clearTimeout(systemSearchRefreshTimer);
-      systemSearchRefreshTimer = null;
+  function scheduleSearchEngine(query: string) {
+    if (searchEngineTimer !== null) {
+      window.clearTimeout(searchEngineTimer);
+      searchEngineTimer = null;
     }
 
-    const trimmedQuery = query.trim();
-    systemSearchSequence += 1;
-    if (trimmedQuery.length === 0) {
-      systemResults = [];
-      scheduleSearchRender(query);
+    const request = searchQueryController.next(query);
+    if (!request.query) {
+      searchResults = [];
+      searchStatus = 'Search is ready';
+      queueSearchPanelPublish();
       return;
     }
 
-    systemResults = [];
-    scheduleSearchRender(query);
-    const sequence = systemSearchSequence;
-    systemSearchTimer = window.setTimeout(() => {
-      systemSearchTimer = null;
-      void loadSystemSearchResults(trimmedQuery, sequence, 0);
+    searchStatus = 'Searching...';
+    publishPendingSearchPayload();
+    searchEngineTimer = window.setTimeout(() => {
+      searchEngineTimer = null;
+      void loadSearchEngineResults(request);
     }, 0);
   }
 
-  async function loadSystemSearchResults(query: string, sequence: number, _refreshAttempt: number) {
-    searchStatus = 'Searching Everything...';
+  async function loadSearchEngineResults(request: { query: string; sequence: number }) {
     try {
-      const results = await searchSystem(query);
-      if (!shouldApplySystemSearchResponse(query, sequence, searchQuery, systemSearchSequence)) {
+      const response: SearchEngineResponse = await searchEngine({
+        query: request.query,
+        sequence: request.sequence,
+        limit: 50,
+        presentation: searchPresentation,
+        context: {
+          openWindows: openWindows.map((window) => ({
+            id: String(window.hwnd),
+            title: window.title,
+            appName: window.processName
+          }))
+        }
+      });
+      if (!shouldApplySearchEngineResponse(
+        { query: response.query, sequence: response.sequence },
+        searchQuery,
+        searchQueryController.currentSequence()
+      )) {
         return;
       }
 
-      systemResults = results;
-      searchStatus = results.length
-        ? 'Showing ranked search results'
-        : 'Showing app and settings matches';
-      scheduleSearchRender();
+      const payload = searchEngineResponseToPanelPayload(response, selectedIndex, searchPresentation);
+      searchResults = payload.results;
+      selectedIndex = payload.selectedIndex;
+      searchStatus = payload.statusMessage;
+      queueSearchPanelPublish(payload);
     } catch (error) {
-      console.error('Failed to search installed apps and files', error);
-      if (sequence === systemSearchSequence) {
-        systemResults = [];
-        searchStatus = 'Everything search unavailable';
-        scheduleSearchRender();
+      if (!searchQueryController.shouldApply(request, searchQuery)) {
+        return;
       }
+      console.error('Failed to search apps, settings, and files', error);
+      searchStatus = 'Search unavailable';
+      queueSearchPanelPublish();
     }
   }
 
@@ -688,11 +688,16 @@
       return;
     }
 
-    recordSearchResultUsage(result);
-    if (isSystemPathResult(result)) {
+    if (result.actionId === 'runControlPanel') {
+      await runControlPanel(result.actionArgs);
+    } else if (result.path && (result.providerId === 'everything' || result.providerId === 'local')) {
       await openShellPath(result.path as string);
     } else if (result.kind === 'app') {
-      await launchPinnedTaskbarLauncher(result.id.replace('app:', ''));
+      if (result.path) {
+        await openShellPath(result.path);
+      } else {
+        await launchPinnedTaskbarLauncher(result.id.replace('app:', ''));
+      }
     } else if (result.kind === 'window') {
       const taskWindow = openWindows.find((item) => result.id === `window:${item.hwnd}`);
       if (taskWindow) {
@@ -704,7 +709,7 @@
       await openShellPath(result.path);
     } else if (result.id === 'command:refresh-search') {
       await loadSearchCatalog();
-      scheduleSystemSearch(searchQuery);
+      scheduleSearchEngine(searchQuery);
     } else if (result.id === 'command:open-control-plane') {
       await showControlPlane();
     } else if (result.id === 'command:hide-search') {
@@ -721,10 +726,17 @@
   function applySearchQuery(nextQuery: string) {
     searchQuery = nextQuery;
     selectedIndex = 0;
-    queueSearchPanelPublish();
-    scheduleSearchRender(searchQuery);
-    scheduleSystemSearch(searchQuery);
+    searchStatus = searchQuery.trim() ? 'Searching...' : 'Search is ready';
+    queueSearchPanelPublish({
+      query: searchQuery,
+      results: searchQuery.trim() ? searchResults : [],
+      selectedIndex,
+      statusMessage: searchStatus,
+      presentation: searchPresentation,
+      phase: searchQuery.trim() ? 'typing' : 'complete'
+    });
     openConfiguredPanel();
+    scheduleSearchEngine(searchQuery);
   }
 
   function handleSearchInput(event: Event) {
@@ -734,13 +746,19 @@
   function applySearchKeyboardAction(key: string): boolean {
     const action = searchPanelKeyboardAction(key);
     if (action === 'selectNext') {
-      selectedIndex = Math.min(selectedIndex + 1, Math.max(searchResults.length - 1, 0));
+      const nextIndex = nextVisibleRowIndex(visibleRows, selectedVisibleIndex, 1);
+      if (nextIndex >= 0) {
+        selectedIndex = visibleRows[nextIndex]?.resultIndex ?? selectedIndex;
+      }
       queueSearchPanelPublish();
     } else if (action === 'selectPrevious') {
-      selectedIndex = Math.max(selectedIndex - 1, 0);
+      const nextIndex = nextVisibleRowIndex(visibleRows, selectedVisibleIndex, -1);
+      if (nextIndex >= 0) {
+        selectedIndex = visibleRows[nextIndex]?.resultIndex ?? selectedIndex;
+      }
       queueSearchPanelPublish();
     } else if (action === 'activate') {
-      void activateResult(searchResults[selectedIndex]);
+      void activateResult(selectedVisibleResult);
     } else if (action === 'close') {
       void closePanel();
     } else {
@@ -853,24 +871,6 @@
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
-    void listen(SEARCH_INDEX_REFRESHED_EVENT, () => {
-      if (shouldRefreshSystemSearchAfterIndexUpdate(searchOpen, searchQuery)) {
-        if (systemSearchTimer !== null) {
-          window.clearTimeout(systemSearchTimer);
-          systemSearchTimer = null;
-        }
-        if (systemSearchRefreshTimer !== null) {
-          window.clearTimeout(systemSearchRefreshTimer);
-          systemSearchRefreshTimer = null;
-        }
-
-        systemSearchSequence += 1;
-        void loadSystemSearchResults(searchQuery.trim(), systemSearchSequence, 1);
-        scheduleSearchRender();
-      }
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
     unlisteners.push(addShellPreferencesChangeListener((preferences) => {
       shellPreferences = preferences;
     }));
@@ -879,14 +879,8 @@
       window.clearInterval(timer);
       window.clearInterval(searchRefreshTimer);
       window.clearTimeout(runtimeMetricsTimer);
-      if (systemSearchTimer !== null) {
-        window.clearTimeout(systemSearchTimer);
-      }
-      if (systemSearchRefreshTimer !== null) {
-        window.clearTimeout(systemSearchRefreshTimer);
-      }
-      if (searchRenderTimer !== null) {
-        window.clearTimeout(searchRenderTimer);
+      if (searchEngineTimer !== null) {
+        window.clearTimeout(searchEngineTimer);
       }
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);

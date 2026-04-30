@@ -1,3 +1,5 @@
+// Legacy compatibility helper for historical tests only.
+// Visible typed search must not import this file.
 import type { SearchPanelResult } from './searchPanel';
 import type { PinnedTaskbarLauncher } from './taskbarLaunchers';
 import type { TaskbarWindow } from './taskbarWindows';

@@ -81,13 +81,7 @@
   onMouseLeave={() => void hidePreviewSurface()}
 >
   {#if preview}
-    <div class="preview-header">
-      <img class="preview-icon" src={preview.iconDataUrl} alt="" draggable="false" />
-      <div class="preview-copy">
-        <strong>{preview.title || preview.processName}</strong>
-        <span>{preview.isMinimized ? 'Minimized window' : preview.processName}</span>
-      </div>
-    </div>
+
 
     {#if isNativeLivePreview}
       <div class="preview-frame preview-frame-native" aria-hidden="true"></div>

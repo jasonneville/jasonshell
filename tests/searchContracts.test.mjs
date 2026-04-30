@@ -44,6 +44,8 @@ test('search result kind union expands without breaking current result callers',
 test('provider health contract reports safe Everything setup states', () => {
   assert.deepEqual(SEARCH_PROVIDER_IDS, [
     'apps',
+    'settings',
+    'local',
     'openWindows',
     'everything',
     'windowsSearch',
@@ -141,6 +143,7 @@ test('activation contract covers Flow-like result actions', () => {
     'openFolder',
     'runCommand',
     'openSetting',
+    'runControlPanel',
     'copyCalculatorResult',
     'openWebUrl',
     'openBookmark'

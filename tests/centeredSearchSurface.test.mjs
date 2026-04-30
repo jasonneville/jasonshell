@@ -21,8 +21,8 @@ test('top bar opens configured centered search from focus and typing without Ctr
   assert.match(source, /openCenteredPanel/);
   assert.match(source, /function applySearchQuery\(nextQuery: string\)/);
   assert.match(source, /applySearchQuery\(\(event\.currentTarget as HTMLInputElement\)\.value\)/);
-  assert.match(source, /queueSearchPanelPublish\(\)/);
-  assert.match(source, /scheduleSearchRender\(searchQuery\)/);
+  assert.match(source, /queueSearchPanelPublish\(\{[\s\S]*phase: searchQuery\.trim\(\) \? 'typing' : 'complete'/);
+  assert.match(source, /scheduleSearchEngine\(searchQuery\)/);
   assert.match(source, /on:focus=\{openConfiguredPanel\}/);
   assert.doesNotMatch(source, /Ctrl K/);
 });

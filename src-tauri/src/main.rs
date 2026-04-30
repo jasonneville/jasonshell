@@ -11,6 +11,7 @@ mod launchers;
 mod layout;
 mod process_manager;
 mod providers;
+mod search;
 mod search_panel;
 mod search_sources;
 mod settings;
@@ -59,7 +60,6 @@ fn main() {
         .manage(task_preview_state())
         .manage(search_panel_state())
         .manage(stack_popup_state())
-        .manage(search_sources::search_index_state())
         .manage(diagnostics::diagnostics_state())
         .invoke_handler(tauri::generate_handler![
             launchers::list_pinned_taskbar_apps,
@@ -101,10 +101,11 @@ fn main() {
             audio::set_default_audio_device,
             audio::set_default_audio_input_device,
             audio::set_default_audio_output_device,
-            search_sources::search_system,
+            search::search_engine,
             search_sources::get_search_provider_health,
             search_sources::request_everything_setup,
             shell_paths::open_shell_path,
+            shell_paths::run_control_panel,
             stack_popup::list_pinned_stack_folders,
             stack_popup::pin_stack_folder,
             stack_popup::unpin_stack_folder,
@@ -229,7 +230,7 @@ fn main() {
         })
         .setup(|app| {
             let windows = shell_windows::create_shell_windows(app)?;
-            search_sources::warm_search_index(app.handle().clone());
+            search::providers::apps::warm_app_index_async();
 
             #[cfg(target_os = "windows")]
             {

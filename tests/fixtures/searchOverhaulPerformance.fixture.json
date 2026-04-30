@@ -1,0 +1,34 @@
+{
+  "phase": "search_overhaul.phase0",
+  "inputEchoBudget": "Input value must be assigned before provider, ranking, filesystem, localStorage, icon, SDK detection, or native panel show work.",
+  "firstVisiblePayloadBudgetMs": 50,
+  "rendererSynchronousBudgetMs": 8,
+  "forbiddenInputHandlerDependencies": [
+    {
+      "name": "provider calls",
+      "patterns": ["searchSystem\\(", "invoke\\(", "fetch\\("]
+    },
+    {
+      "name": "ranking/catalog work",
+      "patterns": ["rankSearchResults\\(", "buildSearchCatalog\\(", "collapseDuplicateResults\\("]
+    },
+    {
+      "name": "native panel show/reposition",
+      "patterns": ["showSearchPanel\\(", "showCenteredSearchPanel\\(", "readCenteredSearchPanelSize\\("]
+    },
+    {
+      "name": "sync storage/filesystem/icon work",
+      "patterns": ["localStorage", "readFileSync\\(", "readdirSync\\(", "statSync\\(", "iconDataUrl"]
+    },
+    {
+      "name": "Everything or Windows Search setup",
+      "patterns": ["Everything", "windowsSearch", "warmedCache", "sdk", "detect"]
+    }
+  ],
+  "requiredOrdering": [
+    "input assignment",
+    "pending or current-best payload publish",
+    "deferred provider dispatch",
+    "latest-only response application"
+  ]
+}

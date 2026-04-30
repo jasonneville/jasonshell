@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
-import { IPC_COMMANDS } from '../ipc/commands.js';
 import type { SearchPanelResult, SearchPanelResultKind } from './searchPanel';
 
+// Legacy compatibility wrapper for historical tests/diagnostics only.
+// Visible typed search must use searchEngine.ts and Rust search_engine.
 export const SEARCH_INDEX_REFRESHED_EVENT = 'search-index:refreshed';
 
 type SystemSearchResult = {
@@ -19,20 +19,9 @@ type SystemSearchResult = {
 };
 
 export function searchSystem(query: string): Promise<SearchPanelResult[]> {
-  return invoke<SystemSearchResult[]>(IPC_COMMANDS.searchSystem, { query }).then((results) =>
-    results.map((result) => ({
-      id: result.id,
-      providerId: result.providerId,
-      kind: result.kind,
-      path: result.path,
-      priority: result.priority,
-      recordKey: result.recordKey,
-      runCount: result.runCount,
-      subtitle: result.subtitle,
-      terms: result.terms,
-      title: result.title,
-      topMost: result.topMost
-    }))
+  void query;
+  return Promise.reject(
+    new Error('search_system is deprecated; visible search must call searchEngine')
   );
 }
 

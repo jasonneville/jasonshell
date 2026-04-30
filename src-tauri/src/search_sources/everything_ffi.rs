@@ -1,7 +1,3 @@
-use super::everything::{
-    EverythingProviderError, EverythingRawResult, EverythingResultKind, EverythingSdk,
-    EverythingSearchRequest,
-};
 use crate::settings::EverythingSortMode;
 use libloading::Library;
 use std::env;
@@ -14,30 +10,38 @@ const BUFFER_CHARS: usize = 4096;
 static EVERYTHING_SDK_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EverythingSdkRequest {
+    pub query: String,
+    pub max_results: usize,
+    pub full_path_search: bool,
+    pub sort: EverythingSortMode,
+    pub content_search_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EverythingSdkRawResult {
+    pub full_path: PathBuf,
+    pub kind: EverythingSdkResultKind,
+    pub run_count: u32,
+    pub highlighted_file_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EverythingSdkResultKind {
+    File,
+    Folder,
+    Volume,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EverythingSdkError {
+    IpcUnavailable,
+    QueryFailed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EverythingSdkDetection {
     pub dll_path: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct DynamicEverythingSdk {
-    dll_path: PathBuf,
-}
-
-impl DynamicEverythingSdk {
-    pub(crate) fn new(dll_path: PathBuf) -> Self {
-        Self { dll_path }
-    }
-}
-
-impl EverythingSdk for DynamicEverythingSdk {
-    fn query(
-        &mut self,
-        request: &EverythingSearchRequest,
-    ) -> Result<Vec<EverythingRawResult>, EverythingProviderError> {
-        query_everything_dll(&self.dll_path, request)
-    }
-
-    fn reset(&mut self) {}
 }
 
 pub(crate) fn detect_system_sdk(installed_exe: Option<&Path>) -> EverythingSdkDetection {
@@ -86,34 +90,34 @@ pub(crate) fn sdk_missing_message() -> &'static str {
     "Everything SDK DLL was not found in approved system SDK locations"
 }
 
-fn query_everything_dll(
+pub(crate) fn query_everything_sdk(
     dll_path: &Path,
-    request: &EverythingSearchRequest,
-) -> Result<Vec<EverythingRawResult>, EverythingProviderError> {
+    request: &EverythingSdkRequest,
+) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError> {
     with_serialized_sdk_access(|| {
         // SAFETY: fixed Everything SDK symbols are called with documented signatures;
         // all string buffers are nul-terminated UTF-16 and reset is called before releasing the global SDK lock.
         unsafe {
             let library = Library::new(dll_path)
-                .map_err(|error| EverythingProviderError::QueryFailed(error.to_string()))?;
+                .map_err(|error| EverythingSdkError::QueryFailed(error.to_string()))?;
             run_query_with_library(&library, request)
         }
     })
 }
 
 fn with_serialized_sdk_access<T>(
-    operation: impl FnOnce() -> Result<T, EverythingProviderError>,
-) -> Result<T, EverythingProviderError> {
+    operation: impl FnOnce() -> Result<T, EverythingSdkError>,
+) -> Result<T, EverythingSdkError> {
     let _guard = EVERYTHING_SDK_LOCK.lock().map_err(|_| {
-        EverythingProviderError::QueryFailed("Everything SDK lock failed".to_string())
+        EverythingSdkError::QueryFailed("Everything SDK lock failed".to_string())
     })?;
     operation()
 }
 
 unsafe fn run_query_with_library(
     library: &Library,
-    request: &EverythingSearchRequest,
-) -> Result<Vec<EverythingRawResult>, EverythingProviderError> {
+    request: &EverythingSdkRequest,
+) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError> {
     type SetSearch = unsafe extern "system" fn(*const u16) -> u32;
     type SetBool = unsafe extern "system" fn(i32);
     type SetU32 = unsafe extern "system" fn(u32);
@@ -181,14 +185,14 @@ unsafe fn run_query_with_library(
                 get_path(index, buffer.as_mut_ptr(), BUFFER_CHARS as u32);
                 let full_path = PathBuf::from(utf16_nul_terminated(&buffer));
                 let kind = if is_folder(index) != 0 {
-                    EverythingResultKind::Folder
+                    EverythingSdkResultKind::Folder
                 } else if is_file(index) != 0 {
-                    EverythingResultKind::File
+                    EverythingSdkResultKind::File
                 } else {
-                    EverythingResultKind::Volume
+                    EverythingSdkResultKind::Volume
                 };
                 let highlighted = string_from_wide_ptr(get_highlighted(index));
-                results.push(EverythingRawResult {
+                results.push(EverythingSdkRawResult {
                     full_path,
                     kind,
                     run_count: get_run_count(index),
@@ -205,17 +209,17 @@ unsafe fn run_query_with_library(
     result
 }
 
-fn symbol_error(error: libloading::Error) -> EverythingProviderError {
-    EverythingProviderError::QueryFailed(format!("Everything SDK symbol missing: {error}"))
+fn symbol_error(error: libloading::Error) -> EverythingSdkError {
+    EverythingSdkError::QueryFailed(format!("Everything SDK symbol missing: {error}"))
 }
 
-fn map_last_error(code: u32) -> EverythingProviderError {
+fn map_last_error(code: u32) -> EverythingSdkError {
     match code {
-        0 => EverythingProviderError::QueryFailed("Everything query returned false".to_string()),
-        1 => EverythingProviderError::QueryFailed("Everything SDK memory error".to_string()),
-        2 => EverythingProviderError::IpcUnavailable,
-        6 => EverythingProviderError::QueryFailed("Everything SDK invalid call".to_string()),
-        _ => EverythingProviderError::QueryFailed(format!("Everything SDK error {code}")),
+        0 => EverythingSdkError::QueryFailed("Everything query returned false".to_string()),
+        1 => EverythingSdkError::QueryFailed("Everything SDK memory error".to_string()),
+        2 => EverythingSdkError::IpcUnavailable,
+        6 => EverythingSdkError::QueryFailed("Everything SDK invalid call".to_string()),
+        _ => EverythingSdkError::QueryFailed(format!("Everything SDK error {code}")),
     }
 }
 

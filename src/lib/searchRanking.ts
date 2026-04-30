@@ -1,3 +1,5 @@
+// Legacy compatibility scorer for historical tests only.
+// Visible typed search is canonically ranked in Rust search/scoring.rs.
 import type { SearchPanelResult } from './searchPanel';
 
 const MAX_RESULTS = 14;

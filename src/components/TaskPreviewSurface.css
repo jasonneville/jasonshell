@@ -1,4 +1,4 @@
-.preview-surface {
+/* .preview-surface {
   background: var(--js-bg-surface);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
@@ -15,6 +15,7 @@
   text-align: left;
   width: 100%;
 }
+
 
 .preview-surface:focus-visible {
   border-color: var(--js-color-accent-border);
@@ -33,7 +34,7 @@
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
   box-shadow: var(--js-inset-highlight);
-  padding: 0.35rem 0.45rem;
+  padding: 0.01rem 0.01rem;
 }
 
 .preview-surface-native:focus-visible .preview-header {
@@ -105,6 +106,112 @@
   color: var(--js-color-text-muted);
   font-size: 0.64rem;
   font-weight: 600;
-  padding: 0.75rem;
+  padding: 0.00rem;
   text-align: center;
+} */
+.preview-surface {
+  background: var(--js-bg-surface);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
+  color: var(--js-color-text);
+  cursor: pointer;
+  display: flex; /* Changed from grid */
+  flex-direction: column;
+  gap: 0; /* Removed gap */
+  height: 100%; /* Fills parent height */
+  outline: none;
+  padding: 0; /* Removed padding to fill edge-to-edge */
+  text-align: left;
+  width: 100%; /* Fills parent width */
+  overflow: hidden;
+  box-sizing: border-box; /* Ensures border doesn't add to size */
+}
+
+.preview-surface:focus-visible {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-shadow-raised), var(--js-focus-ring);
+}
+
+.preview-surface-native {
+  background: rgb(36, 36, 36);
+  box-shadow: none;
+}
+
+.preview-surface-native .preview-header {
+  background: var(--js-bg-surface);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  box-shadow: var(--js-inset-highlight);
+  padding: 0.01rem 0.01rem;
+}
+
+.preview-surface-native:focus-visible .preview-header {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
+}
+
+.preview-header {
+  align-items: center;
+  display: flex;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: var(--js-space-3); /* Moved padding here */
+}
+
+.preview-icon {
+  display: block;
+  flex: 0 0 auto;
+  height: 1rem;
+  width: 1rem;
+}
+
+.preview-copy {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.preview-copy strong {
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-copy span {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-frame, .preview-empty {
+  align-items: center;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  display: flex;
+  flex: 1; /* Fills remaining space */
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.preview-frame-native {
+  background: transparent;
+}
+
+.preview-image {
+  display: block;
+  height: 100%;
+  object-fit: cover; /* Changed from contain to fill area */
+  width: 100%;
+}
+
+.preview-empty {
+  color: var(--js-color-text-muted);
 }

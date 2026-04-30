@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  groupSearchResults,
+  buildVisibleSearchRows,
   configuredSearchOpenAction,
+  createLatestSearchQueryController,
   nextSearchPanelFallbackDelay,
+  nextVisibleRowIndex,
   nextSearchResultRefreshRequest,
   searchModeFromSettings,
   searchPanelKeyboardAction,
   searchResultActionHints,
+  selectedVisibleRowIndex,
+  shouldApplySearchEngineResponse,
   shouldApplySearchResultRefresh,
   shouldContinueSearchPanelFallbackPolling
 } from '../dist-tests/features/search/searchUxState.js';
@@ -26,22 +30,50 @@ const results = [
   { id: 'app:C:/Code.lnk', kind: 'app', title: 'Code', subtitle: 'Pinned app', terms: 'code app', priority: 100 }
 ];
 
-test('groups search results into keyboard-scan sections without changing result order inside groups', () => {
-  const groups = groupSearchResults(results);
+test('builds flat visible rows with Best match first and grouped remaining rows after it', () => {
+  const visibleRows = buildVisibleSearchRows(results);
 
-  assert.deepEqual(groups.map((group) => group.id), ['apps', 'windows', 'places', 'files', 'commands']);
-  assert.deepEqual(groups.map((group) => group.items[0].index), [4, 1, 2, 3, 0]);
+  assert.deepEqual(
+    visibleRows.map((row) => [row.groupLabel, row.result.title, row.showGroupLabel]),
+    [
+      ['Best match', 'Refresh', true],
+      ['Best match', 'Editor', false],
+      ['Best match', 'Downloads', false],
+      ['Apps', 'Code', true],
+      ['Files', 'notes.txt', true]
+    ]
+  );
+  assert.deepEqual(visibleRows.map((row) => row.resultIndex), [0, 1, 2, 4, 3]);
+  assert.deepEqual(visibleRows.map((row) => row.domId), [
+    'search-result-0',
+    'search-result-1',
+    'search-result-2',
+    'search-result-4',
+    'search-result-3'
+  ]);
 });
 
-test('Everything results are grouped by useful result type', () => {
-  const groups = groupSearchResults([
-    { id: 'system:app:C:/Spotify.lnk', providerId: 'everything', kind: 'app', title: 'Spotify', subtitle: 'Everything', terms: 'spotify', priority: 170 },
-    { id: 'system:file:C:/B.txt', providerId: 'everything', kind: 'file', title: 'B', subtitle: 'Everything', terms: 'b', priority: 1 },
-    { id: 'system:folder:C:/A', providerId: 'everything', kind: 'folder', title: 'A', subtitle: 'Everything', terms: 'a', priority: 999 }
+test('best match removes top backend rows from later groups while preserving group order inside remainder', () => {
+  const visibleRows = buildVisibleSearchRows([
+    { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'System display preferences', terms: 'display settings', priority: 980 },
+    { id: 'folder:c-dev', kind: 'folder', title: 'C:\\dev', subtitle: 'Folder', terms: 'dev folder', priority: 920, path: 'C:\\dev' },
+    { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'Application', terms: 'spotify app', priority: 960 },
+    { id: 'app:code', kind: 'app', title: 'Code', subtitle: 'Application', terms: 'code app', priority: 800 },
+    { id: 'folder:downloads', kind: 'folder', title: 'Downloads', subtitle: 'Folder', terms: 'downloads folder', priority: 780, path: 'shell:Downloads' },
+    { id: 'file:notes', kind: 'file', title: 'notes.txt', subtitle: 'File', terms: 'notes file', priority: 760 },
+    { id: 'window:editor', kind: 'window', title: 'Editor', subtitle: 'Code', terms: 'editor code', priority: 740 },
+    { id: 'command:refresh-search', kind: 'command', title: 'Refresh', subtitle: 'Reload', terms: 'refresh', priority: 720 }
   ]);
 
-  assert.deepEqual(groups.map((group) => group.id), ['apps', 'places', 'files']);
-  assert.deepEqual(groups.map((group) => group.items[0].result.title), ['Spotify', 'A', 'B']);
+  assert.deepEqual(
+    visibleRows.map((row) => row.result.title),
+    ['Display Settings', 'C:\\dev', 'Spotify', 'Code', 'Downloads', 'notes.txt', 'Editor', 'Refresh']
+  );
+  assert.deepEqual(
+    visibleRows.map((row) => row.groupLabel),
+    ['Best match', 'Best match', 'Best match', 'Apps', 'Folders', 'Files', 'Windows', 'Commands']
+  );
+  assert.equal(new Set(visibleRows.map((row) => row.rowKey)).size, visibleRows.length);
 });
 
 test('labels primary and secondary actions by result kind', () => {
@@ -62,16 +94,154 @@ test('labels primary and secondary actions by result kind', () => {
   );
 });
 
-test('groups new Flow-like result kinds with command-style actions', () => {
-  const groups = groupSearchResults([
+test('groups new Flow-like result kinds into settings and commands visible sections', () => {
+  const visibleRows = buildVisibleSearchRows([
     { id: 'setting:display', kind: 'setting', title: 'Display', subtitle: 'Setting', terms: 'display', priority: 70 },
     { id: 'calculator:2+2', kind: 'calculator', title: '4', subtitle: 'Calculator', terms: '2+2', priority: 70 },
     { id: 'web:g', kind: 'web', title: 'Search web', subtitle: 'Google', terms: 'g cats', priority: 70 },
     { id: 'bookmark:docs', kind: 'bookmark', title: 'Docs', subtitle: 'Bookmark', terms: 'docs', priority: 70 }
   ]);
 
-  assert.deepEqual(groups.map((group) => group.id), ['commands']);
-  assert.deepEqual(groups[0].items.map((item) => item.result.kind), ['setting', 'calculator', 'web', 'bookmark']);
+  assert.deepEqual(
+    visibleRows.map((row) => row.groupLabel),
+    ['Best match', 'Best match', 'Best match', 'Commands']
+  );
+  assert.deepEqual(visibleRows.map((row) => row.result.kind), ['setting', 'calculator', 'web', 'bookmark']);
+});
+
+test('visible row helpers map backend selection into visual order', () => {
+  const visibleRows = buildVisibleSearchRows([
+    { id: 'app:alpha', kind: 'app', title: 'Alpha', subtitle: 'App', terms: 'alpha', priority: 100 },
+    { id: 'file:beta', kind: 'file', title: 'beta.txt', subtitle: 'File', terms: 'beta', priority: 90 },
+    { id: 'folder:gamma', kind: 'folder', title: 'Gamma', subtitle: 'Folder', terms: 'gamma', priority: 80, path: 'C:\\Gamma' },
+    { id: 'app:delta', kind: 'app', title: 'Delta', subtitle: 'App', terms: 'delta', priority: 70 },
+    { id: 'command:echo', kind: 'command', title: 'Echo', subtitle: 'Command', terms: 'echo', priority: 60 }
+  ]);
+
+  assert.equal(selectedVisibleRowIndex(visibleRows, 3), 3);
+  assert.equal(selectedVisibleRowIndex(visibleRows, 4), 4);
+  assert.equal(selectedVisibleRowIndex(visibleRows, 99), -1);
+  assert.equal(nextVisibleRowIndex(visibleRows, -1, 1), 0);
+  assert.equal(nextVisibleRowIndex(visibleRows, -1, -1), visibleRows.length - 1);
+  assert.equal(nextVisibleRowIndex(visibleRows, 3, -1), 2);
+  assert.equal(nextVisibleRowIndex(visibleRows, 3, 1), 4);
+});
+
+test('phase 1 query-gate ordering keeps first visible row equal to backend rank 1 across representative intents', () => {
+  const queryCases = [
+    {
+      query: 'display settings',
+      results: [
+        { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 1000 },
+        { id: 'folder:display-docs', kind: 'folder', title: 'Display', subtitle: 'Folder', terms: 'display folder', priority: 999, path: 'C:\\Docs\\Display' },
+        { id: 'app:displayfusion', kind: 'app', title: 'DisplayFusion', subtitle: 'App', terms: 'displayfusion', priority: 998 },
+        { id: 'setting:sound', kind: 'setting', title: 'Sound Settings', subtitle: 'Setting', terms: 'sound settings', priority: 997 }
+      ],
+      expectedTop: 'Display Settings'
+    },
+    {
+      query: 'sound settings',
+      results: [
+        { id: 'setting:sound', kind: 'setting', title: 'Sound Settings', subtitle: 'Setting', terms: 'sound settings', priority: 1000 },
+        { id: 'file:sound', kind: 'file', title: 'sound.txt', subtitle: 'File', terms: 'sound file', priority: 999 },
+        { id: 'app:sound-recorder', kind: 'app', title: 'Sound Recorder', subtitle: 'App', terms: 'sound recorder', priority: 998 },
+        { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 997 }
+      ],
+      expectedTop: 'Sound Settings'
+    },
+    {
+      query: 'control panel',
+      results: [
+        { id: 'setting:control-panel', kind: 'setting', title: 'Control Panel', subtitle: 'Windows setting', terms: 'control panel settings', priority: 1000 },
+        { id: 'command:open-control-plane', kind: 'command', title: 'Control Plane', subtitle: 'JasonShell command', terms: 'control plane', priority: 999 },
+        { id: 'folder:control-panel', kind: 'folder', title: 'Control Panel', subtitle: 'Folder', terms: 'control panel folder', priority: 998, path: 'C:\\Docs\\Control Panel' }
+      ],
+      expectedTop: 'Control Panel'
+    },
+    {
+      query: 'spotify',
+      results: [
+        { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'Installed app', terms: 'spotify app', priority: 1000 },
+        { id: 'file:spotify', kind: 'file', title: 'spotify notes.txt', subtitle: 'File', terms: 'spotify notes', priority: 999 },
+        { id: 'folder:spotify', kind: 'folder', title: 'Spotify', subtitle: 'Folder', terms: 'spotify folder', priority: 998, path: 'C:\\Spotify' }
+      ],
+      expectedTop: 'Spotify'
+    },
+    {
+      query: 'C:\\dev',
+      results: [
+        { id: 'folder:c-dev', kind: 'folder', title: 'C:\\dev', subtitle: 'Folder', terms: 'c dev folder', priority: 1000, path: 'C:\\dev' },
+        { id: 'app:devhome', kind: 'app', title: 'Dev Home', subtitle: 'App', terms: 'dev home', priority: 999 },
+        { id: 'file:dev-notes', kind: 'file', title: 'dev-notes.txt', subtitle: 'File', terms: 'dev notes', priority: 998 }
+      ],
+      expectedTop: 'C:\\dev'
+    },
+    {
+      query: 'dev',
+      results: [
+        { id: 'folder:c-dev', kind: 'folder', title: 'C:\\dev', subtitle: 'Folder', terms: 'c dev folder', priority: 1000, path: 'C:\\dev' },
+        { id: 'app:devhome', kind: 'app', title: 'Dev Home', subtitle: 'App', terms: 'dev home', priority: 999 },
+        { id: 'command:open-control-plane', kind: 'command', title: 'Open developer dashboard', subtitle: 'Command', terms: 'developer dashboard', priority: 998 },
+        { id: 'file:devlog', kind: 'file', title: 'dev.log', subtitle: 'File', terms: 'dev log', priority: 997 }
+      ],
+      expectedTop: 'C:\\dev'
+    }
+  ];
+
+  for (const queryCase of queryCases) {
+    const visibleRows = buildVisibleSearchRows(queryCase.results);
+    assert.equal(visibleRows[0]?.result.title, queryCase.expectedTop, queryCase.query);
+    assert.equal(visibleRows[0]?.result, queryCase.results[0], queryCase.query);
+  }
+});
+
+test('visible rows keep duplicate backend ids uniquely keyable while preserving raw activation ids', () => {
+  const visibleRows = buildVisibleSearchRows([
+    { id: 'duplicate:id', kind: 'app', title: 'First Duplicate', subtitle: 'App', terms: 'dup first', priority: 100 },
+    { id: 'duplicate:id', kind: 'folder', title: 'Second Duplicate', subtitle: 'Folder', terms: 'dup second', priority: 99, path: 'C:\\dup' },
+    { id: 'duplicate:id', kind: 'file', title: 'Third Duplicate', subtitle: 'File', terms: 'dup third', priority: 98 }
+  ]);
+
+  assert.deepEqual(visibleRows.map((row) => row.id), ['duplicate:id', 'duplicate:id', 'duplicate:id']);
+  assert.deepEqual(visibleRows.map((row) => row.rowKey), [
+    '0:duplicate:id',
+    '1:duplicate:id',
+    '2:duplicate:id'
+  ]);
+  assert.deepEqual(visibleRows.map((row) => row.domId), [
+    'search-result-0',
+    'search-result-1',
+    'search-result-2'
+  ]);
+  assert.equal(new Set(visibleRows.map((row) => row.rowKey)).size, 3);
+});
+
+test('top-bar keyboard traversal can map visible-row movement back to backend result indices', () => {
+  const visibleRows = buildVisibleSearchRows([
+    { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 100 },
+    { id: 'folder:dev', kind: 'folder', title: 'C:\\dev', subtitle: 'Folder', terms: 'dev folder', priority: 99, path: 'C:\\dev' },
+    { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'App', terms: 'spotify app', priority: 98 },
+    { id: 'app:code', kind: 'app', title: 'Code', subtitle: 'App', terms: 'code app', priority: 97 },
+    { id: 'file:notes', kind: 'file', title: 'notes.txt', subtitle: 'File', terms: 'notes file', priority: 96 },
+    { id: 'setting:sound', kind: 'setting', title: 'Sound Settings', subtitle: 'Setting', terms: 'sound settings', priority: 95 }
+  ]);
+
+  let selectedIndex = 3;
+  let selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  assert.equal(selectedVisibleIndex, 3);
+  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'Code');
+
+  selectedIndex = visibleRows[nextVisibleRowIndex(visibleRows, selectedVisibleIndex, 1)].resultIndex;
+  selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  assert.equal(selectedVisibleIndex, 4);
+  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'notes.txt');
+  assert.equal(selectedIndex, 4);
+
+  selectedIndex = visibleRows[nextVisibleRowIndex(visibleRows, selectedVisibleIndex, 1)].resultIndex;
+  selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  assert.equal(selectedVisibleIndex, 5);
+  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'Sound Settings');
+  assert.equal(selectedIndex, 5);
 });
 
 test('ranking accepts injected usage so frequent results can outrank equal matches', () => {
@@ -139,6 +309,17 @@ test('search input state can advance while expensive result refresh is deferred 
   assert.equal(shouldApplySearchResultRefresh(requests[0], displayedQuery, sequence), false);
   assert.equal(shouldApplySearchResultRefresh(requests[2], displayedQuery, sequence), false);
   assert.equal(shouldApplySearchResultRefresh(requests[3], displayedQuery, sequence), true);
+});
+
+test('search engine controller ignores out-of-order stale provider responses', () => {
+  const controller = createLatestSearchQueryController();
+  const first = controller.next('d');
+  const second = controller.next('di');
+  const third = controller.next('display');
+
+  assert.equal(shouldApplySearchEngineResponse(first, 'display', controller.currentSequence()), false);
+  assert.equal(controller.shouldApply(second, 'display'), false);
+  assert.equal(controller.shouldApply(third, 'display'), true);
 });
 
 test('search mode defaults to centered and preserves explicit top-right routing', () => {

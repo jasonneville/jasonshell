@@ -1,13 +1,14 @@
-use super::apps;
 use super::everything;
-use super::query;
-use super::windows_search;
-use super::SystemSearchResult;
 use crate::settings::ShellSettings;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+use super::{apps, query, windows_search, SystemSearchResult};
+
+#[cfg(test)]
 const INSTALLED_APP_RESULT_LIMIT: usize = 16;
+#[cfg(test)]
 const WINDOWS_APP_RESULT_LIMIT: usize = 24;
 
 #[allow(dead_code)]
@@ -63,12 +64,14 @@ pub(crate) struct ProviderHealthContract {
     pub checked_at_iso: String,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ProviderSearchBatch {
     pub results: Vec<SystemSearchResult>,
     pub health: Vec<ProviderHealthContract>,
 }
 
+#[cfg(test)]
 pub(crate) fn search_provider_results(
     query: &str,
     settings: &ShellSettings,
@@ -96,10 +99,12 @@ pub(crate) fn search_provider_results(
     batch
 }
 
+#[cfg(test)]
 fn has_app_result(results: &[SystemSearchResult]) -> bool {
     results.iter().any(|result| result.kind == "app")
 }
 
+#[cfg(test)]
 fn append_windows_app_results(batch: &mut ProviderSearchBatch, query: &str) {
     match windows_search::search_windows(query, WINDOWS_APP_RESULT_LIMIT) {
         windows_search::ProviderSearchOutcome::Results(results) => {
