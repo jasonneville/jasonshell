@@ -3,6 +3,7 @@ import type { SearchActivationKind, SearchPanelPayload, SearchPanelResult } from
 import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export const SEARCH_ENGINE_COMMAND = IPC_COMMANDS.searchEngine;
+export const SEARCH_ENGINE_PROGRESS_EVENT = 'search-engine:progress';
 
 export const SEARCH_ENGINE_PRESENTATIONS = ['anchored', 'centered'] as const;
 export type SearchEnginePresentation = (typeof SEARCH_ENGINE_PRESENTATIONS)[number];
@@ -23,7 +24,7 @@ export type SearchResultKind = (typeof SEARCH_ENGINE_RESULT_KINDS)[number];
 export const SEARCH_PROGRESS_PHASES = ['typing', 'local', 'provider', 'complete', 'error'] as const;
 export type SearchProgressPhase = (typeof SEARCH_PROGRESS_PHASES)[number];
 
-export const SEARCH_PROVIDER_CACHE_STATES = ['hit', 'miss', 'refresh', 'disabled'] as const;
+export const SEARCH_PROVIDER_CACHE_STATES = ['hit', 'miss', 'refresh', 'indexing', 'disabled'] as const;
 export type SearchProviderCacheState = (typeof SEARCH_PROVIDER_CACHE_STATES)[number];
 
 export const SEARCH_ACTION_KINDS = [
@@ -85,6 +86,8 @@ export type SearchResult = {
   score: number;
   matchReason: string;
   recordKey: string;
+  titleHighlightData?: number[];
+  subtitleHighlightData?: number[];
   iconDataUrl?: string;
 };
 
@@ -94,6 +97,7 @@ export type SearchProviderTiming = {
   endedAt?: string;
   durationMs: number;
   cache: SearchProviderCacheState;
+  cacheAgeMs?: number;
   resultCount: number;
   applied: boolean;
   discardedAsStale: boolean;
@@ -163,6 +167,8 @@ export function searchEngineResultToPanelResult(result: SearchResult): SearchPan
     actionId: panelActionId(result.action),
     actionArgs: result.action.kind === 'runControlPanel' ? result.action.args : undefined,
     copyText: result.action.kind === 'copyText' ? result.action.text : undefined,
+    titleHighlightData: result.titleHighlightData,
+    subtitleHighlightData: result.subtitleHighlightData,
     recordKey: result.recordKey
   };
 }
@@ -184,6 +190,50 @@ export function searchEngineResponseToPanelPayload(
     statusMessage: results.length ? 'Showing search results' : 'No search results matched',
     presentation
   };
+}
+
+export function searchEngineProgressToPanelPayload(
+  payload: SearchProgressPayload,
+  selectedIndex = 0,
+  presentation: SearchEnginePresentation = 'centered'
+): SearchPanelPayload {
+  const results = payload.results.map(searchEngineResultToPanelResult);
+  return {
+    query: payload.query,
+    results,
+    selectedIndex: Math.min(selectedIndex, Math.max(results.length - 1, 0)),
+    statusMessage: payload.statusMessage,
+    presentation,
+    phase: payload.phase,
+    sequence: payload.sequence
+  };
+}
+
+export function mergeSearchPanelResultsByStableKey(
+  current: readonly SearchPanelResult[],
+  incoming: readonly SearchPanelResult[]
+): SearchPanelResult[] {
+  const merged = new Map<string, SearchPanelResult>();
+  const order: string[] = [];
+
+  for (const result of current) {
+    const key = stablePanelResultKey(result);
+    if (!merged.has(key)) {
+      order.push(key);
+    }
+    merged.set(key, result);
+  }
+
+  for (const result of incoming) {
+    const key = stablePanelResultKey(result);
+    if (!merged.has(key)) {
+      order.push(key);
+    }
+    const currentResult = merged.get(key);
+    merged.set(key, currentResult ? mergePanelResult(currentResult, result) : result);
+  }
+
+  return order.map((key) => merged.get(key)).filter((result): result is SearchPanelResult => Boolean(result));
 }
 
 export function isSearchQueryRequest(value: unknown): value is SearchQueryRequest {
@@ -262,6 +312,8 @@ export function isSearchResult(value: unknown): value is SearchResult {
       Number.isFinite(record.score) &&
       typeof record.matchReason === 'string' &&
       typeof record.recordKey === 'string' &&
+      isOptionalHighlightData(record.titleHighlightData) &&
+      isOptionalHighlightData(record.subtitleHighlightData) &&
       (iconDataUrl === undefined || (typeof iconDataUrl === 'string' && isSafeDataUrl(iconDataUrl)))
   );
 }
@@ -280,6 +332,10 @@ export function isSearchProviderTiming(value: unknown): value is SearchProviderT
       Number.isFinite(record.durationMs) &&
       record.durationMs >= 0 &&
       enumValue(SEARCH_PROVIDER_CACHE_STATES, record.cache) &&
+      (record.cacheAgeMs === undefined ||
+        (typeof record.cacheAgeMs === 'number' &&
+          Number.isFinite(record.cacheAgeMs) &&
+          record.cacheAgeMs >= 0)) &&
       typeof resultCount === 'number' &&
       Number.isInteger(resultCount) &&
       resultCount >= 0 &&
@@ -469,4 +525,26 @@ function panelActionId(action: SearchAction): SearchActivationKind {
     default:
       return action.kind;
   }
+}
+
+function stablePanelResultKey(result: SearchPanelResult): string {
+  return result.recordKey?.trim() || result.id;
+}
+
+function mergePanelResult(current: SearchPanelResult, incoming: SearchPanelResult): SearchPanelResult {
+  return {
+    ...current,
+    ...incoming,
+    titleHighlightData: incoming.titleHighlightData ?? current.titleHighlightData,
+    subtitleHighlightData: incoming.subtitleHighlightData ?? current.subtitleHighlightData
+  };
+}
+
+function isOptionalHighlightData(value: unknown): value is number[] | undefined {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length % 2 === 0 &&
+      value.every((index) => typeof index === 'number' && Number.isInteger(index) && index >= 0))
+  );
 }

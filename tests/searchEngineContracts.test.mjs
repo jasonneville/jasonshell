@@ -3,12 +3,15 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   SEARCH_ENGINE_COMMAND,
+  SEARCH_ENGINE_PROGRESS_EVENT,
   isSafeControlPanelAction,
   isSafeMsSettingsUri,
   isSearchEngineResponse,
   isSearchProgressPayload,
   isSearchQueryRequest,
+  mergeSearchPanelResultsByStableKey,
   isSearchResult,
+  searchEngineProgressToPanelPayload,
   searchEngineResultToPanelResult,
   validateSearchResultActionSafety
 } from '../dist-tests/lib/searchEngine.js';
@@ -40,6 +43,7 @@ function providerTiming(overrides = {}) {
     endedAt: generatedAt,
     durationMs: 2.5,
     cache: 'hit',
+    cacheAgeMs: 25,
     resultCount: 1,
     applied: true,
     discardedAsStale: false,
@@ -49,6 +53,7 @@ function providerTiming(overrides = {}) {
 
 test('search engine request and response contracts match phase 1 shape', () => {
   assert.equal(SEARCH_ENGINE_COMMAND, 'search_engine');
+  assert.equal(SEARCH_ENGINE_PROGRESS_EVENT, 'search-engine:progress');
   assert.equal(
     isSearchQueryRequest({
       query: 'display settings',
@@ -207,9 +212,120 @@ test('progress payload supports immediate local rows and stale provider batches'
   );
 });
 
-test.todo('phase 0 red: rust search engine still lacks progressive typing/local/provider batches');
+test('progress payload converts to panel payload and merges by stable record key', () => {
+  const localPayload = searchEngineProgressToPanelPayload({
+    query: 'sound settings',
+    sequence: 22,
+    phase: 'local',
+    results: [
+      displaySettingsResult({
+        id: 'setting:sound',
+        title: 'Sound Settings',
+        titleHighlightData: [0, 5],
+        path: 'ms-settings:sound',
+        action: { kind: 'openSetting', uri: 'ms-settings:sound' },
+        recordKey: 'setting:sound'
+      })
+    ],
+    providerTimings: [providerTiming({ providerId: 'settings', resultCount: 1 })],
+    statusMessage: '1 local result',
+    generatedAt
+  });
+  const providerPayload = searchEngineProgressToPanelPayload({
+    query: 'sound settings',
+    sequence: 22,
+    phase: 'provider',
+    results: [
+      displaySettingsResult({
+        id: 'everything:file:c:/docs/sound.txt',
+        providerId: 'everything',
+        kind: 'file',
+        title: 'sound.txt',
+        subtitle: 'File',
+        path: 'C:\\docs\\sound.txt',
+        action: { kind: 'openFile', path: 'C:\\docs\\sound.txt' },
+        terms: ['sound'],
+        aliases: [],
+        score: 400,
+        matchReason: 'token',
+        recordKey: 'file:c:\\docs\\sound.txt'
+      }),
+      displaySettingsResult({
+        id: 'setting:sound-duplicate-id',
+        title: 'Sound Settings',
+        path: 'ms-settings:sound',
+        action: { kind: 'openSetting', uri: 'ms-settings:sound' },
+        recordKey: 'setting:sound'
+      })
+    ],
+    providerTimings: [
+      providerTiming({ providerId: 'settings', resultCount: 1 }),
+      providerTiming({ providerId: 'everything', resultCount: 1 })
+    ],
+    statusMessage: 'Merged Everything results',
+    generatedAt
+  });
 
-test.todo('phase 0 red: rust app cache and fuzzy scoring gaps are still unimplemented');
+  const merged = mergeSearchPanelResultsByStableKey(localPayload.results, providerPayload.results);
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].recordKey, 'setting:sound');
+  assert.deepEqual(merged[0].titleHighlightData, [0, 5]);
+  assert.equal(merged[1].recordKey, 'file:c:\\docs\\sound.txt');
+});
+
+test('provider timing accepts persistent app-cache indexing state and cache age', () => {
+  assert.equal(
+    isSearchEngineResponse({
+      query: 'spotify',
+      sequence: 30,
+      results: [],
+      providerTimings: [
+        providerTiming({
+          providerId: 'apps',
+          cache: 'indexing',
+          cacheAgeMs: 120_000,
+          resultCount: 0
+        })
+      ],
+      health: [{ providerId: 'apps', state: 'indexing', message: 'building app index' }],
+      generatedAt
+    }),
+    true
+  );
+});
+
+test('search result contract accepts highlight spans for fuzzy matches', () => {
+  const result = displaySettingsResult({
+    id: 'app:spotify',
+    providerId: 'apps',
+    kind: 'app',
+    title: 'Spotify',
+    subtitle: 'Application',
+    path: 'C:\\Apps\\Spotify.lnk',
+    action: { kind: 'openApp', path: 'C:\\Apps\\Spotify.lnk' },
+    terms: ['spotify'],
+    aliases: ['Spotify'],
+    score: 2520,
+    matchReason: 'subsequence',
+    recordKey: 'app:c:\\apps\\spotify.lnk',
+    titleHighlightData: [0, 2, 3, 3],
+    subtitleHighlightData: []
+  });
+
+  assert.equal(isSearchResult(result), true);
+  assert.deepEqual(searchEngineResultToPanelResult(result).titleHighlightData, [0, 2, 3, 3]);
+});
+
+test('search result contract rejects malformed highlight span arrays', () => {
+  assert.equal(
+    isSearchResult(
+      displaySettingsResult({
+        titleHighlightData: [0, 2, 3]
+      })
+    ),
+    false
+  );
+});
 
 test('new search engine wrapper is isolated from legacy catalog and ranking hot paths', () => {
   const source = readFileSync(new URL('../src/lib/searchEngine.ts', import.meta.url), 'utf8');

@@ -1,6 +1,9 @@
 use crate::search::contracts::{
     SearchProviderId, SearchResult, SearchResultAction, SearchResultKind,
 };
+use crate::search::matcher::{
+    best_match, query_tokens as match_query_tokens, MatchField, MatchTier,
+};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8,14 +11,18 @@ enum MatchQuality {
     Exact,
     Prefix,
     Acronym,
-    Token,
+    TokenPrefix,
+    Subsequence,
+    EditDistance,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct MatchScore {
     quality: MatchQuality,
     score: i32,
     reason: &'static str,
+    title_highlight_data: Vec<usize>,
+    subtitle_highlight_data: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +51,8 @@ pub(crate) fn rank_visible_results(
         };
         row.score = score.score;
         row.match_reason = score.reason.to_string();
+        row.title_highlight_data = score.title_highlight_data;
+        row.subtitle_highlight_data = score.subtitle_highlight_data;
         let key = duplicate_key(&row);
         match deduped.get(&key) {
             Some(existing) if compare_results(&row, existing).is_ge() => {}
@@ -66,7 +75,7 @@ fn score_row(
     intent: QueryIntent,
 ) -> Option<MatchScore> {
     let fields = SearchFields::from_result(row);
-    let mut score = match_quality_score(&fields, query, tokens)?;
+    let mut score = match_quality_score(row, &fields, row.provider_id, query, tokens)?;
 
     score.score += kind_base(row.kind);
     score.score += provider_base(row.provider_id);
@@ -78,43 +87,95 @@ fn score_row(
 }
 
 fn match_quality_score(
+    row: &SearchResult,
     fields: &SearchFields,
+    provider_id: SearchProviderId,
     query: &str,
     tokens: &[String],
 ) -> Option<MatchScore> {
-    if fields.exact_values.iter().any(|value| value == query) {
-        return Some(MatchScore {
-            quality: MatchQuality::Exact,
-            score: 2_000,
-            reason: "exact",
-        });
-    }
-    if fields
-        .prefix_values
-        .iter()
-        .any(|value| value.starts_with(query))
-    {
-        return Some(MatchScore {
-            quality: MatchQuality::Prefix,
-            score: 1_650,
-            reason: "prefix",
-        });
-    }
-    if !fields.acronym.is_empty() && fields.acronym == query {
-        return Some(MatchScore {
-            quality: MatchQuality::Acronym,
-            score: 1_500,
-            reason: "acronym",
-        });
-    }
-    if tokens.iter().all(|token| fields.searchable.contains(token)) {
-        return Some(MatchScore {
-            quality: MatchQuality::Token,
-            score: 900,
-            reason: "token",
-        });
-    }
-    None
+    let matched = best_match(
+        &row.title,
+        row.subtitle.as_deref(),
+        &fields.hidden_values,
+        query,
+        tokens,
+        supports_fuzzy(provider_id),
+    )?;
+
+    let (quality, title_highlight_data, subtitle_highlight_data) = match matched.tier {
+        MatchTier::Exact => match matched.field {
+            MatchField::Title => (MatchQuality::Exact, matched.highlight_data, Vec::new()),
+            MatchField::Subtitle => (MatchQuality::Exact, Vec::new(), matched.highlight_data),
+            MatchField::Hidden => (MatchQuality::Exact, Vec::new(), Vec::new()),
+        },
+        MatchTier::Prefix => match matched.field {
+            MatchField::Title => (MatchQuality::Prefix, matched.highlight_data, Vec::new()),
+            MatchField::Subtitle => (MatchQuality::Prefix, Vec::new(), matched.highlight_data),
+            MatchField::Hidden => (MatchQuality::Prefix, Vec::new(), Vec::new()),
+        },
+        MatchTier::Acronym => match matched.field {
+            MatchField::Title => (MatchQuality::Acronym, matched.highlight_data, Vec::new()),
+            MatchField::Subtitle => (MatchQuality::Acronym, Vec::new(), matched.highlight_data),
+            MatchField::Hidden => (MatchQuality::Acronym, Vec::new(), Vec::new()),
+        },
+        MatchTier::TokenPrefix => match matched.field {
+            MatchField::Title => (
+                MatchQuality::TokenPrefix,
+                matched.highlight_data,
+                Vec::new(),
+            ),
+            MatchField::Subtitle => (
+                MatchQuality::TokenPrefix,
+                Vec::new(),
+                matched.highlight_data,
+            ),
+            MatchField::Hidden => (MatchQuality::TokenPrefix, Vec::new(), Vec::new()),
+        },
+        MatchTier::Subsequence => match matched.field {
+            MatchField::Title => (
+                MatchQuality::Subsequence,
+                matched.highlight_data,
+                Vec::new(),
+            ),
+            MatchField::Subtitle => (
+                MatchQuality::Subsequence,
+                Vec::new(),
+                matched.highlight_data,
+            ),
+            MatchField::Hidden => (MatchQuality::Subsequence, Vec::new(), Vec::new()),
+        },
+        MatchTier::EditDistance => match matched.field {
+            MatchField::Title => (
+                MatchQuality::EditDistance,
+                matched.highlight_data,
+                Vec::new(),
+            ),
+            MatchField::Subtitle => (
+                MatchQuality::EditDistance,
+                Vec::new(),
+                matched.highlight_data,
+            ),
+            MatchField::Hidden => (MatchQuality::EditDistance, Vec::new(), Vec::new()),
+        },
+    };
+
+    Some(MatchScore {
+        quality,
+        score: matched.score,
+        reason: matched.reason,
+        title_highlight_data,
+        subtitle_highlight_data,
+    })
+}
+
+fn supports_fuzzy(provider_id: SearchProviderId) -> bool {
+    matches!(
+        provider_id,
+        SearchProviderId::Apps
+            | SearchProviderId::Settings
+            | SearchProviderId::Commands
+            | SearchProviderId::LocalFolders
+    )
 }
 
 fn intent_boost(kind: SearchResultKind, intent: QueryIntent) -> i32 {
@@ -139,7 +200,8 @@ fn open_window_match_boost(kind: SearchResultKind, quality: MatchQuality) -> i32
         MatchQuality::Exact => 900,
         MatchQuality::Prefix => 650,
         MatchQuality::Acronym => 500,
-        MatchQuality::Token => 300,
+        MatchQuality::TokenPrefix | MatchQuality::Subsequence => 300,
+        MatchQuality::EditDistance => 0,
     }
 }
 
@@ -276,58 +338,28 @@ fn duplicate_key(row: &SearchResult) -> String {
 }
 
 struct SearchFields {
-    exact_values: Vec<String>,
-    prefix_values: Vec<String>,
-    searchable: String,
-    acronym: String,
+    hidden_values: Vec<String>,
 }
 
 impl SearchFields {
     fn from_result(row: &SearchResult) -> Self {
-        let title = normalize(&row.title);
-        let aliases = row.aliases.iter().map(|value| normalize(value));
-        let terms = row.terms.iter().map(|value| normalize(value));
-        let path = row.path.as_deref().map(normalize).unwrap_or_default();
-        let record_key = normalize(&row.record_key);
-        let mut exact_values = Vec::with_capacity(4 + row.aliases.len() + row.terms.len());
-        exact_values.push(title.clone());
-        exact_values.push(path.clone());
-        exact_values.push(record_key.clone());
-        exact_values.extend(aliases.clone());
-        exact_values.extend(terms.clone());
-
-        let mut prefix_values = Vec::with_capacity(exact_values.len());
-        prefix_values.extend(exact_values.iter().cloned());
-
-        let searchable = exact_values
-            .iter()
-            .filter(|value| !value.is_empty())
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" ");
-
         Self {
-            exact_values,
-            prefix_values,
-            searchable,
-            acronym: acronym(&title),
+            hidden_values: {
+                let mut hidden = Vec::with_capacity(2 + row.aliases.len() + row.terms.len());
+                hidden.push(row.record_key.clone());
+                if let Some(path) = row.path.clone() {
+                    hidden.push(path);
+                }
+                hidden.extend(row.aliases.iter().cloned());
+                hidden.extend(row.terms.iter().cloned());
+                hidden
+            },
         }
     }
 }
 
 fn query_tokens(query: &str) -> Vec<String> {
-    normalize(query)
-        .split(' ')
-        .filter(|token| !token.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn acronym(value: &str) -> String {
-    value
-        .split_whitespace()
-        .filter_map(|token| token.chars().next())
-        .collect()
+    match_query_tokens(query)
 }
 
 fn normalize_record_key(value: &str) -> String {
@@ -391,6 +423,8 @@ mod tests {
             score: 99_999,
             match_reason: "fixture".to_string(),
             record_key: id.to_string(),
+            title_highlight_data: Vec::new(),
+            subtitle_highlight_data: Vec::new(),
             icon_data_url: None,
         }
     }
@@ -532,5 +566,67 @@ mod tests {
 
         assert_eq!(ranked[0].provider_id, SearchProviderId::OpenWindows);
         assert_eq!(ranked[0].kind, SearchResultKind::Window);
+    }
+
+    #[test]
+    fn fuzzy_apps_and_settings_match_abbreviations_without_helping_everything() {
+        let rows = vec![
+            row(
+                "everything:file:spotify",
+                SearchProviderId::Everything,
+                SearchResultKind::File,
+                "Spotify backup.zip",
+                Some(r"C:\Temp\Spotify backup.zip"),
+            ),
+            row(
+                "app:spotify",
+                SearchProviderId::Apps,
+                SearchResultKind::App,
+                "Spotify",
+                Some(r"C:\Start Menu\Spotify.lnk"),
+            ),
+        ];
+
+        let ranked = rank_visible_results("sptfy", rows, 10);
+
+        assert_eq!(ranked[0].id, "app:spotify");
+        assert_eq!(ranked[0].match_reason, "subsequence");
+        assert_eq!(ranked[0].title_highlight_data, vec![0, 2, 3, 1, 5, 2]);
+
+        let everything_only = vec![row(
+            "everything:file:spotify",
+            SearchProviderId::Everything,
+            SearchResultKind::File,
+            "Spotify backup.zip",
+            Some(r"C:\Temp\Spotify backup.zip"),
+        )];
+
+        assert!(rank_visible_results("sptfy", everything_only, 10).is_empty());
+    }
+
+    #[test]
+    fn token_prefix_fuzzy_keeps_exact_setting_above_random_file() {
+        let rows = vec![
+            row(
+                "everything:file:display-set",
+                SearchProviderId::Everything,
+                SearchResultKind::File,
+                "display setup notes.txt",
+                Some(r"C:\docs\display setup notes.txt"),
+            ),
+            row(
+                "setting:display",
+                SearchProviderId::Settings,
+                SearchResultKind::Setting,
+                "Display Settings",
+                Some("ms-settings:display"),
+            ),
+        ];
+
+        let ranked = rank_visible_results("disp set", rows, 10);
+
+        assert_eq!(ranked[0].id, "setting:display");
+        assert_eq!(ranked[0].match_reason, "tokenPrefix");
+        assert_eq!(ranked[0].title_highlight_data, vec![0, 4, 8, 3]);
     }
 }

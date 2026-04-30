@@ -91,7 +91,9 @@ fn run_control_panel_command(args: &[String]) -> Result<(), String> {
     };
     let code = result.0 as isize;
     if code <= 32 {
-        return Err(format!("ShellExecuteW failed for control.exe with code {code}"));
+        return Err(format!(
+            "ShellExecuteW failed for control.exe with code {code}"
+        ));
     }
     Ok(())
 }
@@ -170,7 +172,9 @@ mod tests {
     #[test]
     fn control_panel_args_allow_applets_and_block_shell_metacharacters() {
         assert!(is_safe_control_panel_arg("Microsoft.Sound"));
-        assert!(is_safe_control_panel_arg("{26EE0668-A00A-44D7-9371-BEB064C98683}"));
+        assert!(is_safe_control_panel_arg(
+            "{26EE0668-A00A-44D7-9371-BEB064C98683}"
+        ));
         assert!(!is_safe_control_panel_arg(""));
         assert!(!is_safe_control_panel_arg("&calc.exe"));
         assert!(!is_safe_control_panel_arg("Microsoft.Sound;calc.exe"));

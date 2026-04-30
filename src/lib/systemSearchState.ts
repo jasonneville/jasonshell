@@ -46,7 +46,9 @@ export function shouldShowSearchPanelForAnchor(
 export function searchPanelPayloadSignature(payload: SearchPanelPayload): string {
   return JSON.stringify({
     query: payload.query,
+    phase: payload.phase ?? null,
     presentation: payload.presentation ?? null,
+    sequence: payload.sequence ?? null,
     selectedIndex: payload.selectedIndex,
     statusMessage: payload.statusMessage,
     results: payload.results.map((result) => ({

@@ -2,6 +2,7 @@ use crate::search::contracts::{
     SearchProviderCacheState, SearchProviderHealth, SearchProviderHealthState, SearchProviderId,
     SearchProviderTiming, SearchQueryContext, SearchResult, SearchResultAction, SearchResultKind,
 };
+use crate::search::matcher::{best_match, query_tokens as match_query_tokens};
 use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -45,6 +46,7 @@ pub(crate) fn search_local(
             ended_at: Some(crate::search::contracts::iso_now()),
             duration_ms: started.elapsed().as_secs_f64() * 1000.0,
             cache: SearchProviderCacheState::Hit,
+            cache_age_ms: None,
             result_count,
             applied: true,
             discarded_as_stale: false,
@@ -239,46 +241,33 @@ fn local_result(row: &LocalRow, score: i32, reason: &'static str) -> SearchResul
                 )
             })
             .unwrap_or_else(|| row.id.clone()),
+        title_highlight_data: Vec::new(),
+        subtitle_highlight_data: Vec::new(),
         icon_data_url: None,
     }
 }
 
 fn score_local_row(row: &LocalRow, tokens: &[String]) -> Option<(i32, &'static str)> {
     let query = tokens.join(" ");
-    let title = normalize(&row.title);
-    let path = row
-        .path
-        .as_ref()
-        .map(|path| normalize(&path.display().to_string()))
-        .unwrap_or_default();
-    let aliases = row
+    let hidden = row
         .aliases
         .iter()
-        .map(|alias| normalize(alias))
+        .cloned()
+        .chain(row.path.iter().map(|path| path.display().to_string()))
         .collect::<Vec<_>>();
-
-    if aliases.iter().any(|alias| alias == &query) || path == query {
-        return Some((row.priority + 900, "localAlias"));
-    }
-    if title == query {
-        return Some((row.priority + 820, "localTitle"));
-    }
-    if path.starts_with(&query) {
-        return Some((row.priority + 720, "localPath"));
-    }
-    let searchable = format!("{} {} {}", title, aliases.join(" "), path);
-    if tokens.iter().all(|token| searchable.contains(token)) {
-        return Some((row.priority + 240, "localToken"));
-    }
-    None
+    let matched = best_match(
+        &row.title,
+        Some(&row.subtitle),
+        &hidden,
+        &query,
+        tokens,
+        true,
+    )?;
+    Some((row.priority + matched.score, matched.reason))
 }
 
 fn query_tokens(query: &str) -> Vec<String> {
-    normalize(query)
-        .split(' ')
-        .filter(|token| !token.is_empty())
-        .map(str::to_string)
-        .collect()
+    match_query_tokens(query)
 }
 
 fn token_terms(value: &str) -> Vec<String> {

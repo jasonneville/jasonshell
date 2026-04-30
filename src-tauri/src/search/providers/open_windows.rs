@@ -30,6 +30,7 @@ pub(crate) fn search_open_windows(
             ended_at: Some(iso_now()),
             duration_ms: started.elapsed().as_secs_f64() * 1000.0,
             cache: SearchProviderCacheState::Hit,
+            cache_age_ms: None,
             result_count,
             applied: true,
             discarded_as_stale: false,
@@ -38,7 +39,10 @@ pub(crate) fn search_open_windows(
             provider_id: SearchProviderId::OpenWindows,
             state: SearchProviderHealthState::Ready,
             reason_code: None,
-            message: Some(format!("{} open window context rows supplied", windows.len())),
+            message: Some(format!(
+                "{} open window context rows supplied",
+                windows.len()
+            )),
         },
     }
 }
@@ -56,7 +60,8 @@ fn rank_open_windows(
     let mut results = windows
         .iter()
         .filter_map(|window| {
-            score_window(window, &tokens).map(|(score, reason)| window_result(window, score, reason))
+            score_window(window, &tokens)
+                .map(|(score, reason)| window_result(window, score, reason))
         })
         .collect::<Vec<_>>();
     results.sort_by(|left, right| {
@@ -104,6 +109,8 @@ fn window_result(
         score,
         match_reason: reason.to_string(),
         record_key: format!("window:{}", window.id),
+        title_highlight_data: Vec::new(),
+        subtitle_highlight_data: Vec::new(),
         icon_data_url: None,
     }
 }
@@ -114,7 +121,11 @@ fn score_window(
 ) -> Option<(i32, &'static str)> {
     let query = tokens.join(" ");
     let title = normalize(&window.title);
-    let app_name = window.app_name.as_deref().map(normalize).unwrap_or_default();
+    let app_name = window
+        .app_name
+        .as_deref()
+        .map(normalize)
+        .unwrap_or_default();
     let executable_path = window
         .executable_path
         .as_deref()

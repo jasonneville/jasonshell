@@ -124,6 +124,10 @@ pub(crate) struct SearchResult {
     pub score: i32,
     pub match_reason: String,
     pub record_key: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub title_highlight_data: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtitle_highlight_data: Vec<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_data_url: Option<String>,
 }
@@ -244,6 +248,8 @@ pub(crate) struct SearchProviderTiming {
     pub ended_at: Option<String>,
     pub duration_ms: f64,
     pub cache: SearchProviderCacheState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_age_ms: Option<u64>,
     pub result_count: usize,
     pub applied: bool,
     pub discarded_as_stale: bool,
@@ -255,6 +261,7 @@ pub(crate) enum SearchProviderCacheState {
     Hit,
     Miss,
     Refresh,
+    Indexing,
     Disabled,
 }
 
@@ -365,6 +372,7 @@ mod tests {
             ended_at: Some(iso_now()),
             duration_ms: 3.0,
             cache: SearchProviderCacheState::Hit,
+            cache_age_ms: Some(25),
             result_count: 2,
             applied: true,
             discarded_as_stale: false,
@@ -378,6 +386,7 @@ mod tests {
 
         assert_eq!(timing.provider_id, health.provider_id);
         assert_eq!(timing.result_count, 2);
+        assert_eq!(timing.cache_age_ms, Some(25));
         assert_eq!(health.state, SearchProviderHealthState::Ready);
     }
 

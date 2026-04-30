@@ -230,6 +230,7 @@ fn main() {
         })
         .setup(|app| {
             let windows = shell_windows::create_shell_windows(app)?;
+            search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
 
             #[cfg(target_os = "windows")]

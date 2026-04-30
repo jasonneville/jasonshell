@@ -11,6 +11,18 @@ Source inputs: `search_improvements.md`, current `master_spec.md`, prior search 
 - 2026-04-30 `[TOOL]` VALIDATED: Phase 0 validation used `npx tsc -p tsconfig.test.json` plus focused Node test runs against the search UX and search engine contract suites. The new Phase 0 assertions fail at the intended red gaps while the untouched baseline assertions remain intact.
 - 2026-04-30 `[CODE]` COMPLETED: Phase 1 Display Intent Preservation is now implemented in `src/features/search/searchUxState.ts` and `src/components/SearchPanelSurface.svelte`. The panel builds a flat `visibleRows` model with a `Best match` section for the top 1-3 backend-ranked rows, removes those rows from later sections, renders remaining `Apps`/`Folders`/`Files`/`Settings`/`Windows`/`Commands` groups in stable backend order within each group, and drives selection/activation/scroll/ARIA from visible row order. Follow-up QA hardened visible row identity with duplicate-safe `rowKey`/DOM ids while preserving raw backend result ids for activation.
 - 2026-04-30 `[TOOL]` VALIDATED: Phase 1 validation passed with `npx tsc -p tsconfig.test.json`; `node --test tests\searchUxState.test.mjs tests\searchPanelState.test.mjs tests\searchEngineContracts.test.mjs` passed 35 assertions with 2 explicit TODOs for deferred later phases; `cargo test --manifest-path src-tauri\Cargo.toml search::` passed 45/45. Helper-level tests now cover query-gate style top-row ordering, visible navigation order, duplicate backend ids, and visible group labeling. Adversarial re-review returned CONCERNS only for retained source-regex guard tests; duplicate-id and phase-boundary concerns were resolved.
+- 2026-04-30 `[USER]` IN_PROGRESS: Targeted implementation slice started for Phase 2 and Phase 3. Phase 2 Progressive Local-First Search must finish and pass its acceptance validation before any Phase 3 Persistent Warm App Index implementation begins.
+- 2026-04-30 `[CODE]` COMPLETED: Phase 2 Progressive Local-First Search is implemented. Rust `search_engine` remains the final compatibility command while emitting `search-engine:progress` payloads for local, provider, complete, and recoverable error phases. The frontend still publishes typing immediately, applies progress events through the existing `SearchProgressPayload` shape, merges rows by stable `recordKey`/`id`, preserves useful rows while newer input is pending, and rejects stale query/sequence/phase regressions in both frontend panel state and Rust search-panel storage.
+- 2026-04-30 `[TOOL]` VALIDATED: Phase 2 acceptance passed with `npx tsc -p tsconfig.test.json`; `node --test tests\searchEngineContracts.test.mjs tests\searchPanelState.test.mjs tests\searchUxState.test.mjs` passed 38/38 with 1 TODO for the later app-cache/fuzzy gap; `cargo test --manifest-path src-tauri\Cargo.toml search::` passed 47/47. Phase 3 may now begin.
+- 2026-04-30 `[CODE]` COMPLETED: Phase 3 Persistent Warm App Index is implemented. `search/providers/apps.rs` persists `search-app-index-v1.json` under app local data with only title/path/aliases/source/priority/indexed timestamp metadata, hydrates it at startup before async warm refresh, returns stale persisted rows with refresh state, ignores corrupt cache and schedules refresh, reports `Hit`/`Refresh`/`Miss`/`Disabled`/`Indexing` plus cache age, and keeps query-time app search cache-only.
+- 2026-04-30 `[TOOL]` VALIDATED: Phase 3 acceptance passed with `cargo test --manifest-path src-tauri\Cargo.toml search::providers::apps` passing 8/8 and `cargo test --manifest-path src-tauri\Cargo.toml search::` passing 50/50. Cross-contract checks also passed: `npx tsc -p tsconfig.test.json`; `node --test tests\searchEngineContracts.test.mjs tests\searchPanelState.test.mjs tests\searchUxState.test.mjs` passed 40/40 with 1 TODO for deferred fuzzy work; `cargo test --manifest-path src-tauri\Cargo.toml search_panel` passed 9/9; `cargo fmt --manifest-path src-tauri\Cargo.toml --check` passed; scoped `git diff --check` reported line-ending warnings only.
+- 2026-04-30 `[TOOL]` QA: Adversarial Phase 2/3 review returned CLEAN. Residual non-blocking risks: no live WebView mocked-slow-Everything smoke was run, and `cacheAgeMs` is coarse because it is derived from whole-second persisted timestamps.
+- 2026-04-30 `[USER]` IN_PROGRESS: Targeted implementation slice started for Phase 4 and Phase 5. Phase 4 Fuzzy Matching and Highlights must finish and pass acceptance validation before any Phase 5 Everything Query Modes implementation begins.
+- 2026-04-30T22:05:00-05:00 `[USER]` IN_PROGRESS: Narrow Phase 4-only implementation slice started. Phase 4 Fuzzy Matching and Highlights may change bounded small-catalog providers, Rust ranking/contracts, frontend highlight rendering, focused tests, and spec/plan status. Phase 5 Everything query modes remain blocked and untouched until a later request.
+- 2026-04-30 `[CODE]` COMPLETED: Phase 4 Fuzzy Matching and Highlights implemented before Phase 5 work began. Added bounded launcher-style matching/highlight metadata for apps/settings and rank gating that keeps broad Everything rows out of Rust fuzzy matching.
+- 2026-04-30 `[TOOL]` VALIDATED: Phase 4 gate passed via separate Cargo filters equivalent to the documented Rust target (`search::scoring`, `search::providers::apps`, `search::providers::settings`), `npx tsc -p tsconfig.test.json`, and `node --test tests\searchUxState.test.mjs tests\searchEngineContracts.test.mjs`.
+- 2026-04-30 `[CODE]` COMPLETED: Phase 5 Everything Query Modes implemented after Phase 4 acceptance passed. Added simple-name, path-like, folder-navigation, and app-like query modes; kept content search disabled; kept full-path search path-like only; bounded overfetch; and boosted folder/app intent within Everything result mapping.
+- 2026-04-30 `[TOOL]` VALIDATED: Phase 5 gate passed via `cargo test --manifest-path src-tauri\Cargo.toml search::providers::everything` passing 12/12 and `cargo test --manifest-path src-tauri\Cargo.toml search::` passing 64/64. Final hygiene also passed with `cargo fmt --manifest-path src-tauri\Cargo.toml --check`, `npx tsc -p tsconfig.test.json`, `node --test tests\searchUxState.test.mjs tests\searchEngineContracts.test.mjs` passing 26/26, and `git diff --check` reporting only normal CRLF conversion warnings.
 
 ## Summary
 
@@ -194,6 +206,8 @@ Owner: Rust search subagent
 
 Skills: `rust-skills`, `senior-backend`, `tdd-guide`
 
+Status: COMPLETED 2026-04-30. Persisted warm app cache now hydrates at startup, stale rows survive refresh, corrupt cache is ignored, cache age/state is reported, and query-time app search remains scan-free.
+
 Purpose: first app query after launch should not miss installed apps because memory cache is cold.
 
 Ordered tasks:
@@ -231,6 +245,8 @@ cargo test --manifest-path src-tauri\Cargo.toml search::
 Exit gate: cold-start app trust fixed without per-query filesystem scans.
 
 ## Phase 4: Fuzzy Matching and Highlights
+
+Status: completed 2026-04-30 before Phase 5 started.
 
 Owner: Rust ranking subagent
 
@@ -276,6 +292,8 @@ node --test tests\searchUxState.test.mjs tests\searchEngineContracts.test.mjs
 Exit gate: fuzzy improves short-catalog accuracy without broad filesystem cost.
 
 ## Phase 5: Everything Query Modes
+
+Status: completed 2026-04-30 after Phase 4 acceptance passed.
 
 Owner: Rust Everything provider subagent
 

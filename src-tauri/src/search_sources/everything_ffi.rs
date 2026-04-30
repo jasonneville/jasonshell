@@ -108,9 +108,9 @@ pub(crate) fn query_everything_sdk(
 fn with_serialized_sdk_access<T>(
     operation: impl FnOnce() -> Result<T, EverythingSdkError>,
 ) -> Result<T, EverythingSdkError> {
-    let _guard = EVERYTHING_SDK_LOCK.lock().map_err(|_| {
-        EverythingSdkError::QueryFailed("Everything SDK lock failed".to_string())
-    })?;
+    let _guard = EVERYTHING_SDK_LOCK
+        .lock()
+        .map_err(|_| EverythingSdkError::QueryFailed("Everything SDK lock failed".to_string()))?;
     operation()
 }
 

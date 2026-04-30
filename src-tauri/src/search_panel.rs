@@ -36,6 +36,8 @@ pub struct CenteredSearchPanelRequest {
 pub struct SearchPanelRuntimeState {
     latest_payload: Option<Value>,
     latest_payload_sequence: u64,
+    latest_payload_query: Option<String>,
+    latest_payload_phase_rank: u8,
 }
 
 #[tauri::command]
@@ -181,10 +183,22 @@ fn store_search_panel_payload(state: &Mutex<SearchPanelRuntimeState>, payload: V
         .lock()
         .expect("search panel runtime state is poisoned");
     if let Some(sequence) = search_panel_payload_sequence(&payload) {
-        if sequence <= guard.latest_payload_sequence {
+        let query = search_panel_payload_query(&payload);
+        let phase_rank = search_panel_payload_phase_rank(&payload);
+        if sequence < guard.latest_payload_sequence {
             return false;
         }
+        if sequence == guard.latest_payload_sequence {
+            if query != guard.latest_payload_query.as_deref() {
+                return false;
+            }
+            if phase_rank < guard.latest_payload_phase_rank {
+                return false;
+            }
+        }
         guard.latest_payload_sequence = sequence;
+        guard.latest_payload_query = query.map(str::to_string);
+        guard.latest_payload_phase_rank = phase_rank;
     }
     guard.latest_payload = Some(payload);
     true
@@ -200,6 +214,21 @@ fn latest_search_panel_payload(state: &Mutex<SearchPanelRuntimeState>) -> Option
 
 fn search_panel_payload_sequence(payload: &Value) -> Option<u64> {
     payload.get("sequence").and_then(Value::as_u64)
+}
+
+fn search_panel_payload_query(payload: &Value) -> Option<&str> {
+    payload.get("query").and_then(Value::as_str)
+}
+
+fn search_panel_payload_phase_rank(payload: &Value) -> u8 {
+    match payload.get("phase").and_then(Value::as_str) {
+        Some("typing") => 0,
+        Some("local") => 1,
+        Some("provider") => 2,
+        Some("error") => 2,
+        Some("complete") => 3,
+        _ => 3,
+    }
 }
 
 fn bounded_centered_search_size(request: CenteredSearchPanelRequest) -> CenteredSearchPanelRequest {
@@ -334,6 +363,7 @@ mod tests {
             "results": [],
             "selectedIndex": 0,
             "statusMessage": "Searching",
+            "phase": "local",
             "sequence": 4
         });
         let stale = json!({
@@ -341,6 +371,7 @@ mod tests {
             "results": [],
             "selectedIndex": 0,
             "statusMessage": "Searching",
+            "phase": "provider",
             "sequence": 3
         });
 
@@ -350,5 +381,90 @@ mod tests {
         let stored = latest_search_panel_payload(&state).expect("payload should be stored");
         assert_eq!(stored["query"], "spotify");
         assert_eq!(stored["sequence"], 4);
+    }
+
+    #[test]
+    fn rejects_same_sequence_for_different_query() {
+        let state = Mutex::new(SearchPanelRuntimeState::default());
+        assert!(store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Showing local results",
+                "phase": "local",
+                "sequence": 7
+            })
+        ));
+        assert!(!store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spot",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Showing provider results",
+                "phase": "provider",
+                "sequence": 7
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_phase_regression_for_same_query_and_sequence() {
+        let state = Mutex::new(SearchPanelRuntimeState::default());
+        assert!(store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Showing provider results",
+                "phase": "provider",
+                "sequence": 8
+            })
+        ));
+        assert!(!store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Showing local results",
+                "phase": "local",
+                "sequence": 8
+            })
+        ));
+    }
+
+    #[test]
+    fn allows_complete_after_recoverable_provider_error() {
+        let state = Mutex::new(SearchPanelRuntimeState::default());
+        assert!(store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Everything unavailable",
+                "phase": "error",
+                "sequence": 9
+            })
+        ));
+        assert!(store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Showing search results",
+                "phase": "complete",
+                "sequence": 9
+            })
+        ));
+
+        let stored = latest_search_panel_payload(&state).expect("payload should be stored");
+        assert_eq!(stored["phase"], "complete");
+        assert_eq!(stored["statusMessage"], "Showing search results");
     }
 }

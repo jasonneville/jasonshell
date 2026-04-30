@@ -44,8 +44,12 @@
   import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
   import {
     searchEngine,
+    SEARCH_ENGINE_PROGRESS_EVENT,
+    mergeSearchPanelResultsByStableKey,
+    searchEngineProgressToPanelPayload,
     searchEngineResponseToPanelPayload,
-    type SearchEngineResponse
+    type SearchEngineResponse,
+    type SearchProgressPayload
   } from '../lib/searchEngine';
   import {
     addShellPreferencesChangeListener,
@@ -601,17 +605,24 @@
       return;
     }
     lastSearchPanelPayloadSignature = signature;
-    const sequencedPayload = {
-      ...payload,
-      sequence: ++searchPanelPayloadSequence
-    };
+    const sequencedPayload =
+      payload.sequence === undefined
+        ? {
+            ...payload,
+            sequence: ++searchPanelPayloadSequence
+          }
+        : {
+            ...payload,
+            sequence: payload.sequence
+          };
+    searchPanelPayloadSequence = Math.max(searchPanelPayloadSequence, sequencedPayload.sequence ?? 0);
     void publishSearchPanel(sequencedPayload).catch((error) => {
       console.error('Failed to update search panel', error);
       lastSearchPanelPayloadSignature = null;
     });
   }
 
-  function publishPendingSearchPayload() {
+  function publishPendingSearchPayload(sequence: number) {
     queueSearchPanelPublish({
       query: searchQuery,
       results: searchResults,
@@ -619,7 +630,7 @@
       statusMessage: searchStatus,
       presentation: searchPresentation,
       phase: 'typing',
-      sequence: searchPanelPayloadSequence + 1
+      sequence
     });
   }
 
@@ -629,20 +640,40 @@
       searchEngineTimer = null;
     }
 
-    const request = searchQueryController.next(query);
-    if (!request.query) {
+    if (!query.trim()) {
       searchResults = [];
       searchStatus = 'Search is ready';
       queueSearchPanelPublish();
-      return;
+      return null;
     }
 
+    const request = searchQueryController.next(query);
     searchStatus = 'Searching...';
-    publishPendingSearchPayload();
     searchEngineTimer = window.setTimeout(() => {
       searchEngineTimer = null;
       void loadSearchEngineResults(request);
     }, 0);
+    return request;
+  }
+
+  function applySearchEngineProgress(payload: SearchProgressPayload) {
+    if (!searchQueryController.shouldApply({ query: payload.query, sequence: payload.sequence }, searchQuery)) {
+      return;
+    }
+    const nextPayload = searchEngineProgressToPanelPayload(payload, selectedIndex, searchPresentation);
+    const currentStableKey = searchResults[selectedIndex]?.recordKey ?? searchResults[selectedIndex]?.id ?? null;
+    searchResults = payload.phase === 'complete'
+      ? nextPayload.results
+      : mergeSearchPanelResultsByStableKey(searchResults, nextPayload.results);
+    selectedIndex = currentStableKey
+      ? Math.max(0, searchResults.findIndex((result) => (result.recordKey ?? result.id) === currentStableKey))
+      : Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
+    searchStatus = nextPayload.statusMessage;
+    queueSearchPanelPublish({
+      ...nextPayload,
+      results: searchResults,
+      selectedIndex
+    });
   }
 
   async function loadSearchEngineResults(request: { query: string; sequence: number }) {
@@ -672,14 +703,22 @@
       searchResults = payload.results;
       selectedIndex = payload.selectedIndex;
       searchStatus = payload.statusMessage;
-      queueSearchPanelPublish(payload);
+      queueSearchPanelPublish({
+        ...payload,
+        phase: 'complete',
+        sequence: response.sequence
+      });
     } catch (error) {
       if (!searchQueryController.shouldApply(request, searchQuery)) {
         return;
       }
       console.error('Failed to search apps, settings, and files', error);
       searchStatus = 'Search unavailable';
-      queueSearchPanelPublish();
+      queueSearchPanelPublish({
+        ...currentSearchPanelPayload(),
+        phase: 'error',
+        sequence: request.sequence
+      });
     }
   }
 
@@ -727,16 +766,20 @@
     searchQuery = nextQuery;
     selectedIndex = 0;
     searchStatus = searchQuery.trim() ? 'Searching...' : 'Search is ready';
+    const request = scheduleSearchEngine(searchQuery);
     queueSearchPanelPublish({
       query: searchQuery,
       results: searchQuery.trim() ? searchResults : [],
       selectedIndex,
       statusMessage: searchStatus,
       presentation: searchPresentation,
-      phase: searchQuery.trim() ? 'typing' : 'complete'
+      phase: searchQuery.trim() ? 'typing' : 'complete',
+      sequence: request?.sequence
     });
     openConfiguredPanel();
-    scheduleSearchEngine(searchQuery);
+    if (request) {
+      publishPendingSearchPayload(request.sequence);
+    }
   }
 
   function handleSearchInput(event: Event) {
@@ -840,6 +883,11 @@
       searchOpen = false;
       searchPanelAnchor = null;
       lastSearchPanelPayloadSignature = null;
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<SearchProgressPayload>(SEARCH_ENGINE_PROGRESS_EVENT, (event) => {
+      applySearchEngineProgress(event.payload);
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });

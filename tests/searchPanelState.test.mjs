@@ -38,6 +38,7 @@ test('applies a typed search payload with visible results and selection', () => 
   assert.equal(next.results.length, 1);
   assert.equal(next.results[0].title, 'Firefox');
   assert.equal(next.selectedIndex, 0);
+  assert.equal(next.sequence, 0);
 });
 
 test('applies filesystem search results with launch paths', () => {
@@ -180,6 +181,126 @@ test('search panel payload signature includes presentation and ranking metadata'
   assert.notEqual(searchPanelPayloadSignature(basePayload), searchPanelPayloadSignature(changedPayload));
 });
 
+test('search panel state rejects stale query and phase regressions for the same sequence', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 5
+  });
+  const staleQuery = applySearchPanelPayload(local, {
+    query: 'spot',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'stale',
+    phase: 'provider',
+    sequence: 5
+  });
+  const regressedPhase = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'older local',
+    phase: 'typing',
+    sequence: 5
+  });
+
+  assert.equal(staleQuery.query, 'spotify');
+  assert.equal(staleQuery.statusMessage, '1 local result');
+  assert.equal(regressedPhase.phase, 'local');
+});
+
+test('search panel state keeps useful rows for typing and empty error payloads', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 6
+  });
+  const typing = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Searching...',
+    phase: 'typing',
+    sequence: 6
+  });
+  const errored = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Provider error',
+    phase: 'error',
+    sequence: 6
+  });
+
+  assert.equal(typing.results.length, 1);
+  assert.equal(errored.results.length, 1);
+  assert.equal(errored.statusMessage, 'Provider error');
+});
+
+test('search panel state allows complete payload after recoverable provider error', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 9
+  });
+  const errored = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Everything unavailable',
+    phase: 'error',
+    sequence: 9
+  });
+  const completed = applySearchPanelPayload(errored, {
+    query: 'spotify',
+    results: local.results,
+    selectedIndex: 0,
+    statusMessage: 'Showing search results',
+    phase: 'complete',
+    sequence: 9
+  });
+
+  assert.equal(completed.phase, 'complete');
+  assert.equal(completed.statusMessage, 'Showing search results');
+  assert.equal(completed.results.length, 1);
+});
+
 test('top-bar defers expensive search render work out of the input handler', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
@@ -189,6 +310,9 @@ test('top-bar defers expensive search render work out of the input handler', () 
   assert.match(source, /function scheduleSearchEngine\(query: string\)/);
   assert.doesNotMatch(source, /queuedSearchEngineRequest/);
   assert.match(source, /searchEngine\(\{/);
+  assert.match(source, /SEARCH_ENGINE_PROGRESS_EVENT/);
+  assert.match(source, /applySearchEngineProgress\(event\.payload\)/);
+  assert.match(source, /mergeSearchPanelResultsByStableKey/);
   assert.match(source, /shouldApplySearchEngineResponse\(/);
   assert.match(source, /searchEngineResponseToPanelPayload\(response, selectedIndex, searchPresentation\)/);
   assert.doesNotMatch(inputHandler, /rankSearchResults\(/);
@@ -198,7 +322,7 @@ test('top-bar defers expensive search render work out of the input handler', () 
   assert.doesNotMatch(source, /\$:\s*searchResults\s*=\s*rankSearchResults\(allResults, searchQuery\)/);
   assert.match(source, /function queueSearchPanelPublish/);
   assert.match(source, /lastSearchPanelPayloadSignature = signature/);
-  assert.match(source, /sequence: \+\+searchPanelPayloadSequence/);
+  assert.match(source, /payload\.sequence === undefined/);
   assert.doesNotMatch(source, /await publishSearchPanel\(sequencedPayload\)/);
   assert.match(source, /result\.kind === 'setting' && result\.path/);
   assert.match(source, /await openShellPath\(result\.path\)/);

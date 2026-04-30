@@ -287,6 +287,21 @@
     updateResize(event);
     resizeDrag = null;
   }
+
+  function highlightParts(text: string, indexes?: number[]) {
+    const selected = new Set<number>();
+    for (let index = 0; index < (indexes?.length ?? 0); index += 2) {
+      const start = indexes?.[index] ?? 0;
+      const length = indexes?.[index + 1] ?? 0;
+      for (let offset = 0; offset < length; offset += 1) {
+        selected.add(start + offset);
+      }
+    }
+    return Array.from(text).map((character, index) => ({
+      character,
+      highlighted: selected.has(index)
+    }));
+  }
 </script>
 
 <svelte:window on:mousedown={markPanelInteraction} />
@@ -346,8 +361,16 @@
             {/if}
           </span>
           <span class="result-copy">
-            <strong>{result.title}</strong>
-            <small>{result.subtitle}</small>
+            <strong>
+              {#each highlightParts(result.title, result.titleHighlightData) as part}
+                <span class:result-highlight={part.highlighted}>{part.character}</span>
+              {/each}
+            </strong>
+            <small>
+              {#each highlightParts(result.subtitle, result.subtitleHighlightData) as part}
+                <span class:result-highlight={part.highlighted}>{part.character}</span>
+              {/each}
+            </small>
           </span>
           <span class="result-actions">
             <span class="result-action-primary">{hints.primary}</span>

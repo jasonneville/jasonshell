@@ -2,6 +2,9 @@ use crate::search::contracts::{
     SearchProviderHealth, SearchProviderHealthState, SearchProviderId, SearchResult,
     SearchResultAction, SearchResultKind,
 };
+use crate::search::matcher::{
+    best_match, query_tokens as match_query_tokens, MatchData, MatchField,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SettingsProviderRow {
@@ -157,7 +160,7 @@ pub(crate) fn search_settings(query: &str, limit: usize) -> Vec<SearchResult> {
     let mut results = SETTINGS_ROWS
         .iter()
         .filter_map(|row| {
-            score_row(row, &tokens).map(|(score, reason)| row_to_result(row, score, reason))
+            score_row(row, &tokens).map(|(score, matched)| row_to_result(row, score, matched))
         })
         .collect::<Vec<_>>();
 
@@ -172,11 +175,7 @@ pub(crate) fn search_settings(query: &str, limit: usize) -> Vec<SearchResult> {
     results
 }
 
-fn row_to_result(
-    row: &SettingsProviderRow,
-    score: i32,
-    match_reason: &'static str,
-) -> SearchResult {
+fn row_to_result(row: &SettingsProviderRow, score: i32, matched: MatchData) -> SearchResult {
     SearchResult {
         id: row.id.to_string(),
         provider_id: SETTINGS_PROVIDER_ID,
@@ -192,8 +191,18 @@ fn row_to_result(
             .map(|alias| (*alias).to_string())
             .collect(),
         score,
-        match_reason: match_reason.to_string(),
+        match_reason: matched.reason.to_string(),
         record_key: row.id.to_string(),
+        title_highlight_data: if matched.field == MatchField::Title {
+            matched.highlight_data.clone()
+        } else {
+            Vec::new()
+        },
+        subtitle_highlight_data: if matched.field == MatchField::Subtitle {
+            matched.highlight_data
+        } else {
+            Vec::new()
+        },
         icon_data_url: None,
     }
 }
@@ -211,77 +220,23 @@ fn action_for_row(row: &SettingsProviderRow) -> SearchResultAction {
     }
 }
 
-fn score_row(row: &SettingsProviderRow, tokens: &[String]) -> Option<(i32, &'static str)> {
+fn score_row(row: &SettingsProviderRow, tokens: &[String]) -> Option<(i32, MatchData)> {
     let query = tokens.join(" ");
-    let title = normalize(row.title);
-    let category = normalize(row.category);
-    let terms = normalized_slice(row.terms);
-    let aliases = normalized_slice(row.aliases);
-
-    if aliases.iter().any(|alias| alias == &query) {
-        return Some((row.priority + 1_000, "alias"));
-    }
-    if title == query {
-        return Some((row.priority + 950, "exactTitle"));
-    }
-    if terms.iter().any(|term| term == &query) {
-        return Some((row.priority + 800, "term"));
-    }
-    if category == query {
-        return Some((row.priority + 500, "category"));
-    }
-
-    let searchable = searchable_text(row);
-    if !tokens.iter().all(|token| searchable.contains(token)) {
-        return None;
-    }
-
-    let mut score = row.priority + 200;
-    let reason = if aliases.iter().any(|alias| token_match(alias, tokens)) {
-        score += 200;
-        "alias"
-    } else if token_match(&title, tokens) {
-        score += 160;
-        "exactTitle"
-    } else if terms.iter().any(|term| token_match(term, tokens)) {
-        score += 120;
-        "term"
-    } else {
-        "category"
-    };
-
-    Some((score, reason))
-}
-
-fn token_match(value: &str, tokens: &[String]) -> bool {
-    tokens.iter().all(|token| value.contains(token))
-}
-
-fn searchable_text(row: &SettingsProviderRow) -> String {
-    let mut pieces = Vec::with_capacity(6 + row.terms.len() + row.aliases.len());
-    pieces.push(normalize(row.id));
-    pieces.push(normalize(row.title));
-    pieces.push(normalize(row.subtitle));
-    pieces.push(normalize(row.path));
-    pieces.push(normalize(row.category));
+    let mut hidden = Vec::with_capacity(5 + row.terms.len() + row.aliases.len());
+    hidden.push(row.id.to_string());
+    hidden.push(row.path.to_string());
+    hidden.push(row.category.to_string());
     if let Some(applet) = row.control_panel_applet {
-        pieces.push(normalize(applet));
+        hidden.push(applet.to_string());
     }
-    pieces.extend(normalized_slice(row.terms));
-    pieces.extend(normalized_slice(row.aliases));
-    pieces.join(" ")
-}
-
-fn normalized_slice(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| normalize(value)).collect()
+    hidden.extend(row.terms.iter().map(|value| (*value).to_string()));
+    hidden.extend(row.aliases.iter().map(|value| (*value).to_string()));
+    let matched = best_match(row.title, Some(row.subtitle), &hidden, &query, tokens, true)?;
+    Some((row.priority + matched.score, matched))
 }
 
 fn query_tokens(query: &str) -> Vec<String> {
-    normalize(query)
-        .split(' ')
-        .filter(|token| !token.is_empty())
-        .map(str::to_string)
-        .collect()
+    match_query_tokens(query)
 }
 
 fn normalize(value: &str) -> String {
@@ -424,5 +379,15 @@ mod tests {
 
         assert_eq!(health.provider_id, SearchProviderId::Settings);
         assert_eq!(health.state, SearchProviderHealthState::Ready);
+    }
+
+    #[test]
+    fn display_settings_matches_disp_set_abbreviation() {
+        let result = search_settings("disp set", 1)
+            .pop()
+            .expect("display settings");
+
+        assert_eq!(result.id, "setting:display");
+        assert_eq!(result.match_reason, "tokenPrefix");
     }
 }

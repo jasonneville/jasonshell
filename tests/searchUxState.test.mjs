@@ -216,6 +216,23 @@ test('visible rows keep duplicate backend ids uniquely keyable while preserving 
   assert.equal(new Set(visibleRows.map((row) => row.rowKey)).size, 3);
 });
 
+test('visible rows preserve fuzzy highlight span data for panel rendering', () => {
+  const visibleRows = buildVisibleSearchRows([
+    {
+      id: 'app:spotify',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Application',
+      terms: 'spotify app',
+      priority: 100,
+      titleHighlightData: [0, 2, 3, 3],
+      subtitleHighlightData: []
+    }
+  ]);
+
+  assert.deepEqual(visibleRows[0].result.titleHighlightData, [0, 2, 3, 3]);
+});
+
 test('top-bar keyboard traversal can map visible-row movement back to backend result indices', () => {
   const visibleRows = buildVisibleSearchRows([
     { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 100 },

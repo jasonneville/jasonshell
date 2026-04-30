@@ -143,6 +143,11 @@
   font-weight: 750;
 }
 
+.result-highlight {
+  color: var(--js-color-accent);
+  font-weight: 850;
+}
+
 .result-copy small,
 .result-kind,
 .empty-state {
