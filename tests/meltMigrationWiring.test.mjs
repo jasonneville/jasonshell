@@ -130,8 +130,8 @@ test('search panel and task-preview safe action buttons use Melt-backed real but
   assert.match(searchPanelSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
   assert.match(searchPanelSource, /<MeltActionButton[\s\S]*class="pin-folder"[\s\S]*ariaLabel=\{`Pin \$\{result\.title\} to the top bar`\}[\s\S]*onClick=\{\(event\) => pinFolderResult\(event, result\)\}/);
   assert.match(searchPanelSource, /role="option"/);
-  assert.match(searchPanelSource, /on:dblclick=\{\(\) => activateResult\(result\)\}/);
-  assert.match(searchPanelSource, /on:keydown=\{\(event\) => handleResultKeydown\(event, result\)\}/);
+  assert.match(searchPanelSource, /on:dblclick=\{\(\) => activateRow\(row\)\}/);
+  assert.match(searchPanelSource, /on:keydown=\{\(event\) => handleResultKeydown\(event, row\)\}/);
   assert.match(searchPanelSource, /on:dragstart=\{\(event\) => startFolderDrag\(event, result\)\}/);
   assert.doesNotMatch(searchPanelSource, /<button[\s\S]*class="pin-folder"/);
 

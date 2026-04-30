@@ -10,6 +10,7 @@ export const SEARCH_PANEL_SELECT_EVENT = 'search-panel:select';
 export const SEARCH_PANEL_QUERY_EVENT = 'search-panel:query';
 export const SEARCH_PANEL_KEY_EVENT = 'search-panel:key';
 export const SEARCH_PANEL_PIN_FOLDER_EVENT = 'search-panel:pin-folder';
+export const SEARCH_PANEL_EXPAND_GROUP_EVENT = 'search-panel:expand-group';
 export const SEARCH_PANEL_INTERACTION_EVENT = 'search-panel:interaction';
 export const SEARCH_PANEL_CLOSED_EVENT = 'search-panel:closed';
 

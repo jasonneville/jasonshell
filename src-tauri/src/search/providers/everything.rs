@@ -3,6 +3,7 @@ use crate::search::contracts::{
     SearchProviderReasonCode, SearchProviderTiming, SearchResult, SearchResultAction,
     SearchResultKind,
 };
+use crate::search::icons::icon_data_url_for_path;
 use crate::search_sources::everything_ffi::{
     self, EverythingSdkError, EverythingSdkRawResult, EverythingSdkRequest, EverythingSdkResultKind,
 };
@@ -392,7 +393,7 @@ fn map_sdk_result_for_mode(
             .map(parse_everything_highlight_indexes)
             .unwrap_or_default(),
         subtitle_highlight_data: Vec::new(),
-        icon_data_url: None,
+        icon_data_url: icon_data_url_for_path(&result.full_path),
     }
 }
 
@@ -783,6 +784,39 @@ mod tests {
         assert!(run.sdk_latency_ms.is_some());
         assert!(run.sdk_latency_ms.unwrap() >= 5.0);
         assert_eq!(run.results.len(), 1);
+        clear_everything_cache_for_test();
+    }
+
+    #[test]
+    fn simple_name_query_returns_rows_without_path_mode() {
+        clear_everything_cache_for_test();
+        let run = search_everything_with(
+            "jnev1",
+            5,
+            || EverythingDetection {
+                dll_path: Some(PathBuf::from(r"C:\Everything64.dll")),
+                installed_exe_path: Some(PathBuf::from(
+                    r"C:\Program Files\Everything\Everything.exe",
+                )),
+                process_running: true,
+                service_running: true,
+            },
+            |_, request| {
+                assert_eq!(request.query, "jnev1");
+                assert!(!request.full_path_search);
+                assert_eq!(request.sort, EverythingSortMode::NameAsc);
+                Ok(vec![EverythingSdkRawResult {
+                    full_path: PathBuf::from(r"C:\Users\jnev1"),
+                    kind: EverythingSdkResultKind::Folder,
+                    run_count: 1,
+                    highlighted_file_name: Some("*jnev1*".to_string()),
+                }])
+            },
+        );
+
+        assert_eq!(run.results.len(), 1);
+        assert_eq!(run.results[0].provider_id, SearchProviderId::Everything);
+        assert_eq!(run.results[0].kind, SearchResultKind::Folder);
         clear_everything_cache_for_test();
     }
 

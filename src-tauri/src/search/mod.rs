@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod contracts;
+pub(crate) mod icons;
 pub(crate) mod matcher;
 pub(crate) mod providers;
 pub(crate) mod scoring;
@@ -311,6 +312,7 @@ mod tests {
                 title: "Terminal - JasonShell".to_string(),
                 app_name: Some("Windows Terminal".to_string()),
                 executable_path: None,
+                icon_data_url: None,
             });
 
         let response = run_search_engine(request, |_| {});

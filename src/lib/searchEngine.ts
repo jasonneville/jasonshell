@@ -46,6 +46,7 @@ export type SearchOpenWindowContext = {
   title: string;
   appName?: string;
   executablePath?: string;
+  iconDataUrl?: string;
 };
 
 export type SearchQueryContext = {
@@ -411,12 +412,14 @@ function isSearchQueryContext(value: unknown): value is SearchQueryContext {
 
 function isSearchOpenWindowContext(value: unknown): value is SearchOpenWindowContext {
   const record = asRecord(value);
+  const iconDataUrl = record?.iconDataUrl;
   return Boolean(
     record &&
       typeof record.id === 'string' &&
       typeof record.title === 'string' &&
       (record.appName === undefined || typeof record.appName === 'string') &&
-      (record.executablePath === undefined || typeof record.executablePath === 'string')
+      (record.executablePath === undefined || typeof record.executablePath === 'string') &&
+      (iconDataUrl === undefined || (typeof iconDataUrl === 'string' && isSafeDataUrl(iconDataUrl)))
   );
 }
 

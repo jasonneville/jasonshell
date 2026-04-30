@@ -3,6 +3,8 @@ use crate::search::contracts::{
     SearchProviderHealthState, SearchProviderId, SearchProviderTiming, SearchResult,
     SearchResultAction, SearchResultKind,
 };
+use crate::search::icons::icon_data_url_for_path;
+use std::path::Path;
 use std::time::Instant;
 
 #[derive(Clone, Debug)]
@@ -82,6 +84,13 @@ fn window_result(
 ) -> SearchResult {
     let app_name = window.app_name.clone().unwrap_or_default();
     let executable_path = window.executable_path.clone().unwrap_or_default();
+    let icon_data_url = window.icon_data_url.clone().or_else(|| {
+        window
+            .executable_path
+            .as_deref()
+            .filter(|path| !path.trim().is_empty())
+            .and_then(|path| icon_data_url_for_path(Path::new(path)))
+    });
     SearchResult {
         id: format!("window:{}", window.id),
         provider_id: SearchProviderId::OpenWindows,
@@ -111,7 +120,7 @@ fn window_result(
         record_key: format!("window:{}", window.id),
         title_highlight_data: Vec::new(),
         subtitle_highlight_data: Vec::new(),
-        icon_data_url: None,
+        icon_data_url,
     }
 }
 
@@ -183,6 +192,7 @@ mod tests {
             title: "JasonShell - Visual Studio Code".to_string(),
             app_name: Some("Code".to_string()),
             executable_path: Some(r"C:\Users\me\AppData\Local\Programs\Code.exe".to_string()),
+            icon_data_url: None,
         }];
 
         let results = rank_open_windows("jasonshell", &windows, 10);

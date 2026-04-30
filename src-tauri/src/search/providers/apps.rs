@@ -2,11 +2,12 @@ use crate::search::contracts::{
     SearchProviderCacheState, SearchProviderHealth, SearchProviderHealthState, SearchProviderId,
     SearchProviderTiming, SearchResult, SearchResultAction, SearchResultKind,
 };
+use crate::search::icons::icon_data_url_for_path;
 use crate::search::matcher::{
-    best_match, query_tokens as match_query_tokens, MatchData, MatchField,
+    best_match, full_highlight, query_tokens as match_query_tokens, MatchData, MatchField,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use tauri::{AppHandle, Manager};
 
 const APP_INDEX_TTL: Duration = Duration::from_secs(60);
 const APP_INDEX_CACHE_FILE: &str = "search-app-index-v1.json";
-const APP_INDEX_CACHE_VERSION: u32 = 1;
+const APP_INDEX_CACHE_VERSION: u32 = 2;
 const MAX_INDEXED_APPS: usize = 4_000;
 const MAX_VISITED_APP_DIRS: usize = 8_000;
 
@@ -312,16 +313,17 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 fn build_app_index(roots: Vec<AppRoot>, limit: usize) -> Vec<AppIndexEntry> {
-    let mut seen = HashSet::new();
-    let mut entries = Vec::new();
+    let mut entries_by_key: HashMap<String, AppIndexEntry> = HashMap::new();
 
     for root in roots {
         if !root.path.exists() {
             continue;
         }
-        collect_app_entries(&root, limit, &mut seen, &mut entries);
+        collect_app_entries(&root, limit, &mut entries_by_key);
     }
 
+    let entries = entries_by_key.into_values().collect::<Vec<_>>();
+    let mut entries = collapse_duplicate_app_identities(entries);
     entries.sort_by(|left, right| {
         right
             .priority
@@ -336,15 +338,14 @@ fn build_app_index(roots: Vec<AppRoot>, limit: usize) -> Vec<AppIndexEntry> {
 fn collect_app_entries(
     root: &AppRoot,
     limit: usize,
-    seen: &mut HashSet<String>,
-    entries: &mut Vec<AppIndexEntry>,
+    entries_by_key: &mut HashMap<String, AppIndexEntry>,
 ) {
     let mut stack = vec![(root.path.clone(), 0usize)];
     let mut visited = 0usize;
 
     while let Some((dir, depth)) = stack.pop() {
         visited += 1;
-        if visited > MAX_VISITED_APP_DIRS || entries.len() >= limit {
+        if visited > MAX_VISITED_APP_DIRS || entries_by_key.len() >= limit {
             break;
         }
 
@@ -357,7 +358,7 @@ fn collect_app_entries(
                     stack.push((path, depth + 1));
                 }
             } else if has_extension(&path, root.extensions) {
-                push_app_entry(path, root, seen, entries);
+                push_app_entry(path, root, entries_by_key);
             }
         }
     }
@@ -366,22 +367,117 @@ fn collect_app_entries(
 fn push_app_entry(
     path: PathBuf,
     root: &AppRoot,
-    seen: &mut HashSet<String>,
-    entries: &mut Vec<AppIndexEntry>,
+    entries_by_key: &mut HashMap<String, AppIndexEntry>,
 ) {
-    let key = path.to_string_lossy().to_lowercase();
-    if !seen.insert(key) {
+    let title = display_name(&path);
+    let launch_path = canonical_launch_path(&path);
+    let dedupe_key = normalize_record_key(&launch_path.display().to_string());
+    let candidate = AppIndexEntry {
+        aliases: app_aliases(&title, &path),
+        title,
+        path: launch_path,
+        source: root.source.to_string(),
+        priority: root.priority,
+    };
+
+    if let Some(existing) = entries_by_key.get_mut(&dedupe_key) {
+        merge_aliases(existing, &candidate.aliases);
+        if should_replace_entry(existing, &candidate) {
+            let merged_aliases = merged_aliases(existing, &candidate.aliases);
+            *existing = candidate;
+            existing.aliases = merged_aliases;
+        }
         return;
     }
 
-    let title = display_name(&path);
-    entries.push(AppIndexEntry {
-        aliases: app_aliases(&title, &path),
-        title,
-        path,
-        source: root.source.to_string(),
-        priority: root.priority,
-    });
+    entries_by_key.insert(dedupe_key, candidate);
+}
+
+fn should_replace_entry(existing: &AppIndexEntry, candidate: &AppIndexEntry) -> bool {
+    let existing_windows_apps = is_windows_apps_path(&existing.path);
+    let candidate_windows_apps = is_windows_apps_path(&candidate.path);
+    if existing_windows_apps != candidate_windows_apps {
+        return !candidate_windows_apps;
+    }
+    if existing.priority == candidate.priority {
+        return source_rank(&candidate.source) > source_rank(&existing.source);
+    }
+    candidate.priority > existing.priority
+}
+
+fn merge_aliases(existing: &mut AppIndexEntry, aliases: &[String]) {
+    existing.aliases = merged_aliases(existing, aliases);
+}
+
+fn merged_aliases(existing: &AppIndexEntry, aliases: &[String]) -> Vec<String> {
+    let mut merged = existing.aliases.clone();
+    let mut seen = merged
+        .iter()
+        .map(|alias| alias.to_lowercase())
+        .collect::<HashSet<_>>();
+    for alias in aliases {
+        let key = alias.to_lowercase();
+        if seen.insert(key) {
+            merged.push(alias.clone());
+        }
+    }
+    merged
+}
+
+fn canonical_launch_path(path: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if has_lnk_extension(path) {
+            if let Some(target) = resolve_shortcut_target(path) {
+                return target;
+            }
+        }
+    }
+    path.to_path_buf()
+}
+
+fn collapse_duplicate_app_identities(entries: Vec<AppIndexEntry>) -> Vec<AppIndexEntry> {
+    let mut by_identity: HashMap<String, AppIndexEntry> = HashMap::new();
+    for entry in entries {
+        let identity_key = app_identity_key(&entry);
+        if let Some(existing) = by_identity.get_mut(&identity_key) {
+            merge_aliases(existing, &entry.aliases);
+            if should_replace_entry(existing, &entry) {
+                let merged = merged_aliases(existing, &entry.aliases);
+                *existing = entry;
+                existing.aliases = merged;
+            }
+            continue;
+        }
+        by_identity.insert(identity_key, entry);
+    }
+    by_identity.into_values().collect()
+}
+
+fn app_identity_key(entry: &AppIndexEntry) -> String {
+    let title_key = normalize(&entry.title);
+    let stem_key = entry
+        .path
+        .file_stem()
+        .map(|stem| normalize(&stem.to_string_lossy()))
+        .unwrap_or_default();
+    format!("{title_key}|{stem_key}")
+}
+
+fn is_windows_apps_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('/', r"\").to_ascii_lowercase();
+    normalized.contains(r"\microsoft\windowsapps\")
+}
+
+fn source_rank(source: &str) -> i32 {
+    match source {
+        "pinnedTaskbar" => 4,
+        "currentUserStartMenu" => 3,
+        "allUsersStartMenu" => 2,
+        "programs" => 1,
+        "windowsApps" => 0,
+        _ => -1,
+    }
 }
 
 fn rank_apps(entries: &[AppIndexEntry], query: &str, limit: usize) -> Vec<SearchResult> {
@@ -423,13 +519,13 @@ fn app_result(entry: &AppIndexEntry, score: i32, matched: MatchData) -> SearchRe
         score,
         match_reason: matched.reason.to_string(),
         record_key,
-        title_highlight_data: if matched.field == MatchField::Title {
-            matched.highlight_data
-        } else {
-            Vec::new()
+        title_highlight_data: match matched.field {
+            MatchField::Title => matched.highlight_data,
+            MatchField::Hidden => full_highlight(&entry.title),
+            MatchField::Subtitle => Vec::new(),
         },
         subtitle_highlight_data: Vec::new(),
-        icon_data_url: None,
+        icon_data_url: icon_data_url_for_path(&entry.path),
     }
 }
 
@@ -489,6 +585,76 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
         .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
         .map(|extension| extensions.iter().any(|expected| extension == *expected))
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn has_lnk_extension(path: &Path) -> bool {
+    path.extension()
+        .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
+        .map(|extension| extension == "lnk")
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_shortcut_target(shortcut_path: &Path) -> Option<PathBuf> {
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM_READ,
+    };
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::Win32::UI::Shell::{SLR_NOSEARCH, SLR_NOTRACK, SLR_NO_UI};
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+
+    struct ComGuard {
+        initialized: bool,
+    }
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.initialized {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let _com_guard = ComGuard {
+        initialized: unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() },
+    };
+    let shell_link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }.ok()?;
+    let persist_file: IPersistFile = shell_link.cast().ok()?;
+    let shortcut_wide = to_wide(shortcut_path);
+    unsafe { persist_file.Load(PCWSTR(shortcut_wide.as_ptr()), STGM_READ) }.ok()?;
+    unsafe {
+        let _ = shell_link.Resolve(
+            HWND::default(),
+            (SLR_NO_UI.0 | SLR_NOSEARCH.0 | SLR_NOTRACK.0) as u32,
+        );
+    }
+
+    let mut target_path = vec![0_u16; 260];
+    let mut find_data = WIN32_FIND_DATAW::default();
+    unsafe { shell_link.GetPath(&mut target_path, &mut find_data, 0) }.ok()?;
+    let path = trim_wide_buffer(&target_path);
+    if path.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(path))
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn trim_wide_buffer(buffer: &[u16]) -> String {
+    let end = buffer.iter().position(|value| *value == 0).unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..end]).trim().to_string()
 }
 
 fn read_sorted_dir(path: &Path) -> Vec<fs::DirEntry> {
@@ -599,6 +765,7 @@ fn current_epoch_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -751,6 +918,77 @@ mod tests {
 
         assert_eq!(result.title, "Visual Studio Code");
         assert_eq!(result.match_reason, "tokenPrefix");
+    }
+
+    #[test]
+    fn alias_only_app_match_gets_visible_highlight_fallback() {
+        let entry = AppIndexEntry {
+            title: "Spotify".to_string(),
+            path: PathBuf::from(r"C:\Apps\Spotify.lnk"),
+            source: "testStartMenu".to_string(),
+            aliases: vec!["music player".to_string()],
+            priority: 1_550,
+        };
+
+        let result = rank_apps(&[entry], "music player", 1).pop().unwrap();
+
+        assert_eq!(result.title, "Spotify");
+        assert!(!result.title_highlight_data.is_empty());
+    }
+
+    #[test]
+    fn app_index_collapses_duplicate_launch_paths_to_single_entry() {
+        let mut deduped = HashMap::new();
+        let root_a = AppRoot {
+            path: PathBuf::from(r"C:\root-a"),
+            extensions: &["lnk"],
+            max_depth: 1,
+            priority: 1_550,
+            source: "startMenuA",
+        };
+        let root_b = AppRoot {
+            path: PathBuf::from(r"C:\root-b"),
+            extensions: &["lnk"],
+            max_depth: 1,
+            priority: 1_540,
+            source: "startMenuB",
+        };
+        let launch_path = PathBuf::from(r"C:\Apps\Spotify.exe");
+        push_app_entry(launch_path.clone(), &root_a, &mut deduped);
+        push_app_entry(launch_path, &root_b, &mut deduped);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped
+                .values()
+                .next()
+                .map(|entry| entry.source.as_str()),
+            Some("startMenuA")
+        );
+    }
+
+    #[test]
+    fn identity_collapse_prefers_non_windows_apps_path() {
+        let windows_apps_entry = AppIndexEntry {
+            title: "Spotify".to_string(),
+            path: PathBuf::from(r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\Spotify.exe"),
+            source: "windowsApps".to_string(),
+            aliases: vec!["Spotify".to_string()],
+            priority: 1_550,
+        };
+        let native_entry = AppIndexEntry {
+            title: "Spotify".to_string(),
+            path: PathBuf::from(r"C:\Users\me\AppData\Roaming\Spotify\Spotify.exe"),
+            source: "currentUserStartMenu".to_string(),
+            aliases: vec!["Spotify".to_string(), "Music".to_string()],
+            priority: 1_500,
+        };
+
+        let collapsed = collapse_duplicate_app_identities(vec![windows_apps_entry, native_entry]);
+
+        assert_eq!(collapsed.len(), 1);
+        assert!(collapsed[0].path.to_string_lossy().contains(r"\Roaming\Spotify\Spotify.exe"));
+        assert!(collapsed[0].aliases.iter().any(|alias| alias == "Music"));
     }
 
     fn test_dir(name: &str) -> PathBuf {

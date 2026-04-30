@@ -43,6 +43,8 @@ pub(crate) struct SearchOpenWindowContext {
     pub app_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_data_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]

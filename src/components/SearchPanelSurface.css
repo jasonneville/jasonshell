@@ -188,6 +188,27 @@
   border-color: var(--js-color-accent-border);
 }
 
+.result-show-more {
+  background: transparent;
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text-muted);
+  cursor: pointer;
+  font-size: 0.6rem;
+  font-weight: 760;
+  justify-self: start;
+  margin-left: calc(1.8rem + var(--js-space-3));
+  padding: 0.18rem 0.44rem;
+  text-transform: uppercase;
+}
+
+.result-show-more:hover,
+.result-show-more:focus-visible {
+  background: var(--js-color-surface-overlay);
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text);
+}
+
 .empty-state {
   display: grid;
   height: calc(100% - 2rem);

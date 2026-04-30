@@ -2,6 +2,7 @@ use crate::search::contracts::{
     SearchProviderCacheState, SearchProviderHealth, SearchProviderHealthState, SearchProviderId,
     SearchProviderTiming, SearchQueryContext, SearchResult, SearchResultAction, SearchResultKind,
 };
+use crate::search::icons::icon_data_url_for_path;
 use crate::search::matcher::{best_match, query_tokens as match_query_tokens};
 use std::env;
 use std::path::PathBuf;
@@ -214,6 +215,7 @@ fn rank_local_rows(rows: &[LocalRow], query: &str, limit: usize) -> Vec<SearchRe
 
 fn local_result(row: &LocalRow, score: i32, reason: &'static str) -> SearchResult {
     let path_text = row.path.as_ref().map(|path| path.display().to_string());
+    let icon_data_url = row.path.as_deref().and_then(icon_data_url_for_path);
     SearchResult {
         id: row.id.clone(),
         provider_id: row.provider_id,
@@ -243,7 +245,7 @@ fn local_result(row: &LocalRow, score: i32, reason: &'static str) -> SearchResul
             .unwrap_or_else(|| row.id.clone()),
         title_highlight_data: Vec::new(),
         subtitle_highlight_data: Vec::new(),
-        icon_data_url: None,
+        icon_data_url,
     }
 }
 

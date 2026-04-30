@@ -21,6 +21,7 @@
     runControlPanel,
     SEARCH_PANEL_ACTIVATE_EVENT,
     SEARCH_PANEL_CLOSED_EVENT,
+    SEARCH_PANEL_EXPAND_GROUP_EVENT,
     SEARCH_PANEL_INTERACTION_EVENT,
     SEARCH_PANEL_KEY_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
@@ -84,11 +85,16 @@
   import {
     buildVisibleSearchRows,
     createLatestSearchQueryController,
+    DEFAULT_VISIBLE_GROUP_LIMIT,
+    nextProgressiveSearchResultSet,
     nextVisibleRowIndex,
+    resolveVisibleSearchRowResultIndex,
     searchModeFromSettings,
     searchPanelKeyboardAction,
     selectedVisibleRowIndex,
-    shouldApplySearchEngineResponse
+    shouldApplySearchEngineResponse,
+    type SearchExpandableGroupId,
+    type SearchVisibleRowIdentity
   } from '../features/search/searchUxState';
   import MeltActionButton from './melt/MeltActionButton.svelte';
 
@@ -98,6 +104,7 @@
   let openWindows: TaskbarWindow[] = [];
   let stackPins: StackPin[] = [];
   let searchResults: SearchPanelResult[] = [];
+  let searchResultsQuery = '';
   let searchQuery = '';
   let searchOpen = false;
   let selectedIndex = 0;
@@ -116,6 +123,7 @@
   let searchPanelPayloadSequence = 0;
   let searchMode: SearchMode = 'centeredHotkey';
   let searchPresentation: 'anchored' | 'centered' = 'centered';
+  let expandedVisibleGroups = new Set<SearchExpandableGroupId>();
   let searchPanelAnchor: SearchPanelAnchorState | null = null;
   let lastSearchPanelPayloadSignature: string | null = null;
   let pinDropStatus = '';
@@ -134,7 +142,10 @@
   const SOUND_PANEL_ID = 'audio-panel';
 
   $: selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
-  $: visibleRows = buildVisibleSearchRows(searchResults);
+  $: visibleRows = buildVisibleSearchRows(searchResults, {
+    expandedGroups: expandedVisibleGroups,
+    perGroupLimit: DEFAULT_VISIBLE_GROUP_LIMIT
+  });
   $: selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
   $: selectedVisibleResult = selectedVisibleIndex >= 0 ? visibleRows[selectedVisibleIndex]?.result : undefined;
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
@@ -634,7 +645,7 @@
     });
   }
 
-  function scheduleSearchEngine(query: string) {
+  function scheduleSearchEngine(query: string, existingRequest?: { query: string; sequence: number } | null) {
     if (searchEngineTimer !== null) {
       window.clearTimeout(searchEngineTimer);
       searchEngineTimer = null;
@@ -642,12 +653,13 @@
 
     if (!query.trim()) {
       searchResults = [];
+      searchResultsQuery = '';
       searchStatus = 'Search is ready';
       queueSearchPanelPublish();
       return null;
     }
 
-    const request = searchQueryController.next(query);
+    const request = existingRequest ?? searchQueryController.next(query);
     searchStatus = 'Searching...';
     searchEngineTimer = window.setTimeout(() => {
       searchEngineTimer = null;
@@ -662,12 +674,20 @@
     }
     const nextPayload = searchEngineProgressToPanelPayload(payload, selectedIndex, searchPresentation);
     const currentStableKey = searchResults[selectedIndex]?.recordKey ?? searchResults[selectedIndex]?.id ?? null;
-    searchResults = payload.phase === 'complete'
-      ? nextPayload.results
-      : mergeSearchPanelResultsByStableKey(searchResults, nextPayload.results);
+    const nextResultSet = nextProgressiveSearchResultSet(
+      { query: searchResultsQuery, results: searchResults },
+      { query: payload.query, phase: payload.phase, results: nextPayload.results },
+      mergeSearchPanelResultsByStableKey
+    );
+    const replacedResultSet = nextResultSet.query !== searchResultsQuery;
+    searchResults = nextResultSet.results;
+    searchResultsQuery = nextResultSet.query;
     selectedIndex = currentStableKey
       ? Math.max(0, searchResults.findIndex((result) => (result.recordKey ?? result.id) === currentStableKey))
       : Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
+    if (replacedResultSet && searchResults.length) {
+      selectedIndex = Math.min(nextPayload.selectedIndex, searchResults.length - 1);
+    }
     searchStatus = nextPayload.statusMessage;
     queueSearchPanelPublish({
       ...nextPayload,
@@ -687,7 +707,8 @@
           openWindows: openWindows.map((window) => ({
             id: String(window.hwnd),
             title: window.title,
-            appName: window.processName
+            appName: window.processName,
+            iconDataUrl: window.iconDataUrl
           }))
         }
       });
@@ -701,6 +722,7 @@
 
       const payload = searchEngineResponseToPanelPayload(response, selectedIndex, searchPresentation);
       searchResults = payload.results;
+      searchResultsQuery = response.query;
       selectedIndex = payload.selectedIndex;
       searchStatus = payload.statusMessage;
       queueSearchPanelPublish({
@@ -763,10 +785,13 @@
   }
 
   function applySearchQuery(nextQuery: string) {
+    if (nextQuery !== searchQuery) {
+      expandedVisibleGroups = new Set<SearchExpandableGroupId>();
+    }
     searchQuery = nextQuery;
     selectedIndex = 0;
     searchStatus = searchQuery.trim() ? 'Searching...' : 'Search is ready';
-    const request = scheduleSearchEngine(searchQuery);
+    const request = searchQuery.trim() ? searchQueryController.next(searchQuery) : null;
     queueSearchPanelPublish({
       query: searchQuery,
       results: searchQuery.trim() ? searchResults : [],
@@ -779,6 +804,9 @@
     openConfiguredPanel();
     if (request) {
       publishPendingSearchPayload(request.sequence);
+      scheduleSearchEngine(searchQuery, request);
+    } else {
+      scheduleSearchEngine(searchQuery, request);
     }
   }
 
@@ -817,9 +845,22 @@
   }
 
   function selectSearchResult(resultId: string) {
-    const index = searchResults.findIndex((result) => result.id === resultId);
+    const index = resolveVisibleSearchRowResultIndex(searchResults, resultId);
     if (index >= 0) {
-      selectedIndex = index;
+      if (selectedIndex !== index) {
+        selectedIndex = index;
+        queueSearchPanelPublish();
+      }
+    }
+  }
+
+  function selectSearchVisibleRow(identity: SearchVisibleRowIdentity | string) {
+    const index = resolveVisibleSearchRowResultIndex(searchResults, identity);
+    if (index >= 0) {
+      if (selectedIndex !== index) {
+        selectedIndex = index;
+        queueSearchPanelPublish();
+      }
     }
   }
 
@@ -841,15 +882,23 @@
     void loadSearchCatalog();
     void loadSearchMode();
     void loadStackPins();
-    void listen<string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
+    void listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
-      void activateResult(searchResults.find((result) => result.id === event.payload));
+      const index = resolveVisibleSearchRowResultIndex(searchResults, event.payload);
+      void activateResult(index >= 0 ? searchResults[index] : undefined);
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
-    void listen<string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
+    void listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
       markSearchPanelInteraction();
-      selectSearchResult(event.payload);
+      selectSearchVisibleRow(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<SearchExpandableGroupId>(SEARCH_PANEL_EXPAND_GROUP_EVENT, (event) => {
+      markSearchPanelInteraction();
+      expandedVisibleGroups = new Set([...expandedVisibleGroups, event.payload]);
+      queueSearchPanelPublish();
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });

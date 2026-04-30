@@ -35,10 +35,10 @@
   --js-color-control-active: rgba(138, 167, 255, 0.24);
   --js-color-border: rgba(227, 235, 255, 0.14);
   --js-color-border-soft: rgba(227, 235, 255, 0.08);
-  --js-color-accent: #8aa7ff;
+  --js-color-accent: #c0d8e7;
   --js-color-accent-soft: rgba(91, 130, 255, 0.18);
-  --js-color-accent-border: rgba(138, 167, 255, 0.44);
-  --js-color-selected: rgba(91, 130, 255, 0.2);
+  --js-color-accent-border: rgba(0, 0, 0, 0.44);
+  --js-color-selected: rgba(45, 45, 45, 0.2);
   --js-color-success: rgba(92, 214, 149, 0.18);
   --js-color-success-border: rgba(92, 214, 149, 0.42);
   --js-color-info: rgba(91, 130, 255, 0.16);

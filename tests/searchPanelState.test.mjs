@@ -305,9 +305,9 @@ test('top-bar defers expensive search render work out of the input handler', () 
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
   assert.match(inputHandler, /applySearchQuery\(\(event\.currentTarget as HTMLInputElement\)\.value\)/);
-  assert.match(source, /function applySearchQuery\(nextQuery: string\)[\s\S]*scheduleSearchEngine\(searchQuery\)/);
+  assert.match(source, /function applySearchQuery\(nextQuery: string\)[\s\S]*scheduleSearchEngine\(searchQuery, request\)/);
   assert.match(source, /function publishPendingSearchPayload/);
-  assert.match(source, /function scheduleSearchEngine\(query: string\)/);
+  assert.match(source, /function scheduleSearchEngine\(query: string, existingRequest\?: \{ query: string; sequence: number \} \| null\)/);
   assert.doesNotMatch(source, /queuedSearchEngineRequest/);
   assert.match(source, /searchEngine\(\{/);
   assert.match(source, /SEARCH_ENGINE_PROGRESS_EVENT/);
@@ -328,7 +328,7 @@ test('top-bar defers expensive search render work out of the input handler', () 
   assert.match(source, /await openShellPath\(result\.path\)/);
   assert.match(source, /const needsNativeShow = !searchOpen \|\| searchPresentation !== 'centered'/);
   assert.match(source, /if \(needsNativeShow\) \{[\s\S]*showCenteredSearchPanel\(readCenteredSearchPanelSize\(\)\)/);
-  assert.match(source, /visibleRows = buildVisibleSearchRows\(searchResults\)/);
+  assert.match(source, /visibleRows = buildVisibleSearchRows\(searchResults,\s*\{/);
   assert.match(source, /selectedVisibleIndex = selectedVisibleRowIndex\(visibleRows, selectedIndex\)/);
   assert.match(source, /const nextIndex = nextVisibleRowIndex\(visibleRows, selectedVisibleIndex, 1\)/);
   assert.match(source, /const nextIndex = nextVisibleRowIndex\(visibleRows, selectedVisibleIndex, -1\)/);
@@ -343,10 +343,20 @@ test('search-panel fallback fetches cannot overwrite newer event payloads', () =
   assert.match(source, /if \(generation !== fallbackGeneration\) \{[\s\S]*return;[\s\S]*\}[\s\S]*applyPayload\(payload\)/);
 });
 
+test('centered search surface keeps local typing immediate without unconditional payload refocus', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /let optimisticQueryDraft: string \| null = null;/);
+  assert.match(source, /\$: displayedQuery = optimisticQueryDraft \?\? query;/);
+  assert.match(source, /optimisticQueryDraft = value;/);
+  assert.match(source, /if \(shouldFocusCenteredQueryInput\(\)\) \{\s*void focusQueryInput\(\);/);
+  assert.doesNotMatch(source, /if \(event\.payload\.presentation === 'centered'\) \{\s*void focusQueryInput\(\);/);
+});
+
 test('search panel renders a flat visibleRows model instead of grouped buckets', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /visibleRows = buildVisibleSearchRows\(results\)/);
+  assert.match(source, /visibleRows = buildVisibleSearchRows\(results,\s*\{/);
   assert.match(source, /\{#each visibleRows as row, index/);
   assert.doesNotMatch(source, /resultGroups = groupSearchResults\(results\)/);
   assert.doesNotMatch(source, /\{#each resultGroups as group/);
@@ -362,6 +372,7 @@ test('search panel keyboard and aria state follow visibleRows order', () => {
   assert.match(source, /use:trackVisibleRow=\{index\}/);
   assert.match(source, /selectVisibleOffset\(1\)/);
   assert.match(source, /selectVisibleOffset\(-1\)/);
-  assert.match(source, /activateResult\(selectedRow\.result\)/);
+  assert.match(source, /activateRow\(selectedRow\)/);
+  assert.match(source, /searchVisibleRowIdentity\(row\)/);
   assert.doesNotMatch(source, /use:trackResultRow=\{index\}/);
 });

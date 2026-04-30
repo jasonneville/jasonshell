@@ -2,7 +2,7 @@ use crate::search::contracts::{
     SearchProviderId, SearchResult, SearchResultAction, SearchResultKind,
 };
 use crate::search::matcher::{
-    best_match, query_tokens as match_query_tokens, MatchField, MatchTier,
+    best_match, full_highlight, query_tokens as match_query_tokens, MatchField, MatchTier,
 };
 use std::collections::HashMap;
 
@@ -106,17 +106,21 @@ fn match_quality_score(
         MatchTier::Exact => match matched.field {
             MatchField::Title => (MatchQuality::Exact, matched.highlight_data, Vec::new()),
             MatchField::Subtitle => (MatchQuality::Exact, Vec::new(), matched.highlight_data),
-            MatchField::Hidden => (MatchQuality::Exact, Vec::new(), Vec::new()),
+            MatchField::Hidden => (MatchQuality::Exact, full_highlight(&row.title), Vec::new()),
         },
         MatchTier::Prefix => match matched.field {
             MatchField::Title => (MatchQuality::Prefix, matched.highlight_data, Vec::new()),
             MatchField::Subtitle => (MatchQuality::Prefix, Vec::new(), matched.highlight_data),
-            MatchField::Hidden => (MatchQuality::Prefix, Vec::new(), Vec::new()),
+            MatchField::Hidden => (MatchQuality::Prefix, full_highlight(&row.title), Vec::new()),
         },
         MatchTier::Acronym => match matched.field {
             MatchField::Title => (MatchQuality::Acronym, matched.highlight_data, Vec::new()),
             MatchField::Subtitle => (MatchQuality::Acronym, Vec::new(), matched.highlight_data),
-            MatchField::Hidden => (MatchQuality::Acronym, Vec::new(), Vec::new()),
+            MatchField::Hidden => (
+                MatchQuality::Acronym,
+                full_highlight(&row.title),
+                Vec::new(),
+            ),
         },
         MatchTier::TokenPrefix => match matched.field {
             MatchField::Title => (
@@ -129,7 +133,11 @@ fn match_quality_score(
                 Vec::new(),
                 matched.highlight_data,
             ),
-            MatchField::Hidden => (MatchQuality::TokenPrefix, Vec::new(), Vec::new()),
+            MatchField::Hidden => (
+                MatchQuality::TokenPrefix,
+                full_highlight(&row.title),
+                Vec::new(),
+            ),
         },
         MatchTier::Subsequence => match matched.field {
             MatchField::Title => (
@@ -142,7 +150,11 @@ fn match_quality_score(
                 Vec::new(),
                 matched.highlight_data,
             ),
-            MatchField::Hidden => (MatchQuality::Subsequence, Vec::new(), Vec::new()),
+            MatchField::Hidden => (
+                MatchQuality::Subsequence,
+                full_highlight(&row.title),
+                Vec::new(),
+            ),
         },
         MatchTier::EditDistance => match matched.field {
             MatchField::Title => (
@@ -155,7 +167,11 @@ fn match_quality_score(
                 Vec::new(),
                 matched.highlight_data,
             ),
-            MatchField::Hidden => (MatchQuality::EditDistance, Vec::new(), Vec::new()),
+            MatchField::Hidden => (
+                MatchQuality::EditDistance,
+                full_highlight(&row.title),
+                Vec::new(),
+            ),
         },
     };
 
@@ -468,6 +484,69 @@ mod tests {
     }
 
     #[test]
+    fn windows_settings_intent_beats_incidental_everything_rows() {
+        let rows = vec![
+            row(
+                "everything:file:windows-settings-notes",
+                SearchProviderId::Everything,
+                SearchResultKind::File,
+                "windows settings notes.txt",
+                Some(r"C:\docs\windows settings notes.txt"),
+            ),
+            row(
+                "setting:windows-settings",
+                SearchProviderId::Settings,
+                SearchResultKind::Setting,
+                "Windows Settings",
+                Some("ms-settings:"),
+            ),
+        ];
+
+        let ranked = rank_visible_results("windows settings", rows, 10);
+
+        assert_eq!(ranked[0].provider_id, SearchProviderId::Settings);
+        assert_eq!(ranked[0].id, "setting:windows-settings");
+    }
+
+    #[test]
+    fn control_panel_intent_beats_incidental_everything_rows() {
+        let rows = vec![
+            row(
+                "everything:folder:control-panel-docs",
+                SearchProviderId::Everything,
+                SearchResultKind::Folder,
+                "Control Panel",
+                Some(r"C:\docs\Control Panel"),
+            ),
+            SearchResult {
+                id: "setting:control-panel".to_string(),
+                provider_id: SearchProviderId::Settings,
+                kind: SearchResultKind::Setting,
+                title: "Control Panel".to_string(),
+                subtitle: Some("Open classic Control Panel".to_string()),
+                path: Some("control.exe".to_string()),
+                action: SearchResultAction::RunControlPanel {
+                    executable: "control.exe".to_string(),
+                    args: None,
+                },
+                terms: vec!["control".to_string(), "panel".to_string()],
+                aliases: vec!["control panel".to_string()],
+                score: 0,
+                match_reason: "fixture".to_string(),
+                record_key: "setting:control-panel".to_string(),
+                title_highlight_data: Vec::new(),
+                subtitle_highlight_data: Vec::new(),
+                icon_data_url: None,
+            },
+        ];
+
+        let ranked = rank_visible_results("control panel", rows, 10);
+
+        assert_eq!(ranked[0].provider_id, SearchProviderId::Settings);
+        assert_eq!(ranked[0].id, "setting:control-panel");
+    }
+
+    #[test]
     fn app_intent_wins_app_query() {
         let rows = vec![
             row(
@@ -628,5 +707,25 @@ mod tests {
         assert_eq!(ranked[0].id, "setting:display");
         assert_eq!(ranked[0].match_reason, "tokenPrefix");
         assert_eq!(ranked[0].title_highlight_data, vec![0, 4, 8, 3]);
+    }
+
+    #[test]
+    fn alias_only_app_match_gets_visible_highlight_fallback() {
+        let mut app = row(
+            "app:spotify",
+            SearchProviderId::Apps,
+            SearchResultKind::App,
+            "Spotify",
+            Some(r"C:\Start Menu\Spotify.lnk"),
+        );
+        app.aliases = vec!["music player".to_string()];
+
+        let ranked = rank_visible_results("music player", vec![app], 10);
+
+        assert_eq!(ranked[0].id, "app:spotify");
+        assert!(
+            !ranked[0].title_highlight_data.is_empty()
+                || !ranked[0].subtitle_highlight_data.is_empty()
+        );
     }
 }

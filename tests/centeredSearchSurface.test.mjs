@@ -53,3 +53,38 @@ test('search panel surface owns centered input and resize grip wiring', () => {
   assert.match(source, /resizeSearchPanel\(size\)/);
   assert.match(source, /writeCenteredSearchPanelSize/);
 });
+
+test('centered search surface targets top-bar explicitly for cross-window search intents', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  assert.match(source, /import \{ emitTo \} from '@tauri-apps\/api\/event';/);
+  assert.match(source, /topBarWebviewWindowEventTarget/);
+  assert.match(source, /const topBarTarget = topBarWebviewWindowEventTarget\(\);/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, value\)/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_KEY_EVENT, event\.key\)/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_SELECT_EVENT, searchVisibleRowIdentity\(row\)\)/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_ACTIVATE_EVENT, searchVisibleRowIdentity\(row\)\)/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_INTERACTION_EVENT, null\)/);
+});
+
+test('centered search surface keeps a local optimistic query draft while backend search catches up', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  assert.match(source, /let optimisticQueryDraft: string \| null = null;/);
+  assert.match(source, /\$: displayedQuery = optimisticQueryDraft \?\? query;/);
+  assert.match(source, /optimisticQueryDraft = value;/);
+  assert.match(source, /value=\{displayedQuery\}/);
+  assert.match(source, /if \(panelState\.query === '' \|\| optimisticQueryDraft === panelState\.query\) \{/);
+});
+
+test('centered search surface hides immediately on escape and only refocuses when panel focus is elsewhere', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  assert.match(source, /import \{\s*getSearchPanelPayload,\s*hideSearchPanel,/);
+  assert.match(source, /function hideCenteredPanelImmediately\(\) \{/);
+  assert.match(source, /void hideSearchPanel\(\)\.catch\(\(\) => undefined\);/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_KEY_EVENT, 'Escape'\)/);
+  assert.match(source, /if \(event\.key === 'Escape' && presentation === 'centered'\) \{/);
+  assert.match(source, /if \(presentation === 'centered'\) \{\s*hideCenteredPanelImmediately\(\);/);
+  assert.match(source, /function shouldFocusCenteredQueryInput\(\) \{/);
+  assert.match(source, /document\.activeElement === queryInput/);
+  assert.match(source, /document\.activeElement instanceof HTMLElement && document\.activeElement\.closest\('\.search-panel'\)/);
+  assert.doesNotMatch(source, /if \(event\.payload\.presentation === 'centered'\) \{\s*void focusQueryInput\(\);/);
+});

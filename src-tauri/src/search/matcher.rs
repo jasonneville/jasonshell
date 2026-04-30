@@ -73,6 +73,15 @@ pub(crate) fn query_tokens(query: &str) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn full_highlight(value: &str) -> Vec<usize> {
+    let len = value.chars().count();
+    if len == 0 {
+        Vec::new()
+    } else {
+        vec![0, len]
+    }
+}
+
 pub(crate) fn acronym(value: &str) -> String {
     word_parts(value)
         .iter()

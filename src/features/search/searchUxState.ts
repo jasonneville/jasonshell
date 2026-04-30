@@ -11,6 +11,7 @@ export type SearchVisibleGroupId =
   | 'settings'
   | 'windows'
   | 'commands';
+export type SearchExpandableGroupId = Exclude<SearchVisibleGroupId, 'bestMatch'>;
 
 export type GroupedSearchResult = {
   result: SearchPanelResult;
@@ -33,6 +34,35 @@ export type SearchVisibleRow = {
   groupId: SearchVisibleGroupId;
   groupLabel: string;
   showGroupLabel: boolean;
+};
+
+export type SearchVisibleRowIdentity = {
+  id: string;
+  rowKey?: string;
+  recordKey?: string;
+  resultIndex?: number;
+};
+export type SearchVisibleGroupOverflow = {
+  groupId: SearchExpandableGroupId;
+  groupLabel: string;
+  totalCount: number;
+  visibleCount: number;
+  hiddenCount: number;
+};
+export type SearchVisibleRowsBuildOptions = {
+  expandedGroups?: ReadonlySet<SearchExpandableGroupId>;
+  perGroupLimit?: number;
+};
+
+export type SearchProgressiveResultSet = {
+  query: string;
+  results: SearchPanelResult[];
+};
+
+export type SearchProgressiveResultUpdate = {
+  query: string;
+  phase?: 'typing' | 'local' | 'provider' | 'complete' | 'error';
+  results: SearchPanelResult[];
 };
 
 export type SearchResultActionHints = {
@@ -66,7 +96,7 @@ export type SearchKeyboardAction =
   | 'selectNext';
 
 const GROUP_ORDER: SearchResultGroupId[] = ['everything', 'apps', 'windows', 'places', 'files', 'commands'];
-const VISIBLE_GROUP_ORDER: SearchVisibleGroupId[] = [
+const VISIBLE_GROUP_ORDER: SearchExpandableGroupId[] = [
   'apps',
   'folders',
   'files',
@@ -74,6 +104,7 @@ const VISIBLE_GROUP_ORDER: SearchVisibleGroupId[] = [
   'windows',
   'commands'
 ];
+export const DEFAULT_VISIBLE_GROUP_LIMIT = 7;
 
 export function groupSearchResults(results: readonly SearchPanelResult[]): SearchResultGroup[] {
   const groups = new Map<SearchResultGroupId, SearchResultGroup>();
@@ -94,10 +125,15 @@ export function groupSearchResults(results: readonly SearchPanelResult[]): Searc
   );
 }
 
-export function buildVisibleSearchRows(results: readonly SearchPanelResult[]): SearchVisibleRow[] {
+export function buildVisibleSearchRows(
+  results: readonly SearchPanelResult[],
+  options: SearchVisibleRowsBuildOptions = {}
+): SearchVisibleRow[] {
   const visibleRows: SearchVisibleRow[] = [];
   const bestMatchCount = Math.min(results.length, 3);
   const remainingGroups = new Map<SearchVisibleGroupId, GroupedSearchResult[]>();
+  const perGroupLimit = Math.max(1, options.perGroupLimit ?? DEFAULT_VISIBLE_GROUP_LIMIT);
+  const expandedGroups = options.expandedGroups;
 
   results.slice(0, bestMatchCount).forEach((result, index) => {
     visibleRows.push({
@@ -126,7 +162,8 @@ export function buildVisibleSearchRows(results: readonly SearchPanelResult[]): S
     if (!items?.length) {
       continue;
     }
-    items.forEach((item, itemIndex) => {
+    const visibleItems = expandedGroups?.has(groupId) ? items : items.slice(0, perGroupLimit);
+    visibleItems.forEach((item, itemIndex) => {
       visibleRows.push({
         id: item.result.id,
         rowKey: visibleRowKey(item.result.id, item.index),
@@ -142,6 +179,44 @@ export function buildVisibleSearchRows(results: readonly SearchPanelResult[]): S
   }
 
   return visibleRows;
+}
+
+export function buildVisibleSearchGroupOverflows(
+  results: readonly SearchPanelResult[],
+  options: SearchVisibleRowsBuildOptions = {}
+): SearchVisibleGroupOverflow[] {
+  const bestMatchCount = Math.min(results.length, 3);
+  const remainingGroups = new Map<SearchVisibleGroupId, GroupedSearchResult[]>();
+  const expandedGroups = options.expandedGroups;
+  const perGroupLimit = Math.max(1, options.perGroupLimit ?? DEFAULT_VISIBLE_GROUP_LIMIT);
+  const overflows: SearchVisibleGroupOverflow[] = [];
+
+  results.slice(bestMatchCount).forEach((result, offset) => {
+    const resultIndex = bestMatchCount + offset;
+    const groupId = searchVisibleGroupId(result);
+    const items = remainingGroups.get(groupId) ?? [];
+    items.push({ result, index: resultIndex });
+    remainingGroups.set(groupId, items);
+  });
+
+  for (const groupId of VISIBLE_GROUP_ORDER) {
+    const items = remainingGroups.get(groupId);
+    if (!items?.length || expandedGroups?.has(groupId)) {
+      continue;
+    }
+    if (items.length <= perGroupLimit) {
+      continue;
+    }
+    overflows.push({
+      groupId,
+      groupLabel: visibleGroupLabel(groupId),
+      totalCount: items.length,
+      visibleCount: perGroupLimit,
+      hiddenCount: items.length - perGroupLimit
+    });
+  }
+
+  return overflows;
 }
 
 export function selectedVisibleRowIndex(
@@ -163,6 +238,76 @@ export function nextVisibleRowIndex(
     return direction > 0 ? 0 : visibleRows.length - 1;
   }
   return Math.max(0, Math.min(visibleRows.length - 1, currentVisibleIndex + direction));
+}
+
+export function searchVisibleRowIdentity(row: SearchVisibleRow): SearchVisibleRowIdentity {
+  return {
+    id: row.id,
+    rowKey: row.rowKey,
+    recordKey: row.result.recordKey,
+    resultIndex: row.resultIndex
+  };
+}
+
+export function resolveVisibleSearchRowResultIndex(
+  results: readonly SearchPanelResult[],
+  identity: SearchVisibleRowIdentity | string
+): number {
+  if (typeof identity === 'string') {
+    return results.findIndex((result) => result.id === identity);
+  }
+
+  if (
+    Number.isInteger(identity.resultIndex) &&
+    identity.resultIndex !== undefined &&
+    identity.resultIndex >= 0 &&
+    identity.resultIndex < results.length
+  ) {
+    const result = results[identity.resultIndex];
+    if (
+      result.id === identity.id &&
+      (identity.recordKey === undefined || identity.recordKey === result.recordKey)
+    ) {
+      return identity.resultIndex;
+    }
+  }
+
+  if (identity.recordKey) {
+    const recordKeyIndex = results.findIndex((result) =>
+      result.id === identity.id && result.recordKey === identity.recordKey
+    );
+    if (recordKeyIndex >= 0) {
+      return recordKeyIndex;
+    }
+  }
+
+  return results.findIndex((result) => result.id === identity.id);
+}
+
+export function nextProgressiveSearchResultSet(
+  current: SearchProgressiveResultSet,
+  update: SearchProgressiveResultUpdate,
+  mergeResults: (
+    current: readonly SearchPanelResult[],
+    incoming: readonly SearchPanelResult[]
+  ) => SearchPanelResult[]
+): SearchProgressiveResultSet {
+  if (update.phase === 'typing') {
+    return current;
+  }
+  if (update.phase === 'error' && update.results.length === 0) {
+    return current;
+  }
+  if (update.phase === 'complete' || update.query !== current.query) {
+    return {
+      query: update.query,
+      results: update.results
+    };
+  }
+  return {
+    query: current.query,
+    results: mergeResults(current.results, update.results)
+  };
 }
 
 export function searchResultActionHints(result: SearchPanelResult): SearchResultActionHints {

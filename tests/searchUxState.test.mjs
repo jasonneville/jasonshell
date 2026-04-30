@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  buildVisibleSearchGroupOverflows,
   buildVisibleSearchRows,
+  DEFAULT_VISIBLE_GROUP_LIMIT,
   configuredSearchOpenAction,
   createLatestSearchQueryController,
   nextSearchPanelFallbackDelay,
   nextVisibleRowIndex,
+  resolveVisibleSearchRowResultIndex,
   nextSearchResultRefreshRequest,
   searchModeFromSettings,
   searchPanelKeyboardAction,
+  searchVisibleRowIdentity,
   searchResultActionHints,
   selectedVisibleRowIndex,
+  nextProgressiveSearchResultSet,
   shouldApplySearchEngineResponse,
   shouldApplySearchResultRefresh,
   shouldContinueSearchPanelFallbackPolling
@@ -92,6 +97,51 @@ test('labels primary and secondary actions by result kind', () => {
     }),
     { primary: 'Copy', secondary: null }
   );
+});
+
+test('category rows default to seven visible items and advertise remaining rows', () => {
+  const appResults = Array.from({ length: 12 }, (_, index) => ({
+    id: `app:${index}`,
+    kind: 'app',
+    title: `App ${index + 1}`,
+    subtitle: 'Application',
+    terms: `app ${index + 1}`,
+    priority: 900 - index
+  }));
+  const rows = buildVisibleSearchRows(appResults);
+  const overflows = buildVisibleSearchGroupOverflows(appResults);
+
+  assert.equal(DEFAULT_VISIBLE_GROUP_LIMIT, 7);
+  assert.equal(rows.length, 10);
+  assert.equal(rows.filter((row) => row.groupId === 'bestMatch').length, 3);
+  assert.equal(rows.filter((row) => row.groupId === 'apps').length, 7);
+  assert.deepEqual(overflows, [
+    {
+      groupId: 'apps',
+      groupLabel: 'Apps',
+      totalCount: 9,
+      visibleCount: 7,
+      hiddenCount: 2
+    }
+  ]);
+});
+
+test('expanded groups reveal hidden rows and clear overflow state for that category', () => {
+  const appResults = Array.from({ length: 12 }, (_, index) => ({
+    id: `app:${index}`,
+    kind: 'app',
+    title: `App ${index + 1}`,
+    subtitle: 'Application',
+    terms: `app ${index + 1}`,
+    priority: 900 - index
+  }));
+  const expanded = new Set(['apps']);
+  const rows = buildVisibleSearchRows(appResults, { expandedGroups: expanded });
+  const overflows = buildVisibleSearchGroupOverflows(appResults, { expandedGroups: expanded });
+
+  assert.equal(rows.length, 12);
+  assert.equal(rows.filter((row) => row.groupId === 'apps').length, 9);
+  assert.deepEqual(overflows, []);
 });
 
 test('groups new Flow-like result kinds into settings and commands visible sections', () => {
@@ -214,6 +264,52 @@ test('visible rows keep duplicate backend ids uniquely keyable while preserving 
     'search-result-2'
   ]);
   assert.equal(new Set(visibleRows.map((row) => row.rowKey)).size, 3);
+});
+
+test('visible row identity resolves second duplicate backend id to the clicked visible row', () => {
+  const duplicateResults = [
+    { id: 'duplicate:id', recordKey: 'app:first', kind: 'app', title: 'First Duplicate', subtitle: 'App', terms: 'dup first', priority: 100 },
+    { id: 'duplicate:id', recordKey: 'folder:second', kind: 'folder', title: 'Second Duplicate', subtitle: 'Folder', terms: 'dup second', priority: 99, path: 'C:\\dup' },
+    { id: 'duplicate:id', recordKey: 'file:third', kind: 'file', title: 'Third Duplicate', subtitle: 'File', terms: 'dup third', priority: 98 }
+  ];
+  const visibleRows = buildVisibleSearchRows(duplicateResults);
+  const secondIdentity = searchVisibleRowIdentity(visibleRows[1]);
+
+  assert.deepEqual(secondIdentity, {
+    id: 'duplicate:id',
+    rowKey: '1:duplicate:id',
+    recordKey: 'folder:second',
+    resultIndex: 1
+  });
+  assert.equal(resolveVisibleSearchRowResultIndex(duplicateResults, secondIdentity), 1);
+  assert.equal(resolveVisibleSearchRowResultIndex(duplicateResults, { id: 'duplicate:id' }), 0);
+});
+
+test('progressive new-query local rows replace stale prior-query working set before complete', () => {
+  const spotifyRows = [
+    { id: 'app:spotify', recordKey: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'App', terms: 'spotify', priority: 100 },
+    { id: 'file:spotify', recordKey: 'file:spotify', kind: 'file', title: 'spotify notes.txt', subtitle: 'File', terms: 'spotify file', priority: 90 }
+  ];
+  const displayRows = [
+    { id: 'setting:display', recordKey: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 1000 }
+  ];
+  const merge = (current, incoming) => [...current, ...incoming];
+  const typing = nextProgressiveSearchResultSet(
+    { query: 'spotify', results: spotifyRows },
+    { query: 'display settings', phase: 'typing', results: [] },
+    merge
+  );
+  const local = nextProgressiveSearchResultSet(
+    typing,
+    { query: 'display settings', phase: 'local', results: displayRows },
+    merge
+  );
+
+  assert.deepEqual(typing.results.map((result) => result.title), ['Spotify', 'spotify notes.txt']);
+  assert.equal(typing.query, 'spotify');
+  assert.deepEqual(local.results.map((result) => result.title), ['Display Settings']);
+  assert.equal(local.query, 'display settings');
+  assert.equal(buildVisibleSearchRows(local.results)[0]?.result.title, 'Display Settings');
 });
 
 test('visible rows preserve fuzzy highlight span data for panel rendering', () => {
