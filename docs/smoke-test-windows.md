@@ -1,6 +1,6 @@
 # Windows Live Smoke Test Checklist
 
-Status: current live-smoke checklist for JasonShell Phase 0 validation.
+Status: current live-smoke checklist for JasonShell tray-and-command phases 0-5 validation.
 
 Use this after the static validation gates pass. These checks require a Windows desktop session, WebView2, and `npm run tauri dev`; they are not replaced by Node or Rust unit tests.
 
@@ -21,10 +21,30 @@ Use this after the static validation gates pass. These checks require a Windows 
 ## Top Bar And Search
 
 - Date/time updates once per second.
+- Command button (`>_`) appears immediately left of tray; tray appears immediately left of sound.
+- Opening command, tray, sound, or search closes any other top-bar popup (mutual exclusivity).
 - Ctrl+K focuses search and opens `search-panel`.
 - Typing a query updates search results without clearing visible state prematurely.
 - Keyboard selection and Enter activation work for a result.
 - Pinning a folder from search updates the top-bar pin rail immediately.
+
+## Tray Panel
+
+- Clicking the tray down-arrow opens `tray-panel` anchored under the top bar.
+- Tray list shows visible + overflow Explorer notification-area entries with stable source-qualified ids.
+- Left click relays native Explorer tray behavior (for example volume/network flyouts).
+- Right click opens native Explorer tray context menus (not a JasonShell custom menu).
+- `tray-panel` closes on focus loss and top-bar `aria-expanded` state clears.
+
+## Command Panel
+
+- Clicking the command button (`>_`) opens `command-panel` anchored under the top bar.
+- Saved-command list supports Run/Edit/Delete and remains responsive while other top-bar popups are closed.
+- Editor supports Label, Mode, Program/Script path, Working directory, and Arguments (one arg per line).
+- Save persists entries through `load_shell_settings`/`save_shell_settings`; restart confirms persistence.
+- Running a command in `direct`, `powershellFile`, and `cmdFile` mode succeeds for known-safe sample commands and closes the panel on success.
+- Invalid entries (for example secret-like args, non-absolute script path modes, empty label/target) show inline validation errors inside the popup.
+- `command-panel` closes on focus loss and top-bar `aria-expanded` state clears.
 
 ## Stack Browser
 
@@ -49,7 +69,7 @@ Use this after the static validation gates pass. These checks require a Windows 
 - Sorting works for visible columns, including Start Time when values are available.
 - Kill action refuses protected/current-shell targets and refreshes after attempts.
 
-## System Tray Status
+## Notes
 
-- System tray support is parked/experimental as of Phase 0 docs: repo evidence shows a test-only Windows backend module, `src/lib/systemTray.ts`, and `tests/systemTray.test.mjs`, but shipped commands are intentionally not registered.
-- Do not mark tray behavior shipped until commands are registered, a visible surface consumes them, capabilities are scoped, and this checklist has tray-specific live checks.
+- `npm run tauri dev` may fail when ports `1420`/`1421` are already occupied; stop the conflicting dev server and retry.
+- If `cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --` reports AppBar/work-area warnings, capture logs and continue manual popup/relay checks before marking smoke complete.

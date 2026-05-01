@@ -718,6 +718,7 @@ mod tests {
                 restoration: WorkspaceRestorationReservation::default(),
             }],
             task_history: Vec::new(),
+            quick_commands: Default::default(),
         }
     }
 }

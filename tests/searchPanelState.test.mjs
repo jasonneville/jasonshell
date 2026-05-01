@@ -349,8 +349,18 @@ test('centered search surface keeps local typing immediate without unconditional
   assert.match(source, /let optimisticQueryDraft: string \| null = null;/);
   assert.match(source, /\$: displayedQuery = optimisticQueryDraft \?\? query;/);
   assert.match(source, /optimisticQueryDraft = value;/);
+  assert.match(source, /queueQueryEmit\(value\)/);
+  assert.match(source, /function cancelQueuedQueryEmit\(\) \{/);
   assert.match(source, /if \(shouldFocusCenteredQueryInput\(\)\) \{\s*void focusQueryInput\(\);/);
   assert.doesNotMatch(source, /if \(event\.payload\.presentation === 'centered'\) \{\s*void focusQueryInput\(\);/);
+});
+
+test('top-bar search closes with blur and can reopen immediately from pointer interaction', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /async function closePanel\(\) \{[\s\S]*searchInput\?\.blur\(\);/);
+  assert.match(source, /function handleSearchPointerDown\(\) \{[\s\S]*if \(!searchOpen\) \{[\s\S]*openConfiguredPanel\(\);/);
+  assert.match(source, /on:pointerdown=\{handleSearchPointerDown\}/);
 });
 
 test('search panel renders a flat visibleRows model instead of grouped buckets', () => {

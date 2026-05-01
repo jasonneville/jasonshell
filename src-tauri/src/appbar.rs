@@ -181,7 +181,7 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
                     explorer::hide_primary_taskbar_if_needed(monitor_rect)?;
             }
             start_taskbar_guard(&mut state);
-            set_work_area_with_retry(
+            set_work_area_with_retry_or_warn(
                 monitor_rect,
                 "monitor work area while Explorer taskbar is hidden",
             )?;
@@ -200,7 +200,7 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
                 reserve_appbar(hwnd, AppBarEdge::Bottom, bottom_rect)
             })?;
 
-        set_work_area_with_retry(
+        set_work_area_with_retry_or_warn(
             reserved_work_area(monitor_rect, resolved_top_rect, resolved_bottom_rect),
             "reserved shell work area",
         )?;
@@ -482,6 +482,21 @@ fn set_work_area_with_retry(rect: RECT, context: &str) -> AppResult<()> {
     .into())
 }
 
+fn set_work_area_with_retry_or_warn(rect: RECT, context: &str) -> AppResult<()> {
+    match set_work_area_with_retry(rect, context) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let message = error.to_string();
+            if message.contains("failed to restore") {
+                eprintln!("warning: {message}; continuing with observed work area");
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
 fn move_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
@@ -654,7 +669,7 @@ fn cleanup_runtime_state(state: &mut ShellRuntimeState) -> AppResult<()> {
     cleanup_runtime_state_with(
         state,
         unregister_appbar,
-        set_work_area_with_retry,
+        set_work_area_with_retry_or_warn,
         |snapshot| explorer::restore_taskbar(snapshot).map_err(Into::into),
     )
 }

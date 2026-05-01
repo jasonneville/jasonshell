@@ -1,6 +1,7 @@
 use crate::workspaces::{normalize_workspace, WorkspaceProfile};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ pub struct ShellSettings {
     pub workspaces: Vec<WorkspaceProfile>,
     #[serde(default)]
     pub task_history: Vec<Value>,
+    #[serde(default)]
+    pub quick_commands: QuickCommandsSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -61,6 +64,34 @@ pub struct EverythingSearchSettings {
     pub sort: EverythingSortMode,
     #[serde(default)]
     pub content_search_enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickCommandsSettings {
+    #[serde(default)]
+    pub entries: Vec<QuickCommandEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickCommandEntry {
+    pub id: String,
+    pub label: String,
+    pub mode: QuickCommandMode,
+    pub target_path: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum QuickCommandMode {
+    #[default]
+    Direct,
+    PowershellFile,
+    CmdFile,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -107,6 +138,7 @@ impl Default for ShellSettings {
             search: SearchSettings::default(),
             workspaces: Vec::new(),
             task_history: Vec::new(),
+            quick_commands: QuickCommandsSettings::default(),
         }
     }
 }
@@ -140,6 +172,14 @@ impl Default for EverythingSearchSettings {
             full_path_search: default_true(),
             sort: EverythingSortMode::NameAsc,
             content_search_enabled: false,
+        }
+    }
+}
+
+impl Default for QuickCommandsSettings {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
         }
     }
 }
@@ -251,7 +291,202 @@ fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, Strin
         workspaces.push(normalize_workspace(workspace)?);
     }
     settings.workspaces = workspaces;
+    settings.quick_commands = validate_quick_commands_settings(settings.quick_commands)?;
     Ok(settings)
+}
+
+fn validate_quick_commands_settings(
+    mut quick_commands: QuickCommandsSettings,
+) -> Result<QuickCommandsSettings, String> {
+    let mut seen_ids = HashSet::new();
+    let mut normalized = Vec::with_capacity(quick_commands.entries.len());
+    for entry in quick_commands.entries {
+        let entry = validate_quick_command_entry(&entry)?;
+        if !seen_ids.insert(entry.id.clone()) {
+            return Err(format!("quick command id must be unique: {}", entry.id));
+        }
+        normalized.push(entry);
+    }
+    quick_commands.entries = normalized;
+    Ok(quick_commands)
+}
+
+pub(crate) fn validate_quick_command_entry(
+    entry: &QuickCommandEntry,
+) -> Result<QuickCommandEntry, String> {
+    let id = entry.id.trim();
+    if !is_slug_safe_id(id) {
+        return Err(format!(
+            "quick command id must be slug-safe lowercase text: {}",
+            entry.id
+        ));
+    }
+
+    let label = entry.label.trim();
+    if label.is_empty() {
+        return Err("quick command label must not be empty".to_string());
+    }
+
+    let target_path = entry.target_path.trim();
+    if target_path.is_empty() {
+        return Err(format!(
+            "quick command '{}' target path must not be empty",
+            id
+        ));
+    }
+    let target_is_absolute = Path::new(target_path).is_absolute();
+    match entry.mode {
+        QuickCommandMode::Direct => {
+            if !target_is_absolute && !is_safe_command_token(target_path) {
+                return Err(format!(
+                    "quick command '{}' direct mode target must be an absolute path or safe command token",
+                    id
+                ));
+            }
+        }
+        QuickCommandMode::PowershellFile | QuickCommandMode::CmdFile => {
+            if !target_is_absolute {
+                return Err(format!(
+                    "quick command '{}' script mode target must be an absolute path",
+                    id
+                ));
+            }
+        }
+    }
+
+    let args = validate_quick_command_args(&entry.args, id)?;
+    let cwd = normalize_optional_absolute_dir(entry.cwd.as_deref(), id)?;
+    Ok(QuickCommandEntry {
+        id: id.to_string(),
+        label: label.to_string(),
+        mode: entry.mode,
+        target_path: target_path.to_string(),
+        args,
+        cwd,
+    })
+}
+
+pub(crate) fn validate_quick_command_args(
+    args: &[String],
+    command_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::with_capacity(args.len());
+    for arg in args {
+        let arg = arg.trim();
+        if arg.is_empty() {
+            return Err(format!(
+                "quick command '{}' argument must not be empty",
+                command_id
+            ));
+        }
+        reject_control_chars(arg, command_id)?;
+        if contains_secret_like_arg(arg) {
+            return Err(format!(
+                "quick command '{}' contains secret-like argument content",
+                command_id
+            ));
+        }
+        normalized.push(arg.to_string());
+    }
+    Ok(normalized)
+}
+
+fn normalize_optional_absolute_dir(
+    value: Option<&str>,
+    command_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if !Path::new(value).is_absolute() {
+        return Err(format!(
+            "quick command '{}' cwd must be an absolute path when present",
+            command_id
+        ));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn is_slug_safe_id(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    if !bytes[0].is_ascii_lowercase() && !bytes[0].is_ascii_digit() {
+        return false;
+    }
+    if matches!(bytes.last(), Some(b'-' | b'_')) {
+        return false;
+    }
+    let mut previous_was_separator = false;
+    for ch in bytes {
+        let is_separator = matches!(*ch, b'-' | b'_');
+        let is_allowed = ch.is_ascii_lowercase() || ch.is_ascii_digit() || is_separator;
+        if !is_allowed {
+            return false;
+        }
+        if is_separator && previous_was_separator {
+            return false;
+        }
+        previous_was_separator = is_separator;
+    }
+    true
+}
+
+pub(crate) fn is_safe_command_token(value: &str) -> bool {
+    if value.is_empty() || value.contains(['\\', '/', ':']) {
+        return false;
+    }
+    value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+}
+
+fn reject_control_chars(value: &str, command_id: &str) -> Result<(), String> {
+    if value.chars().any(|ch| ch.is_control()) {
+        return Err(format!(
+            "quick command '{}' contains control characters in argument text",
+            command_id
+        ));
+    }
+    Ok(())
+}
+
+fn contains_secret_like_arg(value: &str) -> bool {
+    let lowered = value.to_ascii_lowercase();
+    if lowered.contains("bearer ") {
+        return true;
+    }
+    if lowered.starts_with("sk-")
+        || lowered.starts_with("ghp_")
+        || lowered.starts_with("gho_")
+        || lowered.starts_with("github_pat_")
+        || lowered.starts_with("xoxb-")
+        || lowered.starts_with("akia")
+    {
+        return true;
+    }
+    if let Some((left, _)) = lowered.split_once('=') {
+        let key = left.trim().trim_start_matches('-');
+        if is_secret_key(key) {
+            return true;
+        }
+    }
+    if lowered.starts_with("--") {
+        let flag = lowered
+            .trim_start_matches('-')
+            .split_whitespace()
+            .next()
+            .unwrap_or_default();
+        if is_secret_key(flag) {
+            return true;
+        }
+    }
+    false
 }
 
 fn migrate_settings_value(value: Value) -> Result<ShellSettings, String> {
@@ -395,6 +630,7 @@ mod tests {
         );
         assert!(settings.workspaces.is_empty());
         assert!(settings.task_history.is_empty());
+        assert!(settings.quick_commands.entries.is_empty());
         assert_eq!(settings.ui.search_mode, SearchMode::CenteredHotkey);
         assert_eq!(settings.search, SearchSettings::default());
     }
@@ -410,6 +646,7 @@ mod tests {
         assert_eq!(value["search"]["everything"]["installMode"], "ask");
         assert_eq!(value["search"]["everything"]["sdkSource"], "system");
         assert_eq!(value["search"]["everything"]["contentSearchEnabled"], false);
+        assert_eq!(value["quickCommands"]["entries"], json!([]));
     }
 
     #[test]
@@ -474,5 +711,72 @@ mod tests {
         let error = reject_secret_setting_keys(&value, &[]).unwrap_err();
 
         assert!(error.contains("workspaces.0.apiToken"));
+    }
+
+    #[test]
+    fn validates_quick_command_entries_and_rejects_secret_like_args() {
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.entries = vec![QuickCommandEntry {
+            id: "git-status".to_string(),
+            label: "Git Status".to_string(),
+            mode: QuickCommandMode::Direct,
+            target_path: "git.exe".to_string(),
+            args: vec!["status".to_string()],
+            cwd: Some("C:\\dev\\jasonshell".to_string()),
+        }];
+
+        let validated = validate_settings(settings).unwrap();
+        assert_eq!(validated.quick_commands.entries.len(), 1);
+        assert_eq!(validated.quick_commands.entries[0].id, "git-status");
+
+        let mut invalid = ShellSettings::default();
+        invalid.quick_commands.entries = vec![QuickCommandEntry {
+            id: "secret".to_string(),
+            label: "Bad".to_string(),
+            mode: QuickCommandMode::Direct,
+            target_path: "git.exe".to_string(),
+            args: vec!["--token".to_string(), "abc".to_string()],
+            cwd: None,
+        }];
+        assert!(validate_settings(invalid)
+            .unwrap_err()
+            .contains("secret-like"));
+    }
+
+    #[test]
+    fn validates_quick_command_unique_ids_and_absolute_script_modes() {
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.entries = vec![
+            QuickCommandEntry {
+                id: "dup".to_string(),
+                label: "One".to_string(),
+                mode: QuickCommandMode::Direct,
+                target_path: "git.exe".to_string(),
+                args: vec!["status".to_string()],
+                cwd: None,
+            },
+            QuickCommandEntry {
+                id: "dup".to_string(),
+                label: "Two".to_string(),
+                mode: QuickCommandMode::Direct,
+                target_path: "git.exe".to_string(),
+                args: vec!["status".to_string()],
+                cwd: None,
+            },
+        ];
+        assert!(validate_settings(settings).unwrap_err().contains("unique"));
+
+        let mut powershell = ShellSettings::default();
+        powershell.quick_commands.entries = vec![QuickCommandEntry {
+            id: "ps-file".to_string(),
+            label: "PowerShell".to_string(),
+            mode: QuickCommandMode::PowershellFile,
+            target_path: ".\\script.ps1".to_string(),
+            args: vec!["arg".to_string()],
+            cwd: None,
+        }];
+        assert!(validate_settings(powershell)
+            .unwrap_err()
+            .contains("absolute path"));
     }
 }

@@ -82,7 +82,9 @@
 >
   {#if preview}
 
-
+    
+    <span><div class="preview-title" aria-hidden="true">{preview.title || preview.processName}</div></span>
+    
     {#if isNativeLivePreview}
       <div class="preview-frame preview-frame-native" aria-hidden="true"></div>
     {:else if preview.imageDataUrl}

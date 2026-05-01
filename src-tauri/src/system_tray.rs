@@ -1,18 +1,15 @@
-//! Experimental Windows notification-area relay prototype.
-//!
-//! Phase 0 parks this module intentionally: it is not registered in the Tauri
-//! command handler and is compiled only for focused Windows Rust tests. The code
-//! reaches into Explorer-owned toolbar internals, so shipping it requires a
-//! later product decision, live Windows smoke coverage, capability review, and a
-//! real shell surface before it can be treated as active JasonShell behavior.
-
-#![allow(dead_code)]
-
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use png::{BitDepth, ColorType, Encoder};
 use serde::{Deserialize, Serialize};
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
+};
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Memory::{
     VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
@@ -22,8 +19,9 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CopyIcon, DestroyIcon, EnumChildWindows, FindWindowExW, FindWindowW, GetClassNameW,
-    GetWindowThreadProcessId, PostMessageW, SendMessageTimeoutW, SetForegroundWindow, HICON,
-    SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    GetIconInfo, GetWindowThreadProcessId, PostMessageW, SendMessageTimeoutW, SetForegroundWindow,
+    HICON, ICONINFO, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_RBUTTONDOWN, WM_RBUTTONUP,
 };
 
 const TB_BUTTONCOUNT: u32 = 0x0418;
@@ -32,6 +30,7 @@ const TB_GETITEMRECT: u32 = 0x041D;
 const TBSTATE_HIDDEN: u8 = 0x08;
 const SEND_TIMEOUT_MS: u32 = 50;
 const MAX_TRAY_METADATA_BYTES: usize = 64;
+const MAX_TRAY_LABEL_CODE_UNITS: usize = 128;
 const EMPTY_TRAY_ICON_DATA_URL: &str = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -106,6 +105,7 @@ impl ToolbarDiscoverySource {
     }
 }
 
+#[tauri::command]
 pub fn list_system_tray_icons() -> Result<Vec<SystemTrayIconSnapshot>, String> {
     let candidates = tray_toolbar_candidates();
     if candidates.is_empty() {
@@ -132,6 +132,7 @@ pub fn list_system_tray_icons() -> Result<Vec<SystemTrayIconSnapshot>, String> {
     Ok(merged)
 }
 
+#[tauri::command]
 pub fn invoke_system_tray_icon(request: InvokeSystemTrayIconRequest) -> Result<(), String> {
     let parsed = parse_snapshot_id(&request.id)?;
     let Some(toolbar) = tray_toolbar_candidates()
@@ -166,18 +167,17 @@ fn list_toolbar_icons(
         let Some(button) = read_toolbar_button(toolbar, &process, index)? else {
             continue;
         };
-        if normalize_tray_button(button).is_none() {
+        let Some(button) = normalize_tray_button(button) else {
             continue;
-        }
-        let native_icon = tray_native_icon_data_url(&process, button);
-        let (icon_data_url, has_native_icon) = native_icon
-            .map(|data_url| (data_url, true))
-            .unwrap_or_else(|| (tray_icon_placeholder_data_url(), false));
+        };
+        let label = resolved_tray_label(tray_label_from_explorer(&process, button), index);
+        let (icon_data_url, has_native_icon) =
+            resolved_tray_icon_payload(tray_native_icon_data_url(&process, button));
         icons.push(SystemTrayIconSnapshot {
             id: snapshot_id(candidate.source, toolbar, button.id_command),
             command_id: button.id_command,
             index,
-            label: format!("Notification area icon {}", icons.len() + 1),
+            label,
             icon_data_url,
             has_native_icon,
         });
@@ -243,10 +243,165 @@ fn tray_icon_placeholder_data_url() -> String {
     EMPTY_TRAY_ICON_DATA_URL.to_string()
 }
 
-fn tray_native_icon_data_url(_process: &RemoteProcess, _button: ToolbarButton) -> Option<String> {
-    // Native icon extraction depends on task-window icon conversion helpers that are intentionally
-    // not exported while this module is parked. Keep snapshots safe and explicit until integration.
+fn resolved_tray_label(label: Option<String>, index: i32) -> String {
+    label
+        .as_deref()
+        .map(normalize_label_text)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("Notification area icon {}", index + 1))
+}
+
+fn normalize_label_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn tray_label_from_explorer(process: &RemoteProcess, button: ToolbarButton) -> Option<String> {
+    let label_ptr = button.i_string;
+    if label_ptr <= 0 || (label_ptr as usize) <= u16::MAX as usize {
+        return None;
+    }
+    process
+        .read_utf16_label(label_ptr as *const u16, MAX_TRAY_LABEL_CODE_UNITS)
+        .ok()
+}
+
+fn resolved_tray_icon_payload(native_icon_data_url: Option<String>) -> (String, bool) {
+    native_icon_data_url
+        .map(|data_url| (data_url, true))
+        .unwrap_or_else(|| (tray_icon_placeholder_data_url(), false))
+}
+
+fn tray_native_icon_data_url(process: &RemoteProcess, button: ToolbarButton) -> Option<String> {
+    let metadata = read_tray_metadata(process, button.dw_data).ok()?;
+    for icon in metadata.icon_handles() {
+        let Some(local_icon) = copy_foreign_icon(icon) else {
+            continue;
+        };
+        let encoded = icon_to_data_url(local_icon).ok();
+        destroy_local_icon(local_icon);
+        if let Some(data_url) = encoded {
+            return Some(data_url);
+        }
+    }
     None
+}
+
+fn icon_to_data_url(icon_handle: HICON) -> Result<String, String> {
+    Ok(format!(
+        "data:image/png;base64,{}",
+        BASE64.encode(icon_to_png_bytes(icon_handle)?)
+    ))
+}
+
+fn icon_to_png_bytes(icon_handle: HICON) -> Result<Vec<u8>, String> {
+    let (width, height, pixels) = icon_to_rgba(icon_handle)?;
+    let mut png_bytes = Vec::new();
+    let mut encoder = Encoder::new(&mut png_bytes, width, height);
+    encoder.set_color(ColorType::Rgba);
+    encoder.set_depth(BitDepth::Eight);
+
+    let mut writer = encoder
+        .write_header()
+        .map_err(|error| format!("Failed to start tray icon PNG encoding: {error}"))?;
+    writer
+        .write_image_data(&pixels)
+        .map_err(|error| format!("Failed to encode tray icon PNG bytes: {error}"))?;
+    drop(writer);
+
+    Ok(png_bytes)
+}
+
+fn icon_to_rgba(icon_handle: HICON) -> Result<(u32, u32, Vec<u8>), String> {
+    let mut icon = ICONINFO::default();
+    unsafe {
+        GetIconInfo(icon_handle, &mut icon)
+            .map_err(|error| format!("Failed to read tray icon metadata: {error}"))?;
+    }
+
+    let conversion_result = (|| {
+        if icon.hbmColor.0.is_null() {
+            return Err("Tray icon does not expose a color bitmap".to_string());
+        }
+
+        let mut bitmap = BITMAP::default();
+        let object_size = unsafe {
+            GetObjectW(
+                icon.hbmColor.into(),
+                size_of::<BITMAP>() as i32,
+                Some((&mut bitmap as *mut BITMAP).cast()),
+            )
+        };
+        if object_size == 0 {
+            return Err("Failed to inspect tray icon bitmap".to_string());
+        }
+
+        let width = bitmap.bmWidth as i32;
+        let height = bitmap.bmHeight as i32;
+        if width <= 0 || height <= 0 {
+            return Err("Tray icon bitmap dimensions are invalid".to_string());
+        }
+
+        let mut pixels = vec![0_u8; (width * height * 4) as usize];
+        let mut bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let dc = unsafe { CreateCompatibleDC(Some(HDC::default())) };
+        if dc.0.is_null() {
+            return Err("Failed to create tray icon device context".to_string());
+        }
+
+        let scanlines = unsafe {
+            GetDIBits(
+                dc,
+                icon.hbmColor,
+                0,
+                height as u32,
+                Some(pixels.as_mut_ptr().cast()),
+                &mut bitmap_info,
+                DIB_RGB_COLORS,
+            )
+        };
+        unsafe {
+            let _ = DeleteDC(dc);
+        }
+
+        if scanlines == 0 {
+            return Err("Failed to read tray icon pixels".to_string());
+        }
+
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+
+        Ok((width as u32, height as u32, pixels))
+    })();
+
+    unsafe {
+        delete_bitmap(icon.hbmColor);
+        delete_bitmap(icon.hbmMask);
+    }
+
+    conversion_result
+}
+
+unsafe fn delete_bitmap(bitmap: HBITMAP) {
+    if !bitmap.0.is_null() {
+        let _ = DeleteObject(bitmap.into());
+    }
 }
 
 fn read_tray_metadata(
@@ -660,6 +815,48 @@ impl RemoteProcess {
         }
         Ok(buffer)
     }
+
+    fn read_utf16_label(
+        &self,
+        remote_ptr: *const u16,
+        max_code_units: usize,
+    ) -> Result<String, String> {
+        if remote_ptr.is_null() || max_code_units == 0 || max_code_units > MAX_TRAY_LABEL_CODE_UNITS
+        {
+            return Err("Explorer tray label pointer or bounded read size was invalid".to_string());
+        }
+
+        let mut buffer = vec![0_u16; max_code_units];
+        let mut bytes_read = 0usize;
+        unsafe {
+            // SAFETY: remote_ptr is read-only process memory owned by Explorer. The destination
+            // buffer is local and bounded to MAX_TRAY_LABEL_CODE_UNITS.
+            ReadProcessMemory(
+                self.handle,
+                remote_ptr.cast(),
+                buffer.as_mut_ptr().cast(),
+                max_code_units * size_of::<u16>(),
+                Some(&mut bytes_read),
+            )
+            .map_err(|error| format!("Failed to read Explorer tray label text: {error}"))?;
+        }
+        if bytes_read < size_of::<u16>() {
+            return Err("Explorer tray label read was empty".to_string());
+        }
+
+        let units_read = (bytes_read / size_of::<u16>()).min(max_code_units);
+        let first_nul = buffer
+            .iter()
+            .take(units_read)
+            .position(|value| *value == 0)
+            .unwrap_or(units_read);
+        let label = String::from_utf16_lossy(&buffer[..first_nul]);
+        let normalized = normalize_label_text(&label);
+        if normalized.is_empty() {
+            return Err("Explorer tray label text was empty after normalization".to_string());
+        }
+        Ok(normalized)
+    }
 }
 
 impl Drop for RemoteProcess {
@@ -783,10 +980,10 @@ fn push_tree_toolbar_descendants(
 mod tests {
     use super::{
         collect_toolbar_candidates_from_tree, merge_toolbar_snapshots, normalize_tray_button,
-        parse_snapshot_id, read_usize_at, snapshot_id, tray_icon_candidate_offsets,
-        tray_icon_placeholder_data_url, tray_metadata_read_bytes, SystemTrayIconSnapshot,
-        ToolbarButton, ToolbarDiscoverySource, TrayMetadata, WindowTreeNode,
-        MAX_TRAY_METADATA_BYTES, TBSTATE_HIDDEN,
+        parse_snapshot_id, read_usize_at, resolved_tray_icon_payload, resolved_tray_label,
+        snapshot_id, tray_icon_candidate_offsets, tray_icon_placeholder_data_url,
+        tray_metadata_read_bytes, SystemTrayIconSnapshot, ToolbarButton, ToolbarDiscoverySource,
+        TrayMetadata, WindowTreeNode, MAX_TRAY_METADATA_BYTES, TBSTATE_HIDDEN,
     };
     use windows::Win32::Foundation::HWND;
 
@@ -1035,6 +1232,28 @@ mod tests {
         let serialized = serde_json::to_value(snapshot).expect("snapshot serializes");
         assert_eq!(serialized["iconDataUrl"], "data:image/png;base64,native");
         assert_eq!(serialized["hasNativeIcon"], true);
+    }
+
+    #[test]
+    fn tray_label_resolution_prefers_real_explorer_text_and_sanitizes_it() {
+        assert_eq!(
+            resolved_tray_label(Some("  Volume\x00 ".to_string()), 0),
+            "Volume"
+        );
+        assert_eq!(resolved_tray_label(Some("".to_string()), 2), "Notification area icon 3");
+        assert_eq!(resolved_tray_label(None, 4), "Notification area icon 5");
+    }
+
+    #[test]
+    fn tray_icon_payload_resolution_falls_back_when_native_icon_absent() {
+        let (fallback_data_url, fallback_native) = resolved_tray_icon_payload(None);
+        assert_eq!(fallback_data_url, tray_icon_placeholder_data_url());
+        assert!(!fallback_native);
+
+        let (native_data_url, native_flag) =
+            resolved_tray_icon_payload(Some("data:image/png;base64,abc".to_string()));
+        assert_eq!(native_data_url, "data:image/png;base64,abc");
+        assert!(native_flag);
     }
 
     #[test]

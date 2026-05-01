@@ -31,6 +31,9 @@ const tauriConfigSource = readFileSync(new URL('../src-tauri/tauri.conf.json', i
 const wrapperSources = [
   'runtimeMetrics.ts',
   'audio.ts',
+  'commandPanel.ts',
+  'quickCommands.ts',
+  'trayPanel.ts',
   'controlPlane.ts',
   'settingsPanel.ts',
   'devTools.ts',
@@ -62,6 +65,7 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'get_workspace_git_status',
     'record_diagnostic',
     'export_diagnostics',
+    'run_quick_command',
     'show_control_plane',
     'hide_control_plane'
   ]) {
@@ -72,7 +76,7 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     assert.match(eventsSource, new RegExp(event));
   }
 
-  for (const surface of ['top-bar', 'bottom-bar', 'search-panel', 'stack-popup', 'process-manager', 'control-plane']) {
+  for (const surface of ['top-bar', 'bottom-bar', 'search-panel', 'stack-popup', 'process-manager', 'control-plane', 'tray-panel', 'command-panel']) {
     assert.match(surfacesSource, new RegExp(surface));
   }
 
@@ -101,7 +105,10 @@ test('settings wrapper declares versioned schema and stable command names', () =
     },
     search: searchSettings.search,
     workspaces: [],
-    taskHistory: []
+    taskHistory: [],
+    quickCommands: {
+      entries: []
+    }
   });
 });
 
@@ -163,6 +170,9 @@ test('backend settings and diagnostics commands are registered with hardened app
     'settings::save_shell_settings',
     'diagnostics::record_diagnostic',
     'diagnostics::export_diagnostics',
+    'quick_commands::run_quick_command',
+    'command_panel::show_command_panel',
+    'command_panel::hide_command_panel',
     'build_terminal_launch_plan',
     'spawn_workspace_task',
     'get_workspace_git_status'
@@ -178,7 +188,9 @@ test('backend settings and diagnostics commands are registered with hardened app
     'stack-popup',
     'process-manager',
     'control-plane',
-    'settings-panel'
+    'command-panel',
+    'settings-panel',
+    'tray-panel'
   ]) {
     assert.match(capabilitySource, new RegExp(surface));
   }
@@ -186,13 +198,15 @@ test('backend settings and diagnostics commands are registered with hardened app
     Object.values(capabilitySources).map((source) => JSON.parse(source).windows).sort((a, b) => a[0].localeCompare(b[0])),
     [
       ['bottom-bar'],
+      ['command-panel'],
       ['control-plane'],
       ['process-manager'],
       ['search-panel'],
       ['settings-panel'],
       ['stack-popup'],
       ['task-preview'],
-      ['top-bar']
+      ['top-bar'],
+      ['tray-panel']
     ]
   );
 

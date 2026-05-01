@@ -3,6 +3,7 @@
 mod audio;
 mod audio_panel;
 mod automation;
+mod command_panel;
 mod contracts;
 mod control_plane;
 mod dev_tools;
@@ -11,6 +12,7 @@ mod launchers;
 mod layout;
 mod process_manager;
 mod providers;
+mod quick_commands;
 mod search;
 mod search_panel;
 mod search_sources;
@@ -22,12 +24,10 @@ mod stack_popup;
 mod task_preview;
 mod task_windows;
 mod taskbar_menu;
+mod tray_panel;
 mod workspaces;
 
-// Phase 0 R4 decision: the system tray relay is parked as an experimental
-// Windows-only prototype. Do not register its commands until a later phase adds
-// a shipped surface, capabilities, live-smoke coverage, and product docs.
-#[cfg(all(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 mod system_tray;
 
 #[cfg(target_os = "windows")]
@@ -85,6 +85,10 @@ fn main() {
             control_plane::hide_control_plane,
             settings_panel::show_settings_panel,
             settings_panel::hide_settings_panel,
+            tray_panel::show_tray_panel,
+            tray_panel::hide_tray_panel,
+            command_panel::show_command_panel,
+            command_panel::hide_command_panel,
             audio_panel::show_audio_panel,
             audio_panel::hide_audio_panel,
             process_manager::list_processes,
@@ -101,11 +105,14 @@ fn main() {
             audio::set_default_audio_device,
             audio::set_default_audio_input_device,
             audio::set_default_audio_output_device,
+            system_tray::list_system_tray_icons,
+            system_tray::invoke_system_tray_icon,
             search::search_engine,
             search_sources::get_search_provider_health,
             search_sources::request_everything_setup,
             shell_paths::open_shell_path,
             shell_paths::run_control_panel,
+            quick_commands::run_quick_command,
             stack_popup::list_pinned_stack_folders,
             stack_popup::pin_stack_folder,
             stack_popup::unpin_stack_folder,
@@ -207,6 +214,30 @@ fn main() {
                 let _ = window.app_handle().emit_to(
                     shell_windows::TOP_BAR_LABEL,
                     audio_panel::AUDIO_PANEL_CLOSED_EVENT,
+                    (),
+                );
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::TRAY_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = window.app_handle().emit_to(
+                    shell_windows::TOP_BAR_LABEL,
+                    tray_panel::TRAY_PANEL_CLOSED_EVENT,
+                    (),
+                );
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::COMMAND_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = window.app_handle().emit_to(
+                    shell_windows::TOP_BAR_LABEL,
+                    command_panel::COMMAND_PANEL_CLOSED_EVENT,
                     (),
                 );
                 let _ = window.hide();

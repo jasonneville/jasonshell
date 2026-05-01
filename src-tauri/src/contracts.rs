@@ -9,6 +9,8 @@ pub mod surfaces {
     pub const PROCESS_MANAGER: &str = "process-manager";
     pub const CONTROL_PLANE: &str = "control-plane";
     pub const SETTINGS_PANEL: &str = "settings-panel";
+    pub const TRAY_PANEL: &str = "tray-panel";
+    pub const COMMAND_PANEL: &str = "command-panel";
 
     pub const ALL: &[&str] = &[
         TOP_BAR,
@@ -19,6 +21,8 @@ pub mod surfaces {
         PROCESS_MANAGER,
         CONTROL_PLANE,
         SETTINGS_PANEL,
+        TRAY_PANEL,
+        COMMAND_PANEL,
     ];
 }
 
@@ -45,6 +49,10 @@ pub mod commands {
     pub const HIDE_CONTROL_PLANE: &str = "hide_control_plane";
     pub const SHOW_SETTINGS_PANEL: &str = "show_settings_panel";
     pub const HIDE_SETTINGS_PANEL: &str = "hide_settings_panel";
+    pub const SHOW_TRAY_PANEL: &str = "show_tray_panel";
+    pub const HIDE_TRAY_PANEL: &str = "hide_tray_panel";
+    pub const SHOW_COMMAND_PANEL: &str = "show_command_panel";
+    pub const HIDE_COMMAND_PANEL: &str = "hide_command_panel";
     pub const SHOW_AUDIO_PANEL: &str = "show_audio_panel";
     pub const HIDE_AUDIO_PANEL: &str = "hide_audio_panel";
     pub const LIST_PROCESSES: &str = "list_processes";
@@ -61,10 +69,13 @@ pub mod commands {
     pub const SET_DEFAULT_AUDIO_DEVICE: &str = "set_default_audio_device";
     pub const SET_DEFAULT_AUDIO_INPUT_DEVICE: &str = "set_default_audio_input_device";
     pub const SET_DEFAULT_AUDIO_OUTPUT_DEVICE: &str = "set_default_audio_output_device";
+    pub const LIST_SYSTEM_TRAY_ICONS: &str = "list_system_tray_icons";
+    pub const INVOKE_SYSTEM_TRAY_ICON: &str = "invoke_system_tray_icon";
     pub const GET_SEARCH_PROVIDER_HEALTH: &str = "get_search_provider_health";
     pub const REQUEST_EVERYTHING_SETUP: &str = "request_everything_setup";
     pub const OPEN_SHELL_PATH: &str = "open_shell_path";
     pub const RUN_CONTROL_PANEL: &str = "run_control_panel";
+    pub const RUN_QUICK_COMMAND: &str = "run_quick_command";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
     pub const PIN_STACK_FOLDER: &str = "pin_stack_folder";
     pub const UNPIN_STACK_FOLDER: &str = "unpin_stack_folder";
@@ -136,6 +147,10 @@ pub mod commands {
         HIDE_CONTROL_PLANE,
         SHOW_SETTINGS_PANEL,
         HIDE_SETTINGS_PANEL,
+        SHOW_TRAY_PANEL,
+        HIDE_TRAY_PANEL,
+        SHOW_COMMAND_PANEL,
+        HIDE_COMMAND_PANEL,
         SHOW_AUDIO_PANEL,
         HIDE_AUDIO_PANEL,
         LIST_PROCESSES,
@@ -152,10 +167,13 @@ pub mod commands {
         SET_DEFAULT_AUDIO_DEVICE,
         SET_DEFAULT_AUDIO_INPUT_DEVICE,
         SET_DEFAULT_AUDIO_OUTPUT_DEVICE,
+        LIST_SYSTEM_TRAY_ICONS,
+        INVOKE_SYSTEM_TRAY_ICON,
         GET_SEARCH_PROVIDER_HEALTH,
         REQUEST_EVERYTHING_SETUP,
         OPEN_SHELL_PATH,
         RUN_CONTROL_PANEL,
+        RUN_QUICK_COMMAND,
         LIST_PINNED_STACK_FOLDERS,
         PIN_STACK_FOLDER,
         UNPIN_STACK_FOLDER,
@@ -207,6 +225,8 @@ pub mod commands {
 
 pub mod events {
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
+    pub const TRAY_PANEL_CLOSED: &str = "tray-panel:closed";
+    pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
     pub const SEARCH_PANEL_INTERACTION: &str = "search-panel:interaction";
     pub const SEARCH_PANEL_CLOSED: &str = "search-panel:closed";
     pub const SEARCH_INDEX_REFRESHED: &str = "search-index:refreshed";
@@ -217,6 +237,8 @@ pub mod events {
 
     pub const ALL: &[&str] = &[
         PROCESS_MANAGER_CLOSED,
+        TRAY_PANEL_CLOSED,
+        COMMAND_PANEL_CLOSED,
         SEARCH_PANEL_INTERACTION,
         SEARCH_PANEL_CLOSED,
         SEARCH_INDEX_REFRESHED,
@@ -245,6 +267,8 @@ mod tests {
                 "process-manager",
                 "control-plane",
                 "settings-panel",
+                "tray-panel",
+                "command-panel",
             ]
         );
     }
@@ -281,6 +305,10 @@ mod tests {
         assert!(unique.contains("hide_control_plane"));
         assert!(unique.contains("show_settings_panel"));
         assert!(unique.contains("hide_settings_panel"));
+        assert!(unique.contains("show_tray_panel"));
+        assert!(unique.contains("hide_tray_panel"));
+        assert!(unique.contains("show_command_panel"));
+        assert!(unique.contains("hide_command_panel"));
         assert!(unique.contains("show_audio_panel"));
         assert!(unique.contains("hide_audio_panel"));
         assert!(unique.contains("get_audio_state"));
@@ -293,8 +321,11 @@ mod tests {
         assert!(unique.contains("set_default_audio_device"));
         assert!(unique.contains("set_default_audio_input_device"));
         assert!(unique.contains("set_default_audio_output_device"));
+        assert!(unique.contains("list_system_tray_icons"));
+        assert!(unique.contains("invoke_system_tray_icon"));
         assert!(unique.contains("get_search_provider_health"));
         assert!(unique.contains("request_everything_setup"));
+        assert!(unique.contains("run_quick_command"));
     }
 
     #[test]
@@ -303,6 +334,8 @@ mod tests {
             events::ALL,
             &[
                 "process-manager:closed",
+                "tray-panel:closed",
+                "command-panel:closed",
                 "search-panel:interaction",
                 "search-panel:closed",
                 "search-index:refreshed",

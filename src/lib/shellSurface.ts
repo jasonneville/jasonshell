@@ -7,6 +7,8 @@ export type ShellSurface =
   | 'process-manager'
   | 'control-plane'
   | 'settings-panel'
+  | 'tray-panel'
+  | 'command-panel'
   | 'audio-panel'
   | 'unknown';
 
@@ -48,6 +50,14 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Quick shell preferences',
     title: 'JasonShell Settings'
   },
+  'tray-panel': {
+    subtitle: 'Notification area icon relay',
+    title: 'JasonShell Tray'
+  },
+  'command-panel': {
+    subtitle: 'Quick command launcher and editor',
+    title: 'JasonShell Commands'
+  },
   'audio-panel': {
     subtitle: 'Quick audio controls',
     title: 'JasonShell Sound'
@@ -68,6 +78,8 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'process-manager'
     || label === 'control-plane'
     || label === 'settings-panel'
+    || label === 'tray-panel'
+    || label === 'command-panel'
     || label === 'audio-panel'
   ) {
     return label;

@@ -64,6 +64,16 @@
     hideAudioPanel,
     showAudioPanel
   } from '../lib/audio';
+  import {
+    TRAY_PANEL_CLOSED_EVENT,
+    hideTrayPanel,
+    showTrayPanel
+  } from '../lib/trayPanel';
+  import {
+    COMMAND_PANEL_CLOSED_EVENT,
+    hideCommandPanel,
+    showCommandPanel
+  } from '../lib/commandPanel';
   import { showSettingsPanel } from '../lib/settingsPanel';
   import { loadShellSettings } from '../lib/settings';
   import type { SearchMode } from '../lib/searchSettings';
@@ -114,6 +124,8 @@
   // Pin rail UI
   let pinRailHover = false;
   let pinRailEl: HTMLDivElement | null = null;
+  let commandControl: HTMLDivElement | null = null;
+  let trayControl: HTMLDivElement | null = null;
   let soundControl: HTMLDivElement | null = null;
   let showRailScrollLeft = false;
   let showRailScrollRight = false;
@@ -135,10 +147,14 @@
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
   let audioOpen = false;
+  let trayOpen = false;
+  let commandOpen = false;
 
   const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
   const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
+  const COMMAND_PANEL_ID = 'command-panel';
+  const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
 
   $: selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
@@ -243,6 +259,15 @@
     const needsNativeShow = shouldShowSearchPanelForAnchor(searchOpen, searchPanelAnchor, nextAnchor);
     searchOpen = true;
     searchPanelAnchor = nextAnchor;
+    if (audioOpen) {
+      await closeAudioPanel();
+    }
+    if (trayOpen) {
+      await closeTrayPanel();
+    }
+    if (commandOpen) {
+      await closeCommandPanel();
+    }
     queueSearchPanelPublish();
     if (needsNativeShow) {
       await showSearchPanel({
@@ -258,6 +283,15 @@
     searchPresentation = 'centered';
     searchOpen = true;
     searchPanelAnchor = null;
+    if (audioOpen) {
+      await closeAudioPanel();
+    }
+    if (trayOpen) {
+      await closeTrayPanel();
+    }
+    if (commandOpen) {
+      await closeCommandPanel();
+    }
     queueSearchPanelPublish();
     if (needsNativeShow) {
       await showCenteredSearchPanel(readCenteredSearchPanelSize()).catch((error) => {
@@ -275,6 +309,7 @@
     searchOpen = false;
     searchPanelAnchor = null;
     lastSearchPanelPayloadSignature = null;
+    searchInput?.blur();
     await publishSearchPanel({
       query: '',
       results: [],
@@ -311,8 +346,14 @@
 
   function handleTopBarPointerDown(event: MouseEvent) {
     const target = event.target instanceof Node ? event.target : null;
+    if (commandOpen && (!target || !commandControl?.contains(target))) {
+      void closeCommandPanel();
+    }
     if (audioOpen && (!target || !soundControl?.contains(target))) {
       void closeAudioPanel();
+    }
+    if (trayOpen && (!target || !trayControl?.contains(target))) {
+      void closeTrayPanel();
     }
     if (!searchOpen || !searchControl) {
       return;
@@ -345,6 +386,20 @@
     });
   }
 
+  async function closeCommandPanel() {
+    commandOpen = false;
+    await hideCommandPanel().catch((error) => {
+      console.error('Failed to hide command panel', error);
+    });
+  }
+
+  async function closeTrayPanel() {
+    trayOpen = false;
+    await hideTrayPanel().catch((error) => {
+      console.error('Failed to hide tray panel', error);
+    });
+  }
+
   async function toggleSoundPanel(target: EventTarget | null) {
     if (audioOpen) {
       await closeAudioPanel();
@@ -355,6 +410,12 @@
     if (!rect) {
       return;
     }
+    if (trayOpen) {
+      await closeTrayPanel();
+    }
+    if (commandOpen) {
+      await closeCommandPanel();
+    }
     await closePanel();
     audioOpen = true;
     await showAudioPanel({
@@ -363,6 +424,52 @@
     }).catch((error) => {
       audioOpen = false;
       console.error('Failed to show audio panel', error);
+    });
+  }
+
+  async function toggleTrayPanel(target: EventTarget | null) {
+    if (trayOpen) {
+      await closeTrayPanel();
+      return;
+    }
+    const button = target instanceof HTMLElement ? target : null;
+    const rect = button?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    await closePanel();
+    await closeAudioPanel();
+    await closeCommandPanel();
+    trayOpen = true;
+    await showTrayPanel({
+      anchorLeft: rect.left,
+      anchorWidth: rect.width
+    }).catch((error) => {
+      trayOpen = false;
+      console.error('Failed to show tray panel', error);
+    });
+  }
+
+  async function toggleCommandPanel(target: EventTarget | null) {
+    if (commandOpen) {
+      await closeCommandPanel();
+      return;
+    }
+    const button = target instanceof HTMLElement ? target : null;
+    const rect = button?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    await closePanel();
+    await closeAudioPanel();
+    await closeTrayPanel();
+    commandOpen = true;
+    await showCommandPanel({
+      anchorLeft: rect.left,
+      anchorWidth: rect.width
+    }).catch((error) => {
+      commandOpen = false;
+      console.error('Failed to show command panel', error);
     });
   }
 
@@ -844,6 +951,12 @@
     }
   }
 
+  function handleSearchPointerDown() {
+    if (!searchOpen) {
+      openConfiguredPanel();
+    }
+  }
+
   function selectSearchResult(resultId: string) {
     const index = resolveVisibleSearchRowResultIndex(searchResults, resultId);
     if (index >= 0) {
@@ -961,6 +1074,16 @@
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
+    void listen(TRAY_PANEL_CLOSED_EVENT, () => {
+      trayOpen = false;
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen(COMMAND_PANEL_CLOSED_EVENT, () => {
+      commandOpen = false;
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop') {
         void pinAndOpenDroppedFolders(event.payload.paths, pinRailEl);
@@ -985,6 +1108,8 @@
       cancelSearchBlurClose();
       void hideSearchPanel().catch(() => undefined);
       void hideAudioPanel().catch(() => undefined);
+      void hideTrayPanel().catch(() => undefined);
+      void hideCommandPanel().catch(() => undefined);
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -1053,6 +1178,32 @@
       <MeltActionButton class="rail-scroll right" ariaLabel="Scroll pinned folders right" tooltip="Scroll pinned folders right" onClick={() => scrollRailRight()}>&rsaquo;</MeltActionButton>
     {/if}
   </div>
+  <div class="command-control" bind:this={commandControl}>
+    <MeltActionButton
+      class="command-button"
+      ariaLabel="Open quick commands"
+      ariaHaspopup="dialog"
+      ariaExpanded={commandOpen}
+      ariaControls={COMMAND_PANEL_ID}
+      tooltip="Quick commands"
+      onClick={(event) => void toggleCommandPanel(event.currentTarget)}
+    >
+      <span class="command-glyph" aria-hidden="true">>_</span>
+    </MeltActionButton>
+  </div>
+  <div class="tray-control" bind:this={trayControl}>
+    <MeltActionButton
+      class="tray-button"
+      ariaLabel="Open notification area icons"
+      ariaHaspopup="dialog"
+      ariaExpanded={trayOpen}
+      ariaControls={TRAY_PANEL_ID}
+      tooltip="Notification area icons"
+      onClick={(event) => void toggleTrayPanel(event.currentTarget)}
+    >
+      <span class="tray-arrow" aria-hidden="true">▾</span>
+    </MeltActionButton>
+  </div>
   <div class="sound-control" bind:this={soundControl}>
     <MeltActionButton
       class="sound-button"
@@ -1082,6 +1233,7 @@
       placeholder="Search"
       value={searchQuery}
       on:focus={openConfiguredPanel}
+      on:pointerdown={handleSearchPointerDown}
       on:blur={scheduleSearchBlurClose}
       on:input={handleSearchInput}
       on:keydown={handleSearchKeydown}

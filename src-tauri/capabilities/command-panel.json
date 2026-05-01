@@ -1,0 +1,11 @@
+{
+  "identifier": "command-panel",
+  "description": "Command panel auxiliary surface capability: quick-command editor and launcher with window-label access.",
+  "windows": [
+    "command-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

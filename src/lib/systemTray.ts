@@ -42,7 +42,7 @@ export function trayClickRequest(id: string, button: SystemTrayMouseButton): Inv
 }
 
 export async function listSystemTrayIcons() {
-  return normalizeTrayIcons(await invoke<SystemTrayIconSnapshot[]>('list_system_tray_icons'));
+  return normalizeTrayIcons(await invoke<SystemTrayIconSnapshot[]>(IPC_COMMANDS.listSystemTrayIcons));
 }
 
 export async function invokeSystemTrayIcon(request: InvokeSystemTrayIconRequest) {

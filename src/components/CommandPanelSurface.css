@@ -1,0 +1,185 @@
+.command-panel {
+  background: #10131b;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.85rem;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+  color: #e8ecf8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  min-height: 0;
+  padding: 0.7rem;
+}
+
+.command-panel-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.command-panel-header h1 {
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+.command-panel-header p {
+  color: #9ba6be;
+  font-size: 0.66rem;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.command-panel-error {
+  background: rgba(170, 42, 42, 0.35);
+  border: 1px solid rgba(255, 130, 130, 0.52);
+  border-radius: 0.45rem;
+  color: #ffd1d1;
+  font-size: 0.72rem;
+  margin: 0;
+  padding: 0.36rem 0.52rem;
+}
+
+.command-panel-layout {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 0.6rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  min-height: 0;
+}
+
+.command-list,
+.command-editor {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  min-height: 0;
+  padding: 0.48rem;
+}
+
+.command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.command-list-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.command-list h2,
+.command-editor h2 {
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.command-list ul {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.command-list li {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.42rem;
+  padding: 0.36rem;
+}
+
+.command-row {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.command-row strong {
+  font-size: 0.72rem;
+}
+
+.command-row span {
+  color: #9ca8c0;
+  font-size: 0.62rem;
+}
+
+.command-row-actions {
+  display: flex;
+  gap: 0.22rem;
+  margin-top: 0.32rem;
+}
+
+.command-list-state {
+  color: #a7b2c9;
+  font-size: 0.7rem;
+  margin: 0;
+}
+
+.command-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  overflow-y: auto;
+}
+
+.command-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+}
+
+.command-editor span {
+  color: #bcc6da;
+  font-size: 0.67rem;
+  font-weight: 700;
+}
+
+.command-editor input,
+.command-editor select,
+.command-editor textarea {
+  background: rgba(11, 16, 28, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.36rem;
+  color: #eef2ff;
+  font-size: 0.69rem;
+  padding: 0.34rem 0.4rem;
+}
+
+.command-editor textarea {
+  min-height: 6.8rem;
+  resize: vertical;
+}
+
+.command-editor input:focus,
+.command-editor select:focus,
+.command-editor textarea:focus {
+  border-color: #6f9cff;
+  outline: 0;
+}
+
+.command-form-errors {
+  background: rgba(170, 42, 42, 0.3);
+  border: 1px solid rgba(255, 130, 130, 0.4);
+  border-radius: 0.4rem;
+  color: #ffd2d2;
+  font-size: 0.67rem;
+  margin: 0;
+  padding: 0.32rem 0.72rem;
+}
+
+.command-form-errors li {
+  margin: 0.1rem 0;
+}
+
+.command-editor-actions {
+  display: flex;
+  gap: 0.28rem;
+  justify-content: flex-end;
+  margin-top: auto;
+}

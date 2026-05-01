@@ -44,6 +44,8 @@
 
   let panelState = defaultSearchPanelViewState;
   let optimisticQueryDraft: string | null = null;
+  let pendingQueryEmitValue: string | null = null;
+  let queryEmitTimer: number | null = null;
   let resultRows: Array<HTMLDivElement | undefined> = [];
   let queryInput: HTMLInputElement | null = null;
   let lastRevealedSelection = '';
@@ -112,6 +114,7 @@
     return () => {
       fallbackGeneration += 1;
       stopFallbackPolling();
+      cancelQueuedQueryEmit();
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -177,7 +180,7 @@
     const value = (event.currentTarget as HTMLInputElement).value;
     optimisticQueryDraft = value;
     announcePanelInteraction();
-    void emitTo(topBarTarget, SEARCH_PANEL_QUERY_EVENT, value);
+    queueQueryEmit(value);
   }
 
   function handleQueryKeydown(event: KeyboardEvent) {
@@ -319,11 +322,37 @@
 
   function hideCenteredPanelImmediately() {
     optimisticQueryDraft = null;
+    cancelQueuedQueryEmit();
+    queryInput?.blur();
     fallbackGeneration += 1;
     stopFallbackPolling();
     void hideSearchPanel().catch(() => undefined);
     announcePanelInteraction();
     void emitTo(topBarTarget, SEARCH_PANEL_KEY_EVENT, 'Escape');
+  }
+
+  function queueQueryEmit(value: string) {
+    pendingQueryEmitValue = value;
+    if (queryEmitTimer !== null) {
+      return;
+    }
+    queryEmitTimer = window.setTimeout(() => {
+      queryEmitTimer = null;
+      const queuedValue = pendingQueryEmitValue;
+      pendingQueryEmitValue = null;
+      if (queuedValue === null) {
+        return;
+      }
+      void emitTo(topBarTarget, SEARCH_PANEL_QUERY_EVENT, queuedValue);
+    }, 0);
+  }
+
+  function cancelQueuedQueryEmit() {
+    pendingQueryEmitValue = null;
+    if (queryEmitTimer !== null) {
+      window.clearTimeout(queryEmitTimer);
+      queryEmitTimer = null;
+    }
   }
 
   function beginResize(event: PointerEvent) {
@@ -377,7 +406,7 @@
   }
 </script>
 
-<svelte:window on:mousedown={announcePanelInteraction} />
+<svelte:window on:mousedown={markPanelInteraction} />
 
 <section
   class="search-panel"

@@ -3,12 +3,14 @@
   import { onMount } from 'svelte';
   import BottomBar from './components/BottomBar.svelte';
   import AudioPanelSurface from './components/AudioPanelSurface.svelte';
+  import CommandPanelSurface from './components/CommandPanelSurface.svelte';
   import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
   import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
   import SearchPanelSurface from './components/SearchPanelSurface.svelte';
   import SettingsPanelSurface from './components/SettingsPanelSurface.svelte';
   import StackPopupSurface from './components/StackPopupSurface.svelte';
   import TaskPreviewSurface from './components/TaskPreviewSurface.svelte';
+  import TrayPanelSurface from './components/TrayPanelSurface.svelte';
   import TopBar from './components/TopBar.svelte';
   import { installShellPreferencesSync } from './lib/shellPreferences';
   import {
@@ -65,6 +67,10 @@
   <ControlPlaneSurface />
 {:else if surface === 'settings-panel'}
   <SettingsPanelSurface />
+{:else if surface === 'tray-panel'}
+  <TrayPanelSurface />
+{:else if surface === 'command-panel'}
+  <CommandPanelSurface />
 {:else if surface === 'audio-panel'}
   <AudioPanelSurface />
 {:else}

@@ -1,0 +1,11 @@
+{
+  "identifier": "tray-panel",
+  "description": "Tray panel auxiliary surface capability: explorer notification-area icon grid and window-label access.",
+  "windows": [
+    "tray-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

@@ -6,7 +6,9 @@ export const SHELL_SURFACES = {
   stackPopup: 'stack-popup',
   processManager: 'process-manager',
   controlPlane: 'control-plane',
-  settingsPanel: 'settings-panel'
+  settingsPanel: 'settings-panel',
+  trayPanel: 'tray-panel',
+  commandPanel: 'command-panel'
 } as const;
 
 export type KnownShellSurface = (typeof SHELL_SURFACES)[keyof typeof SHELL_SURFACES];
@@ -20,7 +22,9 @@ export const SHELL_SURFACE_TITLES: Record<KnownShellSurface, string> = {
   [SHELL_SURFACES.stackPopup]: 'Stack Browser',
   [SHELL_SURFACES.processManager]: 'Process Manager',
   [SHELL_SURFACES.controlPlane]: 'Control Plane',
-  [SHELL_SURFACES.settingsPanel]: 'Settings Panel'
+  [SHELL_SURFACES.settingsPanel]: 'Settings Panel',
+  [SHELL_SURFACES.trayPanel]: 'Tray Panel',
+  [SHELL_SURFACES.commandPanel]: 'Command Panel'
 };
 
 export function isKnownShellSurface(label: string): label is KnownShellSurface {
