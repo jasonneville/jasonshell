@@ -410,6 +410,17 @@ test('applies complete stack folder listings with partial warning status', () =>
   assert.equal(stackListingStatus(listing), state.statusMessage);
 });
 
+test('reports progressive count status as soon as first metadata page lands', () => {
+  const listing = {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 505,
+    warnings: []
+  };
+
+  assert.equal(stackListingStatus(listing), '1 of 505 items');
+});
+
 test('merges incremental stack folder pages for immediate first render', () => {
   const firstPage = {
     path: documents,
@@ -438,6 +449,73 @@ test('merges incremental stack folder pages for immediate first render', () => {
   assert.deepEqual(merged.entries.map((entry) => entry.name), ['Alpha', 'bravo.txt']);
   assert.equal(merged.total, 3);
   assert.deepEqual(merged.warnings.map((warning) => warning.message), ['first warning', 'second warning']);
+});
+
+test('progressive stack folder merge grows visible rows monotonically by page', () => {
+  const page1 = {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 3,
+    warnings: [],
+    offset: 0,
+    limit: 1,
+    hasMore: true
+  };
+  const page2 = {
+    path: documents,
+    entries: [stackEntry('bravo.txt')],
+    total: 3,
+    warnings: [],
+    offset: 1,
+    limit: 1,
+    hasMore: true
+  };
+  const page3 = {
+    path: documents,
+    entries: [stackEntry('charlie.txt')],
+    total: 3,
+    warnings: [],
+    offset: 2,
+    limit: 1,
+    hasMore: false
+  };
+
+  const merged1 = mergeStackFolderListings(null, page1);
+  const merged2 = mergeStackFolderListings(merged1, page2);
+  const merged3 = mergeStackFolderListings(merged2, page3);
+
+  assert.equal(merged1.entries.length, 1);
+  assert.equal(merged2.entries.length, 2);
+  assert.equal(merged3.entries.length, 3);
+});
+
+test('switching folders resets progressive merge and avoids old-row append into new folder', () => {
+  const oldFolderPage = {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 2,
+    warnings: [],
+    offset: 0,
+    limit: 1,
+    hasMore: true
+  };
+  const newFolderPage = {
+    path: downloads,
+    entries: [{
+      ...stackEntry('fresh.txt'),
+      id: 'C:\\Users\\me\\Downloads\\fresh.txt',
+      path: 'C:\\Users\\me\\Downloads\\fresh.txt'
+    }],
+    total: 1,
+    warnings: [],
+    offset: 0,
+    limit: 1,
+    hasMore: false
+  };
+
+  const merged = mergeStackFolderListings(oldFolderPage, newFolderPage);
+  assert.equal(merged.path, downloads);
+  assert.deepEqual(merged.entries.map((entry) => entry.path), ['C:\\Users\\me\\Downloads\\fresh.txt']);
 });
 
 test('ignores stale folder listing payloads', () => {

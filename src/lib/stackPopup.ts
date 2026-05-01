@@ -41,7 +41,18 @@ type StackFolderPage = {
   limit: number;
   total: number;
   hasMore: boolean;
+  sessionId?: string;
   warnings?: StackFolderWarning[];
+  diagnostics?: StackFolderPageDiagnostics;
+};
+
+type StackFolderPageDiagnostics = {
+  folderOpenDurationMs: number;
+  pageDurationMs: number;
+  pageItemCount: number;
+  iconResolutionCount: number;
+  iconResolutionDurationMs: number;
+  payloadItemCount: number;
 };
 
 type StackPasteResult = {
@@ -108,6 +119,20 @@ export type StackFolderListingPage = StackFolderListing & {
   hasMore: boolean;
 };
 
+type StackFolderListingDiagnostics = {
+  path: string;
+  pageOffset: number;
+  requestedLimit: number;
+  pageDurationMs: number;
+  folderOpenDurationMs: number;
+  pageItemCount: number;
+  iconResolutionCount: number;
+  iconResolutionDurationMs: number;
+  payloadItemCount: number;
+  totalItems: number;
+  hasMore: boolean;
+};
+
 export type StackPasteListing = StackFolderListing & {
   pasteFailures: StackPasteFailure[];
 };
@@ -161,8 +186,8 @@ export function resizeStackPopup(width: number, height: number, persist = false)
   return invoke(IPC_COMMANDS.resizeStackPopup, { width, height, persist });
 }
 
-const STACK_FOLDER_INITIAL_PAGE_LIMIT = 80;
-const STACK_FOLDER_SUBSEQUENT_PAGE_LIMIT = 500;
+const STACK_FOLDER_INITIAL_PAGE_LIMIT = 60;
+const STACK_FOLDER_SUBSEQUENT_PAGE_LIMIT = 120;
 
 export async function listStackFolder(
   folderPath: string,
@@ -170,17 +195,23 @@ export async function listStackFolder(
 ): Promise<StackFolderListing> {
   const entries: StackEntry[] = [];
   const warnings: StackFolderWarning[] = [];
+  const folderOpenStartedAt = performance.now();
+  let sessionId: string | undefined;
   let offset = 0;
   let total = 0;
   let responsePath = folderPath;
 
   while (true) {
     const limit = offset === 0 ? STACK_FOLDER_INITIAL_PAGE_LIMIT : STACK_FOLDER_SUBSEQUENT_PAGE_LIMIT;
+    const pageStartedAt = performance.now();
     const page = await invoke<StackFolderPage>(IPC_COMMANDS.readStackFolder, {
       path: folderPath,
       offset,
-      limit
+      limit,
+      sessionId: sessionId ?? null
     });
+    const pageDurationMs = Math.max(0, performance.now() - pageStartedAt);
+    sessionId = page.sessionId ?? sessionId;
     const listingPage = stackFolderListingPageFromPage(page);
     responsePath = page.path;
     total = page.total;
@@ -188,6 +219,19 @@ export async function listStackFolder(
     warnings.push(...listingPage.warnings);
     await onPage?.(listingPage);
 
+    emitStackFolderListingDiagnostics({
+      path: folderPath,
+      pageOffset: page.offset,
+      requestedLimit: limit,
+      pageDurationMs,
+      folderOpenDurationMs: Math.max(0, performance.now() - folderOpenStartedAt),
+      pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
+      iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
+      iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
+      payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
+      totalItems: page.total,
+      hasMore: page.hasMore
+    });
     const nextOffset = page.offset + page.limit;
     if (!page.hasMore) {
       break;
@@ -199,6 +243,19 @@ export async function listStackFolder(
     offset = nextOffset;
   }
 
+  emitStackFolderListingDiagnostics({
+    path: folderPath,
+    pageOffset: offset,
+    requestedLimit: 0,
+    pageDurationMs: 0,
+    folderOpenDurationMs: Math.max(0, performance.now() - folderOpenStartedAt),
+    pageItemCount: entries.length,
+    iconResolutionCount: 0,
+    iconResolutionDurationMs: 0,
+    payloadItemCount: entries.length,
+    totalItems: total,
+    hasMore: false
+  });
   return { path: responsePath, entries, total, warnings };
 }
 
@@ -306,4 +363,11 @@ function stackFolderListingPageFromPage(page: StackFolderPage): StackFolderListi
     limit: page.limit,
     hasMore: page.hasMore
   };
+}
+
+function emitStackFolderListingDiagnostics(diagnostics: StackFolderListingDiagnostics) {
+  if (typeof console?.debug !== 'function') {
+    return;
+  }
+  console.debug('stack-folder-listing-diagnostics', diagnostics);
 }

@@ -36,7 +36,9 @@ pub(crate) use native_drag::native_drag_mechanism;
 #[cfg(test)]
 pub(crate) use open_with::open_with_candidates_for_extension_with_resolver;
 #[cfg(test)]
-pub(crate) use paging::{read_stack_folder_page, stack_folder_warning};
+pub(crate) use paging::{
+    read_stack_folder_page, read_stack_folder_page_with_session, stack_folder_warning,
+};
 #[cfg(test)]
 pub(crate) use paths::{
     normalize_existing_path, normalize_stack_path_candidate, paths_match_for_unpin,
@@ -133,9 +135,15 @@ pub fn read_stack_folder(
     path: String,
     offset: usize,
     limit: Option<usize>,
+    session_id: Option<String>,
 ) -> Result<StackFolderPage, String> {
     let folder = paths::normalize_existing_dir(&path)?;
-    paging::read_stack_folder_page(&folder, offset, limit.unwrap_or(paging::DEFAULT_PAGE_LIMIT))
+    paging::read_stack_folder_page_with_session(
+        &folder,
+        session_id.as_deref(),
+        offset,
+        limit.unwrap_or(paging::DEFAULT_PAGE_LIMIT),
+    )
 }
 
 #[tauri::command]
@@ -243,7 +251,8 @@ mod tests {
         available_destination_path, backup_corrupt_pin_store, clipboard_mode_from_drop_effect,
         copy_dir, move_path_with_rename, native_drag_mechanism, next_new_text_document_path,
         open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
-        paths_match_for_unpin, read_stack_folder_page, reorder_pins_by_paths,
+        paths_match_for_unpin, read_stack_folder_page, read_stack_folder_page_with_session,
+        reorder_pins_by_paths,
         resolve_stack_alias_with_profile, stack_file_attributes_from_bits, stack_folder_warning,
         stack_item_from_path, validate_child_name, ClipboardMode, PinnedStackFolder,
         ShowStackPopupRequest, StackClipboard, StackItem,
@@ -359,6 +368,26 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_stack_item_without_icon_payload() {
+        let parsed: StackItem = serde_json::from_value(serde_json::json!({
+            "path": r"C:\Items\notes.txt",
+            "name": "notes.txt",
+            "kind": "file",
+            "typeLabel": "TXT File",
+            "sizeBytes": 1,
+            "modifiedAt": 1700000000000u64,
+            "isHidden": false,
+            "isReadonly": false,
+            "isSystem": false,
+            "isSymlink": false,
+            "isReparsePoint": false
+        }))
+        .unwrap();
+
+        assert_eq!(parsed.icon_data_url, None);
+    }
+
+    #[test]
     fn normalizes_show_stack_popup_request_before_delivery() {
         let root = test_dir("show-request");
         fs::create_dir_all(&root).unwrap();
@@ -401,8 +430,16 @@ mod tests {
             fs::write(root.join(format!("file-{index:03}.txt")), b"x").unwrap();
         }
 
-        let first_page = read_stack_folder_page(root.to_str().unwrap(), 0, 500).unwrap();
-        let second_page = read_stack_folder_page(root.to_str().unwrap(), 500, 500).unwrap();
+        let first_page =
+            read_stack_folder_page_with_session(root.to_str().unwrap(), None, 0, 500).unwrap();
+        let session_id = first_page.session_id.clone().unwrap();
+        let second_page = read_stack_folder_page_with_session(
+            root.to_str().unwrap(),
+            Some(&session_id),
+            500,
+            500,
+        )
+        .unwrap();
 
         assert_eq!(first_page.total, 505);
         assert_eq!(first_page.items.len(), 500);

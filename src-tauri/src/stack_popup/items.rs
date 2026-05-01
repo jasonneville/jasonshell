@@ -4,6 +4,17 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 pub(crate) fn stack_item_from_path(path: PathBuf) -> Result<StackItem, String> {
+    stack_item_from_path_with_icon_mode(path, true)
+}
+
+pub(crate) fn stack_item_metadata_from_path(path: PathBuf) -> Result<StackItem, String> {
+    stack_item_from_path_with_icon_mode(path, false)
+}
+
+fn stack_item_from_path_with_icon_mode(
+    path: PathBuf,
+    include_icon_data: bool,
+) -> Result<StackItem, String> {
     let link_metadata = fs::symlink_metadata(&path)
         .map_err(|error| format!("Failed to inspect stack item: {error}"))?;
     let is_symlink = link_metadata.file_type().is_symlink();
@@ -29,7 +40,9 @@ pub(crate) fn stack_item_from_path(path: PathBuf) -> Result<StackItem, String> {
     Ok(StackItem {
         path: path.to_string_lossy().into_owned(),
         type_label: type_label(&path, is_dir, is_symlink, is_reparse_point),
-        icon_data_url: stack_item_icon_data_url(&path),
+        icon_data_url: include_icon_data
+            .then(|| stack_item_icon_data_url(&path))
+            .flatten(),
         size_bytes: (!is_dir).then_some(metadata.len()),
         modified_at,
         is_hidden: metadata_is_hidden(&link_metadata, &name),

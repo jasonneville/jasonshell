@@ -68,6 +68,21 @@ pub struct StackFolderPage {
     pub total: usize,
     pub has_more: bool,
     pub warnings: Vec<StackFolderWarning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<StackFolderPageDiagnostics>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackFolderPageDiagnostics {
+    pub folder_open_duration_ms: u128,
+    pub page_duration_ms: u128,
+    pub page_item_count: usize,
+    pub icon_resolution_count: usize,
+    pub icon_resolution_duration_ms: u128,
+    pub payload_item_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
