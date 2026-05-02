@@ -26,16 +26,18 @@ pub(crate) fn read_stack_folder_page_with_session(
     offset: usize,
     limit: usize,
 ) -> Result<StackFolderPage, String> {
-    let tracker = StackFolderPageTracker::begin();
+    let page_started_at = Instant::now();
     let page_limit = limit.max(1);
     let mut warnings = Vec::new();
+    let mut session_started_at = page_started_at;
 
     let (effective_session_id, entries, total) = if offset == 0 {
         let (entries, discovered_warnings) = collect_stack_folder_entries(path)?;
         warnings.extend(discovered_warnings);
         let total = entries.len();
-        let effective_session_id =
-            with_session_store(|store| store.start_session(path, entries.clone(), total));
+        let effective_session_id = with_session_store(|store| {
+            store.start_session(path, entries.clone(), total, page_started_at)
+        });
         (Some(effective_session_id), entries, total)
     } else {
         let requested_session_id = session_id
@@ -45,8 +47,16 @@ pub(crate) fn read_stack_folder_page_with_session(
         let snapshot = with_session_store(|store| {
             store
                 .continue_session(path, requested_session_id)
-                .map(|session| (session.id.clone(), session.entries.clone(), session.total))
+                .map(|session| {
+                    (
+                        session.id.clone(),
+                        session.entries.clone(),
+                        session.total,
+                        session.started_at,
+                    )
+                })
         })?;
+        session_started_at = snapshot.3;
         (Some(snapshot.0), snapshot.1, snapshot.2)
     };
 
@@ -72,7 +82,17 @@ pub(crate) fn read_stack_folder_page_with_session(
         }
     }
 
-    let diagnostics = tracker.finish(items.len());
+    let diagnostics = StackFolderPageDiagnostics {
+        folder_open_duration_ms: session_started_at.elapsed().as_millis(),
+        page_duration_ms: page_started_at.elapsed().as_millis(),
+        page_item_count: items.len(),
+        icon_resolution_count: 0,
+        icon_resolution_duration_ms: 0,
+        icon_cache_hits: 0,
+        icon_cache_misses: 0,
+        icon_fallback_count: 0,
+        payload_item_count: items.len(),
+    };
     log_stack_folder_page_diagnostics(path, offset, page_limit, total, &diagnostics);
     Ok(StackFolderPage {
         path: path.to_string(),
@@ -114,31 +134,6 @@ fn collect_stack_folder_entries(
     Ok((entries, warnings))
 }
 
-#[derive(Debug)]
-struct StackFolderPageTracker {
-    started_at: Instant,
-}
-
-impl StackFolderPageTracker {
-    fn begin() -> Self {
-        Self {
-            started_at: Instant::now(),
-        }
-    }
-
-    fn finish(self, payload_item_count: usize) -> StackFolderPageDiagnostics {
-        let elapsed = self.started_at.elapsed();
-        StackFolderPageDiagnostics {
-            folder_open_duration_ms: elapsed.as_millis(),
-            page_duration_ms: elapsed.as_millis(),
-            page_item_count: payload_item_count,
-            icon_resolution_count: 0,
-            icon_resolution_duration_ms: 0,
-            payload_item_count,
-        }
-    }
-}
-
 fn log_stack_folder_page_diagnostics(
     path: &str,
     offset: usize,
@@ -147,14 +142,18 @@ fn log_stack_folder_page_diagnostics(
     diagnostics: &StackFolderPageDiagnostics,
 ) {
     eprintln!(
-        "stack-folder-page path=\"{}\" offset={} requestedLimit={} total={} pageDurationMs={} iconResolutionCount={} iconResolutionDurationMs={} payloadItemCount={}",
+        "stack-folder-page path=\"{}\" offset={} requestedLimit={} total={} pageDurationMs={} folderOpenDurationMs={} iconResolutionCount={} iconResolutionDurationMs={} iconCacheHits={} iconCacheMisses={} iconFallbackCount={} payloadItemCount={}",
         path,
         offset,
         requested_limit,
         total,
         diagnostics.page_duration_ms,
+        diagnostics.folder_open_duration_ms,
         diagnostics.icon_resolution_count,
         diagnostics.icon_resolution_duration_ms,
+        diagnostics.icon_cache_hits,
+        diagnostics.icon_cache_misses,
+        diagnostics.icon_fallback_count,
         diagnostics.payload_item_count
     );
 }
@@ -172,6 +171,7 @@ struct StackFolderListingSession {
     path: String,
     entries: Vec<StackFolderEntrySummary>,
     total: usize,
+    started_at: Instant,
 }
 
 #[derive(Default)]
@@ -187,6 +187,7 @@ impl StackFolderListingSessionStore {
         path: &str,
         entries: Vec<StackFolderEntrySummary>,
         total: usize,
+        started_at: Instant,
     ) -> String {
         self.next_id += 1;
         let session_id = format!("stack-listing-{}", self.next_id);
@@ -195,6 +196,7 @@ impl StackFolderListingSessionStore {
             path: path.to_string(),
             entries,
             total,
+            started_at,
         };
         self.sessions.insert(session_id.clone(), session);
         self.active_by_path
@@ -312,6 +314,7 @@ mod tests {
     use super::{read_stack_folder_page_with_session, StackFolderPageDiagnostics};
     use std::collections::HashSet;
     use std::fs;
+    use std::time::Duration;
 
     #[test]
     fn stack_folder_page_diagnostics_defaults_to_zeroed_metrics() {
@@ -322,6 +325,9 @@ mod tests {
         assert_eq!(diagnostics.page_item_count, 0);
         assert_eq!(diagnostics.icon_resolution_count, 0);
         assert_eq!(diagnostics.icon_resolution_duration_ms, 0);
+        assert_eq!(diagnostics.icon_cache_hits, 0);
+        assert_eq!(diagnostics.icon_cache_misses, 0);
+        assert_eq!(diagnostics.icon_fallback_count, 0);
         assert_eq!(diagnostics.payload_item_count, 0);
     }
 
@@ -401,6 +407,78 @@ mod tests {
 
         assert_eq!(second.total, 4);
         assert!(!names.iter().any(|name| name == "row-900.txt"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn mixed_large_folder_listing_completes_across_pages_without_duplicates_or_skips() {
+        let root = test_dir("mixed-large-folder");
+        fs::create_dir_all(&root).unwrap();
+
+        for index in 0..180usize {
+            fs::write(root.join(format!("archive-{index:03}.zip")), b"x").unwrap();
+            fs::write(root.join(format!("tool-{index:03}.exe")), b"x").unwrap();
+            fs::write(root.join(format!("note-{index:03}.txt")), b"x").unwrap();
+        }
+
+        let path = root.to_string_lossy().to_string();
+        let mut offset = 0usize;
+        let mut session_id: Option<String> = None;
+        let mut all_paths = Vec::new();
+        let mut total = 0usize;
+
+        loop {
+            let page =
+                read_stack_folder_page_with_session(&path, session_id.as_deref(), offset, 75).unwrap();
+            session_id = page.session_id.clone().or(session_id);
+            if total == 0 {
+                total = page.total;
+            }
+            all_paths.extend(page.items.iter().map(|item| item.path.clone()));
+            if !page.has_more {
+                break;
+            }
+            offset += page.limit;
+        }
+
+        let unique = all_paths.iter().cloned().collect::<HashSet<_>>();
+        assert_eq!(total, 540);
+        assert_eq!(all_paths.len(), 540);
+        assert_eq!(unique.len(), 540);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn continuation_diagnostics_keep_session_elapsed_time_for_metadata_completion_timing() {
+        let root = test_dir("session-elapsed-diagnostics");
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..160usize {
+            fs::write(root.join(format!("row-{index:03}.txt")), b"x").unwrap();
+        }
+
+        let path = root.to_string_lossy().to_string();
+        let first = read_stack_folder_page_with_session(&path, None, 0, 80).unwrap();
+        let session_id = first.session_id.clone().unwrap();
+        std::thread::sleep(Duration::from_millis(25));
+        let second = read_stack_folder_page_with_session(&path, Some(&session_id), 80, 80).unwrap();
+
+        let first_elapsed = first
+            .diagnostics
+            .as_ref()
+            .expect("first diagnostics")
+            .folder_open_duration_ms;
+        let second_elapsed = second
+            .diagnostics
+            .as_ref()
+            .expect("second diagnostics")
+            .folder_open_duration_ms;
+
+        assert!(
+            second_elapsed >= first_elapsed + 20,
+            "expected continuation elapsed time to include inter-page delay; first={first_elapsed}, second={second_elapsed}"
+        );
 
         fs::remove_dir_all(root).ok();
     }

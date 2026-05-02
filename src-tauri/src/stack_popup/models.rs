@@ -82,6 +82,9 @@ pub struct StackFolderPageDiagnostics {
     pub page_item_count: usize,
     pub icon_resolution_count: usize,
     pub icon_resolution_duration_ms: u128,
+    pub icon_cache_hits: usize,
+    pub icon_cache_misses: usize,
+    pub icon_fallback_count: usize,
     pub payload_item_count: usize,
 }
 

@@ -52,6 +52,9 @@ type StackFolderPageDiagnostics = {
   pageItemCount: number;
   iconResolutionCount: number;
   iconResolutionDurationMs: number;
+  iconCacheHits: number;
+  iconCacheMisses: number;
+  iconFallbackCount: number;
   payloadItemCount: number;
 };
 
@@ -138,14 +141,21 @@ export type StackFolderListingPage = StackFolderListing & {
 };
 
 type StackFolderListingDiagnostics = {
+  phase: 'page' | 'first-paint' | 'metadata-complete' | 'icon-queue-complete';
   path: string;
   pageOffset: number;
   requestedLimit: number;
   pageDurationMs: number;
   folderOpenDurationMs: number;
+  firstPaintDurationMs: number;
+  metadataListingCompleteDurationMs: number;
+  iconQueueCompleteDurationMs: number;
   pageItemCount: number;
   iconResolutionCount: number;
   iconResolutionDurationMs: number;
+  iconCacheHits: number;
+  iconCacheMisses: number;
+  iconFallbackCount: number;
   payloadItemCount: number;
   totalItems: number;
   hasMore: boolean;
@@ -218,6 +228,7 @@ export async function listStackFolder(
   let offset = 0;
   let total = 0;
   let responsePath = folderPath;
+  let firstPaintDurationMs = 0;
 
   while (true) {
     const limit = offset === 0 ? STACK_FOLDER_INITIAL_PAGE_LIMIT : STACK_FOLDER_SUBSEQUENT_PAGE_LIMIT;
@@ -236,16 +247,47 @@ export async function listStackFolder(
     entries.push(...listingPage.entries);
     warnings.push(...listingPage.warnings);
     await onPage?.(listingPage);
+    const folderOpenDurationMs = Math.max(0, performance.now() - folderOpenStartedAt);
+    if (!firstPaintDurationMs && entries.length > 0) {
+      firstPaintDurationMs = folderOpenDurationMs;
+      emitStackFolderListingDiagnostics({
+        phase: 'first-paint',
+        path: folderPath,
+        pageOffset: page.offset,
+        requestedLimit: limit,
+        pageDurationMs,
+        folderOpenDurationMs,
+        firstPaintDurationMs,
+        metadataListingCompleteDurationMs: 0,
+        iconQueueCompleteDurationMs: 0,
+        pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
+        iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
+        iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
+        iconCacheHits: page.diagnostics?.iconCacheHits ?? 0,
+        iconCacheMisses: page.diagnostics?.iconCacheMisses ?? 0,
+        iconFallbackCount: page.diagnostics?.iconFallbackCount ?? 0,
+        payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
+        totalItems: page.total,
+        hasMore: page.hasMore
+      });
+    }
 
     emitStackFolderListingDiagnostics({
+      phase: 'page',
       path: folderPath,
       pageOffset: page.offset,
       requestedLimit: limit,
       pageDurationMs,
-      folderOpenDurationMs: Math.max(0, performance.now() - folderOpenStartedAt),
+      folderOpenDurationMs,
+      firstPaintDurationMs,
+      metadataListingCompleteDurationMs: 0,
+      iconQueueCompleteDurationMs: 0,
       pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
       iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
       iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
+      iconCacheHits: page.diagnostics?.iconCacheHits ?? 0,
+      iconCacheMisses: page.diagnostics?.iconCacheMisses ?? 0,
+      iconFallbackCount: page.diagnostics?.iconFallbackCount ?? 0,
       payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
       totalItems: page.total,
       hasMore: page.hasMore
@@ -261,15 +303,23 @@ export async function listStackFolder(
     offset = nextOffset;
   }
 
+  const metadataListingCompleteDurationMs = Math.max(0, performance.now() - folderOpenStartedAt);
   emitStackFolderListingDiagnostics({
+    phase: 'metadata-complete',
     path: folderPath,
     pageOffset: offset,
     requestedLimit: 0,
     pageDurationMs: 0,
-    folderOpenDurationMs: Math.max(0, performance.now() - folderOpenStartedAt),
+    folderOpenDurationMs: metadataListingCompleteDurationMs,
+    firstPaintDurationMs,
+    metadataListingCompleteDurationMs,
+    iconQueueCompleteDurationMs: 0,
     pageItemCount: entries.length,
     iconResolutionCount: 0,
     iconResolutionDurationMs: 0,
+    iconCacheHits: 0,
+    iconCacheMisses: 0,
+    iconFallbackCount: 0,
     payloadItemCount: entries.length,
     totalItems: total,
     hasMore: false
@@ -387,7 +437,7 @@ function stackFolderListingPageFromPage(page: StackFolderPage): StackFolderListi
   };
 }
 
-function emitStackFolderListingDiagnostics(diagnostics: StackFolderListingDiagnostics) {
+export function emitStackFolderListingDiagnostics(diagnostics: StackFolderListingDiagnostics) {
   if (typeof console?.debug !== 'function') {
     return;
   }

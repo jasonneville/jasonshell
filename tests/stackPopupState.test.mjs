@@ -613,3 +613,44 @@ test('reports icon hydration progress distinctly from metadata listing completio
   assert.equal(stackIconHydrationStatus(5, 5), '');
   assert.equal(stackIconHydrationStatus(8, 5), '');
 });
+
+test('status transitions cover loading, progressive count, metadata done, and icon completion', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  assert.equal(state.statusMessage, 'Loading folder...');
+
+  state = applyStackFolderListing(state, documents, {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 505,
+    warnings: []
+  });
+  assert.equal(state.statusMessage, '1 of 505 items');
+  assert.equal(stackIconHydrationStatus(0, 1), 'Loading icons 0 of 1');
+  assert.equal(stackIconHydrationStatus(1, 1), '');
+});
+
+test('regression: progressive merge grows past legacy 80-row first page without stalling', () => {
+  const page1 = {
+    path: documents,
+    entries: Array.from({ length: 80 }, (_, index) => stackEntry(`alpha-${index.toString().padStart(3, '0')}.txt`)),
+    total: 505,
+    warnings: [],
+    offset: 0,
+    limit: 80,
+    hasMore: true
+  };
+  const page2 = {
+    path: documents,
+    entries: Array.from({ length: 60 }, (_, index) => stackEntry(`bravo-${index.toString().padStart(3, '0')}.txt`)),
+    total: 505,
+    warnings: [],
+    offset: 80,
+    limit: 60,
+    hasMore: true
+  };
+
+  const merged = mergeStackFolderListings(mergeStackFolderListings(null, page1), page2);
+
+  assert.equal(merged.entries.length, 140);
+  assert.equal(stackListingStatus(merged), '140 of 505 items');
+});

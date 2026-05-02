@@ -9,6 +9,7 @@
     copyStackItems,
     deleteStackItem,
     endStackPopupFocusLossHold,
+    emitStackFolderListingDiagnostics,
     getStackPopupRequest,
     hideStackPopup,
     listStackOpenWithCandidates,
@@ -128,6 +129,15 @@
   let iconHydrationResolvedCount = 0;
   let iconHydrationTargetCount = 0;
   let iconHydrationStatusMessage = '';
+  let iconHydrationCacheHits = 0;
+  let iconHydrationCacheMisses = 0;
+  let iconHydrationFallbackCount = 0;
+  let iconHydrationStartedAt = 0;
+  let iconQueueCompleteDurationMs = 0;
+  let iconQueueDiagnosticsEmitted = false;
+  let iconDiagnosticsPath: string | null = null;
+  let iconDiagnosticsFirstPaintDurationMs = 0;
+  let iconDiagnosticsMetadataCompleteDurationMs = 0;
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -247,14 +257,24 @@
 
     closeMenus();
     const loadSequence = ++folderLoadSequence;
-    startNewIconHydrationSession();
+    startNewIconHydrationSession(folderPath);
+    const listingStartedAt = performance.now();
+    let firstPaintDurationMs = 0;
     loadingPath = folderPath;
     errorMessage = '';
     try {
-      const listing = await listStackFolder(folderPath);
+      const listing = await listStackFolder(folderPath, async (page) => {
+        if (!firstPaintDurationMs && page.entries.length) {
+          firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
+        }
+        maybeFocusDetailsGridAfterPageAppend();
+      });
       if (loadSequence !== folderLoadSequence) {
         return;
       }
+      iconDiagnosticsPath = folderPath;
+      iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
+      iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
       stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       pathDraft = stackState.currentPath;
@@ -292,7 +312,9 @@
     }
 
     const loadSequence = ++folderLoadSequence;
-    startNewIconHydrationSession();
+    startNewIconHydrationSession(folderPath);
+    const listingStartedAt = performance.now();
+    let firstPaintDurationMs = 0;
     let mergedListing: StackFolderListing | null = null;
     loadingPath = folderPath;
     errorMessage = '';
@@ -303,6 +325,9 @@
         }
 
         mergedListing = mergeStackFolderListings(mergedListing, page);
+        if (!firstPaintDurationMs && mergedListing.entries.length > 0) {
+          firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
+        }
         stackState = applyStackFolderListing(stackState, folderPath, mergedListing);
         scheduleVisibleIconHydration(folderPath, loadSequence);
         updateDetailsViewport();
@@ -311,6 +336,9 @@
       if (loadSequence !== folderLoadSequence) {
         return;
       }
+      iconDiagnosticsPath = folderPath;
+      iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
+      iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
       stackState = applyStackFolderListing(stackState, folderPath, mergedListing ?? listing);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       updateDetailsViewport();
@@ -327,13 +355,22 @@
     }
   }
 
-  function startNewIconHydrationSession() {
+  function startNewIconHydrationSession(folderPath: string) {
     iconHydrationJobToken += 1;
     iconHydrationPending = [];
     iconHydrationInFlight = 0;
     iconHydrationResolvedCount = 0;
     iconHydrationTargetCount = 0;
     iconHydrationStatusMessage = '';
+    iconHydrationCacheHits = 0;
+    iconHydrationCacheMisses = 0;
+    iconHydrationFallbackCount = 0;
+    iconHydrationStartedAt = performance.now();
+    iconQueueCompleteDurationMs = 0;
+    iconQueueDiagnosticsEmitted = false;
+    iconDiagnosticsPath = folderPath;
+    iconDiagnosticsFirstPaintDurationMs = 0;
+    iconDiagnosticsMetadataCompleteDurationMs = 0;
   }
 
   function scheduleVisibleIconHydration(folderPath: string, loadSequence: number) {
@@ -397,6 +434,9 @@
   ) {
     try {
       const batch = await resolveStackItemIcons(paths);
+      iconHydrationCacheHits += batch.cacheHits;
+      iconHydrationCacheMisses += batch.cacheMisses;
+      iconHydrationFallbackCount += batch.items.filter((item) => !item.iconDataUrl).length;
       const updates = stackIconUpdatesFromBatch(batch.items);
       for (const item of batch.items) {
         const cacheKey = normalizeIconCacheKey(item.path);
@@ -422,6 +462,7 @@
       iconHydrationInFlight = Math.max(0, iconHydrationInFlight - 1);
       iconHydrationResolvedCount = Math.max(0, iconHydrationTargetCount - iconHydrationPending.length);
       updateIconHydrationStatusMessage();
+      maybeEmitIconQueueCompletionDiagnostics(folderPath, loadSequence, jobToken);
       await drainIconHydrationQueue(folderPath, loadSequence, jobToken);
     }
   }
@@ -448,6 +489,48 @@
       iconHydrationResolvedCount,
       iconHydrationTargetCount
     );
+  }
+
+  function maybeEmitIconQueueCompletionDiagnostics(
+    folderPath: string,
+    loadSequence: number,
+    jobToken: number
+  ) {
+    if (
+      iconQueueDiagnosticsEmitted
+      || jobToken !== iconHydrationJobToken
+      || loadSequence !== folderLoadSequence
+      || folderPath !== stackState.currentPath
+      || iconHydrationPending.length > 0
+      || iconHydrationInFlight > 0
+      || !iconHydrationTargetCount
+      || iconDiagnosticsPath !== folderPath
+    ) {
+      return;
+    }
+
+    iconQueueCompleteDurationMs = Math.max(0, performance.now() - iconHydrationStartedAt);
+    iconQueueDiagnosticsEmitted = true;
+    emitStackFolderListingDiagnostics({
+      phase: 'icon-queue-complete',
+      path: folderPath,
+      pageOffset: stackState.entries.length,
+      requestedLimit: 0,
+      pageDurationMs: 0,
+      folderOpenDurationMs: iconDiagnosticsMetadataCompleteDurationMs,
+      firstPaintDurationMs: iconDiagnosticsFirstPaintDurationMs,
+      metadataListingCompleteDurationMs: iconDiagnosticsMetadataCompleteDurationMs,
+      iconQueueCompleteDurationMs,
+      pageItemCount: stackState.entries.length,
+      iconResolutionCount: iconHydrationResolvedCount,
+      iconResolutionDurationMs: iconQueueCompleteDurationMs,
+      iconCacheHits: iconHydrationCacheHits,
+      iconCacheMisses: iconHydrationCacheMisses,
+      iconFallbackCount: iconHydrationFallbackCount,
+      payloadItemCount: stackState.entries.length,
+      totalItems: stackState.entries.length,
+      hasMore: false
+    });
   }
 
   async function navigateHistory(direction: -1 | 1) {
