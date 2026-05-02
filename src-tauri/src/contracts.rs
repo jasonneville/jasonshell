@@ -87,6 +87,7 @@ pub mod commands {
     pub const END_STACK_POPUP_FOCUS_LOSS_HOLD: &str = "end_stack_popup_focus_loss_hold";
     pub const RESIZE_STACK_POPUP: &str = "resize_stack_popup";
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
+    pub const RESOLVE_STACK_ITEM_ICONS: &str = "resolve_stack_item_icons";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
     pub const OPEN_STACK_ITEM_WITH_PICKER: &str = "open_stack_item_with_picker";
     pub const LIST_STACK_OPEN_WITH_CANDIDATES: &str = "list_stack_open_with_candidates";
@@ -185,6 +186,7 @@ pub mod commands {
         END_STACK_POPUP_FOCUS_LOSS_HOLD,
         RESIZE_STACK_POPUP,
         READ_STACK_FOLDER,
+        RESOLVE_STACK_ITEM_ICONS,
         OPEN_STACK_ITEM,
         OPEN_STACK_ITEM_WITH_PICKER,
         LIST_STACK_OPEN_WITH_CANDIDATES,

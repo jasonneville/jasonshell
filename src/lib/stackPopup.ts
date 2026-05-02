@@ -73,6 +73,24 @@ export type StackNativeDragPreparation = {
   mechanism: string;
 };
 
+export type StackItemIconResolution = {
+  path: string;
+  iconDataUrl: string | null;
+  cacheHit: boolean;
+  resolutionDurationMs: number;
+};
+
+export type StackItemIconResolutionBatch = {
+  items: StackItemIconResolution[];
+  requestedCount: number;
+  resolvedCount: number;
+  cacheHits: number;
+  cacheMisses: number;
+  truncated: boolean;
+  maxBatchSize: number;
+  totalDurationMs: number;
+};
+
 export type StackPasteFailure = {
   path: string;
   message: string;
@@ -321,6 +339,10 @@ export function openStackItemWithPicker(path: string): Promise<void> {
 
 export function listStackOpenWithCandidates(path: string): Promise<StackOpenWithCandidate[]> {
   return invoke<StackOpenWithCandidate[]>(IPC_COMMANDS.listStackOpenWithCandidates, { path });
+}
+
+export function resolveStackItemIcons(paths: string[]): Promise<StackItemIconResolutionBatch> {
+  return invoke<StackItemIconResolutionBatch>(IPC_COMMANDS.resolveStackItemIcons, { paths });
 }
 
 export function openStackItemWithApp(path: string, appId: string): Promise<void> {

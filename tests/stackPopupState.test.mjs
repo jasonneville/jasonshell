@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  applyStackEntryIconUpdates,
   applyStackEntries,
   applyStackFolderListing,
   canNavigateStackBack,
@@ -27,6 +28,7 @@ import {
   stackPopupOpenPath,
   stackPopupRequestKey,
   stackItemNameFromPath,
+  stackIconHydrationStatus,
   updateStackSort
 } from '../dist-tests/lib/stackPopupState.js';
 import { stackFileIconForEntry } from '../dist-tests/lib/stackFileIcons.js';
@@ -573,4 +575,41 @@ test('stack browser fallback icon metadata does not use text abbreviations', () 
   ]) {
     assert.equal(Object.hasOwn(stackFileIconForEntry(entry), 'glyph'), false);
   }
+});
+
+test('updates row icons in place without changing progressive row ordering', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [
+    {
+      ...stackEntry('alpha.txt'),
+      iconDataUrl: null
+    },
+    {
+      ...stackEntry('bravo.txt'),
+      iconDataUrl: null
+    }
+  ]);
+
+  const updated = applyStackEntryIconUpdates(state, documents, [
+    {
+      path: 'C:\\Users\\me\\Documents\\bravo.txt',
+      iconDataUrl: 'data:image/png;base64,icon-bravo'
+    },
+    {
+      path: 'C:\\Users\\me\\Documents\\alpha.txt',
+      iconDataUrl: 'data:image/png;base64,icon-alpha'
+    }
+  ]);
+
+  assert.deepEqual(updated.entries.map((entry) => entry.name), ['alpha.txt', 'bravo.txt']);
+  assert.equal(updated.entries[0].iconDataUrl, 'data:image/png;base64,icon-alpha');
+  assert.equal(updated.entries[1].iconDataUrl, 'data:image/png;base64,icon-bravo');
+});
+
+test('reports icon hydration progress distinctly from metadata listing completion', () => {
+  assert.equal(stackIconHydrationStatus(0, 0), '');
+  assert.equal(stackIconHydrationStatus(0, 5), 'Loading icons 0 of 5');
+  assert.equal(stackIconHydrationStatus(2, 5), 'Loading icons 2 of 5');
+  assert.equal(stackIconHydrationStatus(5, 5), '');
+  assert.equal(stackIconHydrationStatus(8, 5), '');
 });

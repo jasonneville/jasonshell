@@ -53,6 +53,7 @@ export const IPC_COMMANDS = {
   endStackPopupFocusLossHold: 'end_stack_popup_focus_loss_hold',
   resizeStackPopup: 'resize_stack_popup',
   readStackFolder: 'read_stack_folder',
+  resolveStackItemIcons: 'resolve_stack_item_icons',
   openStackItem: 'open_stack_item',
   openStackItemWithPicker: 'open_stack_item_with_picker',
   listStackOpenWithCandidates: 'list_stack_open_with_candidates',

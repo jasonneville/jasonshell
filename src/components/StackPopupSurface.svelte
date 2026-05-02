@@ -1,5 +1,6 @@
 <script lang="ts">
   import './StackPopupSurface.css';
+  import { emit } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
@@ -22,15 +23,18 @@
     pasteStackItems,
     prepareStackFileDrag,
     renameStackItem,
+    resolveStackItemIcons,
     resizeStackPopup,
     revealStackItem,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
+    type StackItemIconResolution,
     type StackFolderListing,
     type StackOpenWithCandidate
   } from '../lib/stackPopup';
   import { folderPathToUri, folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
   import {
+    applyStackEntryIconUpdates,
     applyStackFolderListing,
     canNavigateStackBack,
     canNavigateStackForward,
@@ -47,12 +51,14 @@
     selectedStackPaths,
     selectStackEntry,
     stackPopupHasRetainedRows,
+    stackIconHydrationStatus,
     stackBreadcrumbSegments,
     stackPopupOpenPath,
     stackPopupRequestKey,
     stackOpenWithSuggestions,
     stackSortHeaderState,
     updateStackSort,
+    type StackEntryIconUpdate,
     type StackOpenWithSuggestion,
     type StackPopupOpenPayload,
     type StackSortColumn
@@ -60,6 +66,7 @@
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
   import { positionContextMenuInViewport } from '../lib/contextMenuPosition';
   import {
+    STACK_BROWSER_FRONTEND_EVENTS,
     STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
     stackBrowserBreadcrumbOverflow,
     stackBrowserDeletePrompt,
@@ -70,6 +77,8 @@
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
   const STACK_POPUP_MIN_WIDTH = 560;
   const STACK_POPUP_MIN_HEIGHT = 280;
+  const STACK_ICON_RESOLVE_BATCH_SIZE = 24;
+  const STACK_ICON_RESOLVE_MAX_CONCURRENCY = 2;
 
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
@@ -112,6 +121,13 @@
   let pathInputFocused = false;
   let openWithCandidates: StackOpenWithCandidate[] = [];
   let openWithCandidatePath: string | null = null;
+  let iconCache = new Map<string, string | null>();
+  let iconHydrationJobToken = 0;
+  let iconHydrationPending: string[] = [];
+  let iconHydrationInFlight = 0;
+  let iconHydrationResolvedCount = 0;
+  let iconHydrationTargetCount = 0;
+  let iconHydrationStatusMessage = '';
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -231,6 +247,7 @@
 
     closeMenus();
     const loadSequence = ++folderLoadSequence;
+    startNewIconHydrationSession();
     loadingPath = folderPath;
     errorMessage = '';
     try {
@@ -239,6 +256,7 @@
         return;
       }
       stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
+      scheduleVisibleIconHydration(folderPath, loadSequence);
       pathDraft = stackState.currentPath;
       pathDraftBase = stackState.currentPath;
       updateDetailsViewport();
@@ -274,6 +292,7 @@
     }
 
     const loadSequence = ++folderLoadSequence;
+    startNewIconHydrationSession();
     let mergedListing: StackFolderListing | null = null;
     loadingPath = folderPath;
     errorMessage = '';
@@ -285,15 +304,17 @@
 
         mergedListing = mergeStackFolderListings(mergedListing, page);
         stackState = applyStackFolderListing(stackState, folderPath, mergedListing);
+        scheduleVisibleIconHydration(folderPath, loadSequence);
         updateDetailsViewport();
-        focusDetailsGrid();
+        maybeFocusDetailsGridAfterPageAppend();
       });
       if (loadSequence !== folderLoadSequence) {
         return;
       }
       stackState = applyStackFolderListing(stackState, folderPath, mergedListing ?? listing);
+      scheduleVisibleIconHydration(folderPath, loadSequence);
       updateDetailsViewport();
-      focusDetailsGrid();
+      maybeFocusDetailsGridAfterPageAppend();
     } catch (error) {
       console.error('Failed to load stack folder', error);
       if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
@@ -304,6 +325,129 @@
         loadingPath = null;
       }
     }
+  }
+
+  function startNewIconHydrationSession() {
+    iconHydrationJobToken += 1;
+    iconHydrationPending = [];
+    iconHydrationInFlight = 0;
+    iconHydrationResolvedCount = 0;
+    iconHydrationTargetCount = 0;
+    iconHydrationStatusMessage = '';
+  }
+
+  function scheduleVisibleIconHydration(folderPath: string, loadSequence: number) {
+    if (loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
+      return;
+    }
+
+    const cachedUpdates: StackEntryIconUpdate[] = [];
+    const pending = new Set(iconHydrationPending);
+    let targetCount = 0;
+    for (const entry of stackState.entries) {
+      if (entry.iconDataUrl) {
+        continue;
+      }
+      const cacheKey = normalizeIconCacheKey(entry.path);
+      if (!cacheKey) {
+        continue;
+      }
+      targetCount += 1;
+      if (iconCache.has(cacheKey)) {
+        const cachedIcon = iconCache.get(cacheKey) ?? null;
+        if (cachedIcon) {
+          cachedUpdates.push({ path: entry.path, iconDataUrl: cachedIcon });
+        }
+        continue;
+      }
+      pending.add(entry.path);
+    }
+
+    if (cachedUpdates.length) {
+      stackState = applyStackEntryIconUpdates(stackState, folderPath, cachedUpdates);
+    }
+
+    iconHydrationPending = [...pending];
+    iconHydrationTargetCount = targetCount;
+    iconHydrationResolvedCount = Math.max(0, targetCount - iconHydrationPending.length);
+    updateIconHydrationStatusMessage();
+    void drainIconHydrationQueue(folderPath, loadSequence, iconHydrationJobToken);
+  }
+
+  async function drainIconHydrationQueue(folderPath: string, loadSequence: number, jobToken: number) {
+    while (
+      loadSequence === folderLoadSequence
+      && folderPath === stackState.currentPath
+      && jobToken === iconHydrationJobToken
+      && iconHydrationInFlight < STACK_ICON_RESOLVE_MAX_CONCURRENCY
+      && iconHydrationPending.length > 0
+    ) {
+      const batchPaths = iconHydrationPending.slice(0, STACK_ICON_RESOLVE_BATCH_SIZE);
+      iconHydrationPending = iconHydrationPending.slice(batchPaths.length);
+      iconHydrationInFlight += 1;
+      void resolveIconBatch(folderPath, loadSequence, jobToken, batchPaths);
+    }
+  }
+
+  async function resolveIconBatch(
+    folderPath: string,
+    loadSequence: number,
+    jobToken: number,
+    paths: string[]
+  ) {
+    try {
+      const batch = await resolveStackItemIcons(paths);
+      const updates = stackIconUpdatesFromBatch(batch.items);
+      for (const item of batch.items) {
+        const cacheKey = normalizeIconCacheKey(item.path);
+        if (!cacheKey) {
+          continue;
+        }
+        iconCache.set(cacheKey, item.iconDataUrl ?? null);
+      }
+      if (
+        updates.length
+        && loadSequence === folderLoadSequence
+        && folderPath === stackState.currentPath
+        && jobToken === iconHydrationJobToken
+      ) {
+        stackState = applyStackEntryIconUpdates(stackState, folderPath, updates);
+      }
+    } catch (error) {
+      console.error('Failed to resolve stack row icons', error);
+    } finally {
+      if (jobToken !== iconHydrationJobToken) {
+        return;
+      }
+      iconHydrationInFlight = Math.max(0, iconHydrationInFlight - 1);
+      iconHydrationResolvedCount = Math.max(0, iconHydrationTargetCount - iconHydrationPending.length);
+      updateIconHydrationStatusMessage();
+      await drainIconHydrationQueue(folderPath, loadSequence, jobToken);
+    }
+  }
+
+  function stackIconUpdatesFromBatch(items: StackItemIconResolution[]): StackEntryIconUpdate[] {
+    return items
+      .filter((item) => Boolean(item.path && item.iconDataUrl))
+      .map((item) => ({
+        path: item.path,
+        iconDataUrl: item.iconDataUrl
+      }));
+  }
+
+  function normalizeIconCacheKey(path: string) {
+    const trimmed = path.trim();
+    if (!trimmed) {
+      return '';
+    }
+    return trimmed.replace(/\//g, '\\').toLocaleLowerCase();
+  }
+
+  function updateIconHydrationStatusMessage() {
+    iconHydrationStatusMessage = stackIconHydrationStatus(
+      iconHydrationResolvedCount,
+      iconHydrationTargetCount
+    );
   }
 
   async function navigateHistory(direction: -1 | 1) {
@@ -700,21 +844,45 @@
     window.requestAnimationFrame(() => detailsGrid?.focus());
   }
 
+  function maybeFocusDetailsGridAfterPageAppend() {
+    if (!detailsGrid) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active && (active === detailsGrid || detailsGrid.contains(active))) {
+      return;
+    }
+    focusDetailsGrid();
+  }
+
   function updateDetailsViewport() {
     window.requestAnimationFrame(() => {
       if (!detailsBody) {
         detailsBodyScrollTop = 0;
         detailsBodyHeight = 0;
+        emitVisibleRowsWindowChanged();
         return;
       }
       detailsBodyScrollTop = detailsBody.scrollTop;
       detailsBodyHeight = detailsBody.getBoundingClientRect().height;
+      emitVisibleRowsWindowChanged();
     });
   }
 
   function handleDetailsBodyScroll() {
     detailsBodyScrollTop = detailsBody?.scrollTop ?? 0;
     detailsBodyHeight = detailsBody?.getBoundingClientRect().height ?? 0;
+    emitVisibleRowsWindowChanged();
+  }
+
+  function emitVisibleRowsWindowChanged() {
+    const windowSlice = stackBrowserVirtualWindow(entries, detailsBodyScrollTop, detailsBodyHeight);
+    void emit(STACK_BROWSER_FRONTEND_EVENTS.folderRowsWindowChanged, {
+      path: currentPath,
+      startIndex: windowSlice.startIndex,
+      endIndex: windowSlice.endIndex,
+      totalRows: entries.length
+    }).catch(() => undefined);
   }
 
   function sortBy(column: StackSortColumn) {
@@ -1182,6 +1350,8 @@
     <span>{errorMessage || stackState.statusMessage}</span>
     {#if loadingPath}
       <span>Loading...</span>
+    {:else if iconHydrationStatusMessage}
+      <span>{iconHydrationStatusMessage}</span>
     {/if}
   </div>
 

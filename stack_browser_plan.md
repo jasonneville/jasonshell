@@ -199,7 +199,7 @@ Implementation default:
 
 ## Assumptions
 
-- One sequential `gpt-5.3-codex` worker owns full implementation.
+- Assume `gpt-5.3-codex` worker owns full implementation. Ensure to still use QA subagents.
 - No new end-user settings needed for this work.
 - Current Stack Browser UX and commands stay intact; only load architecture changes.
 - Lazy icon loading with fallback glyphs is acceptable if text rows appear instantly.

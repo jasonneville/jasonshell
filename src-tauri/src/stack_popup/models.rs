@@ -85,6 +85,28 @@ pub struct StackFolderPageDiagnostics {
     pub payload_item_count: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackItemIconResolution {
+    pub path: String,
+    pub icon_data_url: Option<String>,
+    pub cache_hit: bool,
+    pub resolution_duration_ms: u128,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackItemIconResolutionBatch {
+    pub items: Vec<StackItemIconResolution>,
+    pub requested_count: usize,
+    pub resolved_count: usize,
+    pub cache_hits: usize,
+    pub cache_misses: usize,
+    pub truncated: bool,
+    pub max_batch_size: usize,
+    pub total_duration_ms: u128,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackPasteResult {

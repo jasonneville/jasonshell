@@ -1,5 +1,6 @@
 mod clipboard;
 mod file_ops;
+mod icons;
 mod items;
 mod models;
 mod native_drag;
@@ -16,8 +17,8 @@ use tauri::{AppHandle, State};
 
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackItem,
-    StackNativeDragPreparation, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize,
-    StackPopupRuntimeState,
+    StackItemIconResolutionBatch, StackNativeDragPreparation, StackOpenWithCandidate,
+    StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 
 #[cfg(test)]
@@ -27,6 +28,8 @@ pub(crate) use file_ops::{
     available_destination_path, copy_dir, copy_path, move_path_with_rename,
     next_new_text_document_path,
 };
+#[cfg(test)]
+pub(crate) use icons::{resolve_stack_item_icons_batch, resolve_stack_item_icons_for_paths};
 #[cfg(test)]
 pub(crate) use items::{stack_file_attributes_from_bits, stack_item_from_path};
 #[cfg(test)]
@@ -147,6 +150,11 @@ pub fn read_stack_folder(
 }
 
 #[tauri::command]
+pub fn resolve_stack_item_icons(paths: Vec<String>) -> Result<StackItemIconResolutionBatch, String> {
+    icons::resolve_stack_item_icons_for_paths(paths)
+}
+
+#[tauri::command]
 pub fn open_stack_item(path: String) -> Result<(), String> {
     shell_paths::open_shell_path(path)
 }
@@ -252,7 +260,7 @@ mod tests {
         copy_dir, move_path_with_rename, native_drag_mechanism, next_new_text_document_path,
         open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
         paths_match_for_unpin, read_stack_folder_page, read_stack_folder_page_with_session,
-        reorder_pins_by_paths,
+        reorder_pins_by_paths, resolve_stack_item_icons_batch, resolve_stack_item_icons_for_paths,
         resolve_stack_alias_with_profile, stack_file_attributes_from_bits, stack_folder_warning,
         stack_item_from_path, validate_child_name, ClipboardMode, PinnedStackFolder,
         ShowStackPopupRequest, StackClipboard, StackItem,
@@ -826,5 +834,46 @@ mod tests {
             .unwrap();
         assert!(!root.join("Folder").exists());
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn stack_icon_resolution_cache_reuses_cached_path_icons() {
+        let root = test_dir("icon-cache");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("alpha.txt");
+        fs::write(&file, b"x").unwrap();
+        let path = file.to_string_lossy().to_string();
+
+        let first = resolve_stack_item_icons_for_paths(vec![path.clone()]).unwrap();
+        let second = resolve_stack_item_icons_for_paths(vec![path.clone()]).unwrap();
+
+        assert_eq!(first.items.len(), 1);
+        assert_eq!(second.items.len(), 1);
+        assert!(!first.items[0].cache_hit);
+        assert!(second.items[0].cache_hit);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn stack_icon_resolution_returns_none_for_missing_paths_without_failing_batch() {
+        let missing = test_dir("missing-icon")
+            .join("does-not-exist.bin")
+            .to_string_lossy()
+            .to_string();
+
+        let batch = resolve_stack_item_icons_for_paths(vec![missing.clone()]).unwrap();
+        assert_eq!(batch.items.len(), 1);
+        assert_eq!(batch.items[0].path, missing);
+        assert_eq!(batch.items[0].icon_data_url, None);
+    }
+
+    #[test]
+    fn stack_icon_resolution_batch_limit_stays_bounded() {
+        let roots = (0..200usize)
+            .map(|index| format!(r"C:\temp\path-{index:03}.txt"))
+            .collect::<Vec<_>>();
+        let bounded = resolve_stack_item_icons_batch(roots, 24);
+
+        assert!(bounded.len() <= 24);
     }
 }

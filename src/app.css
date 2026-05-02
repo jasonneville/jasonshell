@@ -178,7 +178,7 @@
 
 :root[data-theme='nord'] {
   --js-color-bg: #242933;
-  --js-color-text: #eceff4;
+  --js-color-text: #e5e9f0;
   --js-color-text-strong: #ffffff;
   --js-color-text-muted: rgba(216, 222, 233, 0.72);
   --js-color-text-subtle: rgba(216, 222, 233, 0.5);
@@ -189,6 +189,10 @@
   --js-color-accent-soft: rgba(136, 192, 208, 0.16);
   --js-color-accent-border: rgba(136, 192, 208, 0.42);
   --js-color-selected: rgba(136, 192, 208, 0.16);
+  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
+  text-shadow: 0 0 0.1px rgba(0,0,0,0.3);
+  -webkit-font-smoothing: antialiased;
 }
 
 :root[data-theme='dracula'] {

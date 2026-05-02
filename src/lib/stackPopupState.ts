@@ -57,6 +57,11 @@ export type StackOpenWithSuggestion = {
   commandContract: 'open_stack_item_with_app';
 };
 
+export type StackEntryIconUpdate = {
+  path: string;
+  iconDataUrl: string | null;
+};
+
 export function openStackFolder(
   current: StackPopupViewState,
   folderPath: string
@@ -249,6 +254,15 @@ export function stackListingStatus(listing: StackFolderListing) {
   return `${itemStatus} - partial listing: ${listing.warnings.length} warning${listing.warnings.length === 1 ? '' : 's'}`;
 }
 
+export function stackIconHydrationStatus(resolvedCount: number, totalCount: number) {
+  const resolved = Math.max(0, Math.floor(resolvedCount));
+  const total = Math.max(0, Math.floor(totalCount));
+  if (!total || resolved >= total) {
+    return '';
+  }
+  return `Loading icons ${resolved} of ${total}`;
+}
+
 export function applyStackFolderListing(
   current: StackPopupViewState,
   folderPath: string,
@@ -349,6 +363,49 @@ export function updateStackSort(
     sortColumn: column,
     sortDirection,
     entries: sortStackEntries(current.entries, column, sortDirection)
+  };
+}
+
+export function applyStackEntryIconUpdates(
+  current: StackPopupViewState,
+  folderPath: string,
+  updates: StackEntryIconUpdate[]
+): StackPopupViewState {
+  if (folderPath !== current.currentPath || current.entriesPath !== folderPath || !updates.length) {
+    return current;
+  }
+
+  const updatesByPath = new Map(
+    updates
+      .filter((update) => Boolean(update.path))
+      .map((update) => [update.path, update.iconDataUrl])
+  );
+  if (!updatesByPath.size) {
+    return current;
+  }
+
+  let changed = false;
+  const entries = current.entries.map((entry) => {
+    if (!updatesByPath.has(entry.path)) {
+      return entry;
+    }
+    const iconDataUrl = updatesByPath.get(entry.path) ?? null;
+    if (entry.iconDataUrl === iconDataUrl) {
+      return entry;
+    }
+    changed = true;
+    return {
+      ...entry,
+      iconDataUrl
+    };
+  });
+
+  if (!changed) {
+    return current;
+  }
+  return {
+    ...current,
+    entries
   };
 }
 
