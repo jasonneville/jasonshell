@@ -183,11 +183,15 @@ test('top-bar action and pinned-folder controls use Melt-backed buttons without 
 
 test('bottom-bar command buttons use Melt-backed action buttons without changing taskbar semantics', () => {
   assert.match(bottomBarSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
-  assert.equal((bottomBarSource.match(/<MeltActionButton/g) ?? []).length, 3);
+  assert.equal((bottomBarSource.match(/<MeltActionButton/g) ?? []).length, 4);
   assert.doesNotMatch(
     bottomBarSource,
     /import\s+\{[^}]*\b(?:Toggle|Tabs|Popover|SpatialMenu)\b[^}]*\}\s+from 'melt\/builders'/
   );
+
+  assert.match(bottomBarSource, /<MeltActionButton\s+class="launcher-button quick-icon-button"[\s\S]*title=\{icon\.name\}[\s\S]*ariaLabel=\{`Launch \$\{icon\.name\}`\}[\s\S]*disabled=\{launchingQuickIconId === icon\.id\}/);
+  assert.match(bottomBarSource, /onClick=\{\(\) => void launchQuickIconApp\(icon\)\}/);
+  assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openQuickIconMenu\(icon, event\)\}/);
 
   assert.match(bottomBarSource, /<MeltActionButton\s+class="launcher-button"[\s\S]*type="button"[\s\S]*title=\{launcher\.name\}[\s\S]*ariaLabel=\{`Launch \$\{launcher\.name\}`\}[\s\S]*disabled=\{launchingShortcutPath === launcher\.shortcutPath\}/);
   assert.match(bottomBarSource, /onClick=\{\(\) => void launchApp\(launcher\)\}/);

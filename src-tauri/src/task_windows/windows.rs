@@ -154,6 +154,19 @@ pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>
     Ok(windows)
 }
 
+pub(super) fn process_image_path_for_hwnd(hwnd: HWND) -> Result<PathBuf, String> {
+    let mut process_id = 0;
+    unsafe {
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    }
+    if process_id == 0 {
+        return Err("Task window process id is unavailable".to_string());
+    }
+
+    process_image_path(process_id)
+        .ok_or_else(|| "Task window executable path is unavailable".to_string())
+}
+
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
     let handles = &mut *(lparam.0 as *mut Vec<HWND>);
     handles.push(hwnd);

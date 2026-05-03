@@ -97,6 +97,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--js-space-2);
+  justify-content: flex-end;
 }
 
 .stack-actions button {
@@ -118,6 +119,37 @@
 .stack-actions button:not(:disabled):focus-visible {
   background: var(--js-color-control-hover);
   border-color: var(--js-color-accent-border);
+}
+
+.stack-search {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.32rem;
+  margin-left: auto;
+}
+
+.stack-search span {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stack-search input {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font-size: 0.68rem;
+  min-height: 1.45rem;
+  min-width: 10rem;
+  padding: 0 0.42rem;
+}
+
+.stack-search input:focus {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
+  outline: 0;
 }
 
 .stack-status {
@@ -390,7 +422,13 @@
 .details-body {
   min-height: 0;
   overflow-y: auto;
+  padding-left: 0.35rem;
   scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+}
+
+.details-body.marquee-selecting {
+  cursor: crosshair;
+  user-select: none;
 }
 
 .details-body button {
@@ -439,7 +477,16 @@
 
 .virtual-spacer {
   flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.stack-marquee-rect {
+  background: rgba(73, 130, 255, 0.18);
+  border: 1px solid var(--js-color-accent-border);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset;
   pointer-events: none;
+  position: fixed;
+  z-index: 45;
 }
 
 .item-badges {

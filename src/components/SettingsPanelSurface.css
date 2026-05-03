@@ -154,6 +154,58 @@
   white-space: nowrap;
 }
 
+.settings-power-actions,
+.settings-power-confirm-actions {
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-power-actions button,
+.settings-power-confirm-actions button {
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  min-height: 1.7rem;
+  padding: 0 0.55rem;
+}
+
+.settings-power-confirm {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-accent-border);
+  border-radius: var(--js-radius-md);
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.58rem;
+}
+
+.settings-power-confirm h3,
+.settings-power-confirm p {
+  margin: 0;
+}
+
+.settings-power-confirm h3 {
+  color: var(--js-color-text-strong);
+  font-size: 0.72rem;
+}
+
+.settings-power-confirm p {
+  color: var(--js-color-text-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+}
+
+.settings-power-error {
+  color: var(--js-color-danger, #ff7a7a) !important;
+}
+
+.settings-power-confirm-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .settings-panel-footer {
   margin-top: 0;
   padding-bottom: 0.2rem;

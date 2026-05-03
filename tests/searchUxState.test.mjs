@@ -5,6 +5,7 @@ import {
   buildVisibleSearchRows,
   DEFAULT_VISIBLE_GROUP_LIMIT,
   configuredSearchOpenAction,
+  createLatestSearchExecutionQueue,
   createLatestSearchQueryController,
   nextSearchPanelFallbackDelay,
   nextVisibleRowIndex,
@@ -16,6 +17,7 @@ import {
   searchResultActionHints,
   selectedVisibleRowIndex,
   nextProgressiveSearchResultSet,
+  shouldRetrySearchAfterProviderCacheWarm,
   shouldApplySearchEngineResponse,
   shouldApplySearchResultRefresh,
   shouldContinueSearchPanelFallbackPolling
@@ -293,16 +295,13 @@ test('progressive new-query local rows replace stale prior-query working set bef
   const displayRows = [
     { id: 'setting:display', recordKey: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 1000 }
   ];
-  const merge = (current, incoming) => [...current, ...incoming];
   const typing = nextProgressiveSearchResultSet(
     { query: 'spotify', results: spotifyRows },
-    { query: 'display settings', phase: 'typing', results: [] },
-    merge
+    { query: 'display settings', phase: 'typing', results: [] }
   );
   const local = nextProgressiveSearchResultSet(
     typing,
-    { query: 'display settings', phase: 'local', results: displayRows },
-    merge
+    { query: 'display settings', phase: 'local', results: displayRows }
   );
 
   assert.deepEqual(typing.results.map((result) => result.title), ['Spotify', 'spotify notes.txt']);
@@ -310,6 +309,59 @@ test('progressive new-query local rows replace stale prior-query working set bef
   assert.deepEqual(local.results.map((result) => result.title), ['Display Settings']);
   assert.equal(local.query, 'display settings');
   assert.equal(buildVisibleSearchRows(local.results)[0]?.result.title, 'Display Settings');
+});
+
+test('progressive same-normalized-query snapshots replace stale best match without needing trailing-space rerun', () => {
+  const staleRows = [
+    {
+      id: 'file:spotify-readme',
+      recordKey: 'file:c:\\notes\\spotify-readme.txt',
+      kind: 'file',
+      title: 'spotify-readme.txt',
+      subtitle: 'Old file hit',
+      terms: 'spotify readme',
+      priority: 700
+    },
+    {
+      id: 'app:spotify-windowsapps',
+      recordKey: 'app:c:\\users\\jnev1\\appdata\\local\\microsoft\\windowsapps\\spotify.exe',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Stale WindowsApps launcher',
+      terms: 'spotify',
+      priority: 650
+    }
+  ];
+  const freshRankedRows = [
+    {
+      id: 'app:spotify',
+      recordKey: 'app:c:\\program files\\spotify\\spotify.exe',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Installed app',
+      terms: 'spotify',
+      priority: 2400
+    },
+    {
+      id: 'file:spotify-readme',
+      recordKey: 'file:c:\\notes\\spotify-readme.txt',
+      kind: 'file',
+      title: 'spotify-readme.txt',
+      subtitle: 'Old file hit',
+      terms: 'spotify readme',
+      priority: 700
+    }
+  ];
+  const next = nextProgressiveSearchResultSet(
+    { query: 'spotify', results: staleRows },
+    { query: 'spotify', phase: 'provider', results: freshRankedRows }
+  );
+
+  assert.deepEqual(
+    next.results.map((result) => result.recordKey),
+    ['app:c:\\program files\\spotify\\spotify.exe', 'file:c:\\notes\\spotify-readme.txt']
+  );
+  assert.equal(buildVisibleSearchRows(next.results)[0]?.result.recordKey, 'app:c:\\program files\\spotify\\spotify.exe');
 });
 
 test('visible rows preserve fuzzy highlight span data for panel rendering', () => {
@@ -424,6 +476,26 @@ test('search input state can advance while expensive result refresh is deferred 
   assert.equal(shouldApplySearchResultRefresh(requests[3], displayedQuery, sequence), true);
 });
 
+test('latest-only search execution queue keeps rapid Firefox draft immediate and runs final provider request only', () => {
+  const executed = [];
+  const queue = createLatestSearchExecutionQueue((request) => {
+    executed.push(request);
+  });
+  let draft = '';
+
+  for (const query of ['F', 'Fi', 'Fir', 'Fire', 'Firef', 'Firefo', 'Firefox']) {
+    draft = query;
+    queue.enqueue({ query, sequence: executed.length + query.length });
+    assert.equal(draft, query);
+    assert.deepEqual(executed, []);
+  }
+
+  queue.flush();
+
+  assert.equal(draft, 'Firefox');
+  assert.deepEqual(executed, [{ query: 'Firefox', sequence: 7 }]);
+});
+
 test('search engine controller ignores out-of-order stale provider responses', () => {
   const controller = createLatestSearchQueryController();
   const first = controller.next('d');
@@ -433,6 +505,34 @@ test('search engine controller ignores out-of-order stale provider responses', (
   assert.equal(shouldApplySearchEngineResponse(first, 'display', controller.currentSequence()), false);
   assert.equal(controller.shouldApply(second, 'display'), false);
   assert.equal(controller.shouldApply(third, 'display'), true);
+});
+
+test('provider cache warm retry allows stale refresh payloads with nonzero app rows', () => {
+  const request = { query: 'spotify', sequence: 7 };
+
+  assert.equal(
+    shouldRetrySearchAfterProviderCacheWarm(request, 'spotify', 7, [
+      { providerId: 'apps', cache: 'refresh', resultCount: 3 }
+    ]),
+    true
+  );
+});
+
+test('provider cache warm retry ignores non-app cache timings and cache hits', () => {
+  const request = { query: 'spotify', sequence: 8 };
+
+  assert.equal(
+    shouldRetrySearchAfterProviderCacheWarm(request, 'spotify', 8, [
+      { providerId: 'everything', cache: 'refresh', resultCount: 50 }
+    ]),
+    false
+  );
+  assert.equal(
+    shouldRetrySearchAfterProviderCacheWarm(request, 'spotify', 8, [
+      { providerId: 'apps', cache: 'hit', resultCount: 3 }
+    ]),
+    false
+  );
 });
 
 test('search mode defaults to centered and preserves explicit top-right routing', () => {

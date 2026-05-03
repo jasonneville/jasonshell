@@ -19,12 +19,39 @@ test('top bar opens configured centered search from focus and typing without Ctr
   assert.match(source, /searchModeFromSettings\(settings\.ui\.searchMode\)/);
   assert.match(source, /function openConfiguredPanel/);
   assert.match(source, /openCenteredPanel/);
-  assert.match(source, /function applySearchQuery\(nextQuery: string\)/);
-  assert.match(source, /applySearchQuery\(\(event\.currentTarget as HTMLInputElement\)\.value\)/);
-  assert.match(source, /queueSearchPanelPublish\(\{[\s\S]*phase: searchQuery\.trim\(\) \? 'typing' : 'complete'/);
+  assert.match(source, /function publishImmediateSearchInputState\(nextQuery: string\)/);
+  assert.match(source, /function startImmediateSearchQueryExecution/);
+  assert.match(source, /const nextQuery = \(event\.currentTarget as HTMLInputElement\)\.value;/);
+  assert.match(source, /const request = publishImmediateSearchInputState\(nextQuery\)/);
+  assert.match(source, /startImmediateSearchQueryExecution\(request\)/);
+  assert.match(source, /queueSearchPanelPublish\(\{[\s\S]*phase: request\.query \? 'typing' : 'complete'/);
   assert.match(source, /scheduleSearchEngine\(searchQuery\)/);
-  assert.match(source, /on:focus=\{openConfiguredPanel\}/);
+  assert.match(source, /function handleSearchFocus\(\) \{[\s\S]*openConfiguredPanel\(\);/);
+  assert.match(source, /on:focus=\{handleSearchFocus\}/);
   assert.doesNotMatch(source, /Ctrl K/);
+});
+
+test('top-bar direct input path publishes lightweight pending state and queues deferred search work', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+
+  assert.match(inputHandler, /const nextQuery = \(event\.currentTarget as HTMLInputElement\)\.value;/);
+  assert.match(inputHandler, /const request = publishImmediateSearchInputState\(nextQuery\)/);
+  assert.match(inputHandler, /startImmediateSearchQueryExecution\(request\)/);
+  assert.doesNotMatch(inputHandler, /queueSearchQueryProcessing/);
+  assert.doesNotMatch(inputHandler, /applySearchQuery\(/);
+  assert.doesNotMatch(inputHandler, /queueSearchPanelPublish\(/);
+  assert.doesNotMatch(inputHandler, /openConfiguredPanel\(/);
+  assert.doesNotMatch(inputHandler, /showSearchPanel\(/);
+  assert.doesNotMatch(inputHandler, /showCenteredSearchPanel\(/);
+  assert.doesNotMatch(inputHandler, /searchEngine\(/);
+  assert.doesNotMatch(inputHandler, /buildVisibleSearchRows\(/);
+  assert.doesNotMatch(inputHandler, /nextProgressiveSearchResultSet\(/);
+  assert.doesNotMatch(inputHandler, /mergeSearchPanelResultsByStableKey\(/);
+
+  assert.doesNotMatch(source, /let queuedSearchQueryTimer: number \| null = null;/);
+  assert.doesNotMatch(source, /const SEARCH_QUERY_PROCESSING_DELAY_MS = 16;/);
+  assert.doesNotMatch(source, /queueSearchQueryProcessing|flushQueuedSearchQuery|searchQueryProcessingQueue/);
 });
 
 test('centered search surface contract accepts screen-center combobox payloads', () => {
@@ -56,11 +83,18 @@ test('search panel surface owns centered input and resize grip wiring', () => {
 
 test('centered search surface targets top-bar explicitly for cross-window search intents', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  const queryEmit = source.match(/function queueQueryEmit\(value: string\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(source, /type SearchPanelQueryPayload/);
+  assert.match(source, /let queryInputSequence = 0;/);
   assert.match(source, /import \{ emitTo \} from '@tauri-apps\/api\/event';/);
   assert.match(source, /topBarWebviewWindowEventTarget/);
   assert.match(source, /const topBarTarget = topBarWebviewWindowEventTarget\(\);/);
   assert.match(source, /queueQueryEmit\(value\)/);
-  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, queuedValue\)/);
+  assert.match(queryEmit, /queryInputSequence \+= 1;/);
+  assert.match(queryEmit, /const payload: SearchPanelQueryPayload = \{/);
+  assert.match(queryEmit, /query: value/);
+  assert.match(queryEmit, /inputSequence: queryInputSequence/);
+  assert.match(queryEmit, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, payload\)/);
   assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_KEY_EVENT, event\.key\)/);
   assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_SELECT_EVENT, searchVisibleRowIdentity\(row\)\)/);
   assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_ACTIVATE_EVENT, searchVisibleRowIdentity\(row\)\)/);
@@ -70,16 +104,16 @@ test('centered search surface targets top-bar explicitly for cross-window search
 test('centered search surface keeps a local optimistic query draft while backend search catches up', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
   assert.match(source, /let optimisticQueryDraft: string \| null = null;/);
-  assert.match(source, /let pendingQueryEmitValue: string \| null = null;/);
-  assert.match(source, /let queryEmitTimer: number \| null = null;/);
+  assert.doesNotMatch(source, /let pendingQueryEmitValue: string \| null = null;/);
+  assert.doesNotMatch(source, /let queryEmitTimer: number \| null = null;/);
   assert.match(source, /\$: displayedQuery = optimisticQueryDraft \?\? query;/);
   assert.match(source, /optimisticQueryDraft = value;/);
   assert.match(source, /value=\{displayedQuery\}/);
   assert.match(source, /if \(panelState\.query === '' \|\| optimisticQueryDraft === panelState\.query\) \{/);
-  assert.match(source, /function queueQueryEmit\(value: string\) \{/);
-  assert.match(source, /pendingQueryEmitValue = value;/);
-  assert.match(source, /queryEmitTimer = window\.setTimeout\(\(\) => \{/);
-  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, queuedValue\)/);
+  const queryEmit = source.match(/function queueQueryEmit\(value: string\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(queryEmit, /function queueQueryEmit\(value: string\) \{/);
+  assert.match(queryEmit, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, payload\)/);
+  assert.doesNotMatch(queryEmit, /window\.setTimeout|pendingQueryEmitValue|queryEmitTimer|queuedValue/);
 });
 
 test('centered search surface hides immediately on escape and only refocuses when panel focus is elsewhere', () => {

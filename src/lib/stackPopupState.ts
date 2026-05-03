@@ -548,6 +548,20 @@ export function selectAllStackEntries(current: StackPopupViewState): StackPopupV
   };
 }
 
+export function selectStackEntryPaths(
+  current: StackPopupViewState,
+  paths: readonly string[]
+): StackPopupViewState {
+  const visiblePaths = new Set(current.entries.map((entry) => entry.path));
+  const selectedPaths = paths.filter((path, index) => visiblePaths.has(path) && paths.indexOf(path) === index);
+  return {
+    ...current,
+    selectedPath: selectedPaths.at(-1) ?? null,
+    selectedPaths,
+    selectionAnchorPath: selectedPaths[0] ?? null
+  };
+}
+
 export function navigateStackHistory(
   current: StackPopupViewState,
   direction: -1 | 1

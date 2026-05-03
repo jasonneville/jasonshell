@@ -17,6 +17,7 @@ import {
   parentStackPath,
   selectAllStackEntries,
   selectStackEntry,
+  selectStackEntryPaths,
   selectedStackEntry,
   selectedStackPaths,
   sortStackEntries,
@@ -265,6 +266,23 @@ test('supports toggle, range, and select-all stack selection', () => {
 
   state = selectAllStackEntries(state);
   assert.deepEqual(selectedStackPaths(state), entries.map((entry) => entry.path));
+});
+
+test('applies marquee-selected stack entry paths while filtering stale and duplicate paths', () => {
+  const entries = [stackEntry('alpha.txt'), stackEntry('bravo.txt'), stackEntry('charlie.txt')];
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, entries);
+
+  state = selectStackEntryPaths(state, [
+    entries[1].path,
+    'C:\\Users\\me\\Documents\\missing.txt',
+    entries[1].path,
+    entries[2].path
+  ]);
+
+  assert.equal(state.selectedPath, entries[2].path);
+  assert.deepEqual(state.selectedPaths, [entries[1].path, entries[2].path]);
+  assert.equal(state.selectionAnchorPath, entries[1].path);
 });
 
 test('preserves visible selections and drops stale selections after refresh', () => {

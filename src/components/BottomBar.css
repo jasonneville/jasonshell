@@ -86,6 +86,10 @@
   width: 1.62rem;
 }
 
+.bottom-bar .quick-icon-button {
+  width: 1.62rem;
+}
+
 .bottom-bar .launcher-button:hover:not(:disabled) {
   background: var(--js-color-control-hover);
   border-color: var(--js-color-accent-border);

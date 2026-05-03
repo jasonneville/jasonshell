@@ -30,11 +30,14 @@
     readCenteredSearchPanelSize,
     showCenteredSearchPanel,
     showSearchPanel,
+    isSearchPanelQueryPayload,
     type SearchPanelPayload,
+    type SearchPanelQueryPayload,
     type SearchPanelResult
   } from '../lib/searchPanel';
   import {
     listStackPins,
+    openStackFolderInVscode,
     pinStackFolder,
     reorderStackPins,
     STACK_PINS_UPDATED_EVENT,
@@ -46,10 +49,13 @@
   import {
     searchEngine,
     SEARCH_ENGINE_PROGRESS_EVENT,
-    mergeSearchPanelResultsByStableKey,
+    SEARCH_INDEX_REFRESHED_EVENT,
+    isAppSearchIndexRefreshedPayload,
     searchEngineProgressToPanelPayload,
     searchEngineResponseToPanelPayload,
     type SearchEngineResponse,
+    type SearchIndexRefreshedPayload,
+    type SearchProviderTiming,
     type SearchProgressPayload
   } from '../lib/searchEngine';
   import {
@@ -103,6 +109,9 @@
     searchPanelKeyboardAction,
     selectedVisibleRowIndex,
     shouldApplySearchEngineResponse,
+    shouldRetrySearchAfterProviderCacheWarm,
+    shouldRetrySearchFreshness,
+    type SearchEngineQueryRequestState,
     type SearchExpandableGroupId,
     type SearchVisibleRowIdentity
   } from '../features/search/searchUxState';
@@ -116,6 +125,7 @@
   let searchResults: SearchPanelResult[] = [];
   let searchResultsQuery = '';
   let searchQuery = '';
+  let searchInputDraft = '';
   let searchOpen = false;
   let selectedIndex = 0;
   let searchStatus = 'Loading search catalog...';
@@ -131,6 +141,13 @@
   let showRailScrollRight = false;
   let focusedPinIndex: number | null = null;
   let searchEngineTimer: number | null = null;
+  let searchFreshnessRetryTimer: number | null = null;
+  let searchFreshnessRetriedQuery = '';
+  let searchProviderCacheRetryTimer: number | null = null;
+  let searchProviderCacheRetryQuery = '';
+  let searchProviderCacheRetryAttempts = 0;
+  let lastAppIndexRefreshGeneration = 0;
+  let lastSearchPanelInputSequence = 0;
   const searchQueryController = createLatestSearchQueryController();
   let searchPanelPayloadSequence = 0;
   let searchMode: SearchMode = 'centeredHotkey';
@@ -153,9 +170,14 @@
   const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
   const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
+  const SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS = 220;
+  const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
+  type OpenSearchPanelOptions = {
+    publishCurrentPayload?: boolean;
+  };
 
   $: selectedIndex = Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
   $: visibleRows = buildVisibleSearchRows(searchResults, {
@@ -251,7 +273,7 @@
     await openStackPath(pinnedPaths[0], target);
   }
 
-  async function openPanel() {
+  async function openPanel(options: OpenSearchPanelOptions = {}) {
     cancelSearchBlurClose();
     searchPresentation = 'anchored';
     const rect = searchControl.getBoundingClientRect();
@@ -268,7 +290,9 @@
     if (commandOpen) {
       await closeCommandPanel();
     }
-    queueSearchPanelPublish();
+    if (options.publishCurrentPayload ?? true) {
+      queueSearchPanelPublish();
+    }
     if (needsNativeShow) {
       await showSearchPanel({
         anchorLeft: rect.left,
@@ -277,7 +301,7 @@
     }
   }
 
-  async function openCenteredPanel() {
+  async function openCenteredPanel(options: OpenSearchPanelOptions = {}) {
     cancelSearchBlurClose();
     const needsNativeShow = !searchOpen || searchPresentation !== 'centered';
     searchPresentation = 'centered';
@@ -292,7 +316,9 @@
     if (commandOpen) {
       await closeCommandPanel();
     }
-    queueSearchPanelPublish();
+    if (options.publishCurrentPayload ?? true) {
+      queueSearchPanelPublish();
+    }
     if (needsNativeShow) {
       await showCenteredSearchPanel(readCenteredSearchPanelSize()).catch((error) => {
         console.error('Failed to show centered search panel', error);
@@ -300,12 +326,16 @@
     }
   }
 
-  function openConfiguredPanel() {
-    void (searchMode === 'topRight' ? openPanel() : openCenteredPanel());
+  function openConfiguredPanel(options: OpenSearchPanelOptions = {}) {
+    void (searchMode === 'topRight' ? openPanel(options) : openCenteredPanel(options));
+  }
+
+  function handleSearchFocus() {
+    openConfiguredPanel();
   }
 
   async function closePanel() {
-    cancelSearchBlurClose();
+    cleanupSearchWorkAfterClose();
     searchOpen = false;
     searchPanelAnchor = null;
     lastSearchPanelPayloadSignature = null;
@@ -327,6 +357,45 @@
       window.clearTimeout(searchBlurCloseTimer);
       searchBlurCloseTimer = null;
     }
+  }
+
+  function cancelSearchEngineTimer() {
+    if (searchEngineTimer !== null) {
+      window.clearTimeout(searchEngineTimer);
+      searchEngineTimer = null;
+    }
+  }
+
+  function cancelSearchFreshnessRetry() {
+    if (searchFreshnessRetryTimer !== null) {
+      window.clearTimeout(searchFreshnessRetryTimer);
+      searchFreshnessRetryTimer = null;
+    }
+  }
+
+  function cancelSearchProviderCacheRetry() {
+    if (searchProviderCacheRetryTimer !== null) {
+      window.clearTimeout(searchProviderCacheRetryTimer);
+      searchProviderCacheRetryTimer = null;
+    }
+  }
+
+  function resetSearchProviderCacheRetry() {
+    cancelSearchProviderCacheRetry();
+    searchProviderCacheRetryQuery = '';
+    searchProviderCacheRetryAttempts = 0;
+  }
+
+  function cleanupSearchWorkAfterClose() {
+    cancelSearchBlurClose();
+    cancelSearchEngineTimer();
+    cancelSearchFreshnessRetry();
+    resetSearchProviderCacheRetry();
+    invalidateSearchEngineResponses();
+  }
+
+  function invalidateSearchEngineResponses() {
+    searchQueryController.next('');
   }
 
   function markSearchPanelInteraction() {
@@ -740,10 +809,10 @@
     });
   }
 
-  function publishPendingSearchPayload(sequence: number) {
+  function publishPendingSearchPayload(sequence: number, results: SearchPanelResult[] = searchResults) {
     queueSearchPanelPublish({
-      query: searchQuery,
-      results: searchResults,
+      query: searchQuery.trim(),
+      results,
       selectedIndex,
       statusMessage: searchStatus,
       presentation: searchPresentation,
@@ -753,10 +822,7 @@
   }
 
   function scheduleSearchEngine(query: string, existingRequest?: { query: string; sequence: number } | null) {
-    if (searchEngineTimer !== null) {
-      window.clearTimeout(searchEngineTimer);
-      searchEngineTimer = null;
-    }
+    cancelSearchEngineTimer();
 
     if (!query.trim()) {
       searchResults = [];
@@ -775,25 +841,92 @@
     return request;
   }
 
+  function scheduleSearchFreshnessRetry(request: { query: string; sequence: number }) {
+    cancelSearchFreshnessRetry();
+    searchFreshnessRetryTimer = window.setTimeout(() => {
+      searchFreshnessRetryTimer = null;
+      if (
+        searchFreshnessRetriedQuery === request.query ||
+        !shouldRetrySearchFreshness(
+          searchQuery,
+          searchResultsQuery,
+          searchStatus,
+          request.sequence,
+          searchQueryController.currentSequence()
+        )
+      ) {
+        return;
+      }
+      searchFreshnessRetriedQuery = request.query;
+      scheduleSearchEngine(searchQuery);
+    }, 180);
+  }
+
+  function scheduleSearchProviderCacheRetry(
+    request: { query: string; sequence: number },
+    providerTimings: SearchProviderTiming[] | undefined
+  ) {
+    const shouldRetry = shouldRetrySearchAfterProviderCacheWarm(
+      request,
+      searchQuery,
+      searchQueryController.currentSequence(),
+      providerTimings ?? []
+    );
+    if (!shouldRetry) {
+      if (request.query.trim() === searchProviderCacheRetryQuery) {
+        resetSearchProviderCacheRetry();
+      }
+      return;
+    }
+
+    const normalizedQuery = request.query.trim();
+    if (searchProviderCacheRetryQuery !== normalizedQuery) {
+      searchProviderCacheRetryQuery = normalizedQuery;
+      searchProviderCacheRetryAttempts = 0;
+    }
+    if (
+      searchProviderCacheRetryAttempts >= SEARCH_PROVIDER_CACHE_RETRY_LIMIT ||
+      searchProviderCacheRetryTimer !== null
+    ) {
+      return;
+    }
+
+    searchProviderCacheRetryAttempts += 1;
+    searchProviderCacheRetryTimer = window.setTimeout(() => {
+      searchProviderCacheRetryTimer = null;
+      if (
+        !shouldApplySearchEngineResponse(
+          request,
+          searchQuery,
+          searchQueryController.currentSequence()
+        )
+      ) {
+        return;
+      }
+      scheduleSearchEngine(searchQuery);
+    }, SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS);
+  }
+
   function applySearchEngineProgress(payload: SearchProgressPayload) {
     if (!searchQueryController.shouldApply({ query: payload.query, sequence: payload.sequence }, searchQuery)) {
       return;
     }
     const nextPayload = searchEngineProgressToPanelPayload(payload, selectedIndex, searchPresentation);
+    const selectedIndexBeforeUpdate = selectedIndex;
     const currentStableKey = searchResults[selectedIndex]?.recordKey ?? searchResults[selectedIndex]?.id ?? null;
     const nextResultSet = nextProgressiveSearchResultSet(
       { query: searchResultsQuery, results: searchResults },
-      { query: payload.query, phase: payload.phase, results: nextPayload.results },
-      mergeSearchPanelResultsByStableKey
+      { query: payload.query, phase: payload.phase, results: nextPayload.results }
     );
     const replacedResultSet = nextResultSet.query !== searchResultsQuery;
     searchResults = nextResultSet.results;
     searchResultsQuery = nextResultSet.query;
-    selectedIndex = currentStableKey
-      ? Math.max(0, searchResults.findIndex((result) => (result.recordKey ?? result.id) === currentStableKey))
-      : Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
-    if (replacedResultSet && searchResults.length) {
+    if (searchResults.length && (replacedResultSet || selectedIndexBeforeUpdate <= 0 || !currentStableKey)) {
       selectedIndex = Math.min(nextPayload.selectedIndex, searchResults.length - 1);
+    } else {
+      selectedIndex = currentStableKey
+        ? Math.max(0, searchResults.findIndex((result) => (result.recordKey ?? result.id) === currentStableKey))
+        : Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
     }
     searchStatus = nextPayload.statusMessage;
     queueSearchPanelPublish({
@@ -801,6 +934,10 @@
       results: searchResults,
       selectedIndex
     });
+    scheduleSearchProviderCacheRetry(
+      { query: payload.query, sequence: payload.sequence },
+      payload.providerTimings
+    );
   }
 
   async function loadSearchEngineResults(request: { query: string; sequence: number }) {
@@ -837,6 +974,10 @@
         phase: 'complete',
         sequence: response.sequence
       });
+      scheduleSearchProviderCacheRetry(
+        { query: response.query, sequence: response.sequence },
+        response.providerTimings
+      );
     } catch (error) {
       if (!searchQueryController.shouldApply(request, searchQuery)) {
         return;
@@ -886,39 +1027,82 @@
     }
 
     searchQuery = '';
+    searchInputDraft = '';
     selectedIndex = 0;
     await closePanel();
     await loadSearchCatalog();
   }
 
-  function applySearchQuery(nextQuery: string) {
+  function updateSearchInputDraft(nextQuery: string) {
+    searchInputDraft = nextQuery;
+  }
+
+  function cancelSupersededSearchWorkForDraft(nextQuery: string) {
+    if (nextQuery === searchQuery) {
+      return;
+    }
+    cancelSearchEngineTimer();
+    cancelSearchFreshnessRetry();
+    cancelSearchProviderCacheRetry();
+    invalidateSearchEngineResponses();
+  }
+
+  function publishImmediateSearchInputState(nextQuery: string): SearchEngineQueryRequestState {
+    const previousNormalizedQuery = searchQuery.trim();
     if (nextQuery !== searchQuery) {
+      cancelSupersededSearchWorkForDraft(nextQuery);
       expandedVisibleGroups = new Set<SearchExpandableGroupId>();
     }
+    const request = searchQueryController.next(nextQuery);
+    const normalizedChanged = request.query !== previousNormalizedQuery;
     searchQuery = nextQuery;
+    updateSearchInputDraft(nextQuery);
+    if (normalizedChanged) {
+      searchFreshnessRetriedQuery = '';
+      resetSearchProviderCacheRetry();
+    }
     selectedIndex = 0;
-    searchStatus = searchQuery.trim() ? 'Searching...' : 'Search is ready';
-    const request = searchQuery.trim() ? searchQueryController.next(searchQuery) : null;
+    searchStatus = request.query ? 'Searching...' : 'Search is ready';
+    if (!request.query || normalizedChanged) {
+      searchResults = [];
+      searchResultsQuery = '';
+    }
+    openConfiguredPanel({ publishCurrentPayload: false });
     queueSearchPanelPublish({
-      query: searchQuery,
-      results: searchQuery.trim() ? searchResults : [],
+      query: request.query,
+      results: request.query && !normalizedChanged ? searchResults : [],
       selectedIndex,
       statusMessage: searchStatus,
       presentation: searchPresentation,
-      phase: searchQuery.trim() ? 'typing' : 'complete',
-      sequence: request?.sequence
+      phase: request.query ? 'typing' : 'complete',
+      sequence: request.sequence
     });
-    openConfiguredPanel();
-    if (request) {
-      publishPendingSearchPayload(request.sequence);
-      scheduleSearchEngine(searchQuery, request);
-    } else {
-      scheduleSearchEngine(searchQuery, request);
+    return request;
+  }
+
+  function startImmediateSearchQueryExecution(request: SearchEngineQueryRequestState) {
+    if (!shouldApplySearchEngineResponse(request, searchQuery, searchQueryController.currentSequence())) {
+      return;
     }
+    if (!request.query) {
+      cancelSearchFreshnessRetry();
+      resetSearchProviderCacheRetry();
+      return;
+    }
+    publishPendingSearchPayload(request.sequence, searchResults);
+    scheduleSearchFreshnessRetry(request);
+    void loadSearchEngineResults(request);
+  }
+
+  function applySearchQuery(nextQuery: string) {
+    const request = publishImmediateSearchInputState(nextQuery);
+    startImmediateSearchQueryExecution(request);
   }
 
   function handleSearchInput(event: Event) {
-    applySearchQuery((event.currentTarget as HTMLInputElement).value);
+    const nextQuery = (event.currentTarget as HTMLInputElement).value;
+    const request = publishImmediateSearchInputState(nextQuery);
+    startImmediateSearchQueryExecution(request);
   }
 
   function applySearchKeyboardAction(key: string): boolean {
@@ -1015,9 +1199,18 @@
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
-    void listen<string>(SEARCH_PANEL_QUERY_EVENT, (event) => {
+    void listen<SearchPanelQueryPayload>(SEARCH_PANEL_QUERY_EVENT, (event) => {
       markSearchPanelInteraction();
-      applySearchQuery(event.payload);
+      if (!isSearchPanelQueryPayload(event.payload)) {
+        return;
+      }
+      if (event.payload.inputSequence <= lastSearchPanelInputSequence) {
+        return;
+      }
+      lastSearchPanelInputSequence = event.payload.inputSequence;
+      const nextQuery = event.payload.query;
+      const request = publishImmediateSearchInputState(nextQuery);
+      startImmediateSearchQueryExecution(request);
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1041,7 +1234,7 @@
       unlisteners.push(unlisten);
     });
     void listen(SEARCH_PANEL_CLOSED_EVENT, () => {
-      cancelSearchBlurClose();
+      cleanupSearchWorkAfterClose();
       searchOpen = false;
       searchPanelAnchor = null;
       lastSearchPanelPayloadSignature = null;
@@ -1050,6 +1243,28 @@
     });
     void listen<SearchProgressPayload>(SEARCH_ENGINE_PROGRESS_EVENT, (event) => {
       applySearchEngineProgress(event.payload);
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen<SearchIndexRefreshedPayload>(SEARCH_INDEX_REFRESHED_EVENT, (event) => {
+      if (!isAppSearchIndexRefreshedPayload(event.payload)) {
+        return;
+      }
+      if ((event.payload.generatedAtEpochSecs ?? 0) <= lastAppIndexRefreshGeneration) {
+        return;
+      }
+      lastAppIndexRefreshGeneration = event.payload.generatedAtEpochSecs ?? lastAppIndexRefreshGeneration;
+      const refreshQuery = searchInputDraft !== searchQuery ? searchInputDraft : searchQuery;
+      if (!searchOpen || !refreshQuery.trim()) {
+        return;
+      }
+      resetSearchProviderCacheRetry();
+      if (refreshQuery !== searchQuery) {
+        const request = publishImmediateSearchInputState(refreshQuery);
+        startImmediateSearchQueryExecution(request);
+        return;
+      }
+      scheduleSearchEngine(refreshQuery);
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1063,6 +1278,10 @@
     void listen<TopBarPinMenuActionPayload>(TOP_BAR_PIN_MENU_ACTION_EVENT, (event) => {
       if (event.payload.action === 'open') {
         void openStackPath(event.payload.path, queryPinButton(event.payload.path));
+      } else if (event.payload.action === 'openInVscode') {
+        void openStackFolderInVscode(event.payload.path).catch((error) => {
+          console.error('Failed to open pinned folder in VS Code', error);
+        });
       } else if (event.payload.action === 'unpin') {
         void unpinFromMenu(event.payload.path);
       }
@@ -1099,9 +1318,9 @@
       window.clearInterval(timer);
       window.clearInterval(searchRefreshTimer);
       window.clearTimeout(runtimeMetricsTimer);
-      if (searchEngineTimer !== null) {
-        window.clearTimeout(searchEngineTimer);
-      }
+      cancelSearchEngineTimer();
+      cancelSearchFreshnessRetry();
+      cancelSearchProviderCacheRetry();
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);
       }
@@ -1231,8 +1450,8 @@
       aria-haspopup="listbox"
       autocomplete="off"
       placeholder="Search"
-      value={searchQuery}
-      on:focus={openConfiguredPanel}
+      value={searchInputDraft}
+      on:focus={handleSearchFocus}
       on:pointerdown={handleSearchPointerDown}
       on:blur={scheduleSearchBlurClose}
       on:input={handleSearchInput}

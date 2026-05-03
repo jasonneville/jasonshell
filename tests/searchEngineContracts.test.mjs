@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import {
   SEARCH_ENGINE_COMMAND,
   SEARCH_ENGINE_PROGRESS_EVENT,
+  SEARCH_INDEX_REFRESHED_EVENT,
+  isAppSearchIndexRefreshedPayload,
   isSafeControlPanelAction,
   isSafeMsSettingsUri,
   isSearchEngineResponse,
@@ -54,6 +56,7 @@ function providerTiming(overrides = {}) {
 test('search engine request and response contracts match phase 1 shape', () => {
   assert.equal(SEARCH_ENGINE_COMMAND, 'search_engine');
   assert.equal(SEARCH_ENGINE_PROGRESS_EVENT, 'search-engine:progress');
+  assert.equal(SEARCH_INDEX_REFRESHED_EVENT, 'search-index:refreshed');
   assert.equal(
     isSearchQueryRequest({
       query: 'display settings',
@@ -83,6 +86,32 @@ test('search engine request and response contracts match phase 1 shape', () => {
       }
     }),
     true
+  );
+});
+
+test('app search index refresh payload is typed so legacy refresh events are ignored', () => {
+  assert.equal(
+    isAppSearchIndexRefreshedPayload({
+      providerId: 'apps',
+      entryCount: 42,
+      generatedAtEpochSecs: 1_777_777_777
+    }),
+    true
+  );
+  assert.equal(
+    isAppSearchIndexRefreshedPayload({
+      entryCount: 42,
+      generatedAtEpochSecs: 1_777_777_777
+    }),
+    false
+  );
+  assert.equal(
+    isAppSearchIndexRefreshedPayload({
+      providerId: 'legacy',
+      entryCount: 42,
+      generatedAtEpochSecs: 1_777_777_777
+    }),
+    false
   );
 });
 

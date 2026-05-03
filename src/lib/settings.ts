@@ -3,6 +3,7 @@ import type { WorkspaceProfile } from './workspaces';
 import { defaultSearchSettings } from './searchSettings.js';
 import type { SearchMode, SearchSettingsContract } from './searchSettings';
 import { defaultQuickCommandsSettings, type QuickCommandsSettings } from './quickCommands.js';
+import { defaultQuickIconsSettings, type QuickIconsSettings } from './quickIcons.js';
 
 export const SETTINGS_SCHEMA = 'jasonshell.settings';
 export const CURRENT_SETTINGS_VERSION = 1;
@@ -23,6 +24,7 @@ export interface ShellSettings {
   workspaces: WorkspaceProfile[];
   taskHistory: ShellTaskHistoryEntry[];
   quickCommands: QuickCommandsSettings;
+  quickIcons: QuickIconsSettings;
 }
 
 export const SETTINGS_COMMANDS = {
@@ -43,7 +45,8 @@ export function defaultShellSettings(): ShellSettings {
     search: searchSettings.search,
     workspaces: [],
     taskHistory: [],
-    quickCommands: defaultQuickCommandsSettings()
+    quickCommands: defaultQuickCommandsSettings(),
+    quickIcons: defaultQuickIconsSettings()
   };
 }
 

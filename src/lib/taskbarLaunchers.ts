@@ -5,6 +5,7 @@ export type PinnedTaskbarLauncher = {
   id: string;
   name: string;
   shortcutPath: string;
+  targetPath: string | null;
   iconDataUrl: string;
 };
 

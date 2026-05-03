@@ -228,7 +228,9 @@ test('phase 2 settings provider dataset backs required Windows settings intents'
 test('top-bar input handler keeps forbidden work out of the direct input path', () => {
   const topBar = readSource('src/components/TopBar.svelte');
   const inputHandler = extractFunction(topBar, 'handleSearchInput');
-  assert.match(inputHandler, /applySearchQuery\(\(event\.currentTarget as HTMLInputElement\)\.value\)/);
+  assert.match(inputHandler, /const nextQuery = \(event\.currentTarget as HTMLInputElement\)\.value;/);
+  assert.match(inputHandler, /const request = publishImmediateSearchInputState\(nextQuery\)/);
+  assert.match(inputHandler, /startImmediateSearchQueryExecution\(request\)/);
 
   for (const group of performanceFixture.forbiddenInputHandlerDependencies) {
     for (const pattern of group.patterns) {
@@ -239,18 +241,17 @@ test('top-bar input handler keeps forbidden work out of the direct input path', 
 
 test('rapid typing publishes pending or current-best payload before provider resolution and gates stale responses', () => {
   const topBar = readSource('src/components/TopBar.svelte');
-  const applySearchQuery = extractFunction(topBar, 'applySearchQuery');
+  const publishImmediate = extractFunction(topBar, 'publishImmediateSearchInputState');
+  const startImmediate = extractFunction(topBar, 'startImmediateSearchQueryExecution');
   const firstProviderDispatch = Math.min(
     ...[
-      applySearchQuery.indexOf('scheduleSearchEngine(searchQuery, request)'),
-      applySearchQuery.indexOf('scheduleSearchEngine(searchQuery)')
+      startImmediate.indexOf('void loadSearchEngineResults(request)'),
+      startImmediate.indexOf('scheduleSearchEngine(searchQuery)')
     ].filter((index) => index >= 0)
   );
   assert.notEqual(firstProviderDispatch, Infinity, 'provider dispatch seam is present');
-  assert.ok(
-    applySearchQuery.indexOf('queueSearchPanelPublish') < firstProviderDispatch,
-    'panel payload publish is queued before provider dispatch'
-  );
+  assert.match(publishImmediate, /queueSearchPanelPublish\(\{/);
+  assert.match(startImmediate, /publishPendingSearchPayload\(request\.sequence, searchResults\)/);
   assert.equal(shouldApplySystemSearchResponse('dis', 3, 'display', 4), false);
   assert.equal(shouldApplySystemSearchResponse('display', 4, 'display', 4), true);
 });

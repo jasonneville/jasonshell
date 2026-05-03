@@ -407,6 +407,10 @@ export function openStackTerminalHere(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openStackTerminalHere, { path });
 }
 
+export function openStackFolderInVscode(path: string): Promise<void> {
+  return invoke(IPC_COMMANDS.openStackFolderInVscode, { path });
+}
+
 function stackEntryFromItem(item: StackItem): StackEntry {
   return {
     id: item.path,

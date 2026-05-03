@@ -19,6 +19,7 @@
     openStackItem,
     openStackItemWithApp,
     openStackItemWithPicker,
+    openStackFolderInVscode,
     openStackTerminalHere,
     pinStackFolder,
     pasteStackItems,
@@ -51,6 +52,7 @@
     selectedStackEntry,
     selectedStackPaths,
     selectStackEntry,
+    selectStackEntryPaths,
     stackPopupHasRetainedRows,
     stackIconHydrationStatus,
     stackBreadcrumbSegments,
@@ -71,8 +73,13 @@
     STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
     stackBrowserBreadcrumbOverflow,
     stackBrowserDeletePrompt,
+    stackBrowserMarqueeRect,
+    stackBrowserMarqueeSelectedVirtualPaths,
+    stackBrowserSearchEntries,
     stackBrowserScrollTopForIndex,
-    stackBrowserVirtualWindow
+    stackBrowserVirtualWindow,
+    type StackBrowserMarqueePoint,
+    type StackBrowserMarqueeRect
   } from '../features/stack-browser/viewModel';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
@@ -117,9 +124,21 @@
   let pendingResize: { width: number; height: number; persist: boolean } | null = null;
   let resizeFrame: number | null = null;
   let resizeRequestChain: Promise<void> = Promise.resolve();
+  let marqueeSelection:
+    | {
+        pointerId: number;
+        start: StackBrowserMarqueePoint;
+        current: StackBrowserMarqueePoint;
+        additive: boolean;
+        baseSelection: string[];
+        folderPath: string;
+      }
+    | null = null;
+  let marqueeAutoscrollFrame: number | null = null;
   let pathDraft = '';
   let pathDraftBase = '';
   let pathInputFocused = false;
+  let searchQuery = '';
   let openWithCandidates: StackOpenWithCandidate[] = [];
   let openWithCandidatePath: string | null = null;
   let iconCache = new Map<string, string | null>();
@@ -141,6 +160,7 @@
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
+  $: visibleEntries = stackBrowserSearchEntries(entries, searchQuery);
   $: selectedEntry = selectedStackEntry(stackState);
   $: selectedPaths = selectedStackPaths(stackState);
   $: hasSelection = selectedPaths.length > 0;
@@ -149,7 +169,8 @@
   $: breadcrumbs = stackBreadcrumbSegments(currentPath);
   $: breadcrumbOverflow = stackBrowserBreadcrumbOverflow(breadcrumbs, 5);
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
-  $: virtualEntries = stackBrowserVirtualWindow(entries, detailsBodyScrollTop, detailsBodyHeight);
+  $: virtualEntries = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
+  $: marqueeRect = marqueeSelection ? stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current) : null;
   $: openWithSuggestions = openWithCandidates.length ? openWithCandidates : stackOpenWithSuggestions(selectedEntry);
   $: if (currentPath !== pathDraftBase && (!pathInputFocused || pathDraft === pathDraftBase)) {
     pathDraft = currentPath;
@@ -184,6 +205,7 @@
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
+      stopMarqueeAutoscroll();
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
         unlisten();
@@ -737,6 +759,34 @@
     }
   }
 
+  async function openSelectedFolderInVscode() {
+    closeMenus();
+    if (!selectedEntry || selectedEntry.entryType !== 'Folder') {
+      return;
+    }
+    try {
+      await openStackFolderInVscode(selectedEntry.path);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open folder in VS Code', error);
+      errorMessage = operationErrorMessage(error, 'Open in VS Code unavailable');
+    }
+  }
+
+  async function openCurrentFolderInVscode() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      await openStackFolderInVscode(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open current folder in VS Code', error);
+      errorMessage = operationErrorMessage(error, 'Open in VS Code unavailable');
+    }
+  }
+
   async function copyTextToClipboard(text: string, fallback: string) {
     closeMenus();
     if (!text) {
@@ -992,6 +1042,143 @@
     }
     const mode = event.shiftKey ? 'range' : event.ctrlKey || event.metaKey ? 'toggle' : 'single';
     stackState = selectStackEntry(stackState, entry.path, mode);
+  }
+
+  function beginMarqueeSelection(event: PointerEvent) {
+    if (
+      event.button !== 0
+      || hasRetainedRows
+      || !detailsBody
+      || !isStackMarqueeStartTarget(event.target)
+    ) {
+      return;
+    }
+
+    closeMenus();
+    event.preventDefault();
+    event.stopPropagation();
+    const start = { x: event.clientX, y: event.clientY };
+    marqueeSelection = {
+      pointerId: event.pointerId,
+      start,
+      current: start,
+      additive: event.ctrlKey || event.metaKey,
+      baseSelection: [...selectedPaths],
+      folderPath: currentPath
+    };
+    try {
+      detailsBody.setPointerCapture(event.pointerId);
+    } catch {
+      marqueeSelection = null;
+      return;
+    }
+    updateMarqueeSelection();
+  }
+
+  function isStackMarqueeStartTarget(target: EventTarget | null) {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    return target === detailsBody || Boolean(target.closest('.virtual-spacer[data-stack-marquee-start]'));
+  }
+
+  function handleMarqueePointerMove(event: PointerEvent) {
+    if (!marqueeSelection || event.pointerId !== marqueeSelection.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    marqueeSelection = {
+      ...marqueeSelection,
+      current: { x: event.clientX, y: event.clientY }
+    };
+    updateMarqueeSelection();
+    scheduleMarqueeAutoscroll(event.clientY);
+  }
+
+  function endMarqueeSelection(event: PointerEvent) {
+    if (!marqueeSelection || event.pointerId !== marqueeSelection.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    try {
+      if (detailsBody?.hasPointerCapture(event.pointerId)) {
+        detailsBody.releasePointerCapture(event.pointerId);
+      }
+    } finally {
+      stopMarqueeAutoscroll();
+      marqueeSelection = null;
+    }
+  }
+
+  function updateMarqueeSelection() {
+    if (!marqueeSelection || !detailsBody || marqueeSelection.folderPath !== currentPath) {
+      marqueeSelection = null;
+      stopMarqueeAutoscroll();
+      return;
+    }
+
+    const rect = stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current);
+    const selected = stackBrowserMarqueeSelectedVirtualPaths(
+      entries.map((entry) => entry.path),
+      rect,
+      {
+        rowHeight: virtualEntries.rowHeight,
+        rowLeft: detailsBody.getBoundingClientRect().left,
+        rowRight: detailsBody.getBoundingClientRect().right,
+        viewportTop: detailsBody.getBoundingClientRect().top,
+        scrollTop: detailsBody.scrollTop,
+        existingSelection: marqueeSelection.additive ? marqueeSelection.baseSelection : undefined,
+        additive: marqueeSelection.additive
+      }
+    );
+    stackState = selectStackEntryPaths(stackState, selected);
+  }
+
+  function scheduleMarqueeAutoscroll(pointerY: number) {
+    if (!detailsBody) {
+      return;
+    }
+
+    const bounds = detailsBody.getBoundingClientRect();
+    const edgeSize = 32;
+    const maxStep = 18;
+    let step = 0;
+    if (pointerY < bounds.top + edgeSize) {
+      step = -Math.ceil(maxStep * (1 - Math.max(0, pointerY - bounds.top) / edgeSize));
+    } else if (pointerY > bounds.bottom - edgeSize) {
+      step = Math.ceil(maxStep * (1 - Math.max(0, bounds.bottom - pointerY) / edgeSize));
+    }
+
+    if (!step) {
+      stopMarqueeAutoscroll();
+      return;
+    }
+
+    if (marqueeAutoscrollFrame !== null) {
+      return;
+    }
+
+    marqueeAutoscrollFrame = window.requestAnimationFrame(() => {
+      marqueeAutoscrollFrame = null;
+      if (!marqueeSelection || !detailsBody) {
+        return;
+      }
+      detailsBody.scrollTop += step;
+      handleDetailsBodyScroll();
+      updateMarqueeSelection();
+      if (marqueeSelection) {
+        scheduleMarqueeAutoscroll(marqueeSelection.current.y);
+      }
+    });
+  }
+
+  function stopMarqueeAutoscroll() {
+    if (marqueeAutoscrollFrame !== null) {
+      window.cancelAnimationFrame(marqueeAutoscrollFrame);
+      marqueeAutoscrollFrame = null;
+    }
   }
 
   function selectEntryByIndex(index: number, range = false) {
@@ -1362,8 +1549,11 @@
   on:click={closeMenus}
   on:mousedown={handleMouseNavigation}
   on:pointermove={handleResizePointerMove}
+  on:pointermove={handleMarqueePointerMove}
   on:pointerup={endResize}
+  on:pointerup={endMarqueeSelection}
   on:pointercancel={endResize}
+  on:pointercancel={endMarqueeSelection}
   on:resize={updateDetailsViewport}
 />
 
@@ -1426,6 +1616,24 @@
       <MeltActionButton disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
       <MeltActionButton disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
       <MeltActionButton disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <label class="stack-search" aria-label="Search current folder">
+        <span>Search</span>
+        <input
+          aria-label="Search current folder"
+          value={searchQuery}
+          placeholder="Search folder"
+          spellcheck="false"
+          autocomplete="off"
+          on:input={(event) => {
+            searchQuery = event.currentTarget.value;
+            detailsBodyScrollTop = 0;
+            if (detailsBody) {
+              detailsBody.scrollTop = 0;
+            }
+          }}
+          on:keydown={(event) => event.stopPropagation()}
+        />
+      </label>
     </div>
   </header>
 
@@ -1469,7 +1677,7 @@
     role="grid"
     aria-label="Folder details"
     aria-busy={loadingPath ? 'true' : 'false'}
-    aria-rowcount={entries.length + 1}
+    aria-rowcount={visibleEntries.length + 1}
     aria-colcount="4"
     tabindex="0"
     bind:this={detailsGrid}
@@ -1484,14 +1692,18 @@
       <MeltActionButton class={sortHeader('modified').className} role="columnheader" ariaColindex={4} ariaSort={sortHeader('modified').ariaSort} onClick={() => sortBy('modified')}><span>Modified</span><span class="sort-indicator" aria-hidden="true">{sortHeader('modified').indicator}</span></MeltActionButton>
     </div>
 
-    {#if entries.length}
+    {#if visibleEntries.length}
       <div
         class="details-body"
+        class:marquee-selecting={!!marqueeSelection}
+        role="rowgroup"
         bind:this={detailsBody}
+        data-stack-marquee-start="body"
+        on:pointerdown={beginMarqueeSelection}
         on:scroll={handleDetailsBodyScroll}
       >
         {#if virtualEntries.beforeHeight}
-          <div class="virtual-spacer" style={`height:${virtualEntries.beforeHeight}px`} aria-hidden="true"></div>
+          <div class="virtual-spacer" data-stack-marquee-start="spacer" style={`height:${virtualEntries.beforeHeight}px`} aria-hidden="true"></div>
         {/if}
         {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
           {@const entry = virtualRow.item}
@@ -1509,6 +1721,7 @@
             aria-disabled={hasRetainedRows}
             disabled={hasRetainedRows}
             draggable={!hasRetainedRows}
+            data-stack-entry-path={entry.path}
             on:click={(event) => selectEntryFromMouse(event, entry)}
             on:dblclick={() => void activateEntry(entry)}
             on:contextmenu={(event) => handleRowContextMenu(event, entry)}
@@ -1543,7 +1756,14 @@
           </button>
         {/each}
         {#if virtualEntries.afterHeight}
-          <div class="virtual-spacer" style={`height:${virtualEntries.afterHeight}px`} aria-hidden="true"></div>
+          <div class="virtual-spacer" data-stack-marquee-start="spacer" style={`height:${virtualEntries.afterHeight}px`} aria-hidden="true"></div>
+        {/if}
+        {#if marqueeRect}
+          <div
+            class="stack-marquee-rect"
+            style={`left:${marqueeRect.left}px;top:${marqueeRect.top}px;width:${marqueeRect.width}px;height:${marqueeRect.height}px`}
+            aria-hidden="true"
+          ></div>
         {/if}
       </div>
     {:else}
@@ -1575,6 +1795,7 @@
       <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
@@ -1604,6 +1825,7 @@
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void beginCreateTextFile()}>New Text File</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openCurrentFolderInVscode()}>Open in VS Code</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openTerminalHere()}>Open Terminal Here</MeltActionButton>
     </div>
   {/if}

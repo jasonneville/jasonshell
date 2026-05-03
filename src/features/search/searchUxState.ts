@@ -80,10 +80,23 @@ export type SearchEngineQueryRequestState = {
   sequence: number;
 };
 
+export type SearchProviderCacheRetryTiming = {
+  providerId?: string;
+  cache?: string;
+  resultCount?: number;
+};
+
 export type LatestSearchQueryController = {
   next(query: string): SearchEngineQueryRequestState;
   currentSequence(): number;
   shouldApply(request: SearchEngineQueryRequestState, currentQuery: string): boolean;
+};
+
+export type LatestSearchExecutionQueue<TRequest = SearchEngineQueryRequestState> = {
+  enqueue(request: TRequest): void;
+  flush(): TRequest | null;
+  clear(): void;
+  pending(): TRequest | null;
 };
 
 export type SearchKeyboardAction =
@@ -286,11 +299,7 @@ export function resolveVisibleSearchRowResultIndex(
 
 export function nextProgressiveSearchResultSet(
   current: SearchProgressiveResultSet,
-  update: SearchProgressiveResultUpdate,
-  mergeResults: (
-    current: readonly SearchPanelResult[],
-    incoming: readonly SearchPanelResult[]
-  ) => SearchPanelResult[]
+  update: SearchProgressiveResultUpdate
 ): SearchProgressiveResultSet {
   if (update.phase === 'typing') {
     return current;
@@ -298,15 +307,9 @@ export function nextProgressiveSearchResultSet(
   if (update.phase === 'error' && update.results.length === 0) {
     return current;
   }
-  if (update.phase === 'complete' || update.query !== current.query) {
-    return {
-      query: update.query,
-      results: update.results
-    };
-  }
   return {
-    query: current.query,
-    results: mergeResults(current.results, update.results)
+    query: update.query,
+    results: update.results
   };
 }
 
@@ -406,6 +409,45 @@ export function shouldApplySearchEngineResponse(
   return request.sequence === currentSequence && request.query === currentQuery.trim();
 }
 
+export function shouldRetrySearchFreshness(
+  currentQuery: string,
+  resultQuery: string,
+  statusMessage: string,
+  requestSequence: number,
+  currentSequence: number
+): boolean {
+  const normalizedQuery = currentQuery.trim();
+  if (!normalizedQuery || requestSequence !== currentSequence) {
+    return false;
+  }
+  if (!statusMessage.startsWith('Searching')) {
+    return false;
+  }
+  return resultQuery.trim() !== normalizedQuery || statusMessage === 'Searching...'
+    || statusMessage === 'Searching local providers...';
+}
+
+export function shouldRetrySearchAfterProviderCacheWarm(
+  request: SearchEngineQueryRequestState,
+  currentQuery: string,
+  currentSequence: number,
+  providerTimings: readonly SearchProviderCacheRetryTiming[] = []
+): boolean {
+  if (!shouldApplySearchEngineResponse(request, currentQuery, currentSequence)) {
+    return false;
+  }
+
+  return providerTimings.some((timing) => {
+    if (timing.providerId !== 'apps') {
+      return false;
+    }
+    if (timing.cache === 'miss' || timing.cache === 'indexing') {
+      return true;
+    }
+    return timing.cache === 'refresh';
+  });
+}
+
 export function createLatestSearchQueryController(initialSequence = 0): LatestSearchQueryController {
   let sequence = initialSequence;
   return {
@@ -419,6 +461,31 @@ export function createLatestSearchQueryController(initialSequence = 0): LatestSe
     },
     shouldApply(request: SearchEngineQueryRequestState, currentQuery: string) {
       return shouldApplySearchEngineResponse(request, currentQuery, sequence);
+    }
+  };
+}
+
+export function createLatestSearchExecutionQueue<TRequest>(
+  execute: (request: TRequest) => void
+): LatestSearchExecutionQueue<TRequest> {
+  let pendingRequest: TRequest | null = null;
+  return {
+    enqueue(request: TRequest) {
+      pendingRequest = request;
+    },
+    flush() {
+      const request = pendingRequest;
+      pendingRequest = null;
+      if (request !== null) {
+        execute(request);
+      }
+      return request;
+    },
+    clear() {
+      pendingRequest = null;
+    },
+    pending() {
+      return pendingRequest;
     }
   };
 }

@@ -13,7 +13,11 @@
     shellFontOptions,
     type ShellPreferences
   } from '../lib/shellPreferences';
-  import { hideSettingsPanel } from '../lib/settingsPanel';
+  import {
+    hideSettingsPanel,
+    triggerSystemPowerAction,
+    type SystemPowerAction
+  } from '../lib/settingsPanel';
   import {
     getInitialShellThemeId,
     normalizeShellThemeId,
@@ -37,6 +41,15 @@
   let preferences: ShellPreferences = getInitialShellPreferences();
   let selectedThemeId: ShellThemeId = getInitialShellThemeId();
   let now = new Date();
+  let pendingPowerAction: SystemPowerAction | null = null;
+  let powerError = '';
+  let powerBusy = false;
+
+  const powerActionLabels: Record<SystemPowerAction, string> = {
+    sleep: 'Sleep',
+    restart: 'Restart',
+    shutdown: 'Turn Off'
+  };
 
   $: datePreview = formatShellDate(now, preferences.dateFormat);
   $: timePreview = formatShellTime(now, preferences);
@@ -72,6 +85,36 @@
     });
     selectedThemeId = 'base-dark';
     setShellTheme(selectedThemeId);
+  }
+
+  function requestPowerAction(action: SystemPowerAction) {
+    pendingPowerAction = action;
+    powerError = '';
+  }
+
+  function cancelPowerAction() {
+    if (powerBusy) {
+      return;
+    }
+    pendingPowerAction = null;
+    powerError = '';
+  }
+
+  async function confirmPowerAction() {
+    if (!pendingPowerAction || powerBusy) {
+      return;
+    }
+
+    powerBusy = true;
+    powerError = '';
+    try {
+      await triggerSystemPowerAction({ action: pendingPowerAction });
+      pendingPowerAction = null;
+    } catch (error) {
+      powerError = error instanceof Error ? error.message : 'Power action failed.';
+    } finally {
+      powerBusy = false;
+    }
   }
 
   function closePanel() {
@@ -177,6 +220,38 @@
       <strong>{timePreview}</strong>
       <span>{datePreview}</span>
     </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="power-heading">
+    <h2 id="power-heading">Power</h2>
+    <p class="settings-help">System power actions require confirmation before running.</p>
+    <div class="settings-power-actions">
+      <MeltActionButton onClick={() => requestPowerAction('sleep')}>Sleep</MeltActionButton>
+      <MeltActionButton onClick={() => requestPowerAction('restart')}>Restart</MeltActionButton>
+      <MeltActionButton onClick={() => requestPowerAction('shutdown')}>Turn Off</MeltActionButton>
+    </div>
+    {#if pendingPowerAction}
+      <div
+        class="settings-power-confirm"
+        role="alertdialog"
+        aria-labelledby="power-confirm-heading"
+        aria-describedby="power-confirm-description"
+      >
+        <h3 id="power-confirm-heading">Confirm {powerActionLabels[pendingPowerAction]}</h3>
+        <p id="power-confirm-description">
+          This will {powerActionLabels[pendingPowerAction].toLowerCase()} this PC.
+        </p>
+        {#if powerError}
+          <p class="settings-power-error" role="alert">{powerError}</p>
+        {/if}
+        <div class="settings-power-confirm-actions">
+          <MeltActionButton onClick={cancelPowerAction}>Cancel</MeltActionButton>
+          <MeltActionButton onClick={confirmPowerAction}>
+            {powerBusy ? 'Working...' : `Confirm ${powerActionLabels[pendingPowerAction]}`}
+          </MeltActionButton>
+        </div>
+      </div>
+    {/if}
   </section>
 
   <footer class="settings-panel-footer">

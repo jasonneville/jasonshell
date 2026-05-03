@@ -6,6 +6,7 @@ pub struct PinnedTaskbarLauncher {
     pub id: String,
     pub name: String,
     pub shortcut_path: String,
+    pub target_path: Option<String>,
     pub icon_data_url: String,
 }
 
@@ -37,6 +38,10 @@ pub fn reveal_pinned_shortcut_target(shortcut_path: String) -> Result<(), String
 
 pub fn copy_pinned_shortcut_path(shortcut_path: String) -> Result<(), String> {
     imp::copy_pinned_shortcut_path(shortcut_path)
+}
+
+pub fn pin_executable_to_taskbar_shortcut(executable_path: String) -> Result<(), String> {
+    imp::pin_executable_to_taskbar_shortcut(executable_path)
 }
 
 #[cfg(target_os = "windows")]
@@ -101,6 +106,7 @@ mod imp {
                     id: shortcut_path.to_string_lossy().into_owned(),
                     name: launcher_name(&shortcut_path),
                     shortcut_path: shortcut_path.to_string_lossy().into_owned(),
+                    target_path: resolved_shortcut_target_path(&shortcut_path),
                     icon_data_url,
                 });
             }
@@ -198,6 +204,27 @@ mod imp {
         copy_text_to_clipboard(&shortcut_path.to_string_lossy())
     }
 
+    pub fn pin_executable_to_taskbar_shortcut(executable_path: String) -> Result<(), String> {
+        let executable_path = PathBuf::from(executable_path.trim());
+        if !executable_path.is_absolute() {
+            return Err("taskbar pin target must be an absolute executable path".to_string());
+        }
+        if !executable_path.exists() {
+            return Err(format!(
+                "taskbar pin target does not exist: {}",
+                executable_path.display()
+            ));
+        }
+
+        run_in_sta({
+            let executable_path = executable_path.clone();
+            move || {
+                let shortcut_path = next_taskbar_shortcut_path(&executable_path)?;
+                create_shell_shortcut(&shortcut_path, &executable_path)
+            }
+        })
+    }
+
     fn shell_execute_shortcut(
         shortcut_path: PathBuf,
         verb: Option<&str>,
@@ -264,6 +291,62 @@ mod imp {
             .spawn()
             .map_err(|error| format!("Failed to copy launcher path: {error}"))?;
 
+        Ok(())
+    }
+
+    fn next_taskbar_shortcut_path(executable_path: &Path) -> Result<PathBuf, String> {
+        let taskbar_dir = pinned_taskbar_dir()?;
+        fs::create_dir_all(&taskbar_dir)
+            .map_err(|error| format!("Failed to create pinned taskbar directory: {error}"))?;
+        let name = executable_path
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .map(sanitize_shortcut_name)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Pinned App".to_string());
+        let mut candidate = taskbar_dir.join(format!("{name}.lnk"));
+        let mut suffix = 2;
+        while candidate.exists() {
+            candidate = taskbar_dir.join(format!("{name} ({suffix}).lnk"));
+            suffix += 1;
+        }
+        Ok(candidate)
+    }
+
+    fn sanitize_shortcut_name(name: &str) -> String {
+        name.trim()
+            .chars()
+            .map(|ch| match ch {
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+                _ => ch,
+            })
+            .collect()
+    }
+
+    fn create_shell_shortcut(shortcut_path: &Path, target_path: &Path) -> Result<(), String> {
+        let shell_link: IShellLinkW = unsafe {
+            CoCreateInstance(
+                &windows::Win32::UI::Shell::ShellLink,
+                None,
+                CLSCTX_INPROC_SERVER,
+            )
+        }
+        .map_err(|error| format!("Failed to create ShellLink COM object: {error}"))?;
+        let target_wide = to_wide(target_path);
+        unsafe {
+            shell_link
+                .SetPath(PCWSTR(target_wide.as_ptr()))
+                .map_err(|error| format!("Failed to set taskbar shortcut target: {error}"))?;
+        }
+        let persist_file: IPersistFile = shell_link
+            .cast()
+            .map_err(|error| format!("Failed to bind ShellLink persistence: {error}"))?;
+        let shortcut_wide = to_wide(shortcut_path);
+        unsafe {
+            persist_file
+                .Save(PCWSTR(shortcut_wide.as_ptr()), true)
+                .map_err(|error| format!("Failed to save taskbar shortcut: {error}"))?;
+        }
         Ok(())
     }
 
@@ -403,6 +486,12 @@ mod imp {
         }
 
         extract_file_icon_data_url(shortcut_path)
+    }
+
+    fn resolved_shortcut_target_path(shortcut_path: &Path) -> Option<String> {
+        let shell_link = load_shell_link(shortcut_path).ok()?;
+        let target = resolved_shortcut_target(&shell_link).ok()??;
+        Some(target.to_string_lossy().into_owned())
     }
 
     fn explicit_icon_location(shell_link: &IShellLinkW) -> Result<Option<(PathBuf, i32)>, String> {

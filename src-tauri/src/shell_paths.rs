@@ -1,3 +1,5 @@
+use std::path::Path;
+
 #[tauri::command]
 pub fn open_shell_path(path: String) -> Result<(), String> {
     let path = path.trim();
@@ -18,6 +20,27 @@ pub fn run_control_panel(args: Option<Vec<String>>) -> Result<(), String> {
     run_control_panel_command(&args)
 }
 
+pub fn open_folder_in_vscode(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Folder path is empty".to_string());
+    }
+    let folder = Path::new(path);
+    if !folder.is_dir() {
+        return Err(format!("Folder does not exist: {path}"));
+    }
+
+    let Some(vscode_executable) = resolve_vscode_executable() else {
+        return Err("Visual Studio Code was not found in standard install paths or PATH".to_string());
+    };
+
+    std::process::Command::new(&vscode_executable)
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to open folder in VS Code: {error}"))
+}
+
 pub fn open_shell_path_with_picker(path: String) -> Result<(), String> {
     let path = path.trim();
     if path.is_empty() {
@@ -32,6 +55,54 @@ fn is_safe_control_panel_arg(arg: &str) -> bool {
         && arg
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '{' | '}' | ',' | '-'))
+}
+
+const VSCODE_EXECUTABLE_CANDIDATES: &[&str] = &[
+    r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe",
+    r"%ProgramFiles%\Microsoft VS Code\Code.exe",
+    "code.cmd",
+    "code.exe",
+];
+
+fn resolve_vscode_executable() -> Option<std::path::PathBuf> {
+    resolve_vscode_executable_with(resolve_executable_candidate)
+}
+
+fn resolve_vscode_executable_with<F>(resolver: F) -> Option<std::path::PathBuf>
+where
+    F: Fn(&str) -> Option<std::path::PathBuf>,
+{
+    VSCODE_EXECUTABLE_CANDIDATES
+        .iter()
+        .find_map(|candidate| resolver(candidate))
+}
+
+fn resolve_executable_candidate(candidate: &str) -> Option<std::path::PathBuf> {
+    let expanded = expand_environment(candidate);
+    let path = std::path::PathBuf::from(&expanded);
+    if path.is_absolute() {
+        return path.exists().then_some(path);
+    }
+
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|dir| dir.join(&expanded))
+        .find(|path| path.exists())
+}
+
+fn expand_environment(candidate: &str) -> String {
+    let mut expanded = candidate.to_string();
+    for (name, value) in [
+        ("ProgramFiles", std::env::var_os("ProgramFiles")),
+        ("ProgramFiles(x86)", std::env::var_os("ProgramFiles(x86)")),
+        ("LocalAppData", std::env::var_os("LocalAppData")),
+    ] {
+        if let Some(value) = value {
+            expanded = expanded.replace(&format!("%{name}%"), value.to_string_lossy().as_ref());
+        }
+    }
+    expanded
 }
 
 #[cfg(target_os = "windows")]
@@ -167,7 +238,8 @@ fn to_wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_safe_control_panel_arg;
+    use super::{is_safe_control_panel_arg, resolve_vscode_executable_with};
+    use std::path::PathBuf;
 
     #[test]
     fn control_panel_args_allow_applets_and_block_shell_metacharacters() {
@@ -178,5 +250,20 @@ mod tests {
         assert!(!is_safe_control_panel_arg(""));
         assert!(!is_safe_control_panel_arg("&calc.exe"));
         assert!(!is_safe_control_panel_arg("Microsoft.Sound;calc.exe"));
+    }
+
+    #[test]
+    fn vscode_resolver_uses_standard_candidate_order() {
+        let resolved = resolve_vscode_executable_with(|candidate| match candidate {
+            "code.cmd" => Some(PathBuf::from(r"C:\Tools\code.cmd")),
+            _ => None,
+        });
+
+        assert_eq!(resolved, Some(PathBuf::from(r"C:\Tools\code.cmd")));
+    }
+
+    #[test]
+    fn vscode_resolver_returns_none_when_missing() {
+        assert_eq!(resolve_vscode_executable_with(|_| None), None);
     }
 }

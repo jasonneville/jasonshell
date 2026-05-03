@@ -162,6 +162,11 @@ export type SearchPanelPayload = {
   sequence?: number;
 };
 
+export type SearchPanelQueryPayload = {
+  query: string;
+  inputSequence: number;
+};
+
 export type ShowSearchPanelRequest = {
   anchorLeft: number;
   anchorWidth: number;
@@ -292,6 +297,18 @@ export function isCenteredSearchSurfaceContract(
       typeof accessibility.listboxId === 'string' &&
       (accessibility.activeOptionId === undefined ||
         typeof accessibility.activeOptionId === 'string')
+  );
+}
+
+export function isSearchPanelQueryPayload(value: unknown): value is SearchPanelQueryPayload {
+  const record = asRecord(value);
+  const inputSequence = record?.inputSequence;
+  return Boolean(
+    record &&
+      typeof record.query === 'string' &&
+      typeof inputSequence === 'number' &&
+      Number.isSafeInteger(inputSequence) &&
+      inputSequence >= 0
   );
 }
 

@@ -13,3 +13,18 @@ export function showSettingsPanel(request: ShowSettingsPanelRequest): Promise<vo
 export function hideSettingsPanel(): Promise<void> {
   return invoke(IPC_COMMANDS.hideSettingsPanel);
 }
+
+export const SYSTEM_POWER_ACTIONS = ['sleep', 'restart', 'shutdown'] as const;
+
+export type SystemPowerAction = 'sleep' | 'restart' | 'shutdown';
+
+export interface SystemPowerActionRequest {
+  action: SystemPowerAction;
+}
+
+export function triggerSystemPowerAction(request: SystemPowerActionRequest): Promise<void> {
+  if (!SYSTEM_POWER_ACTIONS.includes(request.action)) {
+    return Promise.reject(new Error('Invalid system power action'));
+  }
+  return invoke(IPC_COMMANDS.triggerSystemPowerAction, { request });
+}

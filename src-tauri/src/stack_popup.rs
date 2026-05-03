@@ -250,6 +250,12 @@ pub fn open_stack_terminal_here(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_stack_folder_in_vscode(path: String) -> Result<(), String> {
+    let path = paths::normalize_existing_dir(&path)?;
+    crate::shell_paths::open_folder_in_vscode(path)
+}
+
+#[tauri::command]
 pub fn reveal_stack_item(path: String) -> Result<(), String> {
     file_ops::reveal_stack_item_path(path)
 }

@@ -39,6 +39,7 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Ole",
   "Win32_System_Performance",
   "Win32_System_ProcessStatus",
+  "Win32_System_Power",
   "Win32_System_Search",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",

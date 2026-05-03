@@ -4,6 +4,7 @@ import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export const SEARCH_ENGINE_COMMAND = IPC_COMMANDS.searchEngine;
 export const SEARCH_ENGINE_PROGRESS_EVENT = 'search-engine:progress';
+export const SEARCH_INDEX_REFRESHED_EVENT = 'search-index:refreshed';
 
 export const SEARCH_ENGINE_PRESENTATIONS = ['anchored', 'centered'] as const;
 export type SearchEnginePresentation = (typeof SEARCH_ENGINE_PRESENTATIONS)[number];
@@ -109,6 +110,12 @@ export type SearchProviderHealth = {
   state: 'ready' | 'degraded' | 'unavailable' | 'indexing' | 'disabled';
   reasonCode?: string;
   message?: string;
+};
+
+export type SearchIndexRefreshedPayload = {
+  providerId?: string;
+  entryCount?: number;
+  generatedAtEpochSecs?: number;
 };
 
 export type SearchEngineResponse = {
@@ -379,6 +386,20 @@ export function validateSearchResultActionSafety(result: Pick<SearchResult, 'kin
     );
   }
   return isSearchAction(result.action);
+}
+
+export function isAppSearchIndexRefreshedPayload(value: unknown): value is SearchIndexRefreshedPayload {
+  const record = asRecord(value);
+  return Boolean(
+    record &&
+      record.providerId === 'apps' &&
+      typeof record.entryCount === 'number' &&
+      Number.isInteger(record.entryCount) &&
+      record.entryCount >= 0 &&
+      typeof record.generatedAtEpochSecs === 'number' &&
+      Number.isInteger(record.generatedAtEpochSecs) &&
+      record.generatedAtEpochSecs > 0
+  );
 }
 
 export function isSafeMsSettingsUri(uri: string): boolean {

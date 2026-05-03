@@ -189,7 +189,7 @@ fn store_search_panel_payload(state: &Mutex<SearchPanelRuntimeState>, payload: V
             return false;
         }
         if sequence == guard.latest_payload_sequence {
-            if query != guard.latest_payload_query.as_deref() {
+            if query.as_deref() != guard.latest_payload_query.as_deref() {
                 return false;
             }
             if phase_rank < guard.latest_payload_phase_rank {
@@ -197,7 +197,7 @@ fn store_search_panel_payload(state: &Mutex<SearchPanelRuntimeState>, payload: V
             }
         }
         guard.latest_payload_sequence = sequence;
-        guard.latest_payload_query = query.map(str::to_string);
+        guard.latest_payload_query = query;
         guard.latest_payload_phase_rank = phase_rank;
     }
     guard.latest_payload = Some(payload);
@@ -216,8 +216,11 @@ fn search_panel_payload_sequence(payload: &Value) -> Option<u64> {
     payload.get("sequence").and_then(Value::as_u64)
 }
 
-fn search_panel_payload_query(payload: &Value) -> Option<&str> {
-    payload.get("query").and_then(Value::as_str)
+fn search_panel_payload_query(payload: &Value) -> Option<String> {
+    payload
+        .get("query")
+        .and_then(Value::as_str)
+        .map(|query| query.trim().to_string())
 }
 
 fn search_panel_payload_phase_rank(payload: &Value) -> u8 {
@@ -408,6 +411,44 @@ mod tests {
                 "sequence": 7
             })
         ));
+    }
+
+    #[test]
+    fn accepts_same_sequence_when_only_trailing_space_differs() {
+        let state = Mutex::new(SearchPanelRuntimeState::default());
+        assert!(store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify ",
+                "results": [],
+                "selectedIndex": 0,
+                "statusMessage": "Searching",
+                "phase": "typing",
+                "sequence": 9
+            })
+        ));
+        assert!(store_search_panel_payload(
+            &state,
+            json!({
+                "query": "spotify",
+                "results": [{
+                    "id": "app:spotify",
+                    "kind": "app",
+                    "title": "Spotify",
+                    "subtitle": "Installed app",
+                    "terms": "spotify",
+                    "priority": 100
+                }],
+                "selectedIndex": 0,
+                "statusMessage": "Showing search results",
+                "phase": "complete",
+                "sequence": 9
+            })
+        ));
+
+        let stored = latest_search_panel_payload(&state).expect("payload should be stored");
+        assert_eq!(stored["query"], "spotify");
+        assert_eq!(stored["results"][0]["title"], "Spotify");
     }
 
     #[test]

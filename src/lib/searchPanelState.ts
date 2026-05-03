@@ -33,12 +33,14 @@ export function applySearchPanelPayload(
 
   const nextSequence = payload.sequence ?? current.sequence;
   const nextPhase = payload.phase ?? current.phase;
+  const currentQueryIdentity = current.query.trim();
+  const payloadQueryIdentity = payload.query.trim();
   const shouldKeepResults =
-    payload.phase === 'typing'
+    (payload.phase === 'typing' && payloadQueryIdentity === currentQueryIdentity)
     || (payload.phase === 'error' && payload.results.length === 0 && nextSequence === current.sequence);
 
   return {
-    query: payload.query,
+    query: payload.sequence === undefined ? payload.query : payloadQueryIdentity,
     results: shouldKeepResults ? current.results : payload.results,
     selectedIndex: payload.selectedIndex,
     statusMessage: payload.statusMessage,
@@ -65,7 +67,7 @@ function shouldApplySearchPanelPayload(
   if (payload.sequence > current.sequence) {
     return true;
   }
-  if (payload.query !== current.query) {
+  if (payload.query.trim() !== current.query.trim()) {
     return false;
   }
   return phaseRank(payload.phase) >= phaseRank(current.phase);

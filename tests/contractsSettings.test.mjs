@@ -108,6 +108,9 @@ test('settings wrapper declares versioned schema and stable command names', () =
     taskHistory: [],
     quickCommands: {
       entries: []
+    },
+    quickIcons: {
+      entries: []
     }
   });
 });

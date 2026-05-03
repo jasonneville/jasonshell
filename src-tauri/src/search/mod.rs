@@ -30,13 +30,17 @@ use tauri::{AppHandle, Emitter};
 const SEARCH_ENGINE_PROGRESS_EVENT: &str = "search-engine:progress";
 
 #[tauri::command]
-pub(crate) fn search_engine(
+pub(crate) async fn search_engine(
     app_handle: AppHandle,
     request: SearchQueryRequest,
 ) -> Result<SearchEngineResponse, String> {
-    Ok(run_search_engine(request, |payload| {
-        let _ = app_handle.emit(SEARCH_ENGINE_PROGRESS_EVENT, payload);
-    }))
+    tauri::async_runtime::spawn_blocking(move || {
+        run_search_engine(request, |payload| {
+            let _ = app_handle.emit(SEARCH_ENGINE_PROGRESS_EVENT, payload);
+        })
+    })
+    .await
+    .map_err(|error| format!("search engine worker failed: {error}"))
 }
 
 fn run_search_engine(

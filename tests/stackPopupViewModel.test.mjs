@@ -3,8 +3,12 @@ import { test } from 'node:test';
 
 import {
   STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
+  stackBrowserMarqueeRect,
+  stackBrowserMarqueeSelectedVirtualPaths,
+  stackBrowserMarqueeSelectedPaths,
   stackBrowserBreadcrumbOverflow,
   stackBrowserDeletePrompt,
+  stackBrowserSearchEntries,
   stackBrowserScrollTopForIndex,
   stackBrowserVirtualWindow
 } from '../dist-tests/lib/stackPopupViewModel.js';
@@ -80,6 +84,104 @@ test('calculates scroll positions that keep keyboard-selected virtual rows mount
   );
 });
 
+test('normalizes stack browser marquee rectangles from either drag direction', () => {
+  assert.deepEqual(stackBrowserMarqueeRect({ x: 180, y: 90 }, { x: 40, y: 160 }), {
+    left: 40,
+    top: 90,
+    right: 180,
+    bottom: 160,
+    width: 140,
+    height: 70
+  });
+});
+
+test('selects visible stack rows whose bounds intersect the marquee rectangle', () => {
+  const rows = [
+    { path: 'C:\\Users\\me\\Documents\\alpha.txt', rect: { left: 12, top: 10, right: 360, bottom: 40 } },
+    { path: 'C:\\Users\\me\\Documents\\bravo.txt', rect: { left: 12, top: 40, right: 360, bottom: 70 } },
+    { path: 'C:\\Users\\me\\Documents\\charlie.txt', rect: { left: 12, top: 70, right: 360, bottom: 100 } },
+    { path: 'C:\\Users\\me\\Documents\\delta.txt', rect: { left: 12, top: 100, right: 360, bottom: 130 } }
+  ];
+
+  assert.deepEqual(
+    stackBrowserMarqueeSelectedPaths(
+      rows,
+      { left: 0, top: 35, right: 220, bottom: 106, width: 220, height: 71 },
+      ['C:\\Users\\me\\Documents\\preselected.txt'],
+      false
+    ),
+    [
+      'C:\\Users\\me\\Documents\\alpha.txt',
+      'C:\\Users\\me\\Documents\\bravo.txt',
+      'C:\\Users\\me\\Documents\\charlie.txt',
+      'C:\\Users\\me\\Documents\\delta.txt'
+    ]
+  );
+});
+
+test('additive stack browser marquee keeps existing selection and appends intersecting rows once', () => {
+  const rows = [
+    { path: 'C:\\Users\\me\\Documents\\alpha.txt', rect: { left: 20, top: 20, right: 300, bottom: 50 } },
+    { path: 'C:\\Users\\me\\Documents\\bravo.txt', rect: { left: 20, top: 50, right: 300, bottom: 80 } }
+  ];
+
+  assert.deepEqual(
+    stackBrowserMarqueeSelectedPaths(
+      rows,
+      { left: 0, top: 45, right: 100, bottom: 65, width: 100, height: 20 },
+      ['C:\\Users\\me\\Documents\\alpha.txt', 'C:\\Users\\me\\Documents\\zulu.txt'],
+      true
+    ),
+    [
+      'C:\\Users\\me\\Documents\\alpha.txt',
+      'C:\\Users\\me\\Documents\\zulu.txt',
+      'C:\\Users\\me\\Documents\\bravo.txt'
+    ]
+  );
+});
+
+test('virtual stack browser marquee selects unmounted rows by row geometry during autoscroll', () => {
+  const paths = Array.from({ length: 20 }, (_, index) => `C:\\Users\\me\\Documents\\row-${index}.txt`);
+
+  assert.deepEqual(
+    stackBrowserMarqueeSelectedVirtualPaths(
+      paths,
+      { left: 0, top: 45, right: 300, bottom: 155, width: 300, height: 110 },
+      {
+        rowHeight: 30,
+        rowLeft: 12,
+        rowRight: 360,
+        viewportTop: 100,
+        scrollTop: 90,
+        existingSelection: ['C:\\Users\\me\\Documents\\old.txt'],
+        additive: false
+      }
+    ),
+    paths.slice(1, 5)
+  );
+});
+
+test('virtual stack browser additive marquee preserves drag-start and prior drag selections once rows unmount', () => {
+  const paths = Array.from({ length: 20 }, (_, index) => `C:\\Users\\me\\Documents\\row-${index}.txt`);
+
+  assert.deepEqual(
+    stackBrowserMarqueeSelectedVirtualPaths(
+      paths,
+      { left: 0, top: 185, right: 300, bottom: 246, width: 300, height: 61 },
+      {
+        rowHeight: 30,
+        rowLeft: 12,
+        rowRight: 360,
+        viewportTop: 100,
+        scrollTop: 90,
+        existingSelection: [paths[0], paths[1]],
+        additive: true
+      }
+    ),
+    [paths[0], paths[1], paths[5], paths[6], paths[7]]
+  );
+});
+
 test('collapses middle breadcrumbs while preserving root and current folder', () => {
   const segments = [
     { name: 'C:', path: 'C:\\' },
@@ -132,4 +234,22 @@ test('delete prompt falls back to selectedPath and rejects empty selections', ()
   });
 
   assert.equal(stackBrowserDeletePrompt(entries, [], null).canDelete, false);
+});
+
+test('filters stack browser entries by name and path search text', () => {
+  const entries = [
+    entry('Alpha Notes.txt'),
+    entry('budget.xlsx'),
+    { ...entry('src', 'Folder'), path: 'C:\\Users\\me\\Documents\\Project\\src' }
+  ];
+
+  assert.deepEqual(
+    stackBrowserSearchEntries(entries, 'notes').map((item) => item.name),
+    ['Alpha Notes.txt']
+  );
+  assert.deepEqual(
+    stackBrowserSearchEntries(entries, 'project').map((item) => item.name),
+    ['src']
+  );
+  assert.deepEqual(stackBrowserSearchEntries(entries, '   '), entries);
 });

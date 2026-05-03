@@ -1,4 +1,5 @@
 use crate::launchers;
+use crate::quick_icons::{self, PinTaskWindowQuickIconRequest, QuickIconIdRequest};
 use crate::shell_windows::{BOTTOM_BAR_LABEL, TOP_BAR_LABEL};
 use crate::task_windows::{self, TaskWindowAction};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
@@ -12,6 +13,7 @@ const TASKBAR_REFRESH_LAUNCHERS_EVENT: &str = "taskbar:refresh-launchers";
 const TOP_BAR_PIN_MENU_ACTION_EVENT: &str = "top-bar:pin-menu-action";
 const TASK_WINDOW_MENU_PREFIX: &str = "task-window";
 const LAUNCHER_MENU_PREFIX: &str = "launcher";
+const QUICK_ICON_MENU_PREFIX: &str = "quick-icon";
 const TOP_BAR_PIN_MENU_PREFIX: &str = "top-bar-pin";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -35,6 +37,14 @@ pub struct ShowLauncherContextMenuRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ShowTopBarPinContextMenuRequest {
     pub path: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowQuickIconContextMenuRequest {
+    pub quick_icon_id: String,
     pub x: f64,
     pub y: f64,
 }
@@ -74,6 +84,14 @@ pub fn show_task_window_context_menu(
         !request.is_minimized,
         None::<&str>,
     )
+    .map_err(|error| format!("Failed to build task window close item: {error}"))?;
+    let pin_quick_icon_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TASK_WINDOW_MENU_PREFIX}:pin-quick:{}", request.hwnd),
+        "Pin to taskbar",
+        true,
+        None::<&str>,
+    )
     .map_err(|error| format!("Failed to build task window minimize item: {error}"))?;
     let close_item = MenuItem::with_id(
         &app_handle,
@@ -82,8 +100,11 @@ pub fn show_task_window_context_menu(
         true,
         None::<&str>,
     )
-    .map_err(|error| format!("Failed to build task window close item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&focus_item, &minimize_item, &close_item])
+    .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[&focus_item, &minimize_item, &pin_quick_icon_item, &close_item],
+    )
         .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
 
     bottom_bar
@@ -167,6 +188,39 @@ pub fn show_launcher_context_menu(
 }
 
 #[tauri::command]
+pub fn show_quick_icon_context_menu(
+    app_handle: AppHandle,
+    request: ShowQuickIconContextMenuRequest,
+) -> Result<(), String> {
+    let bottom_bar = app_handle
+        .get_webview_window(BOTTOM_BAR_LABEL)
+        .ok_or_else(|| "Bottom bar window is unavailable".to_string())?;
+    let encoded_id = BASE64_URL.encode(request.quick_icon_id);
+    let launch_item = MenuItem::with_id(
+        &app_handle,
+        format!("{QUICK_ICON_MENU_PREFIX}:launch:{encoded_id}"),
+        "Launch",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build quick icon launch item: {error}"))?;
+    let unpin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{QUICK_ICON_MENU_PREFIX}:unpin:{encoded_id}"),
+        "Unpin legacy quick icon",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build quick icon unpin item: {error}"))?;
+    let menu = Menu::with_items(&app_handle, &[&launch_item, &unpin_item])
+        .map_err(|error| format!("Failed to build quick icon context menu: {error}"))?;
+
+    bottom_bar
+        .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
+        .map_err(|error| format!("Failed to show quick icon context menu: {error}"))
+}
+
+#[tauri::command]
 pub fn show_top_bar_pin_context_menu(
     app_handle: AppHandle,
     request: ShowTopBarPinContextMenuRequest,
@@ -183,6 +237,14 @@ pub fn show_top_bar_pin_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build top-bar pin open item: {error}"))?;
+    let open_in_vscode_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TOP_BAR_PIN_MENU_PREFIX}:open-in-vscode:{encoded_path}"),
+        "Open in VS Code",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build top-bar pin vscode item: {error}"))?;
     let unpin_item = MenuItem::with_id(
         &app_handle,
         format!("{TOP_BAR_PIN_MENU_PREFIX}:unpin:{encoded_path}"),
@@ -191,7 +253,7 @@ pub fn show_top_bar_pin_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build top-bar pin unpin item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&open_item, &unpin_item])
+    let menu = Menu::with_items(&app_handle, &[&open_item, &open_in_vscode_item, &unpin_item])
         .map_err(|error| format!("Failed to build top-bar pin context menu: {error}"))?;
 
     top_bar
@@ -214,6 +276,13 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
             "close" => {
                 task_windows::perform_task_window_action(hwnd.to_string(), TaskWindowAction::Close)
             }
+            "pin-quick" => quick_icons::pin_task_window_quick_icon(
+                app_handle.clone(),
+                PinTaskWindowQuickIconRequest {
+                    hwnd: hwnd.to_string(),
+                },
+            )
+            .map(|_| ()),
             _ => return,
         };
 
@@ -221,12 +290,13 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
             eprintln!("task window menu action failed: {error}");
         }
 
+        let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
         let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
         return;
     }
 
     if let Some((action, encoded_shortcut)) = parse_menu_payload(id, LAUNCHER_MENU_PREFIX) {
-        let shortcut_path = match decode_shortcut_path(encoded_shortcut) {
+        let shortcut_path = match decode_menu_payload(encoded_shortcut) {
             Ok(path) => path,
             Err(error) => {
                 eprintln!("launcher menu decode failed: {error}");
@@ -253,8 +323,43 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
         return;
     }
 
+    if let Some((action, encoded_id)) = parse_menu_payload(id, QUICK_ICON_MENU_PREFIX) {
+        let quick_icon_id = match decode_menu_payload(encoded_id) {
+            Ok(id) => id,
+            Err(error) => {
+                eprintln!("quick icon menu decode failed: {error}");
+                return;
+            }
+        };
+
+        let result = match action {
+            "launch" => quick_icons::launch_quick_icon(
+                app_handle.clone(),
+                QuickIconIdRequest {
+                    id: quick_icon_id.clone(),
+                },
+            ),
+            "unpin" => quick_icons::unpin_quick_icon(
+                app_handle.clone(),
+                QuickIconIdRequest {
+                    id: quick_icon_id.clone(),
+                },
+            )
+            .map(|_| ()),
+            _ => return,
+        };
+
+        if let Err(error) = result {
+            eprintln!("quick icon menu action failed: {error}");
+        }
+
+        let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
+        let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
+        return;
+    }
+
     if let Some((action, encoded_path)) = parse_menu_payload(id, TOP_BAR_PIN_MENU_PREFIX) {
-        let path = match decode_shortcut_path(encoded_path) {
+        let path = match decode_menu_payload(encoded_path) {
             Ok(path) => path,
             Err(error) => {
                 eprintln!("top-bar pin menu decode failed: {error}");
@@ -263,7 +368,11 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
         };
 
         let payload = TopBarPinMenuActionPayload {
-            action: action.to_string(),
+            action: if action == "open-in-vscode" {
+                "openInVscode".to_string()
+            } else {
+                action.to_string()
+            },
             path,
         };
         let _ = app_handle.emit_to(TOP_BAR_LABEL, TOP_BAR_PIN_MENU_ACTION_EVENT, payload);
@@ -279,11 +388,56 @@ fn parse_menu_payload<'a>(id: &'a str, prefix: &str) -> Option<(&'a str, &'a str
     rest.split_once(':')
 }
 
-fn decode_shortcut_path(encoded_shortcut: &str) -> Result<String, String> {
+fn decode_menu_payload(encoded_shortcut: &str) -> Result<String, String> {
     let decoded = BASE64_URL
         .decode(encoded_shortcut)
         .map_err(|error| format!("Failed to decode launcher payload: {error}"))?;
 
     String::from_utf8(decoded)
         .map_err(|error| format!("Launcher payload was not valid UTF-8: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        decode_menu_payload, parse_menu_payload, LAUNCHER_MENU_PREFIX, QUICK_ICON_MENU_PREFIX,
+        TASK_WINDOW_MENU_PREFIX, TOP_BAR_PIN_MENU_PREFIX,
+    };
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
+    use base64::Engine;
+
+    #[test]
+    fn parses_known_menu_prefix_payloads() {
+        assert_eq!(
+            parse_menu_payload("task-window:pin-quick:1234", TASK_WINDOW_MENU_PREFIX),
+            Some(("pin-quick", "1234"))
+        );
+        assert_eq!(
+            parse_menu_payload("launcher:launch:abcd", LAUNCHER_MENU_PREFIX),
+            Some(("launch", "abcd"))
+        );
+        assert_eq!(
+            parse_menu_payload("quick-icon:unpin:abcd", QUICK_ICON_MENU_PREFIX),
+            Some(("unpin", "abcd"))
+        );
+        assert_eq!(
+            parse_menu_payload("top-bar-pin:open-in-vscode:abcd", TOP_BAR_PIN_MENU_PREFIX),
+            Some(("open-in-vscode", "abcd"))
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_prefix_payloads() {
+        assert_eq!(
+            parse_menu_payload("quick-icon:launch:abcd", LAUNCHER_MENU_PREFIX),
+            None
+        );
+        assert_eq!(parse_menu_payload("invalid-payload", QUICK_ICON_MENU_PREFIX), None);
+    }
+
+    #[test]
+    fn decodes_menu_payload_values() {
+        let encoded = BASE64_URL.encode(r"C:\Apps\Code.exe");
+        assert_eq!(decode_menu_payload(&encoded).unwrap(), r"C:\Apps\Code.exe");
+    }
 }

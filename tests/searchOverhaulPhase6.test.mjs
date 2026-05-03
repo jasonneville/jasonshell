@@ -60,8 +60,14 @@ test('phase 6 fixture defines input-pending-latest-stale pipeline and required s
 test('phase 6 input handler updates query before any provider ranking storage filesystem or native show work', () => {
   const topBar = readSource('src/components/TopBar.svelte');
   const inputHandler = extractFunction(topBar, 'handleSearchInput');
-  const inputEchoIndex = inputHandler.indexOf('applySearchQuery((event.currentTarget as HTMLInputElement).value)');
-  assert.notEqual(inputEchoIndex, -1, 'input value is forwarded first');
+  const inputEchoIndex = inputHandler.indexOf('publishImmediateSearchInputState(nextQuery)');
+  assert.notEqual(inputEchoIndex, -1, 'input value is forwarded into immediate visible state first');
+  assert.notEqual(inputHandler.indexOf('startImmediateSearchQueryExecution(request)'), -1, 'search work starts after visible state update');
+  assert.notEqual(
+    inputHandler.indexOf('const nextQuery = (event.currentTarget as HTMLInputElement).value;'),
+    -1,
+    'input event value is captured before queued work'
+  );
 
   for (const group of fixture.forbiddenBeforeInputEcho) {
     const forbiddenIndex = firstIndexOfAny(inputHandler, group.patterns);
@@ -75,12 +81,12 @@ test('phase 6 input handler updates query before any provider ranking storage fi
 
 test('phase 6 top-bar publishes pending payload before deferred engine request and applies latest response only', () => {
   const topBar = readSource('src/components/TopBar.svelte');
-  const applySearchQuery = extractFunction(topBar, 'applySearchQuery');
+  const publishImmediate = extractFunction(topBar, 'publishImmediateSearchInputState');
+  const startImmediate = extractFunction(topBar, 'startImmediateSearchQueryExecution');
 
-  assert.ok(
-    applySearchQuery.indexOf('queueSearchPanelPublish') < applySearchQuery.indexOf('scheduleSearchEngine'),
-    'pending payload is queued before provider dispatch'
-  );
+  assert.match(publishImmediate, /queueSearchPanelPublish\(\{/);
+  assert.match(startImmediate, /publishPendingSearchPayload\(request\.sequence, searchResults\)/);
+  assert.ok(startImmediate.indexOf('publishPendingSearchPayload') < startImmediate.indexOf('void loadSearchEngineResults(request)'), 'pending payload is queued before provider dispatch');
   assert.equal(/phase:\s*['"]typing['"]/.test(topBar), true, 'typing pending phase is emitted');
   assert.equal(/searchEngine\(/.test(topBar), true, 'new search engine wrapper is called');
   assert.equal(/shouldApplySearchEngineResponse\(/.test(topBar), true, 'latest-response gate is used');

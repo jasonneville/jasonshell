@@ -11,6 +11,11 @@
     type PinnedTaskbarLauncher
   } from '../lib/taskbarLaunchers';
   import {
+    filterExplorerLaunchersForQuickIcons,
+    listQuickIcons,
+    type QuickIcon
+  } from '../lib/quickIcons';
+  import {
     showLauncherContextMenu,
     showTaskWindowContextMenu
   } from '../lib/taskbarMenus';
@@ -51,7 +56,9 @@
     taskbarOverflowState,
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
+  let quickIconMessage = 'Loading quick icons…';
   let launcherMessage = 'Loading Explorer taskbar pins…';
+  let quickIcons: QuickIcon[] = [];
   let launchers: PinnedTaskbarLauncher[] = [];
   let taskbarMessage = 'Loading open windows…';
   let openWindows: TaskbarWindow[] = [];
@@ -168,7 +175,8 @@
   async function loadPinnedLaunchers() {
     launcherMessage = 'Loading Explorer taskbar pins…';
     try {
-      launchers = await listPinnedTaskbarLaunchers();
+      const explorerLaunchers = await listPinnedTaskbarLaunchers();
+      launchers = filterExplorerLaunchersForQuickIcons(quickIcons, explorerLaunchers);
       launcherMessage = launchers.length
         ? 'Pinned Explorer shortcuts'
         : 'No supported Explorer taskbar pins';
@@ -176,6 +184,23 @@
       console.error('Failed to load pinned taskbar launchers', error);
       launchers = [];
       launcherMessage = 'Pinned taskbar shortcuts unavailable';
+    }
+  }
+  async function refreshLauncherSections() {
+    await loadQuickIconLaunchers();
+    await loadPinnedLaunchers();
+  }
+  async function loadQuickIconLaunchers() {
+    quickIconMessage = 'Loading quick icons…';
+    try {
+      quickIcons = await listQuickIcons();
+      quickIconMessage = quickIcons.length
+        ? 'Legacy quick icons merged with Explorer pins'
+        : 'No legacy quick icons';
+    } catch (error) {
+      console.error('Failed to load quick icons', error);
+      quickIcons = [];
+      quickIconMessage = 'Quick icons unavailable';
     }
   }
   async function launchApp(launcher: PinnedTaskbarLauncher) {
@@ -467,7 +492,7 @@
   }
   onMount(() => {
     const unlisteners: Array<() => void> = [];
-    void Promise.all([loadPinnedLaunchers(), refreshTaskbarWindows()]);
+    void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
     void listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
       void refreshTaskbarWindows();
@@ -476,7 +501,7 @@
     });
 
     void listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
-      void loadPinnedLaunchers();
+      void refreshLauncherSections();
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });

@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const APP_INDEX_TTL: Duration = Duration::from_secs(60);
 const APP_INDEX_CACHE_FILE: &str = "search-app-index-v1.json";
@@ -25,6 +25,14 @@ const MAX_VISITED_APP_DIRS: usize = 8_000;
 
 static APP_INDEX_RUNTIME: OnceLock<Mutex<AppIndexRuntimeState>> = OnceLock::new();
 static APP_INDEX_REFRESH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSearchIndexRefreshedPayload {
+    provider_id: &'static str,
+    entry_count: usize,
+    generated_at_epoch_secs: u64,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +64,7 @@ impl CachedAppIndex {
 struct AppIndexRuntimeState {
     cache: Option<CachedAppIndex>,
     cache_path: Option<PathBuf>,
+    app_handle: Option<AppHandle>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -171,6 +180,7 @@ pub(crate) fn initialize_app_index_cache(app_handle: &AppHandle) {
     let runtime = app_index_runtime();
     if let Ok(mut guard) = runtime.lock() {
         guard.cache_path = cache_path;
+        guard.app_handle = Some(app_handle.clone());
         guard.cache = persisted_cache;
     }
 }
@@ -181,14 +191,16 @@ pub(crate) fn warm_app_index_async() {
     }
 
     thread::spawn(|| {
-        refresh_app_index_cache();
+        let entry_count = refresh_app_index_cache();
         APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
+        emit_app_index_refreshed(entry_count);
     });
 }
 
-fn refresh_app_index_cache() {
+fn refresh_app_index_cache() -> usize {
     let indexed_at_epoch_secs = current_epoch_secs();
     let entries = build_app_index(app_roots(), MAX_INDEXED_APPS);
+    let entry_count = entries.len();
     let cache = CachedAppIndex {
         indexed_at_epoch_secs,
         entries,
@@ -204,6 +216,24 @@ fn refresh_app_index_cache() {
 
     if let Ok(mut guard) = app_index_runtime().lock() {
         guard.cache = Some(cache);
+    }
+    entry_count
+}
+
+fn emit_app_index_refreshed(entry_count: usize) {
+    let app_handle = app_index_runtime()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.app_handle.clone());
+    if let Some(app_handle) = app_handle {
+        let _ = app_handle.emit(
+            crate::contracts::events::SEARCH_INDEX_REFRESHED,
+            AppSearchIndexRefreshedPayload {
+                provider_id: "apps",
+                entry_count,
+                generated_at_epoch_secs: current_epoch_secs(),
+            },
+        );
     }
 }
 
@@ -224,6 +254,14 @@ fn cached_app_entries_from_cache(
     now_epoch_secs: u64,
 ) -> CachedAppEntriesSnapshot {
     match cached {
+        Some(cached) if APP_INDEX_REFRESH_IN_FLIGHT.load(Ordering::Acquire) => {
+            CachedAppEntriesSnapshot {
+                entries: cached.entries.clone(),
+                cache_state: SearchProviderCacheState::Refresh,
+                cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
+                refresh_needed: false,
+            }
+        }
         Some(cached) if cached.is_fresh(now_epoch_secs) => CachedAppEntriesSnapshot {
             entries: cached.entries.clone(),
             cache_state: SearchProviderCacheState::Hit,
@@ -845,6 +883,29 @@ mod tests {
         APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
         assert!(snapshot.entries.is_empty());
         assert_eq!(snapshot.cache_state, SearchProviderCacheState::Indexing);
+        assert!(!snapshot.refresh_needed);
+    }
+
+    #[test]
+    fn fresh_cache_reports_refresh_while_startup_warm_is_running() {
+        let cached = CachedAppIndex {
+            indexed_at_epoch_secs: 99,
+            entries: vec![AppIndexEntry {
+                title: "Spotify".to_string(),
+                path: PathBuf::from(r"C:\Apps\Spotify.lnk"),
+                source: "test".to_string(),
+                aliases: vec!["Spotify".to_string()],
+                priority: 1_550,
+            }],
+        };
+        APP_INDEX_REFRESH_IN_FLIGHT.store(true, Ordering::Release);
+
+        let snapshot = cached_app_entries_from_cache(Some(&cached), 100);
+
+        APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.cache_state, SearchProviderCacheState::Refresh);
+        assert_eq!(snapshot.cache_age_ms, Some(1_000));
         assert!(!snapshot.refresh_needed);
     }
 

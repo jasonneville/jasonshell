@@ -40,6 +40,35 @@ export type StackBrowserVirtualWindow<T> = {
   totalHeight: number;
 };
 
+export type StackBrowserMarqueePoint = {
+  x: number;
+  y: number;
+};
+
+export type StackBrowserMarqueeRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+export type StackBrowserMarqueeRowBounds = {
+  path: string;
+  rect: Pick<StackBrowserMarqueeRect, 'left' | 'top' | 'right' | 'bottom'>;
+};
+
+export type StackBrowserMarqueeVirtualOptions = {
+  rowHeight?: number;
+  rowLeft: number;
+  rowRight: number;
+  viewportTop: number;
+  scrollTop: number;
+  existingSelection?: readonly string[];
+  additive?: boolean;
+};
+
 export function stackBrowserVirtualWindow<T>(
   items: T[],
   scrollTop: number,
@@ -107,6 +136,82 @@ export function stackBrowserScrollTopForIndex(
   return normalizedScrollTop;
 }
 
+export function stackBrowserMarqueeRect(
+  start: StackBrowserMarqueePoint,
+  current: StackBrowserMarqueePoint
+): StackBrowserMarqueeRect {
+  const left = Math.min(start.x, current.x);
+  const top = Math.min(start.y, current.y);
+  const right = Math.max(start.x, current.x);
+  const bottom = Math.max(start.y, current.y);
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
+export function stackBrowserMarqueeSelectedPaths(
+  rows: readonly StackBrowserMarqueeRowBounds[],
+  marquee: StackBrowserMarqueeRect,
+  existingSelection: readonly string[] = [],
+  additive = false
+): string[] {
+  const selected = rows
+    .filter((row) => rectsIntersect(row.rect, marquee))
+    .map((row) => row.path);
+
+  if (!additive) {
+    return selected;
+  }
+
+  const merged = [...existingSelection];
+  const seen = new Set(merged);
+  for (const path of selected) {
+    if (!seen.has(path)) {
+      seen.add(path);
+      merged.push(path);
+    }
+  }
+  return merged;
+}
+
+export function stackBrowserMarqueeSelectedVirtualPaths(
+  paths: readonly string[],
+  marquee: StackBrowserMarqueeRect,
+  options: StackBrowserMarqueeVirtualOptions
+): string[] {
+  const rowHeight = positiveNumber(options.rowHeight, STACK_BROWSER_ROW_HEIGHT_PX);
+  const scrollTop = Math.max(0, Number.isFinite(options.scrollTop) ? options.scrollTop : 0);
+  const viewportTop = Number.isFinite(options.viewportTop) ? options.viewportTop : 0;
+  const rowLeft = Math.min(options.rowLeft, options.rowRight);
+  const rowRight = Math.max(options.rowLeft, options.rowRight);
+  const selected = paths.filter((path, index) => {
+    if (!path) {
+      return false;
+    }
+    const rowTop = viewportTop + index * rowHeight - scrollTop;
+    return rectsIntersect(
+      {
+        left: rowLeft,
+        top: rowTop,
+        right: rowRight,
+        bottom: rowTop + rowHeight
+      },
+      marquee
+    );
+  });
+
+  if (!options.additive) {
+    return selected;
+  }
+
+  return uniquePaths([...(options.existingSelection ?? []), ...selected]);
+}
+
 export type StackBrowserBreadcrumbOverflow = {
   visibleSegments: StackBreadcrumbSegment[];
   hiddenSegments: StackBreadcrumbSegment[];
@@ -170,6 +275,18 @@ export function stackBrowserDeletePrompt(
       ? `Delete "${selectedEntries[0]?.name ?? 'item'}"? This cannot be undone.`
       : `Delete ${itemCount} selected items? This cannot be undone.`
   };
+}
+
+export function stackBrowserSearchEntries(entries: StackEntry[], query: string): StackEntry[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) {
+    return entries;
+  }
+
+  return entries.filter((entry) =>
+    entry.name.toLocaleLowerCase().includes(normalizedQuery)
+    || entry.path.toLocaleLowerCase().includes(normalizedQuery)
+  );
 }
 
 export type StackBrowserTemplateAction = {
@@ -354,6 +471,28 @@ function positiveNumber(value: number | undefined, fallback: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function uniquePaths(paths: readonly string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const path of paths) {
+    if (!seen.has(path)) {
+      seen.add(path);
+      unique.push(path);
+    }
+  }
+  return unique;
+}
+
+function rectsIntersect(
+  left: Pick<StackBrowserMarqueeRect, 'left' | 'top' | 'right' | 'bottom'>,
+  right: Pick<StackBrowserMarqueeRect, 'left' | 'top' | 'right' | 'bottom'>
+) {
+  return left.right >= right.left
+    && left.left <= right.right
+    && left.bottom >= right.top
+    && left.top <= right.bottom;
 }
 
 function basename(path: string): string {

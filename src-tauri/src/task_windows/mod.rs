@@ -155,3 +155,9 @@ pub(super) fn parse_hwnd(hwnd: &str) -> Result<::windows::Win32::Foundation::HWN
 
     Ok(::windows::Win32::Foundation::HWND(hwnd_value as *mut _))
 }
+
+#[cfg(target_os = "windows")]
+pub(crate) fn task_window_process_path(hwnd: &str) -> Result<std::path::PathBuf, String> {
+    let hwnd = parse_hwnd(hwnd)?;
+    windows::process_image_path_for_hwnd(hwnd)
+}

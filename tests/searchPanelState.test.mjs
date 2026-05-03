@@ -261,6 +261,100 @@ test('search panel state keeps useful rows for typing and empty error payloads',
   assert.equal(errored.statusMessage, 'Provider error');
 });
 
+test('search panel state clears old typing rows for a changed query and normalizes trailing-space identity', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 6
+  });
+
+  const changedTyping = applySearchPanelPayload(local, {
+    query: 'firefox',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Searching...',
+    phase: 'typing',
+    sequence: 7
+  });
+  const trailingSpaceTyping = applySearchPanelPayload(local, {
+    query: 'spotify ',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Searching...',
+    phase: 'typing',
+    sequence: 7
+  });
+  const complete = applySearchPanelPayload(trailingSpaceTyping, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\FreshSpotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Fresh app',
+      terms: 'spotify',
+      priority: 200,
+      recordKey: 'app:c:\\freshspotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: 'Showing search results',
+    phase: 'complete',
+    sequence: 7
+  });
+
+  assert.equal(changedTyping.query, 'firefox');
+  assert.equal(changedTyping.results.length, 0);
+  assert.equal(trailingSpaceTyping.query, 'spotify');
+  assert.equal(trailingSpaceTyping.results.length, 1);
+  assert.equal(complete.results[0].recordKey, 'app:c:\\freshspotify.exe');
+});
+
+test('search panel state applies rapid Windows settings typing payloads without stale rows', () => {
+  let state = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: 'Showing search results',
+    phase: 'complete',
+    sequence: 1
+  });
+
+  for (const [index, query] of ['W', 'Wi', 'Win', 'Wind', 'Windo', 'Window', 'Windows', 'Windows ', 'Windows s', 'Windows se', 'Windows set', 'Windows sett', 'Windows setti', 'Windows settin', 'Windows setting', 'Windows settings'].entries()) {
+    state = applySearchPanelPayload(state, {
+      query,
+      results: [],
+      selectedIndex: 0,
+      statusMessage: 'Searching...',
+      phase: 'typing',
+      sequence: index + 2
+    });
+    assert.equal(state.query, query.trim());
+    assert.equal(state.results.length, 0);
+    assert.equal(state.phase, 'typing');
+  }
+});
+
 test('search panel state allows complete payload after recoverable provider error', () => {
   const local = applySearchPanelPayload(defaultSearchPanelViewState, {
     query: 'spotify',
@@ -301,18 +395,30 @@ test('search panel state allows complete payload after recoverable provider erro
   assert.equal(completed.results.length, 1);
 });
 
+test('search panel state source has no stray debug console literals', () => {
+  const source = readFileSync(new URL('../src/lib/searchPanelState.ts', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(source, /console\.log\(["']FALSE1["']\)/);
+  assert.doesNotMatch(source, /console\.log\(["']FALSE2["']\)/);
+  assert.doesNotMatch(source, /console\.log\(["']here["']\)/);
+});
+
 test('top-bar defers expensive search render work out of the input handler', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
-  assert.match(inputHandler, /applySearchQuery\(\(event\.currentTarget as HTMLInputElement\)\.value\)/);
-  assert.match(source, /function applySearchQuery\(nextQuery: string\)[\s\S]*scheduleSearchEngine\(searchQuery, request\)/);
+  assert.match(inputHandler, /const nextQuery = \(event\.currentTarget as HTMLInputElement\)\.value;/);
+  assert.match(inputHandler, /const request = publishImmediateSearchInputState\(nextQuery\)/);
+  assert.match(inputHandler, /startImmediateSearchQueryExecution\(request\)/);
+  assert.match(source, /function publishImmediateSearchInputState\(nextQuery: string\)[\s\S]*queueSearchPanelPublish\(\{/);
+  assert.match(source, /function startImmediateSearchQueryExecution\(request: SearchEngineQueryRequestState\)[\s\S]*void loadSearchEngineResults\(request\)/);
   assert.match(source, /function publishPendingSearchPayload/);
   assert.match(source, /function scheduleSearchEngine\(query: string, existingRequest\?: \{ query: string; sequence: number \} \| null\)/);
   assert.doesNotMatch(source, /queuedSearchEngineRequest/);
+  assert.doesNotMatch(source, /queueSearchQueryProcessing|flushQueuedSearchQuery|searchQueryProcessingQueue|SEARCH_QUERY_PROCESSING_DELAY_MS/);
   assert.match(source, /searchEngine\(\{/);
   assert.match(source, /SEARCH_ENGINE_PROGRESS_EVENT/);
   assert.match(source, /applySearchEngineProgress\(event\.payload\)/);
-  assert.match(source, /mergeSearchPanelResultsByStableKey/);
+  assert.doesNotMatch(source, /mergeSearchPanelResultsByStableKey/);
   assert.match(source, /shouldApplySearchEngineResponse\(/);
   assert.match(source, /searchEngineResponseToPanelPayload\(response, selectedIndex, searchPresentation\)/);
   assert.doesNotMatch(inputHandler, /rankSearchResults\(/);
@@ -335,6 +441,26 @@ test('top-bar defers expensive search render work out of the input handler', () 
   assert.match(source, /void activateResult\(selectedVisibleResult\)/);
 });
 
+test('top-bar cancels search work on native panel close and listens only to app index refreshes', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const closeHandler = source.match(/void listen\(SEARCH_PANEL_CLOSED_EVENT,[\s\S]*?\}\)\.then/)?.[0] ?? '';
+  const refreshHandler = source.match(/void listen<SearchIndexRefreshedPayload>\(SEARCH_INDEX_REFRESHED_EVENT,[\s\S]*?\}\)\.then/)?.[0] ?? '';
+  const immediate = source.match(/function publishImmediateSearchInputState\(nextQuery: string\)[\s\S]*?\n  \}/)?.[0] ?? '';
+  const start = source.match(/function startImmediateSearchQueryExecution\(request: SearchEngineQueryRequestState\)[\s\S]*?\n  \}/)?.[0] ?? '';
+
+  assert.match(source, /function cleanupSearchWorkAfterClose\(\)/);
+  assert.match(closeHandler, /cleanupSearchWorkAfterClose\(\)/);
+  assert.match(source, /function publishPendingSearchPayload\(sequence: number, results: SearchPanelResult\[\] = searchResults\)/);
+  assert.match(immediate, /if \(!request\.query \|\| normalizedChanged\) \{[\s\S]*searchResults = \[\];[\s\S]*searchResultsQuery = '';/);
+  assert.match(start, /publishPendingSearchPayload\(request\.sequence, searchResults\)/);
+  assert.match(start, /void loadSearchEngineResults\(request\)/);
+  assert.match(source, /const selectedIndexBeforeUpdate = selectedIndex/);
+  assert.match(source, /selectedIndexBeforeUpdate <= 0/);
+  assert.match(source, /if \(!shouldRetry\) \{[\s\S]*resetSearchProviderCacheRetry\(\)/);
+  assert.match(refreshHandler, /isAppSearchIndexRefreshedPayload\(event\.payload\)/);
+  assert.match(refreshHandler, /lastAppIndexRefreshGeneration/);
+});
+
 test('search-panel fallback fetches cannot overwrite newer event payloads', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
   assert.match(source, /let fallbackGeneration = 0/);
@@ -351,6 +477,10 @@ test('centered search surface keeps local typing immediate without unconditional
   assert.match(source, /optimisticQueryDraft = value;/);
   assert.match(source, /queueQueryEmit\(value\)/);
   assert.match(source, /function cancelQueuedQueryEmit\(\) \{/);
+  assert.match(source, /let queryInputSequence = 0;/);
+  assert.match(source, /const payload: SearchPanelQueryPayload = \{/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, payload\)/);
+  assert.doesNotMatch(source, /pendingQueryEmitValue|queryEmitTimer/);
   assert.match(source, /if \(shouldFocusCenteredQueryInput\(\)\) \{\s*void focusQueryInput\(\);/);
   assert.doesNotMatch(source, /if \(event\.payload\.presentation === 'centered'\) \{\s*void focusQueryInput\(\);/);
 });

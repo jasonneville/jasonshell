@@ -19,6 +19,7 @@
     SEARCH_PANEL_UPDATE_EVENT,
     writeCenteredSearchPanelSize,
     type SearchPanelPayload,
+    type SearchPanelQueryPayload,
     type SearchPanelResult
   } from '../lib/searchPanel';
   import {
@@ -44,8 +45,6 @@
 
   let panelState = defaultSearchPanelViewState;
   let optimisticQueryDraft: string | null = null;
-  let pendingQueryEmitValue: string | null = null;
-  let queryEmitTimer: number | null = null;
   let resultRows: Array<HTMLDivElement | undefined> = [];
   let queryInput: HTMLInputElement | null = null;
   let lastRevealedSelection = '';
@@ -53,6 +52,7 @@
   let fallbackTimer: number | null = null;
   let fallbackAttempt = 0;
   let fallbackGeneration = 0;
+  let queryInputSequence = 0;
   let resizeDrag: {
     pointerId: number;
     startX: number;
@@ -332,27 +332,16 @@
   }
 
   function queueQueryEmit(value: string) {
-    pendingQueryEmitValue = value;
-    if (queryEmitTimer !== null) {
-      return;
-    }
-    queryEmitTimer = window.setTimeout(() => {
-      queryEmitTimer = null;
-      const queuedValue = pendingQueryEmitValue;
-      pendingQueryEmitValue = null;
-      if (queuedValue === null) {
-        return;
-      }
-      void emitTo(topBarTarget, SEARCH_PANEL_QUERY_EVENT, queuedValue);
-    }, 0);
+    queryInputSequence += 1;
+    const payload: SearchPanelQueryPayload = {
+      query: value,
+      inputSequence: queryInputSequence
+    };
+    void emitTo(topBarTarget, SEARCH_PANEL_QUERY_EVENT, payload);
   }
 
   function cancelQueuedQueryEmit() {
-    pendingQueryEmitValue = null;
-    if (queryEmitTimer !== null) {
-      window.clearTimeout(queryEmitTimer);
-      queryEmitTimer = null;
-    }
+    // Query emits are per-event; cleanup hook stays for lifecycle symmetry.
   }
 
   function beginResize(event: PointerEvent) {

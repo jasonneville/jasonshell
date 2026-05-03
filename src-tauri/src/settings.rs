@@ -27,6 +27,8 @@ pub struct ShellSettings {
     pub task_history: Vec<Value>,
     #[serde(default)]
     pub quick_commands: QuickCommandsSettings,
+    #[serde(default)]
+    pub quick_icons: QuickIconsSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -71,6 +73,22 @@ pub struct EverythingSearchSettings {
 pub struct QuickCommandsSettings {
     #[serde(default)]
     pub entries: Vec<QuickCommandEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickIconsSettings {
+    #[serde(default)]
+    pub entries: Vec<QuickIconEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickIconEntry {
+    pub id: String,
+    pub name: String,
+    pub target_path: String,
+    pub icon_data_url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -139,6 +157,7 @@ impl Default for ShellSettings {
             workspaces: Vec::new(),
             task_history: Vec::new(),
             quick_commands: QuickCommandsSettings::default(),
+            quick_icons: QuickIconsSettings::default(),
         }
     }
 }
@@ -177,6 +196,14 @@ impl Default for EverythingSearchSettings {
 }
 
 impl Default for QuickCommandsSettings {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl Default for QuickIconsSettings {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
@@ -292,6 +319,7 @@ fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, Strin
     }
     settings.workspaces = workspaces;
     settings.quick_commands = validate_quick_commands_settings(settings.quick_commands)?;
+    settings.quick_icons = validate_quick_icons_settings(settings.quick_icons)?;
     Ok(settings)
 }
 
@@ -309,6 +337,75 @@ fn validate_quick_commands_settings(
     }
     quick_commands.entries = normalized;
     Ok(quick_commands)
+}
+
+fn validate_quick_icons_settings(mut quick_icons: QuickIconsSettings) -> Result<QuickIconsSettings, String> {
+    let mut seen_ids = HashSet::new();
+    let mut seen_targets = HashSet::new();
+    let mut normalized = Vec::with_capacity(quick_icons.entries.len());
+    for entry in quick_icons.entries {
+        let entry = validate_quick_icon_entry(&entry)?;
+        if !seen_ids.insert(entry.id.clone()) {
+            return Err(format!("quick icon id must be unique: {}", entry.id));
+        }
+        let target_key = normalized_path_key(&entry.target_path);
+        if !seen_targets.insert(target_key) {
+            return Err(format!(
+                "quick icon target path must be unique: {}",
+                entry.target_path
+            ));
+        }
+        normalized.push(entry);
+    }
+    quick_icons.entries = normalized;
+    Ok(quick_icons)
+}
+
+pub(crate) fn validate_quick_icon_entry(entry: &QuickIconEntry) -> Result<QuickIconEntry, String> {
+    let id = entry.id.trim();
+    if id.is_empty() {
+        return Err("quick icon id must not be empty".to_string());
+    }
+    let name = entry.name.trim();
+    if name.is_empty() {
+        return Err(format!("quick icon '{}' name must not be empty", id));
+    }
+    let target_path = entry.target_path.trim();
+    if target_path.is_empty() {
+        return Err(format!("quick icon '{}' target path must not be empty", id));
+    }
+    if !Path::new(target_path).is_absolute() {
+        return Err(format!(
+            "quick icon '{}' target path must be absolute",
+            id
+        ));
+    }
+    let icon_data_url = entry.icon_data_url.trim();
+    if icon_data_url.is_empty() {
+        return Err(format!("quick icon '{}' icon data url must not be empty", id));
+    }
+    if !icon_data_url.starts_with("data:image/") {
+        return Err(format!("quick icon '{}' icon data url must be an image data URL", id));
+    }
+
+    Ok(QuickIconEntry {
+        id: id.to_string(),
+        name: name.to_string(),
+        target_path: target_path.to_string(),
+        icon_data_url: icon_data_url.to_string(),
+    })
+}
+
+fn normalized_path_key(path: &str) -> String {
+    normalize_windows_like_path(path)
+}
+
+fn normalize_windows_like_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed.replace('/', "\\").to_ascii_lowercase()
 }
 
 pub(crate) fn validate_quick_command_entry(
@@ -631,6 +728,7 @@ mod tests {
         assert!(settings.workspaces.is_empty());
         assert!(settings.task_history.is_empty());
         assert!(settings.quick_commands.entries.is_empty());
+        assert!(settings.quick_icons.entries.is_empty());
         assert_eq!(settings.ui.search_mode, SearchMode::CenteredHotkey);
         assert_eq!(settings.search, SearchSettings::default());
     }
@@ -647,6 +745,7 @@ mod tests {
         assert_eq!(value["search"]["everything"]["sdkSource"], "system");
         assert_eq!(value["search"]["everything"]["contentSearchEnabled"], false);
         assert_eq!(value["quickCommands"]["entries"], json!([]));
+        assert_eq!(value["quickIcons"]["entries"], json!([]));
     }
 
     #[test]
@@ -778,5 +877,62 @@ mod tests {
         assert!(validate_settings(powershell)
             .unwrap_err()
             .contains("absolute path"));
+    }
+
+    #[test]
+    fn validates_quick_icons_require_absolute_targets_and_unique_ids() {
+        let mut settings = ShellSettings::default();
+        settings.quick_icons.entries = vec![QuickIconEntry {
+            id: "chrome".to_string(),
+            name: "Chrome".to_string(),
+            target_path: "chrome.exe".to_string(),
+            icon_data_url: "data:image/png;base64,aaa".to_string(),
+        }];
+
+        assert!(validate_settings(settings)
+            .unwrap_err()
+            .contains("target path must be absolute"));
+
+        let mut duplicate_ids = ShellSettings::default();
+        duplicate_ids.quick_icons.entries = vec![
+            QuickIconEntry {
+                id: "code".to_string(),
+                name: "Code".to_string(),
+                target_path: "C:\\Apps\\Code\\Code.exe".to_string(),
+                icon_data_url: "data:image/png;base64,aaa".to_string(),
+            },
+            QuickIconEntry {
+                id: "code".to_string(),
+                name: "Code Copy".to_string(),
+                target_path: "C:\\Apps\\Code Copy\\Code.exe".to_string(),
+                icon_data_url: "data:image/png;base64,bbb".to_string(),
+            },
+        ];
+        assert!(validate_settings(duplicate_ids)
+            .unwrap_err()
+            .contains("quick icon id must be unique"));
+    }
+
+    #[test]
+    fn validates_quick_icons_reject_duplicate_target_paths() {
+        let mut settings = ShellSettings::default();
+        settings.quick_icons.entries = vec![
+            QuickIconEntry {
+                id: "vscode".to_string(),
+                name: "Code".to_string(),
+                target_path: "C:\\Tools\\Code.exe".to_string(),
+                icon_data_url: "data:image/png;base64,aaa".to_string(),
+            },
+            QuickIconEntry {
+                id: "vscode-copy".to_string(),
+                name: "Code 2".to_string(),
+                target_path: "c:/tools/code.exe".to_string(),
+                icon_data_url: "data:image/png;base64,bbb".to_string(),
+            },
+        ];
+
+        assert!(validate_settings(settings)
+            .unwrap_err()
+            .contains("target path must be unique"));
     }
 }
