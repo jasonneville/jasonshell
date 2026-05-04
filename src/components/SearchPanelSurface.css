@@ -55,8 +55,34 @@
   font-weight: 650;
   min-width: 0;
   outline: none;
-  padding: 0.38rem 0.55rem;
+  padding: 0.38rem 2rem 0.38rem 0.55rem;
   width: 100%;
+}
+
+.search-panel-clear-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--js-radius-xs);
+  color: var(--js-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 1rem;
+  font-weight: 800;
+  height: 1.5rem;
+  justify-content: center;
+  line-height: 1;
+  margin-left: -2.2rem;
+  padding: 0;
+  width: 1.5rem;
+  z-index: 1;
+}
+
+.search-panel-clear-button:hover,
+.search-panel-clear-button:focus-visible {
+  background: var(--js-color-surface-overlay);
+  color: var(--js-color-text);
 }
 
 .search-panel-query:focus {

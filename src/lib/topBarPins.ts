@@ -32,3 +32,16 @@ export function stackPinRevealPath(
 ) {
   return pendingVisiblePinPath ?? (allowDetectedAdd ? findAddedPinPath(currentPins, nextPins) : null);
 }
+
+export function reorderPinnedFolders<T extends TopBarPinLike>(pins: T[], sourcePath: string, toIndex: number): T[] {
+  const sourceIndex = pins.findIndex((pin) => pin.path === sourcePath);
+  const clampedIndex = Math.max(0, Math.min(pins.length - 1, toIndex));
+  if (sourceIndex < 0 || sourceIndex === clampedIndex) {
+    return pins;
+  }
+
+  const nextPins = [...pins];
+  const [pin] = nextPins.splice(sourceIndex, 1);
+  nextPins.splice(clampedIndex, 0, pin);
+  return nextPins;
+}

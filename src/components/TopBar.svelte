@@ -89,7 +89,7 @@
     TOP_BAR_PIN_MENU_ACTION_EVENT,
     type TopBarPinMenuActionPayload
   } from '../lib/taskbarMenus';
-  import { stackPinRevealPath, topBarWebviewWindowEventTarget } from '../lib/topBarPins';
+  import { reorderPinnedFolders, stackPinRevealPath, topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
     searchPanelAnchorState,
     searchPanelPayloadSignature,
@@ -101,6 +101,7 @@
   import {
     buildVisibleSearchRows,
     createLatestSearchQueryController,
+    clearLatestSearchQuery,
     DEFAULT_VISIBLE_GROUP_LIMIT,
     nextProgressiveSearchResultSet,
     nextVisibleRowIndex,
@@ -161,6 +162,8 @@
   let searchBlurCloseTimer: number | null = null;
   let searchPanelInteractionUntil = 0;
   let draggingPinPath: string | null = null;
+  let draggingPinStartIndex: number | null = null;
+  let suppressNextPinClickPath: string | null = null;
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
   let audioOpen = false;
@@ -168,10 +171,12 @@
   let commandOpen = false;
 
   const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
+  const PIN_REORDER_DRAG_THRESHOLD_PX = 4;
   const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
   const SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS = 220;
   const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
+  const WINDOWS_KEY_OPEN_SEARCH_EVENT = 'search:open-centered';
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
@@ -395,7 +400,7 @@
   }
 
   function invalidateSearchEngineResponses() {
-    searchQueryController.next('');
+    clearLatestSearchQuery(searchQueryController);
   }
 
   function markSearchPanelInteraction() {
@@ -549,8 +554,13 @@
   function handlePinClick(event: MouseEvent, pin: StackPin, index: number) {
     event.preventDefault();
     event.stopPropagation();
+    if (suppressNextPinClickPath === pin.path) {
+      suppressNextPinClickPath = null;
+      event.preventDefault();
+      return;
+    }
     focusedPinIndex = index;
-    void openStackFromPin(pin, event.currentTarget);
+    void openStackPath(pin.path, event.currentTarget);
   }
 
   async function openStackPath(path: string, target: EventTarget | null) {
@@ -604,6 +614,7 @@
 
   function handlePinDragStart(event: DragEvent, pin: StackPin) {
     draggingPinPath = pin.path;
+    draggingPinStartIndex = stackPins.findIndex((item) => item.path === pin.path);
     event.dataTransfer?.setData(PIN_DRAG_TYPE, pin.path);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
@@ -612,11 +623,13 @@
 
   function handlePinDragEnd() {
     draggingPinPath = null;
+    draggingPinStartIndex = null;
     pinRailHover = false;
   }
 
   function handlePinDragOver(event: DragEvent, targetPin: StackPin) {
-    if (!draggingPinPath || draggingPinPath === targetPin.path) {
+    const targetIndex = stackPins.findIndex((pin) => pin.path === targetPin.path);
+    if (!draggingPinPath || draggingPinStartIndex === targetIndex) {
       return;
     }
     event.preventDefault();
@@ -626,14 +639,17 @@
   }
 
   async function handlePinDrop(event: DragEvent, targetPin: StackPin) {
-    if (!draggingPinPath || draggingPinPath === targetPin.path) {
+    const targetIndex = stackPins.findIndex((pin) => pin.path === targetPin.path);
+    if (!draggingPinPath || draggingPinStartIndex === targetIndex) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
     const sourcePath = event.dataTransfer?.getData(PIN_DRAG_TYPE) || draggingPinPath;
+    suppressNextPinClickPath = sourcePath;
     draggingPinPath = null;
-    const nextPins = movePinBefore(stackPins, sourcePath, targetPin.path);
+    draggingPinStartIndex = null;
+    const nextPins = reorderPinnedFolders(stackPins, sourcePath, targetIndex);
     if (nextPins === stackPins) {
       return;
     }
@@ -646,19 +662,6 @@
       showPinDropStatus('Could not save pin order', 'error');
       await loadStackPins();
     }
-  }
-
-  function movePinBefore(pins: StackPin[], sourcePath: string, targetPath: string) {
-    const sourceIndex = pins.findIndex((pin) => pin.path === sourcePath);
-    const targetIndex = pins.findIndex((pin) => pin.path === targetPath);
-    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
-      return pins;
-    }
-    const nextPins = [...pins];
-    const [pin] = nextPins.splice(sourceIndex, 1);
-    const insertIndex = nextPins.findIndex((item) => item.path === targetPath);
-    nextPins.splice(Math.max(0, insertIndex), 0, pin);
-    return nextPins;
   }
 
   function updateRailScrollButtons() {
@@ -1099,6 +1102,17 @@
     startImmediateSearchQueryExecution(request);
   }
 
+  function hasSearchClearValue() {
+    return Boolean(searchInputDraft || searchQuery);
+  }
+
+  async function clearSearch() {
+    const request = publishImmediateSearchInputState('');
+    startImmediateSearchQueryExecution(request);
+    await tick();
+    searchInput?.focus({ preventScroll: true });
+  }
+
   function handleSearchInput(event: Event) {
     const nextQuery = (event.currentTarget as HTMLInputElement).value;
     const request = publishImmediateSearchInputState(nextQuery);
@@ -1196,6 +1210,12 @@
       markSearchPanelInteraction();
       expandedVisibleGroups = new Set([...expandedVisibleGroups, event.payload]);
       queueSearchPanelPublish();
+    }).then((unlisten) => {
+      unlisteners.push(unlisten);
+    });
+    void listen(WINDOWS_KEY_OPEN_SEARCH_EVENT, () => {
+      void openCenteredPanel({ publishCurrentPayload: true });
+      void tick().then(() => searchInput?.focus({ preventScroll: true }));
     }).then((unlisten) => {
       unlisteners.push(unlisten);
     });
@@ -1457,5 +1477,15 @@
       on:input={handleSearchInput}
       on:keydown={handleSearchKeydown}
     />
+    {#if hasSearchClearValue()}
+      <MeltActionButton
+        class="search-clear-button"
+        ariaLabel="Clear search"
+        tooltip="Clear search"
+        onClick={() => void clearSearch()}
+      >
+        ×
+      </MeltActionButton>
+    {/if}
   </div>
 </div>

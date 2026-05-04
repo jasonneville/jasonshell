@@ -3,6 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import {
     AUDIO_PANEL_OPEN_EVENT,
+    AUDIO_REFRESH_EVENT,
     getAudioState,
     hideAudioPanel,
     normalizeVolumePercent,
@@ -10,14 +11,22 @@
     setDefaultAudioInputDevice,
     setDefaultAudioOutputDevice,
     setMasterVolume,
+    type AudioRefreshPayload,
+    type AudioRefreshReason,
     type AudioState
   } from '../lib/audio';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+
+  const AUDIO_REFRESH_DEBOUNCE_MS = 150;
+  const AUDIO_REFRESH_POLL_MS = 2000;
 
   let audioLoading = false;
   let audioError = '';
   let audioState: AudioState | null = null;
   let audioCommandSequence = 0;
+  let audioRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let audioRefreshPollTimer: ReturnType<typeof setInterval> | null = null;
+  let audioPanelVisible = false;
 
   function applyAudioState(nextAudioState: AudioState, options: { clearError?: boolean } = {}) {
     audioState = {
@@ -33,7 +42,7 @@
     }
   }
 
-  async function refreshAudioState() {
+  async function refreshAudioState(_options: { reason?: AudioRefreshReason } = {}) {
     audioLoading = true;
     try {
       applyAudioState(await getAudioState());
@@ -43,6 +52,40 @@
     } finally {
       audioLoading = false;
     }
+  }
+
+  function scheduleAudioRefresh(reason: AudioRefreshReason) {
+    if (audioRefreshTimer) {
+      clearTimeout(audioRefreshTimer);
+    }
+    audioRefreshTimer = setTimeout(() => {
+      audioRefreshTimer = null;
+      void refreshAudioState({ reason });
+    }, AUDIO_REFRESH_DEBOUNCE_MS);
+  }
+
+  function startAudioRefreshPolling() {
+    if (audioRefreshPollTimer) {
+      return;
+    }
+    audioRefreshPollTimer = setInterval(() => {
+      if (audioPanelVisible) {
+        void refreshAudioState({ reason: 'session-changed' });
+      }
+    }, AUDIO_REFRESH_POLL_MS);
+  }
+
+  function stopAudioRefreshPolling() {
+    if (audioRefreshPollTimer) {
+      clearInterval(audioRefreshPollTimer);
+      audioRefreshPollTimer = null;
+    }
+  }
+
+  function closeAudioPanel() {
+    audioPanelVisible = false;
+    stopAudioRefreshPolling();
+    void hideAudioPanel();
   }
 
   function audioVolumeLabel(value: number | null | undefined) {
@@ -130,21 +173,38 @@
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
-      void hideAudioPanel();
+      closeAudioPanel();
     }
   }
 
   onMount(() => {
     let unlistenOpen: (() => void) | null = null;
+    let unlistenRefresh: (() => void) | null = null;
+    audioPanelVisible = true;
+    startAudioRefreshPolling();
     void refreshAudioState();
     void listen(AUDIO_PANEL_OPEN_EVENT, () => {
+      audioPanelVisible = true;
+      startAudioRefreshPolling();
       void refreshAudioState();
     }).then((unlisten) => {
       unlistenOpen = unlisten;
     });
+    void listen<AudioRefreshPayload>(AUDIO_REFRESH_EVENT, (event) => {
+      scheduleAudioRefresh(event.payload.reason);
+    }).then((unlisten) => {
+      unlistenRefresh = unlisten;
+    });
 
     return () => {
+      if (audioRefreshTimer) {
+        clearTimeout(audioRefreshTimer);
+        audioRefreshTimer = null;
+      }
+      audioPanelVisible = false;
+      stopAudioRefreshPolling();
       unlistenOpen?.();
+      unlistenRefresh?.();
     };
   });
 </script>
@@ -156,7 +216,7 @@
     <strong>Sound</strong>
     <div class="sound-panel-actions">
       <MeltActionButton class="sound-refresh" ariaLabel="Refresh sound devices" onClick={() => void refreshAudioState()}>Refresh</MeltActionButton>
-      <MeltActionButton class="sound-refresh" ariaLabel="Close sound controls" onClick={() => void hideAudioPanel()}>Close</MeltActionButton>
+      <MeltActionButton class="sound-refresh" ariaLabel="Close sound controls" onClick={closeAudioPanel}>Close</MeltActionButton>
     </div>
   </div>
   {#if audioError}

@@ -1,15 +1,15 @@
 .command-panel {
-  background: #10131b;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.85rem;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
-  color: #e8ecf8;
+  background: var(--js-bg-panel, var(--js-color-surface));
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-md);
+  box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
+  color: var(--js-color-text);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--js-space-3);
   height: 100%;
   min-height: 0;
-  padding: 0.7rem;
+  padding: var(--js-space-4);
 }
 
 .command-panel-header {
@@ -24,7 +24,7 @@
 }
 
 .command-panel-header p {
-  color: #9ba6be;
+  color: var(--js-color-text-muted);
   font-size: 0.66rem;
   font-weight: 700;
   margin: 0;
@@ -32,36 +32,36 @@
 }
 
 .command-panel-error {
-  background: rgba(170, 42, 42, 0.35);
-  border: 1px solid rgba(255, 130, 130, 0.52);
-  border-radius: 0.45rem;
-  color: #ffd1d1;
+  background: var(--js-color-error);
+  border: 1px solid var(--js-color-error-border);
+  border-radius: var(--js-radius-md);
+  color: var(--js-color-error-text);
   font-size: 0.72rem;
   margin: 0;
-  padding: 0.36rem 0.52rem;
+  padding: var(--js-space-2) var(--js-space-3);
 }
 
 .command-panel-layout {
   display: grid;
   flex: 1 1 auto;
-  gap: 0.6rem;
+  gap: var(--js-space-3);
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
   min-height: 0;
 }
 
 .command-list,
 .command-editor {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.5rem;
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-md);
   min-height: 0;
-  padding: 0.48rem;
+  padding: var(--js-space-3);
 }
 
 .command-list {
   display: flex;
   flex-direction: column;
-  gap: 0.42rem;
+  gap: var(--js-space-2);
 }
 
 .command-list-header {
@@ -80,7 +80,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: var(--js-space-2);
   list-style: none;
   margin: 0;
   min-height: 0;
@@ -89,10 +89,10 @@
 }
 
 .command-list li {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 0.42rem;
-  padding: 0.36rem;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-md);
+  padding: var(--js-space-2);
 }
 
 .command-row {
@@ -105,7 +105,7 @@
 }
 
 .command-row span {
-  color: #9ca8c0;
+  color: var(--js-color-text-muted);
   font-size: 0.62rem;
 }
 
@@ -116,7 +116,7 @@
 }
 
 .command-list-state {
-  color: #a7b2c9;
+  color: var(--js-color-text-muted);
   font-size: 0.7rem;
   margin: 0;
 }
@@ -124,7 +124,7 @@
 .command-editor {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: var(--js-space-2);
   overflow-y: auto;
 }
 
@@ -135,7 +135,7 @@
 }
 
 .command-editor span {
-  color: #bcc6da;
+  color: var(--js-color-text-muted);
   font-size: 0.67rem;
   font-weight: 700;
 }
@@ -143,10 +143,10 @@
 .command-editor input,
 .command-editor select,
 .command-editor textarea {
-  background: rgba(11, 16, 28, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 0.36rem;
-  color: #eef2ff;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
   font-size: 0.69rem;
   padding: 0.34rem 0.4rem;
 }
@@ -159,15 +159,16 @@
 .command-editor input:focus,
 .command-editor select:focus,
 .command-editor textarea:focus {
-  border-color: #6f9cff;
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
   outline: 0;
 }
 
 .command-form-errors {
-  background: rgba(170, 42, 42, 0.3);
-  border: 1px solid rgba(255, 130, 130, 0.4);
-  border-radius: 0.4rem;
-  color: #ffd2d2;
+  background: var(--js-color-error);
+  border: 1px solid var(--js-color-error-border);
+  border-radius: var(--js-radius-md);
+  color: var(--js-color-error-text);
   font-size: 0.67rem;
   margin: 0;
   padding: 0.32rem 0.72rem;

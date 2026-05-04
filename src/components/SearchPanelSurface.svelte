@@ -183,6 +183,18 @@
     queueQueryEmit(value);
   }
 
+  function hasCenteredSearchClearValue() {
+    return Boolean(displayedQuery);
+  }
+
+  async function clearCenteredSearch() {
+    optimisticQueryDraft = '';
+    announcePanelInteraction();
+    queueQueryEmit('');
+    await tick();
+    queryInput?.focus({ preventScroll: true });
+  }
+
   function handleQueryKeydown(event: KeyboardEvent) {
     if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
       return;
@@ -414,6 +426,16 @@
         on:input={updateQuery}
         on:keydown={handleQueryKeydown}
       />
+      {#if presentation === 'centered' && hasCenteredSearchClearValue()}
+        <MeltActionButton
+          class="search-panel-clear-button"
+          ariaLabel="Clear search"
+          tooltip="Clear search"
+          onClick={() => void clearCenteredSearch()}
+        >
+          ×
+        </MeltActionButton>
+      {/if}
     {:else}
       <strong>Search</strong>
       <span>{query || 'Everything files and folders'}</span>

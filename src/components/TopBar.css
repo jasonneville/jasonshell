@@ -334,6 +334,29 @@
   opacity: 0.85;
 }
 
+.top-bar .search-clear-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--js-radius-xs);
+  color: var(--js-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.9rem;
+  font-weight: 800;
+  height: 1.1rem;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 1.1rem;
+}
+
+.top-bar .search-clear-button:hover,
+.top-bar .search-clear-button:focus-visible {
+  background: var(--js-color-surface-overlay);
+  color: var(--js-color-text);
+}
+
 .top-bar .search-control input {
   background: transparent;
   border: 0;

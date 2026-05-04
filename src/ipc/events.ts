@@ -3,6 +3,7 @@ export const IPC_EVENTS = {
   processManagerClosed: 'process-manager:closed',
   trayPanelClosed: 'tray-panel:closed',
   commandPanelClosed: 'command-panel:closed',
+  audioRefresh: 'audio:refresh',
   searchPanelUpdate: 'search-panel:update',
   searchPanelActivate: 'search-panel:activate',
   searchPanelSelect: 'search-panel:select',

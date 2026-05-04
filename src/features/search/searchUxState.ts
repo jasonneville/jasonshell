@@ -465,6 +465,12 @@ export function createLatestSearchQueryController(initialSequence = 0): LatestSe
   };
 }
 
+export function clearLatestSearchQuery(
+  controller: Pick<LatestSearchQueryController, 'next'>
+): SearchEngineQueryRequestState {
+  return controller.next('');
+}
+
 export function createLatestSearchExecutionQueue<TRequest>(
   execute: (request: TRequest) => void
 ): LatestSearchExecutionQueue<TRequest> {

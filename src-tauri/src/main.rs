@@ -28,6 +28,7 @@ mod task_windows;
 mod taskbar_menu;
 mod tray_panel;
 mod workspaces;
+mod windows_key_hook;
 
 #[cfg(target_os = "windows")]
 mod system_tray;
@@ -277,6 +278,9 @@ fn main() {
             let windows = shell_windows::create_shell_windows(app)?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
+            if let Err(error) = windows_key_hook::install_windows_key_hook(app.handle().clone()) {
+                eprintln!("Windows-key hook disabled: {error}");
+            }
 
             #[cfg(target_os = "windows")]
             {
@@ -299,6 +303,7 @@ fn main() {
     app.run(|app_handle, event| {
         #[cfg(target_os = "windows")]
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+            windows_key_hook::uninstall_windows_key_hook();
             if let Err(error) = appbar::cleanup_shell_surfaces(app_handle) {
                 eprintln!("cleanup failed: {error}");
             }

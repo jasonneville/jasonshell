@@ -1,5 +1,16 @@
 import { invoke } from '@tauri-apps/api/core';
 import { IPC_COMMANDS } from '../ipc/commands.js';
+import { IPC_EVENTS } from '../ipc/events.js';
+
+export type AudioRefreshReason =
+  | 'device-added'
+  | 'device-removed'
+  | 'default-changed'
+  | 'session-changed';
+
+export type AudioRefreshPayload = {
+  reason: AudioRefreshReason;
+};
 
 export type AudioDevice = {
   id: string;
@@ -42,6 +53,7 @@ export interface ShowAudioPanelRequest {
 
 export const AUDIO_PANEL_OPEN_EVENT = 'audio-panel:open';
 export const AUDIO_PANEL_CLOSED_EVENT = 'audio-panel:closed';
+export const AUDIO_REFRESH_EVENT = IPC_EVENTS.audioRefresh;
 
 export const AUDIO_COMMANDS = {
   showPanel: IPC_COMMANDS.showAudioPanel,
