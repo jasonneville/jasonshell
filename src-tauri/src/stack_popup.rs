@@ -11,9 +11,10 @@ mod pins;
 mod popup_window;
 
 use crate::shell_paths;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,6 +29,136 @@ pub use models::{
     StackItemIconResolutionBatch, StackNativeDragPreparation, StackOpenWithCandidate,
     StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveKind {
+    Zip,
+    Rar,
+}
+
+impl ArchiveKind {
+    pub(crate) fn from_path(path: &Path) -> Option<Self> {
+        if !path.is_file() {
+            return None;
+        }
+        match path.extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase).as_deref() {
+            Some("zip") => Some(Self::Zip),
+            Some("rar") => Some(Self::Rar),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ArchiveDestinationMode {
+    Here,
+    Folder,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ArchiveExtractor {
+    Builtin,
+    SevenZip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArchiveExtractionPlan {
+    pub executable: PathBuf,
+    pub args: Vec<String>,
+    pub destination_path: PathBuf,
+    pub expected_created_folder: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StackItemPropertiesPlan {
+    pub executable: PathBuf,
+    pub args: Vec<String>,
+}
+
+pub(crate) fn build_stack_item_properties_plan(path: &Path) -> Result<StackItemPropertiesPlan, String> {
+    if !path.exists() {
+        return Err("Path unavailable".to_string());
+    }
+    Ok(StackItemPropertiesPlan {
+        executable: PathBuf::from("powershell.exe"),
+        args: vec![
+            "-NoProfile".to_string(),
+            "-Command".to_string(),
+            "$item = Get-Item -LiteralPath $args[0]; $shell = New-Object -ComObject Shell.Application; $folder = $shell.Namespace($item.DirectoryName); $folder.ParseName($item.Name).InvokeVerb('properties')".to_string(),
+            path.to_string_lossy().to_string(),
+        ],
+    })
+}
+
+pub(crate) fn seven_zip_discovery_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        candidates.push(PathBuf::from(program_files).join("7-Zip").join("7z.exe"));
+    }
+    if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
+        candidates.push(PathBuf::from(program_files_x86).join("7-Zip").join("7z.exe"));
+    }
+    candidates.push(PathBuf::from("7z.exe"));
+    candidates
+}
+
+fn find_seven_zip() -> Option<PathBuf> {
+    seven_zip_discovery_candidates()
+        .into_iter()
+        .find(|candidate| candidate.file_name().and_then(|name| name.to_str()) == Some("7z.exe") && (candidate.is_relative() || candidate.exists()))
+}
+
+pub(crate) fn build_archive_extraction_plan(
+    archive: &Path,
+    destination_mode: ArchiveDestinationMode,
+    extractor: ArchiveExtractor,
+    seven_zip: Option<PathBuf>,
+) -> Result<ArchiveExtractionPlan, String> {
+    let kind = ArchiveKind::from_path(archive).ok_or_else(|| "Unsupported archive type".to_string())?;
+    let parent = archive.parent().ok_or_else(|| "Archive parent folder unavailable".to_string())?;
+    let stem = archive.file_stem().and_then(|value| value.to_str()).ok_or_else(|| "Archive name unavailable".to_string())?;
+    let destination_path = match destination_mode {
+        ArchiveDestinationMode::Here => parent.to_path_buf(),
+        ArchiveDestinationMode::Folder => parent.join(stem),
+    };
+    if matches!(destination_mode, ArchiveDestinationMode::Folder) && destination_path.exists() {
+        return Err("Extraction destination already exists".to_string());
+    }
+
+    if kind == ArchiveKind::Rar && extractor == ArchiveExtractor::Builtin {
+        return Err("7-Zip is required to extract RAR archives".to_string());
+    }
+
+    if kind == ArchiveKind::Zip && extractor == ArchiveExtractor::Builtin {
+        return Ok(ArchiveExtractionPlan {
+            executable: PathBuf::from("powershell.exe"),
+            args: vec![
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1]".to_string(),
+                archive.to_string_lossy().to_string(),
+                destination_path.to_string_lossy().to_string(),
+            ],
+            destination_path,
+            expected_created_folder: matches!(destination_mode, ArchiveDestinationMode::Folder).then(|| parent.join(stem)),
+        });
+    }
+
+    let seven_zip = seven_zip.ok_or_else(|| "7-Zip is required to use 7-Zip extraction".to_string())?;
+    Ok(ArchiveExtractionPlan {
+        executable: seven_zip,
+        args: vec![
+            "x".to_string(),
+            archive.to_string_lossy().to_string(),
+            format!("-o{}", destination_path.to_string_lossy()),
+            "-y".to_string(),
+        ],
+        destination_path,
+        expected_created_folder: matches!(destination_mode, ArchiveDestinationMode::Folder).then(|| parent.join(stem)),
+    })
+}
 
 #[cfg(test)]
 pub(crate) use clipboard::{clipboard_mode_from_drop_effect, paste_clipboard_items};
@@ -148,7 +279,12 @@ pub fn read_stack_folder(
     limit: Option<usize>,
     session_id: Option<String>,
 ) -> Result<StackFolderPage, String> {
-    let folder = paths::normalize_existing_dir(&path)?;
+    let candidate = PathBuf::from(&path);
+    let folder = if candidate.is_dir() {
+        paths::normalize_existing_dir(&path)?
+    } else {
+        candidate.to_string_lossy().to_string()
+    };
     paging::read_stack_folder_page_with_session(
         &folder,
         session_id.as_deref(),
@@ -298,6 +434,47 @@ pub fn open_stack_folder_in_vscode(path: String) -> Result<(), String> {
 pub fn reveal_stack_item(path: String) -> Result<(), String> {
     file_ops::reveal_stack_item_path(path)
 }
+
+#[tauri::command]
+pub fn extract_stack_archive(
+    archive_path: String,
+    destination_mode: ArchiveDestinationMode,
+    extractor: ArchiveExtractor,
+) -> Result<(), String> {
+    let archive = PathBuf::from(paths::normalize_existing_path(&archive_path)?);
+    if !archive.is_absolute() {
+        return Err("Archive path must be absolute".to_string());
+    }
+    if !archive.is_file() {
+        return Err("Archive path must be a file".to_string());
+    }
+    let kind = ArchiveKind::from_path(&archive).ok_or_else(|| "Unsupported archive type".to_string())?;
+    let seven_zip = if extractor == ArchiveExtractor::SevenZip || kind == ArchiveKind::Rar { find_seven_zip() } else { None };
+    let plan = build_archive_extraction_plan(&archive, destination_mode, extractor, seven_zip)?;
+    Command::new(&plan.executable)
+        .args(&plan.args)
+        .status()
+        .map_err(|error| format!("Failed to extract archive: {error}"))
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("Archive extraction failed with status {status}"))
+            }
+        })
+}
+
+#[tauri::command]
+pub fn show_stack_item_properties(path: String) -> Result<(), String> {
+    let path = PathBuf::from(paths::normalize_existing_path(&path)?);
+    let plan = build_stack_item_properties_plan(&path)?;
+    Command::new(&plan.executable)
+        .args(&plan.args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to show properties: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -948,5 +1125,155 @@ mod tests {
         let bounded = resolve_stack_item_icons_batch(roots, 24);
 
         assert!(bounded.len() <= 24);
+    }
+
+    #[test]
+    fn archive_kind_from_path_accepts_zip_rar_files_only() {
+        let root = test_dir("archive-kind");
+        fs::create_dir_all(root.join("folder.zip")).unwrap();
+        fs::write(root.join("bundle.zip"), b"zip").unwrap();
+        fs::write(root.join("BUNDLE.ZIP"), b"zip").unwrap();
+        fs::write(root.join("bundle.rar"), b"rar").unwrap();
+        fs::write(root.join("bundle.7z"), b"7z").unwrap();
+        fs::write(root.join("bundle"), b"none").unwrap();
+
+        assert_eq!(super::ArchiveKind::from_path(&root.join("bundle.zip")), Some(super::ArchiveKind::Zip));
+        assert_eq!(super::ArchiveKind::from_path(&root.join("BUNDLE.ZIP")), Some(super::ArchiveKind::Zip));
+        assert_eq!(super::ArchiveKind::from_path(&root.join("bundle.rar")), Some(super::ArchiveKind::Rar));
+        assert_eq!(super::ArchiveKind::from_path(&root.join("bundle.7z")), None);
+        assert_eq!(super::ArchiveKind::from_path(&root.join("bundle")), None);
+        assert_eq!(super::ArchiveKind::from_path(&root.join("folder.zip")), None);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn archive_7zip_candidates_include_program_files_and_path_fallback() {
+        let candidates = super::seven_zip_discovery_candidates();
+        assert!(candidates.iter().any(|candidate| candidate.ends_with(r"7-Zip\7z.exe")));
+        assert!(candidates.iter().any(|candidate| candidate == Path::new("7z.exe")));
+    }
+
+    #[test]
+    fn archive_extraction_plan_vectorizes_paths_with_spaces() {
+        let root = test_dir("archive-plan spaces");
+        fs::create_dir_all(&root).unwrap();
+        let archive = root.join("release build.rar");
+        fs::write(&archive, b"rar").unwrap();
+
+        let plan = super::build_archive_extraction_plan(
+            &archive,
+            super::ArchiveDestinationMode::Folder,
+            super::ArchiveExtractor::SevenZip,
+            Some(root.join("Tools Dir").join("7z.exe")),
+        ).unwrap();
+
+        assert_eq!(plan.executable, root.join("Tools Dir").join("7z.exe"));
+        assert!(plan.args.iter().any(|arg| arg == &archive.to_string_lossy().to_string()));
+        assert!(plan.args.iter().any(|arg| arg == &format!("-o{}", root.join("release build").to_string_lossy())));
+        assert!(!plan.args.join(" ").contains('"'));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn archive_extraction_plan_keeps_builtin_and_7zip_zip_modes_distinct() {
+        let root = test_dir("archive-plan-modes");
+        fs::create_dir_all(&root).unwrap();
+        let archive = root.join("bundle.zip");
+        fs::write(&archive, b"zip").unwrap();
+
+        let builtin = super::build_archive_extraction_plan(
+            &archive,
+            super::ArchiveDestinationMode::Folder,
+            super::ArchiveExtractor::Builtin,
+            None,
+        ).unwrap();
+        assert_eq!(builtin.executable, Path::new("powershell.exe"));
+        assert!(builtin.args.iter().any(|arg| arg.contains("Expand-Archive")));
+
+        let seven_zip_path = root.join("7z.exe");
+        let seven_zip = super::build_archive_extraction_plan(
+            &archive,
+            super::ArchiveDestinationMode::Folder,
+            super::ArchiveExtractor::SevenZip,
+            Some(seven_zip_path.clone()),
+        ).unwrap();
+        assert_eq!(seven_zip.executable, seven_zip_path);
+        assert!(seven_zip.args.iter().any(|arg| arg == "x"));
+
+        let missing_seven_zip = super::build_archive_extraction_plan(
+            &archive,
+            super::ArchiveDestinationMode::Folder,
+            super::ArchiveExtractor::SevenZip,
+            None,
+        ).unwrap_err();
+        assert_eq!(missing_seven_zip, "7-Zip is required to use 7-Zip extraction");
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn read_stack_folder_page_lists_zip_contents_as_stack_rows() {
+        let root = test_dir("zip-browser");
+        fs::create_dir_all(&root).unwrap();
+        let archive = root.join("bundle.zip");
+        let file = fs::File::create(&archive).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.add_directory("docs/", options).unwrap();
+        writer.start_file("docs/readme.md", options).unwrap();
+        use std::io::Write;
+        writer.write_all(b"hello").unwrap();
+        writer.start_file("app.exe", options).unwrap();
+        writer.write_all(b"exe").unwrap();
+        writer.finish().unwrap();
+
+        let page = super::read_stack_folder_page(archive.to_str().unwrap(), 0, 20).unwrap();
+        assert_eq!(page.path, archive.to_string_lossy());
+        assert_eq!(page.items.iter().map(|item| (&item.name, &item.kind)).collect::<Vec<_>>(), vec![(&"docs".to_string(), &"folder".to_string()), (&"app.exe".to_string(), &"file".to_string())]);
+        assert!(page.items.iter().any(|item| item.path.ends_with(r"bundle.zip\docs")));
+
+        let nested_path = format!(r"{}\docs", archive.to_string_lossy());
+        let nested = super::read_stack_folder_page(&nested_path, 0, 20).unwrap();
+        assert_eq!(nested.items.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["readme.md"]);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn read_stack_folder_command_accepts_zip_paths() {
+        let root = test_dir("zip-browser-command");
+        fs::create_dir_all(&root).unwrap();
+        let archive = root.join("bundle.zip");
+        let file = fs::File::create(&archive).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("app.exe", options).unwrap();
+        use std::io::Write;
+        writer.write_all(b"exe").unwrap();
+        writer.finish().unwrap();
+
+        let page = super::read_stack_folder(archive.to_string_lossy().to_string(), 0, Some(20), None).unwrap();
+        assert_eq!(page.items.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["app.exe"]);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn stack_item_properties_plan_validates_existing_paths() {
+        let root = test_dir("properties-plan");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("server file.ts");
+        fs::write(&file, b"ts").unwrap();
+
+        let plan = super::build_stack_item_properties_plan(&file).unwrap();
+        assert_eq!(plan.executable, Path::new("powershell.exe"));
+        assert!(plan.args.iter().any(|arg| arg.contains("InvokeVerb('properties')")));
+        assert!(plan.args.iter().any(|arg| arg == &file.to_string_lossy().to_string()));
+        assert!(!plan.args.join(" ").contains('"'));
+
+        assert!(super::build_stack_item_properties_plan(&root.join("missing.ts")).is_err());
+        fs::remove_dir_all(root).ok();
     }
 }

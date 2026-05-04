@@ -104,6 +104,8 @@ pub mod commands {
     pub const NEW_STACK_TEXT_FILE: &str = "new_stack_text_file";
     pub const OPEN_STACK_TERMINAL_HERE: &str = "open_stack_terminal_here";
     pub const REVEAL_STACK_ITEM: &str = "reveal_stack_item";
+    pub const EXTRACT_STACK_ARCHIVE: &str = "extract_stack_archive";
+    pub const SHOW_STACK_ITEM_PROPERTIES: &str = "show_stack_item_properties";
     pub const REPORT_SHELL_SURFACE_RUNTIME_METRICS: &str = "report_shell_surface_runtime_metrics";
     pub const LOAD_SHELL_SETTINGS: &str = "load_shell_settings";
     pub const SAVE_SHELL_SETTINGS: &str = "save_shell_settings";
@@ -205,6 +207,8 @@ pub mod commands {
         NEW_STACK_TEXT_FILE,
         OPEN_STACK_TERMINAL_HERE,
         REVEAL_STACK_ITEM,
+        EXTRACT_STACK_ARCHIVE,
+        SHOW_STACK_ITEM_PROPERTIES,
         REPORT_SHELL_SURFACE_RUNTIME_METRICS,
         LOAD_SHELL_SETTINGS,
         SAVE_SHELL_SETTINGS,

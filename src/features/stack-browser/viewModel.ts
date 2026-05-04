@@ -12,6 +12,7 @@ export {
   stackBrowserMarqueeSelectedVirtualPaths,
   stackBrowserMarqueeSelectedPaths,
   stackBrowserContextActionPlans,
+  isStackBrowsableArchiveEntry,
   getStackPathAutocompleteQuery,
   getStackPathInlineCompletion,
   stackBrowserScrollTopForIndex,

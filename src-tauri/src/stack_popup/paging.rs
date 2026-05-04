@@ -1,10 +1,11 @@
 use crate::stack_popup::items::stack_item_metadata_from_path;
 use crate::stack_popup::models::{
-    StackFolderPage, StackFolderPageDiagnostics, StackFolderWarning,
+    StackFolderPage, StackFolderPageDiagnostics, StackFolderWarning, StackItem,
 };
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -69,9 +70,12 @@ pub(crate) fn read_stack_folder_page_with_session(
     let page_len = page_entries.len();
     let mut items = Vec::with_capacity(page_len);
     for entry in page_entries {
-        match stack_item_metadata_from_path(entry.path.clone()) {
-            Ok(item) => items.push(item),
-            Err(message) => warnings.push(stack_folder_warning(Some(entry.path), message)),
+        match entry.item {
+            StackFolderEntryItem::Filesystem(path) => match stack_item_metadata_from_path(path.clone()) {
+                Ok(item) => items.push(item),
+                Err(message) => warnings.push(stack_folder_warning(Some(path), message)),
+            },
+            StackFolderEntryItem::Virtual(item) => items.push(item),
         }
     }
 
@@ -110,6 +114,10 @@ pub(crate) fn read_stack_folder_page_with_session(
 fn collect_stack_folder_entries(
     path: &str,
 ) -> Result<(Vec<StackFolderEntrySummary>, Vec<StackFolderWarning>), String> {
+    if let Some((archive_path, prefix)) = split_zip_virtual_path(path) {
+        return collect_zip_folder_entries(&archive_path, &prefix);
+    }
+
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
     for entry in
@@ -158,11 +166,98 @@ fn log_stack_folder_page_diagnostics(
     );
 }
 
+fn collect_zip_folder_entries(
+    archive_path: &Path,
+    prefix: &str,
+) -> Result<(Vec<StackFolderEntrySummary>, Vec<StackFolderWarning>), String> {
+    let file = File::open(archive_path).map_err(|error| format!("Failed to open zip archive: {error}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|error| format!("Failed to read zip archive: {error}"))?;
+    let mut by_name = HashMap::<String, StackItem>::new();
+    for index in 0..archive.len() {
+        let file = archive.by_index(index).map_err(|error| format!("Failed to read zip entry: {error}"))?;
+        let Some((name, is_dir)) = zip_child_entry(prefix, file.name(), file.is_dir()) else {
+            continue;
+        };
+        by_name.entry(name.clone()).or_insert_with(|| virtual_zip_stack_item(archive_path, prefix, &name, is_dir, file.size()));
+    }
+    let mut entries = by_name
+        .into_values()
+        .map(|item| StackFolderEntrySummary {
+            name: item.name.clone(),
+            is_dir: item.kind == "folder",
+            item: StackFolderEntryItem::Virtual(item),
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        folder_sort_rank(a.is_dir)
+            .cmp(&folder_sort_rank(b.is_dir))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok((entries, Vec::new()))
+}
+
+fn zip_child_entry(prefix: &str, name: &str, is_dir: bool) -> Option<(String, bool)> {
+    let normalized = name.replace('/', "\\").trim_matches('\\').to_string();
+    let normalized_prefix = prefix.replace('/', "\\").trim_matches('\\').to_string();
+    let relative = if normalized_prefix.is_empty() {
+        normalized.as_str()
+    } else {
+        normalized.strip_prefix(&format!("{}\\", normalized_prefix))?
+    };
+    if relative.is_empty() {
+        return None;
+    }
+    let mut parts = relative.split('\\');
+    let first = parts.next()?.to_string();
+    Some((first, is_dir || parts.next().is_some()))
+}
+
+fn virtual_zip_stack_item(archive_path: &Path, prefix: &str, name: &str, is_dir: bool, size: u64) -> StackItem {
+    let relative_path = if prefix.is_empty() { name.to_string() } else { format!("{}\\{}", prefix.trim_matches('\\'), name) };
+    StackItem {
+        path: format!("{}\\{}", archive_path.to_string_lossy(), relative_path),
+        name: name.to_string(),
+        kind: if is_dir { "folder" } else { "file" }.to_string(),
+        type_label: if is_dir { "Folder" } else { "ZIP Entry" }.to_string(),
+        icon_data_url: None,
+        size_bytes: (!is_dir).then_some(size),
+        modified_at: None,
+        is_hidden: name.starts_with('.'),
+        is_readonly: true,
+        is_system: false,
+        is_symlink: false,
+        is_reparse_point: false,
+    }
+}
+
+fn is_zip_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+}
+
+fn split_zip_virtual_path(path: &str) -> Option<(PathBuf, String)> {
+    let lower = path.to_ascii_lowercase();
+    let zip_index = lower.find(".zip")? + 4;
+    let archive = PathBuf::from(&path[..zip_index]);
+    if !archive.is_file() || !is_zip_path(&archive) {
+        return None;
+    }
+    let prefix = path[zip_index..].trim_start_matches(['\\', '/']).to_string();
+    Some((archive, prefix))
+}
+
 #[derive(Clone, Debug)]
 struct StackFolderEntrySummary {
-    path: PathBuf,
     name: String,
     is_dir: bool,
+    item: StackFolderEntryItem,
+}
+
+#[derive(Clone, Debug)]
+enum StackFolderEntryItem {
+    Filesystem(PathBuf),
+    Virtual(StackItem),
 }
 
 #[derive(Clone, Debug)]
@@ -291,7 +386,7 @@ fn stack_folder_entry_summary(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
 
-    Ok(StackFolderEntrySummary { path, name, is_dir })
+    Ok(StackFolderEntrySummary { name, is_dir, item: StackFolderEntryItem::Filesystem(path) })
 }
 
 fn folder_sort_rank(is_dir: bool) -> u8 {

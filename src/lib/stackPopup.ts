@@ -390,6 +390,21 @@ export function revealStackItem(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.revealStackItem, { path });
 }
 
+export type StackArchiveDestinationMode = 'here' | 'folder';
+export type StackArchiveExtractor = 'builtin' | 'sevenZip';
+
+export function extractStackArchive(
+  archivePath: string,
+  destinationMode: StackArchiveDestinationMode,
+  extractor: StackArchiveExtractor = 'builtin'
+): Promise<void> {
+  return invoke(IPC_COMMANDS.extractStackArchive, { archivePath, destinationMode, extractor });
+}
+
+export function showStackItemProperties(path: string): Promise<void> {
+  return invoke(IPC_COMMANDS.showStackItemProperties, { path });
+}
+
 export function openStackItem(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openStackItem, { path });
 }

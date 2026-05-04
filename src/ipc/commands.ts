@@ -76,6 +76,8 @@ export const IPC_COMMANDS = {
   newStackTextFile: 'new_stack_text_file',
   openStackTerminalHere: 'open_stack_terminal_here',
   revealStackItem: 'reveal_stack_item',
+  extractStackArchive: 'extract_stack_archive',
+  showStackItemProperties: 'show_stack_item_properties',
   openStackFolderInVscode: 'open_stack_folder_in_vscode',
   reportShellSurfaceRuntimeMetrics: 'report_shell_surface_runtime_metrics',
   loadShellSettings: 'load_shell_settings',

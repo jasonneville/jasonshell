@@ -149,6 +149,8 @@ fn main() {
             stack_popup::new_stack_text_file,
             stack_popup::open_stack_terminal_here,
             stack_popup::reveal_stack_item,
+            stack_popup::extract_stack_archive,
+            stack_popup::show_stack_item_properties,
             stack_popup::open_stack_folder_in_vscode,
             automation::parse_automation_cli,
             automation::validate_automation_request,

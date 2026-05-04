@@ -421,6 +421,8 @@ export type StackBrowserTemplateAction = {
 };
 
 export type StackBrowserGitOperation = 'diff' | 'stage' | 'restore';
+export type StackArchiveDestinationMode = 'here' | 'folder';
+export type StackArchiveExtractor = 'builtin' | 'sevenZip';
 
 export type StackBrowserContextActionKind =
   | 'open-editor'
@@ -428,6 +430,8 @@ export type StackBrowserContextActionKind =
   | 'copy-path'
   | 'copy-directory-path'
   | 'copy-name'
+  | 'extract-archive'
+  | 'properties'
   | 'create-from-template'
   | 'git-operation';
 
@@ -441,6 +445,8 @@ export type StackBrowserContextActionPlan = {
   templateId?: string;
   templateKind?: StackBrowserTemplateAction['kind'];
   plannedPath?: string;
+  destinationMode?: StackArchiveDestinationMode;
+  extractor?: StackArchiveExtractor;
   gitOperation?: StackBrowserGitOperation;
   destructive: boolean;
   requiresConfirmation: boolean;
@@ -496,6 +502,10 @@ export function stackBrowserContextActionPlans(
   ];
 
   if (entry) {
+    if (entry.entryType === 'File' && isSupportedArchiveName(entry.name)) {
+      plans.push(...stackArchiveExtractionPlans(entry.name, targetPath, workingDirectory));
+    }
+
     plans.push(
       {
         id: 'copy-directory-path',
@@ -535,7 +545,71 @@ export function stackBrowserContextActionPlans(
 
   plans.push(...stackBrowserGitActionPlans(targetPath, workingDirectory, input.git ?? null));
 
+  if (canShowProperties(entry)) {
+    plans.push({
+      id: 'properties',
+      kind: 'properties',
+      label: 'Properties',
+      targetPath,
+      workingDirectory,
+      destructive: false,
+      requiresConfirmation: false
+    });
+  }
+
   return plans;
+}
+
+export function isStackBrowsableArchiveEntry(entry: StackEntry | null | undefined): boolean {
+  return entry?.entryType === 'File' && /\.zip$/i.test(entry.name);
+}
+
+function canShowProperties(entry: StackEntry | null): boolean {
+  if (!entry) {
+    return true;
+  }
+  const metadata = entry as StackEntry & { exists?: boolean; isFilesystem?: boolean };
+  return metadata.exists !== false && metadata.isFilesystem !== false;
+}
+
+function stackArchiveExtractionPlans(
+  name: string,
+  targetPath: string,
+  workingDirectory: string
+): StackBrowserContextActionPlan[] {
+  const plans: StackBrowserContextActionPlan[] = [];
+  if (/\.zip$/i.test(name)) {
+    plans.push(
+      archiveExtractionPlan('extract-here', 'Extract here', targetPath, workingDirectory, 'here', 'builtin'),
+      archiveExtractionPlan(`extract-folder`, `Extract to ${archiveFolderLabel(name)}\\`, targetPath, workingDirectory, 'folder', 'builtin')
+    );
+  }
+  plans.push(
+    archiveExtractionPlan('extract-here-7zip', 'Extract here with 7-Zip', targetPath, workingDirectory, 'here', 'sevenZip'),
+    archiveExtractionPlan(`extract-folder-7zip`, `Extract to ${archiveFolderLabel(name)}\\ with 7-Zip`, targetPath, workingDirectory, 'folder', 'sevenZip')
+  );
+  return plans;
+}
+
+function archiveExtractionPlan(
+  id: string,
+  label: string,
+  targetPath: string,
+  workingDirectory: string,
+  destinationMode: StackArchiveDestinationMode,
+  extractor: StackArchiveExtractor
+): StackBrowserContextActionPlan {
+  return {
+    id,
+    kind: 'extract-archive',
+    label,
+    targetPath,
+    workingDirectory,
+    destinationMode,
+    extractor,
+    destructive: false,
+    requiresConfirmation: false
+  };
 }
 
 function stackBrowserGitActionPlans(
@@ -622,6 +696,14 @@ function rectsIntersect(
 function basename(path: string): string {
   const normalized = path.replace(/\//g, '\\').replace(/\\+$/g, '');
   return normalized.split('\\').filter(Boolean).at(-1) ?? normalized;
+}
+
+function isSupportedArchiveName(name: string): boolean {
+  return /\.(zip|rar)$/i.test(name);
+}
+
+function archiveFolderLabel(name: string): string {
+  return name.replace(/\.[^.]+$/u, '') || name;
 }
 
 function parentPath(path: string): string {

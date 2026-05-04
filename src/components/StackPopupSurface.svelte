@@ -10,6 +10,7 @@
     deleteStackItem,
     endStackPopupFocusLossHold,
     emitStackFolderListingDiagnostics,
+    extractStackArchive,
     getStackPopupRequest,
     hideStackPopup,
     listStackOpenWithCandidates,
@@ -28,9 +29,12 @@
     resolveStackItemIcons,
     resizeStackPopup,
     revealStackItem,
+    showStackItemProperties,
     suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
+    type StackArchiveDestinationMode,
+    type StackArchiveExtractor,
     type StackItemIconResolution,
     type StackFolderListing,
     type StackOpenWithCandidate,
@@ -78,6 +82,7 @@
     stackBrowserDeletePrompt,
     getStackPathAutocompleteQuery,
     getStackPathInlineCompletion,
+    isStackBrowsableArchiveEntry,
     stackBrowserMarqueeRect,
     stackBrowserMarqueeSelectedVirtualPaths,
     stackBrowserSearchEntries,
@@ -624,7 +629,7 @@
 
   async function activateEntry(entry: StackEntry) {
     closeMenus();
-    if (entry.entryType === 'Folder') {
+    if (entry.entryType === 'Folder' || isStackBrowsableArchiveEntry(entry)) {
       await openFolder(entry.path);
     } else {
       await openStackItem(entry.path);
@@ -937,6 +942,68 @@
     createFolderDraft = null;
     renameDraft = selectedEntry.name;
     focusEditorInput();
+  }
+
+  async function showSelectedProperties() {
+    closeMenus();
+    if (!selectedEntry) {
+      return;
+    }
+    try {
+      await showStackItemProperties(selectedEntry.path);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to show stack item properties', error);
+      errorMessage = operationErrorMessage(error, 'Properties unavailable');
+    }
+  }
+
+  async function showCurrentFolderProperties() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      await showStackItemProperties(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to show current folder properties', error);
+      errorMessage = operationErrorMessage(error, 'Properties unavailable');
+    }
+  }
+
+  function selectedArchiveEntry() {
+    if (!selectedEntry || selectedEntry.entryType !== 'File' || !/\.(zip|rar)$/i.test(selectedEntry.name)) {
+      return null;
+    }
+    return selectedEntry;
+  }
+
+  function selectedZipArchiveEntry() {
+    const archive = selectedArchiveEntry();
+    return archive && /\.zip$/i.test(archive.name) ? archive : null;
+  }
+
+  function selectedSevenZipArchiveEntry() {
+    return selectedArchiveEntry();
+  }
+
+  async function extractSelectedArchive(destinationMode: StackArchiveDestinationMode, extractor: StackArchiveExtractor = 'builtin') {
+    closeMenus();
+    const archive = selectedArchiveEntry();
+    if (!archive) {
+      return;
+    }
+
+    try {
+      await extractStackArchive(archive.path, destinationMode, extractor);
+      const listing = await listStackFolder(currentPath);
+      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to extract stack archive', error);
+      errorMessage = operationErrorMessage(error, 'Extract archive unavailable');
+    }
   }
 
   async function renameSelected() {
@@ -1874,12 +1941,17 @@
       <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('here')}>Extract here</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder')}>Extract to folder</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('here', 'sevenZip')}>Extract here with 7-Zip</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder', 'sevenZip')}>Extract to folder with 7-Zip</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</MeltActionButton>
     </div>
   {/if}
 
@@ -1905,6 +1977,7 @@
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openCurrentFolderInVscode()}>Open in VS Code</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openTerminalHere()}>Open Terminal Here</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void showCurrentFolderProperties()}>Properties</MeltActionButton>
     </div>
   {/if}
 
