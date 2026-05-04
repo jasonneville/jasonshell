@@ -727,7 +727,7 @@ struct ParsedSnapshotId {
 fn parse_snapshot_id(id: &str) -> Result<ParsedSnapshotId, String> {
     let parts = id.split(':').collect::<Vec<_>>();
     let [source, toolbar, command] = parts.as_slice() else {
-        return Err("Invalid tray icon id".to_string());
+        return Err("Invalid tray icon id; tray panel remains open".to_string());
     };
     Ok(ParsedSnapshotId {
         source: ToolbarDiscoverySource::from_id_segment(source)
@@ -1005,6 +1005,15 @@ mod tests {
         assert!(parse_snapshot_id("not-a-snapshot-id").is_err());
         assert!(parse_snapshot_id("abc:44").is_err());
         assert!(parse_snapshot_id("1234:not-a-command").is_err());
+    }
+
+    #[test]
+    fn stale_tray_icon_invoke_returns_error_without_panel_close_payload() {
+        let Err(error) = parse_snapshot_id("not-a-snapshot-id") else {
+            panic!("invalid id rejects before relay");
+        };
+        assert_eq!(error, "Invalid tray icon id; tray panel remains open");
+        assert!(!error.contains("tray-panel:closed"));
     }
 
     #[test]

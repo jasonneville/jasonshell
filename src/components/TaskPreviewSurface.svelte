@@ -4,6 +4,7 @@
   import { emit, listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
+    closePreviewedTaskWindow,
     hideTaskWindowPreview,
     isNativeLiveTaskPreviewPayload,
     type TaskPreviewPayload
@@ -48,6 +49,35 @@
     await handlePreviewActivate();
   }
 
+  function handlePreviewPointerEnter() {
+    void emit(TASK_PREVIEW_HOVER_ENTER_EVENT);
+  }
+
+  async function handlePreviewPointerLeave(event: PointerEvent) {
+    const root = event.currentTarget as HTMLElement | null;
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (root && relatedTarget && root.contains(relatedTarget)) {
+      return;
+    }
+    await hidePreviewSurface();
+  }
+
+  async function handlePreviewClose(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!preview) {
+      return;
+    }
+
+    try {
+      await closePreviewedTaskWindow(preview.hwnd);
+      await emit(TASKBAR_REFRESH_WINDOWS_EVENT);
+      await hidePreviewSurface();
+    } catch (error) {
+      console.error(`Failed to close task window ${preview.hwnd}`, error);
+    }
+  }
+
   onMount(() => {
     const unlisteners: Array<() => void> = [];
 
@@ -71,18 +101,21 @@
   });
 </script>
 
-<MeltActionButton
-  class={previewSurfaceClass}
-  ariaDisabled={!preview}
-  ariaLabel={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
-  onClick={() => void handlePreviewActivate()}
-  onKeyDown={(event) => void handlePreviewKeydown(event)}
-  onMouseEnter={() => void emit(TASK_PREVIEW_HOVER_ENTER_EVENT)}
-  onMouseLeave={() => void hidePreviewSurface()}
+<div
+  class="preview-interaction-root"
+  role="group"
+  aria-label="Task preview"
+  on:pointerenter={handlePreviewPointerEnter}
+  on:pointerleave={(event) => void handlePreviewPointerLeave(event)}
 >
+  <MeltActionButton
+    class={previewSurfaceClass}
+    ariaDisabled={!preview}
+    ariaLabel={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
+    onClick={() => void handlePreviewActivate()}
+    onKeyDown={(event) => void handlePreviewKeydown(event)}
+  >
   {#if preview}
-
-    
     <span><div class="preview-title" aria-hidden="true">{preview.title || preview.processName}</div></span>
     
     {#if isNativeLivePreview}
@@ -102,4 +135,13 @@
       </div>
     {/if}
   {/if}
-</MeltActionButton>
+  </MeltActionButton>
+
+  {#if preview}
+    <MeltActionButton
+      class="preview-close-button"
+      ariaLabel="Close previewed window"
+      onClick={(event) => void handlePreviewClose(event)}
+    >×</MeltActionButton>
+  {/if}
+</div>

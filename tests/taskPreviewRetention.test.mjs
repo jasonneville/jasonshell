@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+
+const previewSource = readFileSync(new URL('../src/components/TaskPreviewSurface.svelte', import.meta.url), 'utf8');
+const previewCss = readFileSync(new URL('../src/components/TaskPreviewSurface.css', import.meta.url), 'utf8');
+const previewWrapper = readFileSync(new URL('../src/lib/taskbarPreview.ts', import.meta.url), 'utf8');
+const taskbarWindowsWrapper = readFileSync(new URL('../src/lib/taskbarWindows.ts', import.meta.url), 'utf8');
+const ipcCommands = readFileSync(new URL('../src/ipc/commands.ts', import.meta.url), 'utf8');
+const taskWindowsRs = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', import.meta.url), 'utf8');
+const mainRs = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
+
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  assert.notEqual(start, -1, `${name} exists`);
+  const braceStart = source.indexOf('{', start);
+  let depth = 0;
+  for (let index = braceStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth === 0) return source.slice(braceStart + 1, index);
+  }
+  assert.fail(`${name} body closes`);
+}
+
+test('preview outer root owns full-bounds hover retention handlers', () => {
+  assert.match(previewSource, /function handlePreviewPointerEnter\(/);
+  assert.match(previewSource, /function handlePreviewPointerLeave\(/);
+  assert.match(previewSource, /on:pointerenter=\{handlePreviewPointerEnter\}/);
+  assert.match(previewSource, /on:pointerleave=\{\(event\) => void handlePreviewPointerLeave\(event\)\}/);
+  assert.doesNotMatch(previewSource, /onMouseEnter=\{\(\) => void emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)\}/);
+  assert.doesNotMatch(previewSource, /onMouseLeave=\{\(\) => void hidePreviewSurface\(\)\}/);
+});
+
+test('preview pointer leave ignores top-half/internal transitions and hides only outside root', () => {
+  const leaveBody = functionBody(previewSource, 'handlePreviewPointerLeave');
+  assert.match(leaveBody, /event\.currentTarget/);
+  assert.match(leaveBody, /event\.relatedTarget/);
+  assert.match(leaveBody, /contains\(relatedTarget\)/);
+  assert.match(leaveBody, /return;/);
+  assert.match(leaveBody, /await hidePreviewSurface\(\)/);
+});
+
+test('preview close button is accessible red X and does not activate preview', () => {
+  const closeBody = functionBody(previewSource, 'handlePreviewClose');
+  assert.match(previewSource, /ariaLabel="Close previewed window"/);
+  assert.match(previewSource, /class="preview-close-button"/);
+  assert.match(previewSource, />×<|>✕</);
+  assert.match(closeBody, /event\.preventDefault\(\)/);
+  assert.match(closeBody, /event\.stopPropagation\(\)/);
+  assert.match(closeBody, /await closePreviewedTaskWindow\(preview\.hwnd\)/);
+  assert.match(closeBody, /await hidePreviewSurface\(\)/);
+  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*position:\s*absolute/);
+  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*top:/);
+  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*right:/);
+  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*(red|danger|#dc2626|#ef4444|--js-color-danger)/);
+});
+
+test('close previewed task window wrapper validates external hwnd and command wiring', () => {
+  assert.match(previewWrapper, /export function closePreviewedTaskWindow\(hwnd: string\): Promise<void>/);
+  assert.match(previewWrapper, /if \(!hwnd\.trim\(\)\)/);
+  assert.match(previewWrapper, /invoke\(IPC_COMMANDS\.closeTaskWindow, \{ hwnd \}\)/);
+  assert.match(ipcCommands, /closeTaskWindow: 'close_task_window'/);
+  assert.match(taskbarWindowsWrapper, /closeTaskWindow\(hwnd: string\): Promise<void>/);
+  assert.match(taskWindowsRs, /pub fn close_task_window\(hwnd: String\) -> Result<\(\), String>/);
+  assert.match(taskWindowsRs, /reject_internal_shell_hwnd|is_jasonshell_window/);
+  assert.match(mainRs, /task_windows::close_task_window/);
+});

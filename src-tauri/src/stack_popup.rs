@@ -13,7 +13,15 @@ mod popup_window;
 use crate::shell_paths;
 use std::path::Path;
 use std::sync::Mutex;
+use serde::Serialize;
 use tauri::{AppHandle, State};
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackPathSuggestion {
+    pub name: String,
+    pub path: String,
+}
 
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackItem,
@@ -147,6 +155,37 @@ pub fn read_stack_folder(
         offset,
         limit.unwrap_or(paging::DEFAULT_PAGE_LIMIT),
     )
+}
+
+#[tauri::command]
+pub fn suggest_stack_paths(
+    parent_path: String,
+    segment: String,
+    limit: Option<usize>,
+) -> Result<Vec<StackPathSuggestion>, String> {
+    let parent = paths::normalize_existing_dir(&parent_path)
+        .map_err(|error| format!("Folder unavailable: {error}"))?;
+    let normalized_segment = segment.to_lowercase();
+    let max = limit.unwrap_or(20).clamp(1, 50);
+    let mut suggestions = Vec::new();
+    for entry in std::fs::read_dir(&parent).map_err(|error| format!("Folder unavailable: {error}"))? {
+        let entry = entry.map_err(|error| format!("Folder unavailable: {error}"))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !normalized_segment.is_empty() && !name.to_lowercase().starts_with(&normalized_segment) {
+            continue;
+        }
+        suggestions.push(StackPathSuggestion {
+            name,
+            path: path.to_string_lossy().into_owned(),
+        });
+    }
+    suggestions.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    suggestions.truncate(max);
+    Ok(suggestions)
 }
 
 #[tauri::command]
@@ -512,6 +551,34 @@ mod tests {
 
         assert_eq!(warning.path.as_deref(), Some(r"C:\missing\child"));
         assert_eq!(warning.message, "denied");
+    }
+
+    #[test]
+    fn suggests_stack_paths_with_directories_only_sorted_and_bounded() {
+        let root = test_dir("path-suggestions");
+        fs::create_dir_all(root.join("zulu")).unwrap();
+        fs::create_dir_all(root.join("Alpha")).unwrap();
+        fs::write(root.join("aardvark.txt"), b"x").unwrap();
+
+        let suggestions = super::suggest_stack_paths(root.to_string_lossy().into_owned(), "".into(), Some(1)).unwrap();
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].name, "Alpha");
+        assert!(suggestions[0].path.ends_with("Alpha"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn suggests_stack_paths_returns_structured_errors_for_invalid_parent() {
+        let root = test_dir("path-suggestions-file-parent");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, b"x").unwrap();
+
+        let error = super::suggest_stack_paths(file.to_string_lossy().into_owned(), "".into(), Some(20)).unwrap_err();
+
+        assert!(error.contains("Folder unavailable"));
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

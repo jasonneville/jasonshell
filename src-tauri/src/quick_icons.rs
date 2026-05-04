@@ -47,9 +47,11 @@ pub fn pin_task_window_quick_icon(
         return Err("task window handle is required".to_string());
     }
 
-    let executable_path = task_window_executable_path(hwnd)?;
-    crate::launchers::pin_executable_to_taskbar_shortcut(executable_path)?;
-    list_quick_icons(app_handle)
+    let entry = quick_icon_entry_from_task_window(hwnd)?;
+    let mut settings = settings::load_shell_settings_for_app(&app_handle)?;
+    settings.quick_icons.entries = upsert_quick_icon_entry(settings.quick_icons.entries, entry);
+    let saved = settings::save_shell_settings_for_app(&app_handle, settings)?;
+    Ok(map_quick_icon_entries(saved.quick_icons.entries))
 }
 
 #[tauri::command]

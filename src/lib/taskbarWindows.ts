@@ -64,3 +64,7 @@ export function activateTaskWindow(hwnd: string, wasActive: boolean): Promise<vo
 export function maximizeTaskWindow(hwnd: string): Promise<void> {
   return invoke(IPC_COMMANDS.maximizeTaskWindow, { hwnd });
 }
+
+export function closeTaskWindow(hwnd: string): Promise<void> {
+  return invoke(IPC_COMMANDS.closeTaskWindow, { hwnd });
+}

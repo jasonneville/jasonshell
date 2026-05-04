@@ -20,6 +20,16 @@ export type ShowQuickIconContextMenuRequest = {
   y: number;
 };
 
+export const QUICK_ICON_MENU_ACTIONS = {
+  launchQuickIcon: 'launchQuickIcon',
+  unpinQuickIcon: 'unpinQuickIcon'
+} as const;
+
+export type QuickIconMenuActionPayload = {
+  action: (typeof QUICK_ICON_MENU_ACTIONS)[keyof typeof QUICK_ICON_MENU_ACTIONS];
+  quickIconId: string;
+};
+
 export type ShowTopBarPinContextMenuRequest = {
   path: string;
   x: number;

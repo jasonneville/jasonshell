@@ -34,6 +34,7 @@ Use this after the static validation gates pass. These checks require a Windows 
 - Tray list shows visible + overflow Explorer notification-area entries with stable source-qualified ids.
 - Left click relays native Explorer tray behavior (for example volume/network flyouts).
 - Right click opens native Explorer tray context menus (not a JasonShell custom menu).
+- Left/right tray icon activation keeps `tray-panel` open; stale icon failures show inline error text instead of collapsing the panel.
 - `tray-panel` closes on focus loss and top-bar `aria-expanded` state clears.
 
 ## Command Panel
@@ -57,9 +58,12 @@ Use this after the static validation gates pass. These checks require a Windows 
 ## Bottom Bar
 
 - Explorer taskbar `.lnk` launchers enumerate and launch.
+- App-managed quick icons render before Explorer pins; Terminal/Spotify/app-alias launch failures keep icons visible and show non-crashing error feedback.
+- Right-click app-managed quick icons shows `Unpin from quick icons`; unpin removes only that app-managed entry and preserves Explorer taskbar pins.
 - Open windows group by application identity and activate/minimize with taskbar-like behavior.
 - Reordering task groups with pointer drag does not trigger accidental activation.
-- Hover previews show for task groups and hide reliably.
+- Hover previews show for task groups, stay open while pointer moves into/within the preview, and hide after leaving both tile and preview.
+- Preview red X closes the previewed external window, refreshes bottom-bar windows, hides the preview, and must refuse JasonShell/internal windows.
 - Native group menus refresh window state after actions.
 
 ## Process Manager

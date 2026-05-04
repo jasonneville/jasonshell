@@ -33,6 +33,7 @@ pub mod commands {
     pub const LIST_TASKBAR_PROCESS_WINDOWS: &str = "list_taskbar_process_windows";
     pub const ACTIVATE_TASK_WINDOW: &str = "activate_task_window";
     pub const MAXIMIZE_TASK_WINDOW: &str = "maximize_task_window";
+    pub const CLOSE_TASK_WINDOW: &str = "close_task_window";
     pub const SHOW_TASK_WINDOW_PREVIEW: &str = "show_task_window_preview";
     pub const HIDE_TASK_WINDOW_PREVIEW: &str = "hide_task_window_preview";
     pub const SHOW_TASK_WINDOW_CONTEXT_MENU: &str = "show_task_window_context_menu";
@@ -87,6 +88,7 @@ pub mod commands {
     pub const END_STACK_POPUP_FOCUS_LOSS_HOLD: &str = "end_stack_popup_focus_loss_hold";
     pub const RESIZE_STACK_POPUP: &str = "resize_stack_popup";
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
+    pub const SUGGEST_STACK_PATHS: &str = "suggest_stack_paths";
     pub const RESOLVE_STACK_ITEM_ICONS: &str = "resolve_stack_item_icons";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
     pub const OPEN_STACK_ITEM_WITH_PICKER: &str = "open_stack_item_with_picker";
@@ -132,6 +134,7 @@ pub mod commands {
         LIST_TASKBAR_PROCESS_WINDOWS,
         ACTIVATE_TASK_WINDOW,
         MAXIMIZE_TASK_WINDOW,
+        CLOSE_TASK_WINDOW,
         SHOW_TASK_WINDOW_PREVIEW,
         HIDE_TASK_WINDOW_PREVIEW,
         SHOW_TASK_WINDOW_CONTEXT_MENU,
@@ -186,6 +189,7 @@ pub mod commands {
         END_STACK_POPUP_FOCUS_LOSS_HOLD,
         RESIZE_STACK_POPUP,
         READ_STACK_FOLDER,
+        SUGGEST_STACK_PATHS,
         RESOLVE_STACK_ITEM_ICONS,
         OPEN_STACK_ITEM,
         OPEN_STACK_ITEM_WITH_PICKER,

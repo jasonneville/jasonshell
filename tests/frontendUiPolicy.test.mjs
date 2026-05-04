@@ -44,7 +44,7 @@ test('stack browser exposes editable path input and clickable segment navigation
   const stackPopupSource = source('src/components/StackPopupSurface.svelte');
 
   assert.match(stackPopupSource, /class="stack-path-editor"[\s\S]*on:submit\|preventDefault=\{\(\) => void submitPathDraft\(\)\}/);
-  assert.match(stackPopupSource, /const listing = await listStackFolder\(folderPath\)[\s\S]*commitValidatedStackFolderListing\(stackState, folderPath, listing\)/);
+  assert.match(stackPopupSource, /const listing = await listStackFolder\(folderPath(?:, async \(page\) => \{[\s\S]*?\})?\)[\s\S]*commitValidatedStackFolderListing\(stackState, folderPath, listing\)/);
   assert.match(stackPopupSource, /<input[\s\S]*aria-label="Current folder path"[\s\S]*value=\{pathDraft\}[\s\S]*on:keydown=\{handlePathKeydown\}/);
   assert.match(stackPopupSource, /function handlePathKeydown\(event: KeyboardEvent\)[\s\S]*event\.key === 'Escape'[\s\S]*resetPathDraft\(\)/);
   assert.match(stackPopupSource, /<nav class="path-segments" aria-label="Path segments">/);

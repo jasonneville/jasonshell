@@ -140,8 +140,10 @@ test('search panel and task-preview safe action buttons use Melt-backed real but
   assert.match(taskPreviewSource, /<MeltActionButton[\s\S]*class=\{previewSurfaceClass\}[\s\S]*ariaDisabled=\{!preview\}[\s\S]*ariaLabel=\{preview \? `Activate \$\{preview\.title \|\| preview\.processName\}` : 'Task preview unavailable'\}/);
   assert.match(taskPreviewSource, /onClick=\{\(\) => void handlePreviewActivate\(\)\}/);
   assert.match(taskPreviewSource, /onKeyDown=\{\(event\) => void handlePreviewKeydown\(event\)\}/);
-  assert.match(taskPreviewSource, /onMouseEnter=\{\(\) => void emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)\}/);
-  assert.match(taskPreviewSource, /onMouseLeave=\{\(\) => void hidePreviewSurface\(\)\}/);
+  assert.match(taskPreviewSource, /function handlePreviewPointerEnter\(\)[\s\S]*emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)/);
+  assert.match(taskPreviewSource, /async function handlePreviewPointerLeave\(event: PointerEvent\)[\s\S]*event\.currentTarget[\s\S]*event\.relatedTarget[\s\S]*root\.contains\(relatedTarget\)[\s\S]*hidePreviewSurface\(\)/);
+  assert.match(taskPreviewSource, /on:pointerenter=\{handlePreviewPointerEnter\}/);
+  assert.match(taskPreviewSource, /on:pointerleave=\{\(event\) => void handlePreviewPointerLeave\(event\)\}/);
   assert.doesNotMatch(taskPreviewSource, /<button[\s\S]*class="surface preview-surface"/);
 });
 
@@ -190,7 +192,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   );
 
   assert.match(bottomBarSource, /<MeltActionButton\s+class="launcher-button quick-icon-button"[\s\S]*title=\{icon\.name\}[\s\S]*ariaLabel=\{`Launch \$\{icon\.name\}`\}[\s\S]*disabled=\{launchingQuickIconId === icon\.id\}/);
-  assert.match(bottomBarSource, /onClick=\{\(\) => void launchQuickIconApp\(icon\)\}/);
+  assert.match(bottomBarSource, /onClick=\{\(\) => void launchQuickIconFromBottomBar\(icon\)\}/);
   assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openQuickIconMenu\(icon, event\)\}/);
 
   assert.match(bottomBarSource, /<MeltActionButton\s+class="launcher-button"[\s\S]*type="button"[\s\S]*title=\{launcher\.name\}[\s\S]*ariaLabel=\{`Launch \$\{launcher\.name\}`\}[\s\S]*disabled=\{launchingShortcutPath === launcher\.shortcutPath\}/);

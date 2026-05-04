@@ -42,6 +42,18 @@
   box-shadow: var(--js-focus-ring);
 }
 
+.path-input-shell {
+  display: grid;
+  min-width: 0;
+  position: relative;
+}
+
+.path-input-shell > input,
+.path-inline-ghost {
+  grid-column: 1;
+  grid-row: 1;
+}
+
 .stack-path-editor input {
   background: transparent;
   border: 0;
@@ -51,13 +63,49 @@
   min-width: 0;
   overflow: hidden;
   padding: 0;
+  position: relative;
   text-overflow: ellipsis;
   white-space: nowrap;
   width: 100%;
+  z-index: 1;
 }
 
 .stack-path-editor input:focus {
   box-shadow: none;
+}
+
+.path-inline-ghost {
+  align-items: center;
+  color: var(--js-color-text-muted);
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre;
+  z-index: 2;
+}
+
+.path-inline-typed {
+  color: transparent;
+  flex: 0 0 auto;
+  visibility: hidden;
+  white-space: pre;
+}
+
+.path-inline-completion {
+  align-self: center;
+  background: transparent;
+  border: 0;
+  color: var(--js-color-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  opacity: 0.62;
+  padding: 0;
+  pointer-events: auto;
 }
 
 .path-segments {

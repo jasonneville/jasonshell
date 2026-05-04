@@ -69,6 +69,130 @@ export type StackBrowserMarqueeVirtualOptions = {
   additive?: boolean;
 };
 
+export type StackBrowserMarqueeStartZone = 'body' | 'spacer' | 'blocked';
+
+export type StackBrowserMarqueeStartTarget = {
+  self?: boolean;
+  closest(selector: string): boolean;
+};
+
+export type StackPathAutocompleteQuery = {
+  parentPath: string;
+  segment: string;
+};
+
+export type StackPathInlineCompletionInput = {
+  name: string;
+  path: string;
+};
+
+export type StackPathInlineCompletion = {
+  displayText: string;
+  commitPath: string;
+};
+
+const STACK_BROWSER_MARQUEE_BLOCK_SELECTORS = [
+  '[role="row"]',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  '.inline-editor',
+  '.stack-toolbar',
+  '.context-menu',
+  '.stack-resize-grip'
+] as const;
+
+export function classifyStackMarqueeStartTarget(
+  target: StackBrowserMarqueeStartTarget | null | undefined
+): StackBrowserMarqueeStartZone {
+  if (!target) {
+    return 'blocked';
+  }
+
+  for (const selector of STACK_BROWSER_MARQUEE_BLOCK_SELECTORS) {
+    if (target.closest(selector)) {
+      return 'blocked';
+    }
+  }
+
+  if (target.closest('.virtual-spacer[data-stack-marquee-start]')) {
+    return 'spacer';
+  }
+
+  if (target.self || target.closest('[data-stack-marquee-start="body"]')) {
+    return 'body';
+  }
+
+  return 'blocked';
+}
+
+export function getStackPathAutocompleteQuery(input: string, caret: number): StackPathAutocompleteQuery | null {
+  const beforeCaret = input.slice(0, clamp(Math.floor(caret), 0, input.length)).replace(/\//g, '\\');
+  if (!beforeCaret) {
+    return null;
+  }
+
+  const slashIndex = beforeCaret.lastIndexOf('\\');
+  if (slashIndex < 0) {
+    return null;
+  }
+
+  const parentPath = beforeCaret.slice(0, slashIndex);
+  const segment = beforeCaret.slice(slashIndex + 1);
+  if (/^[A-Za-z]:$/.test(parentPath)) {
+    return { parentPath: `${parentPath}\\`, segment };
+  }
+  if (/^[A-Za-z]:\\/.test(parentPath)) {
+    return { parentPath, segment };
+  }
+  const uncMatch = beforeCaret.match(/^\\\\[^\\]+\\[^\\]+(?:\\|$)/);
+  if (uncMatch && slashIndex >= uncMatch[0].replace(/\\$/, '').length) {
+    return { parentPath, segment };
+  }
+  return null;
+}
+
+export function getStackPathInlineCompletion(
+  input: string,
+  suggestion: StackPathInlineCompletionInput | null | undefined
+): StackPathInlineCompletion | null {
+  if (!input || !suggestion) {
+    return null;
+  }
+
+  const normalizedInput = input.replace(/\//g, '\\');
+  const slashIndex = normalizedInput.lastIndexOf('\\');
+  if (slashIndex < 0) {
+    return null;
+  }
+
+  const normalizedSuggestionPath = suggestion.path.replace(/\//g, '\\');
+  const suggestedSlashIndex = normalizedSuggestionPath.lastIndexOf('\\');
+  if (suggestedSlashIndex < 0) {
+    return null;
+  }
+
+  const typedParent = normalizedInput.slice(0, slashIndex);
+  const suggestedParent = normalizedSuggestionPath.slice(0, suggestedSlashIndex);
+  if (typedParent.toLowerCase() !== suggestedParent.toLowerCase()) {
+    return null;
+  }
+
+  const typedSegment = normalizedInput.slice(slashIndex + 1);
+  if (!typedSegment || suggestion.name.length <= typedSegment.length) {
+    return null;
+  }
+  if (!suggestion.name.toLowerCase().startsWith(typedSegment.toLowerCase())) {
+    return null;
+  }
+
+  return {
+    displayText: suggestion.name.slice(typedSegment.length),
+    commitPath: suggestion.path
+  };
+}
+
 export function stackBrowserVirtualWindow<T>(
   items: T[],
   scrollTop: number,

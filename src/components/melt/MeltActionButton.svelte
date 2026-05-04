@@ -35,6 +35,8 @@
   export let onMouseLeave: (event: MouseEvent) => void = () => undefined;
   export let onPointerCancel: (event: PointerEvent) => void = () => undefined;
   export let onPointerDown: (event: PointerEvent) => void = () => undefined;
+  export let onPointerEnter: (event: PointerEvent) => void = () => undefined;
+  export let onPointerLeave: (event: PointerEvent) => void = () => undefined;
   export let onPointerMove: (event: PointerEvent) => void = () => undefined;
   export let onPointerUp: (event: PointerEvent) => void = () => undefined;
   export let onLostPointerCapture: (event: PointerEvent) => void = () => undefined;
@@ -89,6 +91,8 @@
   on:mouseleave={onMouseLeave}
   on:pointercancel={onPointerCancel}
   on:pointerdown={onPointerDown}
+  on:pointerenter={onPointerEnter}
+  on:pointerleave={onPointerLeave}
   on:pointermove={onPointerMove}
   on:pointerup={onPointerUp}
   on:lostpointercapture={onLostPointerCapture}

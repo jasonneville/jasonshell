@@ -48,3 +48,10 @@ export function showTaskWindowPreview(request: ShowTaskPreviewRequest): Promise<
 export function hideTaskWindowPreview(requestId: number): Promise<void> {
   return invoke(IPC_COMMANDS.hideTaskWindowPreview, { requestId });
 }
+
+export function closePreviewedTaskWindow(hwnd: string): Promise<void> {
+  if (!hwnd.trim()) {
+    return Promise.reject(new Error('Missing preview task window handle'));
+  }
+  return invoke(IPC_COMMANDS.closeTaskWindow, { hwnd });
+}

@@ -107,6 +107,37 @@ pub fn maximize_task_window(hwnd: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+pub fn close_task_window(hwnd: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        reject_internal_shell_hwnd(&hwnd)?;
+        validate_task_window_preview_source(&hwnd)?;
+        actions::perform_task_window_action(hwnd, TaskWindowAction::Close)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = hwnd;
+        Err("Taskbar window integration is only supported on Windows".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn reject_internal_shell_hwnd(hwnd: &str) -> Result<(), String> {
+    if is_jasonshell_window(hwnd)? {
+        return Err("Refusing to close an internal JasonShell window from task preview".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn is_jasonshell_window(hwnd: &str) -> Result<bool, String> {
+    let target_path = task_window_process_path(hwnd)?;
+    let current_exe = std::env::current_exe()
+        .map_err(|error| format!("Current JasonShell executable path is unavailable: {error}"))?;
+    Ok(target_path == current_exe)
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn perform_task_window_action(
     hwnd: String,

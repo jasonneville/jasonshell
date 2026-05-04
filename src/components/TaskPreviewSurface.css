@@ -125,7 +125,37 @@
   text-align: left;
   width: 100%; /* Fills parent width */
   overflow: hidden;
+  position: relative;
   box-sizing: border-box; /* Ensures border doesn't add to size */
+}
+
+.preview-interaction-root {
+  height: 100%;
+  position: relative;
+  width: 100%;
+}
+
+.preview-close-button {
+  align-items: center;
+  background: #dc2626;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  height: 1.35rem;
+  justify-content: center;
+  line-height: 1;
+  position: absolute;
+  right: 0.35rem;
+  top: 0.35rem;
+  width: 1.35rem;
+  z-index: 3;
+}
+
+.preview-close-button:hover {
+  background: #ef4444;
 }
 
 .preview-surface:focus-visible {

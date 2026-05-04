@@ -94,6 +94,17 @@ export type StackItemIconResolutionBatch = {
   totalDurationMs: number;
 };
 
+export type StackPathSuggestionRequest = {
+  parentPath: string;
+  segment: string;
+  limit?: number;
+};
+
+export type StackPathSuggestion = {
+  name: string;
+  path: string;
+};
+
 export type StackPasteFailure = {
   path: string;
   message: string;
@@ -393,6 +404,14 @@ export function listStackOpenWithCandidates(path: string): Promise<StackOpenWith
 
 export function resolveStackItemIcons(paths: string[]): Promise<StackItemIconResolutionBatch> {
   return invoke<StackItemIconResolutionBatch>(IPC_COMMANDS.resolveStackItemIcons, { paths });
+}
+
+export function suggestStackPaths(request: StackPathSuggestionRequest): Promise<StackPathSuggestion[]> {
+  return invoke<StackPathSuggestion[]>(IPC_COMMANDS.suggestStackPaths, {
+    parentPath: request.parentPath,
+    segment: request.segment,
+    limit: request.limit ?? 20
+  });
 }
 
 export function openStackItemWithApp(path: string, appId: string): Promise<void> {

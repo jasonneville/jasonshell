@@ -10,7 +10,9 @@
   let icons: SystemTrayIconSnapshot[] = [];
   let loading = false;
   let loadError = '';
+  let invokeError = '';
   let activeIconId: string | null = null;
+  let isInvokingTrayIcon = false;
 
   async function loadTrayIcons() {
     loading = true;
@@ -26,18 +28,21 @@
   }
 
   async function triggerTrayIcon(icon: SystemTrayIconSnapshot, button: 'left' | 'right') {
-    if (activeIconId) {
+    if (isInvokingTrayIcon) {
       return;
     }
+    isInvokingTrayIcon = true;
     activeIconId = icon.id;
+    invokeError = '';
     try {
       await invokeTrayPanelIcon(icon.id, button);
       await loadTrayIcons();
     } catch (error) {
-      loadError = 'Notification area is unavailable';
+      invokeError = 'Tray icon action failed. Notification area remains open.';
       console.error(`Failed to invoke tray icon ${icon.id}`, error);
     } finally {
       activeIconId = null;
+      isInvokingTrayIcon = false;
     }
   }
 
@@ -52,6 +57,9 @@
 </script>
 
 <div class="tray-panel" id="tray-panel" role="dialog" aria-label="Notification area icons">
+  {#if invokeError}
+    <div class="tray-state tray-state-error" role="alert">{invokeError}</div>
+  {/if}
   {#if loading}
     <div class="tray-state" role="status">Loading notification icons…</div>
   {:else if loadError}

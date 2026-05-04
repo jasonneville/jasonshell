@@ -88,7 +88,7 @@ pub fn show_task_window_context_menu(
     let pin_quick_icon_item = MenuItem::with_id(
         &app_handle,
         format!("{TASK_WINDOW_MENU_PREFIX}:pin-quick:{}", request.hwnd),
-        "Pin to taskbar",
+        "Pin to quick icons",
         true,
         None::<&str>,
     )
@@ -207,7 +207,7 @@ pub fn show_quick_icon_context_menu(
     let unpin_item = MenuItem::with_id(
         &app_handle,
         format!("{QUICK_ICON_MENU_PREFIX}:unpin:{encoded_id}"),
-        "Unpin legacy quick icon",
+        "Unpin from quick icons",
         true,
         None::<&str>,
     )

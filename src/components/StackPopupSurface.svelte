@@ -28,11 +28,13 @@
     resolveStackItemIcons,
     resizeStackPopup,
     revealStackItem,
+    suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
     type StackItemIconResolution,
     type StackFolderListing,
-    type StackOpenWithCandidate
+    type StackOpenWithCandidate,
+    type StackPathSuggestion
   } from '../lib/stackPopup';
   import { folderPathToUri, folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
   import {
@@ -71,8 +73,11 @@
   import {
     STACK_BROWSER_FRONTEND_EVENTS,
     STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
+    classifyStackMarqueeStartTarget,
     stackBrowserBreadcrumbOverflow,
     stackBrowserDeletePrompt,
+    getStackPathAutocompleteQuery,
+    getStackPathInlineCompletion,
     stackBrowserMarqueeRect,
     stackBrowserMarqueeSelectedVirtualPaths,
     stackBrowserSearchEntries,
@@ -137,7 +142,10 @@
   let marqueeAutoscrollFrame: number | null = null;
   let pathDraft = '';
   let pathDraftBase = '';
+  let pathInput: HTMLInputElement | null = null;
   let pathInputFocused = false;
+  let pathSuggestions: StackPathSuggestion[] = [];
+  let pathSuggestionRequestSeq = 0;
   let searchQuery = '';
   let openWithCandidates: StackOpenWithCandidate[] = [];
   let openWithCandidatePath: string | null = null;
@@ -176,6 +184,7 @@
     pathDraft = currentPath;
     pathDraftBase = currentPath;
   }
+  $: pathInlineCompletion = getStackPathInlineCompletion(pathDraft, pathSuggestions[0]);
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
@@ -271,6 +280,7 @@
   }
 
   async function submitPathDraft() {
+    clearPathSuggestions();
     const folderPath = pathDraft.trim();
     if (!folderPath) {
       resetPathDraft();
@@ -318,14 +328,66 @@
   function resetPathDraft() {
     pathDraft = currentPath;
     pathDraftBase = currentPath;
+    clearPathSuggestions();
   }
 
   function handlePathKeydown(event: KeyboardEvent) {
     event.stopPropagation();
+    if (pathInlineCompletion && event.key === 'Tab' && !event.shiftKey) {
+      event.preventDefault();
+      acceptInlinePathCompletion();
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       resetPathDraft();
     }
+  }
+
+  async function refreshPathSuggestions(input: HTMLInputElement) {
+    pathDraft = input.value;
+    const query = getStackPathAutocompleteQuery(pathDraft, input.selectionStart ?? pathDraft.length);
+    const requestSeq = ++pathSuggestionRequestSeq;
+    if (!query) {
+      clearPathSuggestions();
+      return;
+    }
+
+    clearPathSuggestions(false);
+
+    try {
+      const suggestions = await suggestStackPaths({ ...query, limit: 20 });
+      if (requestSeq !== pathSuggestionRequestSeq || input.value !== pathDraft) {
+        return;
+      }
+      pathSuggestions = suggestions;
+    } catch {
+      if (requestSeq === pathSuggestionRequestSeq) {
+        clearPathSuggestions();
+      }
+    }
+  }
+
+  function clearPathSuggestions(invalidateRequests = true) {
+    pathSuggestions = [];
+    if (invalidateRequests) {
+      pathSuggestionRequestSeq += 1;
+    }
+  }
+
+  function acceptInlinePathCompletion() {
+    if (!pathInlineCompletion) {
+      return;
+    }
+    pathDraft = pathInlineCompletion.commitPath;
+    clearPathSuggestions();
+    focusPathInput(pathDraft.length);
+  }
+
+  async function focusPathInput(caret = pathDraft.length) {
+    await tick();
+    pathInput?.focus();
+    pathInput?.setSelectionRange(caret, caret);
   }
 
   async function loadFolder(folderPath: string) {
@@ -1079,7 +1141,10 @@
     if (!(target instanceof Element)) {
       return false;
     }
-    return target === detailsBody || Boolean(target.closest('.virtual-spacer[data-stack-marquee-start]'));
+    return classifyStackMarqueeStartTarget({
+      self: target === detailsBody,
+      closest: (selector) => Boolean(target.closest(selector))
+    }) !== 'blocked';
   }
 
   function handleMarqueePointerMove(event: PointerEvent) {
@@ -1571,24 +1636,37 @@
         aria-label="Current folder path"
         on:submit|preventDefault={() => void submitPathDraft()}
       >
-        <input
-          aria-label="Current folder path"
-          value={pathDraft}
-          placeholder="Stack Browser"
-          spellcheck="false"
-          autocomplete="off"
-          on:focus={() => {
-            pathInputFocused = true;
-          }}
-          on:blur={() => {
-            pathInputFocused = false;
-            resetPathDraft();
-          }}
-          on:input={(event) => {
-            pathDraft = event.currentTarget.value;
-          }}
-          on:keydown={handlePathKeydown}
-        />
+        <div class="path-input-shell">
+          <input
+            bind:this={pathInput}
+            aria-label="Current folder path"
+            value={pathDraft}
+            placeholder="Stack Browser"
+            spellcheck="false"
+            autocomplete="off"
+            on:focus={(event) => {
+              pathInputFocused = true;
+              void refreshPathSuggestions(event.currentTarget);
+            }}
+            on:blur={() => {
+              pathInputFocused = false;
+              window.setTimeout(() => resetPathDraft(), 100);
+            }}
+            on:input={(event) => void refreshPathSuggestions(event.currentTarget)}
+            on:keydown={handlePathKeydown}
+          />
+          {#if pathInlineCompletion}
+            <span class="path-inline-ghost">
+              <span class="path-inline-typed" aria-hidden="true">{pathDraft}</span><button
+                type="button"
+                class="path-inline-completion"
+                aria-label={`Accept path autocomplete ${pathInlineCompletion.displayText}`}
+                tabindex="-1"
+                on:mousedown|preventDefault={acceptInlinePathCompletion}
+              >{pathInlineCompletion.displayText}</button>
+            </span>
+          {/if}
+        </div>
         {#if currentPath}
           <nav class="path-segments" aria-label="Path segments">
             {#each breadcrumbOverflow.visibleSegments as crumb, i (crumb.path)}
