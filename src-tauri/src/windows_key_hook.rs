@@ -85,7 +85,7 @@ impl WindowsKeyClassifier {
                     self.emitted_for_tap = false;
                 }
                 self.set_windows_key_down(event.key, true);
-                WindowsKeyDecision::Suppress
+                WindowsKeyDecision::PassThrough
             }
             (WindowsKeyCode::LeftWin | WindowsKeyCode::RightWin, WindowsKeyEventKind::KeyUp) => {
                 let had_windows_key_down = self.any_windows_key_down();
@@ -96,7 +96,7 @@ impl WindowsKeyClassifier {
                     return WindowsKeyDecision::Suppress;
                 }
                 if self.any_windows_key_down() {
-                    return WindowsKeyDecision::Suppress;
+                    return WindowsKeyDecision::PassThrough;
                 }
 
                 let should_open = !self.chorded && !self.emitted_for_tap;
@@ -106,7 +106,7 @@ impl WindowsKeyClassifier {
                     WindowsKeyDecision::OpenSearch
                 } else {
                     self.emitted_for_tap = false;
-                    WindowsKeyDecision::Suppress
+                    WindowsKeyDecision::PassThrough
                 }
             }
             (WindowsKeyCode::Other(_), _) => {
@@ -294,7 +294,7 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
@@ -308,7 +308,7 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::RightWin)),
@@ -322,7 +322,7 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::Other(u32::from(b'R')))),
@@ -334,13 +334,13 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
 
         let mut classifier = WindowsKeyClassifier::default();
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::Other(u32::from(b'D')))),
@@ -348,8 +348,31 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
+    }
+
+    #[test]
+    fn native_windows_chords_preserve_modifier_down_and_release_paths() {
+        for key in [b'R', b'D', b'E', b'L'] {
+            let mut classifier = WindowsKeyClassifier::default();
+            assert_eq!(
+                classifier.handle_event(down(WindowsKeyCode::LeftWin)),
+                WindowsKeyDecision::PassThrough
+            );
+            assert_eq!(
+                classifier.handle_event(down(WindowsKeyCode::Other(u32::from(key)))),
+                WindowsKeyDecision::PassThrough
+            );
+            assert_eq!(
+                classifier.handle_event(up(WindowsKeyCode::Other(u32::from(key)))),
+                WindowsKeyDecision::PassThrough
+            );
+            assert_eq!(
+                classifier.handle_event(up(WindowsKeyCode::LeftWin)),
+                WindowsKeyDecision::PassThrough
+            );
+        }
     }
 
     #[test]
@@ -358,7 +381,7 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(WindowsKeyEvent {
@@ -366,7 +389,7 @@ mod tests {
                 kind: WindowsKeyEventKind::KeyDown,
                 repeat: true
             }),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
@@ -388,7 +411,7 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
@@ -401,7 +424,7 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::RightWin)),
@@ -419,15 +442,15 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::RightWin)),
@@ -445,11 +468,11 @@ mod tests {
 
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(down(WindowsKeyCode::Other(u32::from(b'R')))),
@@ -457,11 +480,11 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
         assert_eq!(
             classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
+            WindowsKeyDecision::PassThrough
         );
     }
 

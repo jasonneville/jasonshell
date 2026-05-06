@@ -1,6 +1,6 @@
 # Windows Key Chord Preservation P3
 
-Status: Draft, implementation not started  
+Status: Completed 2026-05-06; automated validation passed; live smoke checklist recorded in `shell_event_windows_key_smoke_p2_p3.md` and `Win+L` requires user consent  
 Source: `findings.md`, Suggested Fix Order item 3  
 Priority: P3, run after `shell_open_close_event_correctness_p2.md`
 
@@ -36,10 +36,6 @@ Implementation tasks:
 - Separate the classifier contract from the Win32 hook callback where possible.
 - Document any hard OS limitation before implementation.
 
-Subagents to run:
-
-- `windows-key-contract-test-worker`: use `rust-skills`, `tdd-guide`.
-- `windows-shell-behavior-reviewer`: use `adversarial-reviewer`.
 
 Validation gate:
 
@@ -69,10 +65,6 @@ Implementation tasks:
 - Keep event emission limited to `search:open-centered` targeted to `top-bar`.
 - Preserve existing setup failure behavior in `src-tauri/src/main.rs`.
 
-Subagents to run:
-
-- `windows-key-hook-impl-worker`: use `rust-skills`, `tdd-guide`.
-- `search-open-integration-worker`: use `senior-frontend`, `rust-skills`.
 
 Validation gate:
 
@@ -101,11 +93,6 @@ Implementation tasks:
 - Run smoke on real Windows shell only after automated tests pass.
 - If smoke cannot run safely, record exact reason and leave risk open.
 
-Subagents to run:
-
-- `windows-key-live-smoke-worker`: use `adversarial-reviewer` for checklist discipline.
-
 Validation gate:
 
 - Manual smoke result plus full `npm run validate` when feasible.
-

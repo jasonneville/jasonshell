@@ -23,6 +23,20 @@ pub const SETTINGS_PANEL_LABEL: &str = "settings-panel";
 pub const TRAY_PANEL_LABEL: &str = "tray-panel";
 pub const COMMAND_PANEL_LABEL: &str = "command-panel";
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
+#[cfg(test)]
+pub const ALL_LABELS: &[&str] = &[
+    TOP_BAR_LABEL,
+    BOTTOM_BAR_LABEL,
+    TASK_PREVIEW_LABEL,
+    SEARCH_PANEL_LABEL,
+    STACK_POPUP_LABEL,
+    PROCESS_MANAGER_LABEL,
+    CONTROL_PLANE_LABEL,
+    SETTINGS_PANEL_LABEL,
+    TRAY_PANEL_LABEL,
+    COMMAND_PANEL_LABEL,
+    AUDIO_PANEL_LABEL,
+];
 pub const TOP_BAR_HEIGHT_LOGICAL: f64 = 26.0;
 pub const BOTTOM_BAR_HEIGHT_LOGICAL: f64 = 36.0;
 pub const TASK_PREVIEW_WIDTH_LOGICAL: f64 = 332.0;

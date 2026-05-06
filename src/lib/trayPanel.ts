@@ -16,6 +16,7 @@ export interface ShowTrayPanelRequest {
 }
 
 export const TRAY_PANEL_CLOSED_EVENT = 'tray-panel:closed';
+export const TRAY_PANEL_OPEN_EVENT = 'tray-panel:open';
 
 export function showTrayPanel(request: ShowTrayPanelRequest): Promise<void> {
   return invoke(IPC_COMMANDS.showTrayPanel, { request });

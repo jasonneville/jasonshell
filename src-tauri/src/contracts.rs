@@ -11,6 +11,7 @@ pub mod surfaces {
     pub const SETTINGS_PANEL: &str = "settings-panel";
     pub const TRAY_PANEL: &str = "tray-panel";
     pub const COMMAND_PANEL: &str = "command-panel";
+    pub const AUDIO_PANEL: &str = "audio-panel";
 
     pub const ALL: &[&str] = &[
         TOP_BAR,
@@ -23,6 +24,7 @@ pub mod surfaces {
         SETTINGS_PANEL,
         TRAY_PANEL,
         COMMAND_PANEL,
+        AUDIO_PANEL,
     ];
 }
 
@@ -235,6 +237,7 @@ pub mod commands {
 
 pub mod events {
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
+    pub const TRAY_PANEL_OPEN: &str = "tray-panel:open";
     pub const TRAY_PANEL_CLOSED: &str = "tray-panel:closed";
     pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
     pub const SEARCH_PANEL_INTERACTION: &str = "search-panel:interaction";
@@ -247,6 +250,7 @@ pub mod events {
 
     pub const ALL: &[&str] = &[
         PROCESS_MANAGER_CLOSED,
+        TRAY_PANEL_OPEN,
         TRAY_PANEL_CLOSED,
         COMMAND_PANEL_CLOSED,
         SEARCH_PANEL_INTERACTION,
@@ -261,6 +265,7 @@ pub mod events {
 
 #[cfg(test)]
 mod tests {
+    use crate::shell_windows;
     use super::{commands, events, surfaces};
     use std::collections::HashSet;
 
@@ -279,7 +284,24 @@ mod tests {
                 "settings-panel",
                 "tray-panel",
                 "command-panel",
+                "audio-panel",
             ]
+        );
+    }
+
+    #[test]
+    fn shell_surface_contract_includes_all_shipped_shell_windows() {
+        let contracted_labels = surfaces::ALL.iter().copied().collect::<HashSet<_>>();
+        let missing_labels = shell_windows::ALL_LABELS
+            .iter()
+            .copied()
+            .filter(|label| !contracted_labels.contains(label))
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing_labels.is_empty(),
+            "contracts::surfaces::ALL is missing shipped shell window labels: {:?}",
+            missing_labels
         );
     }
 
@@ -344,6 +366,7 @@ mod tests {
             events::ALL,
             &[
                 "process-manager:closed",
+                "tray-panel:open",
                 "tray-panel:closed",
                 "command-panel:closed",
                 "search-panel:interaction",

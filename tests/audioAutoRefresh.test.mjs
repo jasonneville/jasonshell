@@ -34,6 +34,8 @@ test('audio panel debounces event bursts while keeping manual refresh button', (
 });
 
 test('audio panel keeps a bounded polling fallback only while visible', () => {
+  const initialMountBody = audioPanelSource.match(/onMount\(\(\) => \{[\s\S]*?void listen\(AUDIO_PANEL_OPEN_EVENT/)?.[0] ?? '';
+
   assert.match(audioPanelSource, /const AUDIO_REFRESH_POLL_MS = \d+/);
   assert.match(audioPanelSource, /let audioRefreshPollTimer: ReturnType<typeof setInterval> \| null = null/);
   assert.match(audioPanelSource, /let audioPanelVisible = false/);
@@ -42,4 +44,7 @@ test('audio panel keeps a bounded polling fallback only while visible', () => {
   assert.match(audioPanelSource, /audioRefreshPollTimer = setInterval\(\(\) => \{[\s\S]*void refreshAudioState\(\{ reason: 'session-changed' \}\)/);
   assert.match(audioPanelSource, /audioPanelVisible = true;[\s\S]*startAudioRefreshPolling\(\)/);
   assert.match(audioPanelSource, /audioPanelVisible = false;[\s\S]*stopAudioRefreshPolling\(\)/);
+  assert.doesNotMatch(initialMountBody, /audioPanelVisible = true/);
+  assert.doesNotMatch(initialMountBody, /startAudioRefreshPolling\(\)/);
+  assert.doesNotMatch(initialMountBody, /void refreshAudioState\(\)/);
 });

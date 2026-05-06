@@ -1,6 +1,6 @@
 # Shell Open Close Event Correctness P2
 
-Status: Draft, implementation not started  
+Status: Completed 2026-05-06; automated validation passed; live smoke recorded in `shell_event_windows_key_smoke_p2_p3.md`  
 Source: `findings.md`, Suggested Fix Order item 2  
 Priority: P2, run after `shell_surface_contract_parity_p1.md`
 
@@ -38,11 +38,6 @@ Implementation tasks:
 - No production behavior change in this phase.
 - Name event constants before writing shape-specific assertions where possible.
 
-Subagents to run:
-
-- `tauri-event-contract-test-worker`: use `rust-skills`, `tdd-guide`.
-- `frontend-state-contract-test-worker`: use `senior-frontend`, `tdd-guide`.
-
 Validation gate:
 
 - Focused Node event tests.
@@ -67,9 +62,6 @@ Implementation tasks:
 - Use `emit_to(TOP_BAR_LABEL, SEARCH_PANEL_CLOSED_EVENT, ())`.
 - Keep same-surface search-panel cleanup only if the search panel has real local cleanup work.
 
-Subagents to run:
-
-- `search-close-event-worker`: use `senior-frontend`, `rust-skills`, `tdd-guide`.
 
 Validation gate:
 
@@ -98,11 +90,6 @@ Implementation tasks:
 - Emit tray open after show/focus succeeds enough for the webview to receive it.
 - Preserve TopBar popup exclusivity behavior.
 
-Subagents to run:
-
-- `audio-close-state-worker`: use `senior-frontend`, `rust-skills`, `tdd-guide`.
-- `tray-open-refresh-worker`: use `senior-frontend`, `rust-skills`, `tdd-guide`.
-
 Validation gate:
 
 - `node --test tests/trayPanelWiring.test.mjs tests/contractsSettings.test.mjs`
@@ -126,12 +113,6 @@ Implementation tasks:
 - Run smoke only after focused tests pass.
 - Record any smoke limitation if `npm run tauri dev` is not safe in the environment.
 
-Subagents to run:
-
-- `event-delivery-adversarial-reviewer`: use `adversarial-reviewer`.
-- `runtime-smoke-worker`: use `agent-browser` only if browser/Tauri smoke is explicitly safe; otherwise document manual smoke.
-
 Validation gate:
 
 - `npm run validate` when feasible.
-

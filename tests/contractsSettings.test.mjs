@@ -20,6 +20,10 @@ const eventsSource = readFileSync(new URL('../src/ipc/events.ts', import.meta.ur
 const surfacesSource = readFileSync(new URL('../src/ipc/surfaces.ts', import.meta.url), 'utf8');
 const diagnosticsSource = readFileSync(new URL('../src/ipc/diagnostics.ts', import.meta.url), 'utf8');
 const mainSource = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
+const rustContractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs', import.meta.url), 'utf8');
+const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
+const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
 const capabilityDir = new URL('../src-tauri/capabilities/', import.meta.url);
 const capabilitySources = Object.fromEntries(
   readdirSync(capabilityDir)
@@ -45,6 +49,64 @@ const wrapperSources = [
   'taskbarPreview.ts',
   'taskbarWindows.ts'
 ].map((name) => readFileSync(new URL(`../src/lib/${name}`, import.meta.url), 'utf8'));
+
+function uniqueSorted(values) {
+  return [...new Set(values)].sort();
+}
+
+function regexCaptureAll(source, regex) {
+  return uniqueSorted([...source.matchAll(regex)].map((match) => match[1]));
+}
+
+function parseShellWindowLabels(source) {
+  return regexCaptureAll(source, /pub const [A-Z_]+_LABEL: &str = "([^"]+)"/g);
+}
+
+function parseShellSurfaceTypeLabels(source) {
+  const typeMatch = source.match(/export type ShellSurface =([\s\S]*?);/);
+  assert.ok(typeMatch, 'src/lib/shellSurface.ts must export ShellSurface union');
+  return uniqueSorted(regexCaptureAll(typeMatch[1], /\| '([^']+)'/g).filter((label) => label !== 'unknown'));
+}
+
+function parseIpcSurfaceLabels(source) {
+  const objectMatch = source.match(/export const SHELL_SURFACES = \{([\s\S]*?)\} as const;/);
+  assert.ok(objectMatch, 'src/ipc/surfaces.ts must export SHELL_SURFACES');
+  return regexCaptureAll(objectMatch[1], /:\s*'([^']+)'/g);
+}
+
+function parseAppSurfaceRoutes(source) {
+  return regexCaptureAll(source, /surface === '([^']+)'/g);
+}
+
+function parseRustSurfaceContractLabels(source) {
+  const moduleMatch = source.match(/pub mod surfaces \{([\s\S]*?)\npub mod commands/);
+  assert.ok(moduleMatch, 'src-tauri/src/contracts.rs must define surfaces module before commands module');
+  return regexCaptureAll(moduleMatch[1], /pub const [A-Z_]+: &str = "([^"]+)"/g);
+}
+
+function parseCapabilityWindows(sources) {
+  const labelsToFiles = new Map();
+
+  for (const [name, source] of Object.entries(sources)) {
+    const parsed = JSON.parse(source);
+    for (const label of parsed.windows ?? []) {
+      labelsToFiles.set(label, [...(labelsToFiles.get(label) ?? []), `src-tauri/capabilities/${name}`]);
+    }
+  }
+
+  return labelsToFiles;
+}
+
+function missingFrom(expected, actual) {
+  return expected.filter((label) => !actual.includes(label));
+}
+
+function formatMissingSurfaceLabels(entries) {
+  return entries
+    .filter((entry) => entry.missing.length > 0)
+    .map((entry) => `${entry.file}: ${entry.missing.join(', ')}`)
+    .join('\n');
+}
 
 test('frontend IPC contracts expose command, event, and surface constants for future wrappers', () => {
   for (const command of [
@@ -76,7 +138,17 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     assert.match(eventsSource, new RegExp(event));
   }
 
-  for (const surface of ['top-bar', 'bottom-bar', 'search-panel', 'stack-popup', 'process-manager', 'control-plane', 'tray-panel', 'command-panel']) {
+  for (const surface of [
+    'top-bar',
+    'bottom-bar',
+    'search-panel',
+    'stack-popup',
+    'process-manager',
+    'control-plane',
+    'tray-panel',
+    'command-panel',
+    'audio-panel'
+  ]) {
     assert.match(surfacesSource, new RegExp(surface));
   }
 
@@ -84,6 +156,65 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     assert.doesNotMatch(source, /invoke\('[-_a-z]+/);
     assert.match(source, /IPC_COMMANDS/);
   }
+});
+
+test('shipped shell window surfaces have matching frontend routes, IPC registry entries, and capability targets', () => {
+  const shippedLabels = parseShellWindowLabels(shellWindowsSource);
+  const shellSurfaceLabels = parseShellSurfaceTypeLabels(shellSurfaceSource);
+  const ipcSurfaceLabels = parseIpcSurfaceLabels(surfacesSource);
+  const appRouteLabels = parseAppSurfaceRoutes(appSource);
+  const rustContractLabels = parseRustSurfaceContractLabels(rustContractsSource);
+  const capabilityWindows = parseCapabilityWindows(capabilitySources);
+  const capabilityLabels = uniqueSorted([...capabilityWindows.keys()]);
+
+  const missingEntries = [
+    {
+      file: 'src/lib/shellSurface.ts',
+      missing: missingFrom(shippedLabels, shellSurfaceLabels)
+    },
+    {
+      file: 'src/ipc/surfaces.ts',
+      missing: missingFrom(shippedLabels, ipcSurfaceLabels)
+    },
+    {
+      file: 'src/App.svelte',
+      missing: missingFrom(shippedLabels, appRouteLabels)
+    },
+    {
+      file: 'src-tauri/src/contracts.rs',
+      missing: missingFrom(shippedLabels, rustContractLabels)
+    },
+    {
+      file: 'src-tauri/capabilities/*.json',
+      missing: missingFrom(shippedLabels, capabilityLabels)
+    }
+  ];
+  const missingDetails = formatMissingSurfaceLabels(missingEntries);
+
+  assert.equal(
+    missingDetails,
+    '',
+    `Missing shipped shell surface labels/files:\n${missingDetails}\n\nShipped labels: ${shippedLabels.join(', ')}`
+  );
+
+  for (const label of shippedLabels) {
+    assert.ok(
+      capabilityWindows.get(label)?.length,
+      `Missing capability file targeting shipped shell surface label "${label}"`
+    );
+  }
+});
+
+test('surface parity failure output names future missing capability targets', () => {
+  assert.equal(
+    formatMissingSurfaceLabels([
+      {
+        file: 'src-tauri/capabilities/*.json',
+        missing: missingFrom(['future-panel'], [])
+      }
+    ]),
+    'src-tauri/capabilities/*.json: future-panel'
+  );
 });
 
 test('settings wrapper declares versioned schema and stable command names', () => {
@@ -193,13 +324,15 @@ test('backend settings and diagnostics commands are registered with hardened app
     'control-plane',
     'command-panel',
     'settings-panel',
-    'tray-panel'
+    'tray-panel',
+    'audio-panel'
   ]) {
     assert.match(capabilitySource, new RegExp(surface));
   }
   assert.deepEqual(
     Object.values(capabilitySources).map((source) => JSON.parse(source).windows).sort((a, b) => a[0].localeCompare(b[0])),
     [
+      ['audio-panel'],
       ['bottom-bar'],
       ['command-panel'],
       ['control-plane'],

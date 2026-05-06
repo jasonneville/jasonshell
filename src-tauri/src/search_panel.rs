@@ -151,7 +151,14 @@ pub fn hide_search_panel(app_handle: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "Search panel window is unavailable".to_string())?;
     panel
         .hide()
-        .map_err(|error| format!("Failed to hide the search panel: {error}"))
+        .map_err(|error| format!("Failed to hide the search panel: {error}"))?;
+    emit_search_panel_closed_to_top_bar(&app_handle)
+}
+
+pub fn emit_search_panel_closed_to_top_bar(app_handle: &AppHandle) -> Result<(), String> {
+    app_handle
+        .emit_to(TOP_BAR_LABEL, SEARCH_PANEL_CLOSED_EVENT, ())
+        .map_err(|error| format!("Failed to publish search panel closed event: {error}"))
 }
 
 #[tauri::command]

@@ -1,6 +1,6 @@
 # Shell Surface Contract Parity P1
 
-Status: Draft, implementation not started  
+Status: Implemented and validated on 2026-05-06  
 Source: `findings.md`, Suggested Fix Order item 1  
 Priority: P1, run first
 
@@ -111,4 +111,3 @@ Validation gate:
 
 - Full gate when feasible: `npm run validate`.
 - If full gate fails for unrelated dirty-tree state, record exact focused gates and blocker.
-

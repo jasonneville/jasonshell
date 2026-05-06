@@ -48,3 +48,16 @@ test('native hook fails closed for Windows-key events when hook state is unavail
   assert.match(rust, /if is_windows_key\(event\.key\) \{\s*WindowsKeyDecision::Suppress\s*\} else \{\s*WindowsKeyDecision::PassThrough\s*\}/s);
   assert.match(rust, /\(unavailable_hook_state_decision\(event\), None\)/);
 });
+
+test('native Windows-key chords preserve the OS modifier down and release path', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const plan = readSource('../windows_key_chord_preservation_p3.md');
+
+  assert.match(plan, /Native chords such as `Win\+R`, `Win\+D`, `Win\+E`, and `Win\+L` must continue to reach Windows/);
+  assert.match(rust, /native_windows_chords_preserve_modifier_down_and_release_paths/);
+  assert.match(rust, /WindowsKeyCode::Other\(u32::from\(key\)\)/);
+  assert.doesNotMatch(
+    rust,
+    /WindowsKeyCode::LeftWin \| WindowsKeyCode::RightWin, WindowsKeyEventKind::KeyDown\)[\s\S]{0,260}WindowsKeyDecision::Suppress/
+  );
+});

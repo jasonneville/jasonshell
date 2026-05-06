@@ -69,9 +69,16 @@ pub fn hide_audio_panel(app_handle: AppHandle) -> Result<(), String> {
     panel
         .hide()
         .map_err(|error| format!("Failed to hide the audio panel: {error}"))?;
+    emit_audio_panel_closed(&app_handle)
+}
+
+pub fn emit_audio_panel_closed(app_handle: &AppHandle) -> Result<(), String> {
     app_handle
         .emit_to(TOP_BAR_LABEL, AUDIO_PANEL_CLOSED_EVENT, ())
-        .map_err(|error| format!("Failed to publish audio panel closed event: {error}"))
+        .map_err(|error| format!("Failed to publish audio panel closed event to top bar: {error}"))?;
+    app_handle
+        .emit_to(AUDIO_PANEL_LABEL, AUDIO_PANEL_CLOSED_EVENT, ())
+        .map_err(|error| format!("Failed to publish audio panel closed event to audio panel: {error}"))
 }
 
 fn anchored_panel_x(

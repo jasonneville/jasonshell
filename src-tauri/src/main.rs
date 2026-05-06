@@ -203,7 +203,7 @@ fn main() {
             if window.label() == shell_windows::SEARCH_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
-                let _ = window.emit(search_panel::SEARCH_PANEL_CLOSED_EVENT, ());
+                let _ = search_panel::emit_search_panel_closed_to_top_bar(window.app_handle());
                 let _ = window.hide();
                 return;
             }
@@ -226,11 +226,7 @@ fn main() {
             if window.label() == shell_windows::AUDIO_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
-                let _ = window.app_handle().emit_to(
-                    shell_windows::TOP_BAR_LABEL,
-                    audio_panel::AUDIO_PANEL_CLOSED_EVENT,
-                    (),
-                );
+                let _ = audio_panel::emit_audio_panel_closed(window.app_handle());
                 let _ = window.hide();
                 return;
             }

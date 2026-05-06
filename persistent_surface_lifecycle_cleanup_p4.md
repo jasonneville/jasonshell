@@ -44,10 +44,6 @@ Implementation tasks:
 - No production changes in this phase.
 - Keep source contracts narrow: they should require cleanup behavior, not exact formatting.
 
-Subagents to run:
-
-- `svelte-lifecycle-test-worker`: use `senior-frontend`, `tdd-guide`.
-- `listener-leak-contract-worker`: use `senior-frontend`, `adversarial-reviewer`.
 
 Validation gate:
 
@@ -76,10 +72,6 @@ Implementation tasks:
 - Keep one immediate `refreshAudioState()` on explicit open.
 - Wire close listener after P2 event target work is available.
 
-Subagents to run:
-
-- `audio-lifecycle-impl-worker`: use `senior-frontend`, `tdd-guide`.
-
 Validation gate:
 
 - `node --test tests/audio*.test.mjs`
@@ -105,10 +97,6 @@ Implementation tasks:
 - Apply to TopBar, BottomBar, TaskPreviewSurface, SearchPanelSurface, and ProcessManagerSurface.
 - Preserve existing event names and handlers.
 
-Subagents to run:
-
-- `persistent-listener-impl-worker`: use `senior-frontend`, `tdd-guide`.
-- `listener-leak-adversarial-reviewer`: use `adversarial-reviewer`.
 
 Validation gate:
 
@@ -133,9 +121,6 @@ Implementation tasks:
 - Run adversarial review with focus on late promise resolution, duplicate cleanup, and missing close events.
 - Record any live-smoke limitation.
 
-Subagents to run:
-
-- `persistent-surface-qa-reviewer`: use `adversarial-reviewer`.
 
 Validation gate:
 

@@ -4,8 +4,10 @@
   import {
     invokeTrayPanelIcon,
     listTrayPanelIcons,
+    TRAY_PANEL_OPEN_EVENT,
     type SystemTrayIconSnapshot
   } from '../lib/trayPanel';
+  import { listen } from '@tauri-apps/api/event';
 
   let icons: SystemTrayIconSnapshot[] = [];
   let loading = false;
@@ -52,7 +54,16 @@
   }
 
   onMount(() => {
-    void loadTrayIcons();
+    let unlistenOpen: (() => void) | null = null;
+    void listen(TRAY_PANEL_OPEN_EVENT, () => {
+      void loadTrayIcons();
+    }).then((unlisten) => {
+      unlistenOpen = unlisten;
+    });
+
+    return () => {
+      unlistenOpen?.();
+    };
   });
 </script>
 

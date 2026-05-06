@@ -65,7 +65,7 @@ test('search panel has outside-dismiss and result-interaction handshake', () => 
   assert.match(main, /window\.label\(\) == shell_windows::SEARCH_PANEL_LABEL/);
   assert.match(main, /WindowEvent::Focused\(true\)/);
   assert.match(main, /search_panel::SEARCH_PANEL_INTERACTION_EVENT/);
-  assert.match(main, /search_panel::SEARCH_PANEL_CLOSED_EVENT/);
+  assert.match(main, /search_panel::emit_search_panel_closed_to_top_bar\(window\.app_handle\(\)\)/);
 });
 
 test('outside-click and blur search dismissal route through reset-closing path', () => {

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import {
+    AUDIO_PANEL_CLOSED_EVENT,
     AUDIO_PANEL_OPEN_EVENT,
     AUDIO_REFRESH_EVENT,
     getAudioState,
@@ -179,16 +180,20 @@
 
   onMount(() => {
     let unlistenOpen: (() => void) | null = null;
+    let unlistenClose: (() => void) | null = null;
     let unlistenRefresh: (() => void) | null = null;
-    audioPanelVisible = true;
-    startAudioRefreshPolling();
-    void refreshAudioState();
     void listen(AUDIO_PANEL_OPEN_EVENT, () => {
       audioPanelVisible = true;
       startAudioRefreshPolling();
       void refreshAudioState();
     }).then((unlisten) => {
       unlistenOpen = unlisten;
+    });
+    void listen(AUDIO_PANEL_CLOSED_EVENT, () => {
+      audioPanelVisible = false;
+      stopAudioRefreshPolling();
+    }).then((unlisten) => {
+      unlistenClose = unlisten;
     });
     void listen<AudioRefreshPayload>(AUDIO_REFRESH_EVENT, (event) => {
       scheduleAudioRefresh(event.payload.reason);
@@ -204,6 +209,7 @@
       audioPanelVisible = false;
       stopAudioRefreshPolling();
       unlistenOpen?.();
+      unlistenClose?.();
       unlistenRefresh?.();
     };
   });
