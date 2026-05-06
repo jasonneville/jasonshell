@@ -82,20 +82,27 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
 
-    void listen<TaskPreviewPayload>('task-preview:update', (event) => {
+    registerAsyncUnlistener(listen<TaskPreviewPayload>('task-preview:update', (event) => {
       preview = event.payload;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
-    void listen('task-preview:hide', () => {
+    registerAsyncUnlistener(listen('task-preview:hide', () => {
       preview = null;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
     return () => {
+      disposed = true;
       for (const unlisten of unlisteners) {
         unlisten();
       }

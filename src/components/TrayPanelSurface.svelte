@@ -78,22 +78,24 @@
   {:else if !icons.length}
     <div class="tray-state" role="status">No notification icons are currently available.</div>
   {:else}
-    <ul class="tray-grid" role="list">
-      {#each icons as icon (icon.id)}
-        <li>
-          <button
-            type="button"
-            class="tray-icon-button"
-            aria-label={icon.label}
-            title={icon.label}
-            disabled={Boolean(activeIconId)}
-            on:click={() => void triggerTrayIcon(icon, 'left')}
-            on:contextmenu={(event) => handleTrayContextMenu(event, icon)}
-          >
-            <img src={icon.iconDataUrl} alt="" />
-          </button>
-        </li>
-      {/each}
-    </ul>
+    <div class="tray-content">
+      <ul class="tray-grid" role="list">
+        {#each icons as icon (icon.id)}
+          <li>
+            <button
+              type="button"
+              class="tray-icon-button"
+              aria-label={icon.label}
+              title={icon.label}
+              disabled={Boolean(activeIconId)}
+              on:click={() => void triggerTrayIcon(icon, 'left')}
+              on:contextmenu={(event) => handleTrayContextMenu(event, icon)}
+            >
+              <img src={icon.iconDataUrl} alt="" />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
 </div>

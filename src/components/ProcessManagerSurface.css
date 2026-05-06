@@ -111,6 +111,18 @@
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+}
+
+.process-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+}
+
+.process-table-content {
+  min-width: 48rem;
 }
 
 .process-row {
@@ -131,7 +143,10 @@
   font-weight: 800;
   letter-spacing: 0;
   min-height: 2.25rem;
+  position: sticky;
+  top: 0;
   text-transform: uppercase;
+  z-index: 3;
 }
 
 .process-row-head button {
@@ -178,8 +193,7 @@
 .process-table-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+  overflow: visible;
 }
 
 .process-table-body .process-row:hover {
@@ -194,8 +208,8 @@
   background: var(--js-color-surface-overlay);
   min-height: 1.75rem;
   position: sticky;
-  top: 0;
-  z-index: 1;
+  top: 2.25rem;
+  z-index: 2;
 }
 
 .process-group-title {
@@ -467,6 +481,5 @@
 
   .process-row {
     grid-template-columns: minmax(8.25rem, 1fr) 3.4rem 3.5rem 4.8rem 3.5rem 5.4rem 3.8rem 4.4rem 3.8rem;
-    min-width: 41rem;
   }
 }

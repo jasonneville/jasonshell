@@ -62,13 +62,15 @@ test('top bar exposes tray button left of sound and keeps popup state mutually e
   assert.match(topBarSource, /ariaHaspopup="dialog"/);
   assert.match(topBarSource, /await closePanel\(\);[\s\S]*await closeAudioPanel\(\);[\s\S]*await showTrayPanel\(\{/);
   assert.match(topBarSource, /if \(trayOpen && \(!target \|\| !trayControl\?\.contains\(target\)\)\) \{[\s\S]*void closeTrayPanel\(\);/);
-  assert.match(topBarSource, /void listen\(TRAY_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*trayOpen = false;/);
+  assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(TRAY_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*trayOpen = false;/);
   assert.doesNotMatch(topBarSource, /role="menu"/);
   assert.match(topBarCss, /\.top-bar \.tray-button \{/);
 });
 
 test('tray panel surface renders icon-only grid with loading, error, and empty states', () => {
   assert.match(trayPanelSource, /id="tray-panel" role="dialog"/);
+  assert.match(trayPanelSource, /class="tray-content"[\s\S]*class="tray-grid"/);
+  assert.match(trayPanelSource, /Loading notification icons[\s\S]*No notification icons are currently available[\s\S]*class="tray-content"/);
   assert.match(trayPanelSource, /class="tray-grid"/);
   assert.match(trayPanelSource, /on:click=\{\(\) => void triggerTrayIcon\(icon, 'left'\)\}/);
   assert.match(trayPanelSource, /on:contextmenu=\{\(event\) => handleTrayContextMenu\(event, icon\)\}/);
@@ -78,6 +80,8 @@ test('tray panel surface renders icon-only grid with loading, error, and empty s
   assert.match(trayPanelSource, /Notification area is unavailable/);
   assert.match(trayPanelSource, /No notification icons are currently available/);
   assert.doesNotMatch(trayPanelSource, /<span class="tray-label">/);
+  assert.match(trayPanelCss, /\.tray-panel \{[\s\S]*height:\s*100%;[\s\S]*overflow:\s*hidden;/);
+  assert.match(trayPanelCss, /\.tray-content \{[\s\S]*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*auto;/);
   assert.match(trayPanelCss, /\.tray-grid \{/);
 });
 

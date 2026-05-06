@@ -97,7 +97,17 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
-    void getCurrentWindow().listen<SearchPanelPayload>(SEARCH_PANEL_UPDATE_EVENT, (event) => {
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
+    registerAsyncUnlistener(getCurrentWindow().listen<SearchPanelPayload>(SEARCH_PANEL_UPDATE_EVENT, (event) => {
       fallbackGeneration += 1;
       stopFallbackPolling();
       fallbackAttempt = 0;
@@ -106,12 +116,11 @@
         void focusQueryInput();
       }
       scheduleFallbackPoll();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
     scheduleFallbackPoll(0);
 
     return () => {
+      disposed = true;
       fallbackGeneration += 1;
       stopFallbackPolling();
       cancelQueuedQueryEmit();

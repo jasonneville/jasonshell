@@ -54,7 +54,7 @@ test('rapid left and right tray icon activation share same invoke guard', () => 
 });
 
 test('top bar only observes tray-panel closed event, never tray icon invoke outcome', () => {
-  assert.match(topBarSource, /void listen\(TRAY_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*trayOpen = false;/);
+  assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(TRAY_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*trayOpen = false;/);
   assert.doesNotMatch(topBarSource, /invokeSystemTrayIcon|invokeTrayPanelIcon|trayClickRequest/);
 
   const closeTrayPanelBody = functionBody(topBarSource, 'closeTrayPanel');

@@ -59,7 +59,7 @@ test('top bar command button is left of tray button and enforces popup exclusivi
   assert.match(topBarSource, /ariaLabel="Open quick commands"/);
   assert.match(topBarSource, /await closePanel\(\);[\s\S]*await closeAudioPanel\(\);[\s\S]*await closeTrayPanel\(\);[\s\S]*await showCommandPanel\(\{/);
   assert.match(topBarSource, /if \(commandOpen && \(!target \|\| !commandControl\?\.contains\(target\)\)\) \{[\s\S]*void closeCommandPanel\(\);/);
-  assert.match(topBarSource, /void listen\(COMMAND_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*commandOpen = false;/);
+  assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(COMMAND_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*commandOpen = false;/);
   assert.match(topBarCss, /\.top-bar \.command-button \{/);
   assert.match(topBarSource, />_\s*<\/span>/);
 });

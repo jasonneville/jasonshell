@@ -56,6 +56,9 @@
   }
 
   function scheduleAudioRefresh(reason: AudioRefreshReason) {
+    if (!audioPanelVisible) {
+      return;
+    }
     if (audioRefreshTimer) {
       clearTimeout(audioRefreshTimer);
     }
@@ -83,8 +86,16 @@
     }
   }
 
+  function stopPendingAudioRefresh() {
+    if (audioRefreshTimer) {
+      clearTimeout(audioRefreshTimer);
+      audioRefreshTimer = null;
+    }
+  }
+
   function closeAudioPanel() {
     audioPanelVisible = false;
+    stopPendingAudioRefresh();
     stopAudioRefreshPolling();
     void hideAudioPanel();
   }
@@ -179,38 +190,40 @@
   }
 
   onMount(() => {
-    let unlistenOpen: (() => void) | null = null;
-    let unlistenClose: (() => void) | null = null;
-    let unlistenRefresh: (() => void) | null = null;
-    void listen(AUDIO_PANEL_OPEN_EVENT, () => {
+    const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
+
+    registerAsyncUnlistener(listen(AUDIO_PANEL_OPEN_EVENT, () => {
       audioPanelVisible = true;
-      startAudioRefreshPolling();
       void refreshAudioState();
-    }).then((unlisten) => {
-      unlistenOpen = unlisten;
-    });
-    void listen(AUDIO_PANEL_CLOSED_EVENT, () => {
+      startAudioRefreshPolling();
+    }));
+    registerAsyncUnlistener(listen(AUDIO_PANEL_CLOSED_EVENT, () => {
       audioPanelVisible = false;
+      stopPendingAudioRefresh();
       stopAudioRefreshPolling();
-    }).then((unlisten) => {
-      unlistenClose = unlisten;
-    });
-    void listen<AudioRefreshPayload>(AUDIO_REFRESH_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<AudioRefreshPayload>(AUDIO_REFRESH_EVENT, (event) => {
       scheduleAudioRefresh(event.payload.reason);
-    }).then((unlisten) => {
-      unlistenRefresh = unlisten;
-    });
+    }));
 
     return () => {
-      if (audioRefreshTimer) {
-        clearTimeout(audioRefreshTimer);
-        audioRefreshTimer = null;
-      }
+      disposed = true;
+      stopPendingAudioRefresh();
       audioPanelVisible = false;
       stopAudioRefreshPolling();
-      unlistenOpen?.();
-      unlistenClose?.();
-      unlistenRefresh?.();
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
     };
   });
 </script>

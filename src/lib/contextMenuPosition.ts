@@ -13,6 +13,10 @@ export type ContextMenuViewport = {
   height: number;
 };
 
+export type ScrollableContextMenuPlacement = ContextMenuPoint & {
+  maxHeight: number;
+};
+
 const DEFAULT_VIEWPORT_PADDING = 8;
 
 export function positionContextMenuInViewport(
@@ -33,6 +37,34 @@ export function positionContextMenuInViewport(
     x: clamp(preferredX, safePadding, maxX),
     y: clamp(preferredY, safePadding, maxY)
   };
+}
+
+export function positionScrollableContextMenuInViewport(
+  anchor: ContextMenuPoint,
+  menu: ContextMenuSize,
+  viewport: ContextMenuViewport,
+  padding = DEFAULT_VIEWPORT_PADDING
+): ScrollableContextMenuPlacement {
+  const maxHeight = contextMenuAvailableViewportHeight(viewport, padding);
+  const positioned = positionContextMenuInViewport(
+    anchor,
+    { width: menu.width, height: Math.min(Math.max(0, menu.height), maxHeight) },
+    viewport,
+    padding
+  );
+
+  return {
+    ...positioned,
+    maxHeight
+  };
+}
+
+export function contextMenuAvailableViewportHeight(
+  viewport: ContextMenuViewport,
+  padding = DEFAULT_VIEWPORT_PADDING
+): number {
+  const safePadding = Math.max(0, padding);
+  return Math.max(0, viewport.height - safePadding * 2);
 }
 
 function clamp(value: number, min: number, max: number) {

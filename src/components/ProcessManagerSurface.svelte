@@ -156,6 +156,8 @@
   function closeSurface() {
     isOpen = false;
     armedKillPid = null;
+    inFlightRequest += 1;
+    isLoading = false;
     stopRefreshTimer();
   }
 
@@ -236,15 +238,22 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
 
-    void listen(PROCESS_MANAGER_OPEN_EVENT, openSurface).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(PROCESS_MANAGER_CLOSED_EVENT, closeSurface).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    registerAsyncUnlistener(listen(PROCESS_MANAGER_OPEN_EVENT, openSurface));
+    registerAsyncUnlistener(listen(PROCESS_MANAGER_CLOSED_EVENT, closeSurface));
 
     return () => {
+      disposed = true;
       closeSurface();
       for (const unlisten of unlisteners) {
         unlisten();
@@ -288,151 +297,155 @@
     </div>
   </header>
 
-  <div class="process-table" role="grid" tabindex="0" aria-label="Running processes" aria-live={isOpen ? 'polite' : 'off'}>
-    <div class="process-row process-row-head" role="row">
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('name')} onClick={() => sortBy('name')}>Name{sortIndicator('name')}</MeltActionButton>
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('pid')} onClick={() => sortBy('pid')}>PID{sortIndicator('pid')}</MeltActionButton>
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('cpuPercent')} onClick={() => sortBy('cpuPercent')}>
-        <span class="process-header-metric">
-          <strong>{formatProcessCpu(metricAggregates.cpuPercent)}</strong>
-          <span>CPU{sortIndicator('cpuPercent')}</span>
-        </span>
-      </MeltActionButton>
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('memoryBytes')} onClick={() => sortBy('memoryBytes')}>
-        <span class="process-header-metric">
-          <strong>{formatProcessMemoryPercent(metricAggregates.memoryPercent)}</strong>
-          <span>Memory{sortIndicator('memoryBytes')}</span>
-        </span>
-      </MeltActionButton>
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('gpuPercent')} onClick={() => sortBy('gpuPercent')}>
-        <span class="process-header-metric">
-          <strong>{formatProcessGpu(metricAggregates.gpuPercent)}</strong>
-          <span>GPU{sortIndicator('gpuPercent')}</span>
-        </span>
-      </MeltActionButton>
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('startTimeMs')} onClick={() => sortBy('startTimeMs')}>Start Time{sortIndicator('startTimeMs')}</MeltActionButton>
-      <MeltActionButton role="columnheader" ariaSort={ariaSort('threadCount')} onClick={() => sortBy('threadCount')}>
-        <span class="process-header-metric">
-          <strong>{formatProcessThreadCount(metricAggregates.threadCount)}</strong>
-          <span>Threads{sortIndicator('threadCount')}</span>
-        </span>
-      </MeltActionButton>
-      <span role="columnheader">Status</span>
-      <span role="columnheader">Action</span>
-    </div>
+  <div class="process-table">
+    <div class="process-table-scroll" role="grid" tabindex="0" aria-label="Running processes" aria-live={isOpen ? 'polite' : 'off'}>
+      <div class="process-table-content" role="presentation">
+        <div class="process-row process-row-head" role="row">
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('name')} onClick={() => sortBy('name')}>Name{sortIndicator('name')}</MeltActionButton>
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('pid')} onClick={() => sortBy('pid')}>PID{sortIndicator('pid')}</MeltActionButton>
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('cpuPercent')} onClick={() => sortBy('cpuPercent')}>
+            <span class="process-header-metric">
+              <strong>{formatProcessCpu(metricAggregates.cpuPercent)}</strong>
+              <span>CPU{sortIndicator('cpuPercent')}</span>
+            </span>
+          </MeltActionButton>
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('memoryBytes')} onClick={() => sortBy('memoryBytes')}>
+            <span class="process-header-metric">
+              <strong>{formatProcessMemoryPercent(metricAggregates.memoryPercent)}</strong>
+              <span>Memory{sortIndicator('memoryBytes')}</span>
+            </span>
+          </MeltActionButton>
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('gpuPercent')} onClick={() => sortBy('gpuPercent')}>
+            <span class="process-header-metric">
+              <strong>{formatProcessGpu(metricAggregates.gpuPercent)}</strong>
+              <span>GPU{sortIndicator('gpuPercent')}</span>
+            </span>
+          </MeltActionButton>
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('startTimeMs')} onClick={() => sortBy('startTimeMs')}>Start Time{sortIndicator('startTimeMs')}</MeltActionButton>
+          <MeltActionButton role="columnheader" ariaSort={ariaSort('threadCount')} onClick={() => sortBy('threadCount')}>
+            <span class="process-header-metric">
+              <strong>{formatProcessThreadCount(metricAggregates.threadCount)}</strong>
+              <span>Threads{sortIndicator('threadCount')}</span>
+            </span>
+          </MeltActionButton>
+          <span role="columnheader">Status</span>
+          <span role="columnheader">Action</span>
+        </div>
 
-    <div class="process-table-body">
-      {#if visibleProcessCount || processes.length}
-        {#each processGroups as group (group.id)}
-          {@const groupExpanded = isGroupExpanded(group.id)}
-          <section class="process-group" role="rowgroup" aria-label={group.label}>
-            <div class="process-row process-group-row" role="row">
-              <span class="process-group-title" role="gridcell">
-                <MeltActionButton
-                  class="process-group-toggle"
-                  ariaExpanded={groupExpanded}
-                  ariaControls={processGroupBodyId(group.id)}
-                  title={`${groupExpanded ? 'Collapse' : 'Expand'} ${group.label}`}
-                  onClick={() => toggleGroup(group.id)}
-                >
-                  <span class="process-group-caret" aria-hidden="true">{groupExpanded ? '▾' : '▸'}</span>
-                  <strong>{group.label}</strong>
-                  <span>{group.rows.length}</span>
-                </MeltActionButton>
-              </span>
-            </div>
-            <div class="process-group-detail" id={processGroupBodyId(group.id)} hidden={!groupExpanded}>
-              {#if group.rows.length}
-                {#each group.rows as row (row.process.pid)}
-                  {@const process = row.process}
-                  {@const killState = safeKillButtonState(process, armedKillPid, killingPid)}
-                  {@const developerSummary = processDeveloperSummary(process)}
-                  {@const portsLabel = formatProcessPorts(process.listeningPorts)}
-                  {@const memoryPercent = formatProcessMemoryPercent(process.memoryPercent)}
-                  <div
-                    class:process-row-armed={killState.isArmed}
-                    class="process-row"
-                    role="row"
-                    title={process.commandLine ?? process.executablePath ?? process.name}
-                    style={processRowStyle(row.depth)}
-                  >
-                    <span class="process-name-cell" role="gridcell">
-                      <span class="process-name">
-                        <span class="process-icon-shell" aria-hidden="true">
-                          {#if process.iconDataUrl}
-                            <img class="process-icon" src={process.iconDataUrl} alt="" draggable="false" />
-                          {:else}
-                            <span class="process-icon process-icon-fallback"></span>
+        <div class="process-table-body">
+          {#if visibleProcessCount || processes.length}
+            {#each processGroups as group (group.id)}
+              {@const groupExpanded = isGroupExpanded(group.id)}
+              <section class="process-group" role="rowgroup" aria-label={group.label}>
+                <div class="process-row process-group-row" role="row">
+                  <span class="process-group-title" role="gridcell">
+                    <MeltActionButton
+                      class="process-group-toggle"
+                      ariaExpanded={groupExpanded}
+                      ariaControls={processGroupBodyId(group.id)}
+                      title={`${groupExpanded ? 'Collapse' : 'Expand'} ${group.label}`}
+                      onClick={() => toggleGroup(group.id)}
+                    >
+                      <span class="process-group-caret" aria-hidden="true">{groupExpanded ? '▾' : '▸'}</span>
+                      <strong>{group.label}</strong>
+                      <span>{group.rows.length}</span>
+                    </MeltActionButton>
+                  </span>
+                </div>
+                <div class="process-group-detail" id={processGroupBodyId(group.id)} hidden={!groupExpanded}>
+                  {#if group.rows.length}
+                    {#each group.rows as row (row.process.pid)}
+                      {@const process = row.process}
+                      {@const killState = safeKillButtonState(process, armedKillPid, killingPid)}
+                      {@const developerSummary = processDeveloperSummary(process)}
+                      {@const portsLabel = formatProcessPorts(process.listeningPorts)}
+                      {@const memoryPercent = formatProcessMemoryPercent(process.memoryPercent)}
+                      <div
+                        class:process-row-armed={killState.isArmed}
+                        class="process-row"
+                        role="row"
+                        title={process.commandLine ?? process.executablePath ?? process.name}
+                        style={processRowStyle(row.depth)}
+                      >
+                        <span class="process-name-cell" role="gridcell">
+                          <span class="process-name">
+                            <span class="process-icon-shell" aria-hidden="true">
+                              {#if process.iconDataUrl}
+                                <img class="process-icon" src={process.iconDataUrl} alt="" draggable="false" />
+                              {:else}
+                                <span class="process-icon process-icon-fallback"></span>
+                              {/if}
+                            </span>
+                            <span class="process-tree-indent" aria-hidden="true"></span>
+                            <span class="process-name-copy">{process.name}</span>
+                            {#if process.workspaceHint}
+                              <span class="process-workspace" aria-label={`Workspace hint ${process.workspaceHint.label}`}>{process.workspaceHint.label}</span>
+                            {/if}
+                            {#if row.childCount}
+                              <span class="process-child-count" aria-label={`${row.childCount} visible child processes`}>{row.childCount}</span>
+                            {/if}
+                          </span>
+                          {#if developerSummary}
+                            <span class="process-meta">{developerSummary}</span>
                           {/if}
                         </span>
-                        <span class="process-tree-indent" aria-hidden="true"></span>
-                        <span class="process-name-copy">{process.name}</span>
-                        {#if process.workspaceHint}
-                          <span class="process-workspace" aria-label={`Workspace hint ${process.workspaceHint.label}`}>{process.workspaceHint.label}</span>
-                        {/if}
-                        {#if row.childCount}
-                          <span class="process-child-count" aria-label={`${row.childCount} visible child processes`}>{row.childCount}</span>
-                        {/if}
-                      </span>
-                      {#if developerSummary}
-                        <span class="process-meta">{developerSummary}</span>
-                      {/if}
-                    </span>
-                      <span class="process-number" role="gridcell">{process.pid}</span>
-                      <span class="process-number process-meter" role="gridcell">
-                        <MeltProgress
-                          value={processMetricPercent(process.cpuPercent, 100)}
-                          label={`CPU ${formatProcessCpu(process.cpuPercent)}`}
-                        />
-                        <strong>{formatProcessCpu(process.cpuPercent)}</strong>
-                      </span>
-                      <span class="process-number process-meter memory" role="gridcell">
-                        <MeltProgress
-                          value={processMetricPercent(process.memoryPercent, 100)}
-                          label={`Memory ${memoryPercent} (${formatProcessMemory(process.memoryBytes)})`}
-                          tone="memory"
-                        />
-                        <span class="process-meter-value">
-                          <strong>{memoryPercent}</strong>
-                          <small>{formatProcessMemory(process.memoryBytes)}</small>
-                        </span>
-                      </span>
-                      <span class="process-number process-meter gpu" role="gridcell">
-                        <MeltProgress
-                          value={processMetricPercent(process.gpuPercent, 100)}
-                          label={`GPU ${formatProcessGpu(process.gpuPercent)}`}
-                          tone="gpu"
-                        />
-                        <strong>{formatProcessGpu(process.gpuPercent)}</strong>
-                      </span>
-                      <span class="process-number" role="gridcell">{formatProcessStartTime(process.startTimeMs)}</span>
-                      <span class="process-number" role="gridcell">{process.threadCount ?? '—'}</span>
-                      <span class="process-status" role="gridcell">{process.status}</span>
-                      <span class="process-action" role="gridcell">
-                        <MeltActionButton
-                          class="kill-button"
-                          ariaLabel={killState.ariaLabel}
-                          disabled={killState.disabled}
-                          onClick={() => void killRow(process)}
-                        >
-                          {killState.label}
-                        </MeltActionButton>
-                      </span>
+                          <span class="process-number" role="gridcell">{process.pid}</span>
+                          <span class="process-number process-meter" role="gridcell">
+                            <MeltProgress
+                              value={processMetricPercent(process.cpuPercent, 100)}
+                              label={`CPU ${formatProcessCpu(process.cpuPercent)}`}
+                            />
+                            <strong>{formatProcessCpu(process.cpuPercent)}</strong>
+                          </span>
+                          <span class="process-number process-meter memory" role="gridcell">
+                            <MeltProgress
+                              value={processMetricPercent(process.memoryPercent, 100)}
+                              label={`Memory ${memoryPercent} (${formatProcessMemory(process.memoryBytes)})`}
+                              tone="memory"
+                            />
+                            <span class="process-meter-value">
+                              <strong>{memoryPercent}</strong>
+                              <small>{formatProcessMemory(process.memoryBytes)}</small>
+                            </span>
+                          </span>
+                          <span class="process-number process-meter gpu" role="gridcell">
+                            <MeltProgress
+                              value={processMetricPercent(process.gpuPercent, 100)}
+                              label={`GPU ${formatProcessGpu(process.gpuPercent)}`}
+                              tone="gpu"
+                            />
+                            <strong>{formatProcessGpu(process.gpuPercent)}</strong>
+                          </span>
+                          <span class="process-number" role="gridcell">{formatProcessStartTime(process.startTimeMs)}</span>
+                          <span class="process-number" role="gridcell">{process.threadCount ?? '—'}</span>
+                          <span class="process-status" role="gridcell">{process.status}</span>
+                          <span class="process-action" role="gridcell">
+                            <MeltActionButton
+                              class="kill-button"
+                              ariaLabel={killState.ariaLabel}
+                              disabled={killState.disabled}
+                              onClick={() => void killRow(process)}
+                            >
+                              {killState.label}
+                            </MeltActionButton>
+                          </span>
+                        </div>
+                      {/each}
+                  {:else}
+                    <div class="process-row process-group-empty" role="row">
+                      <span role="gridcell">{processFilter ? `No matching ${group.label.toLocaleLowerCase()}` : group.emptyMessage}</span>
                     </div>
-                  {/each}
-              {:else}
-                <div class="process-row process-group-empty" role="row">
-                  <span role="gridcell">{processFilter ? `No matching ${group.label.toLocaleLowerCase()}` : group.emptyMessage}</span>
+                  {/if}
                 </div>
-              {/if}
+              </section>
+            {/each}
+          {:else}
+            <div class="process-empty surface-state" class:loading={isLoading} class:info={!isLoading} role="status">
+              {isLoading ? 'Loading processes…' : (processFilter ? 'No processes match this filter' : statusMessage)}
             </div>
-          </section>
-        {/each}
-      {:else}
-        <div class="process-empty surface-state" class:loading={isLoading} class:info={!isLoading} role="status">
-          {isLoading ? 'Loading processes…' : (processFilter ? 'No processes match this filter' : statusMessage)}
+          {/if}
         </div>
-      {/if}
+      </div>
     </div>
   </div>
 </main>

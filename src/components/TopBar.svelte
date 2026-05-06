@@ -1186,6 +1186,16 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
     const timer = window.setInterval(() => {
       now = new Date();
     }, 1_000);
@@ -1202,33 +1212,25 @@
     void loadSearchCatalog();
     void loadSearchMode();
     void loadStackPins();
-    void listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
+    registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
       const index = resolveVisibleSearchRowResultIndex(searchResults, event.payload);
       void activateResult(index >= 0 ? searchResults[index] : undefined);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
       markSearchPanelInteraction();
       selectSearchVisibleRow(event.payload);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<SearchExpandableGroupId>(SEARCH_PANEL_EXPAND_GROUP_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<SearchExpandableGroupId>(SEARCH_PANEL_EXPAND_GROUP_EVENT, (event) => {
       markSearchPanelInteraction();
       expandedVisibleGroups = new Set([...expandedVisibleGroups, event.payload]);
       queueSearchPanelPublish();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(WINDOWS_KEY_OPEN_SEARCH_EVENT, () => {
+    }));
+    registerAsyncUnlistener(listen(WINDOWS_KEY_OPEN_SEARCH_EVENT, () => {
       void openCenteredPanel({ publishCurrentPayload: true });
       void tick().then(() => searchInput?.focus({ preventScroll: true }));
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<SearchPanelQueryPayload>(SEARCH_PANEL_QUERY_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<SearchPanelQueryPayload>(SEARCH_PANEL_QUERY_EVENT, (event) => {
       markSearchPanelInteraction();
       if (!isSearchPanelQueryPayload(event.payload)) {
         return;
@@ -1240,42 +1242,30 @@
       const nextQuery = event.payload.query;
       const request = publishImmediateSearchInputState(nextQuery);
       startImmediateSearchQueryExecution(request);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<string>(SEARCH_PANEL_KEY_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<string>(SEARCH_PANEL_KEY_EVENT, (event) => {
       markSearchPanelInteraction();
       applySearchKeyboardAction(event.payload);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<string>(SEARCH_PANEL_PIN_FOLDER_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<string>(SEARCH_PANEL_PIN_FOLDER_EVENT, (event) => {
       markSearchPanelInteraction();
       void pinSearchFolder(event.payload).catch((error) => {
         console.error('Failed to pin stack folder', error);
       });
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(SEARCH_PANEL_INTERACTION_EVENT, () => {
+    }));
+    registerAsyncUnlistener(listen(SEARCH_PANEL_INTERACTION_EVENT, () => {
       markSearchPanelInteraction();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(SEARCH_PANEL_CLOSED_EVENT, () => {
+    }));
+    registerAsyncUnlistener(listen(SEARCH_PANEL_CLOSED_EVENT, () => {
       resetActiveSearchState();
       searchOpen = false;
       searchPanelAnchor = null;
       lastSearchPanelPayloadSignature = null;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<SearchProgressPayload>(SEARCH_ENGINE_PROGRESS_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<SearchProgressPayload>(SEARCH_ENGINE_PROGRESS_EVENT, (event) => {
       applySearchEngineProgress(event.payload);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<SearchIndexRefreshedPayload>(SEARCH_INDEX_REFRESHED_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<SearchIndexRefreshedPayload>(SEARCH_INDEX_REFRESHED_EVENT, (event) => {
       if (!isAppSearchIndexRefreshedPayload(event.payload)) {
         return;
       }
@@ -1294,17 +1284,13 @@
         return;
       }
       scheduleSearchEngine(refreshQuery);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<StackPin[]>(STACK_PINS_UPDATED_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<StackPin[]>(STACK_PINS_UPDATED_EVENT, (event) => {
       void applyStackPins(event.payload);
     }, {
       target: topBarWebviewWindowEventTarget()
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen<TopBarPinMenuActionPayload>(TOP_BAR_PIN_MENU_ACTION_EVENT, (event) => {
+    }));
+    registerAsyncUnlistener(listen<TopBarPinMenuActionPayload>(TOP_BAR_PIN_MENU_ACTION_EVENT, (event) => {
       if (event.payload.action === 'open') {
         void openStackPath(event.payload.path, queryPinButton(event.payload.path));
       } else if (event.payload.action === 'openInVscode') {
@@ -1314,36 +1300,27 @@
       } else if (event.payload.action === 'unpin') {
         void unpinFromMenu(event.payload.path);
       }
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(AUDIO_PANEL_CLOSED_EVENT, () => {
+    }));
+    registerAsyncUnlistener(listen(AUDIO_PANEL_CLOSED_EVENT, () => {
       audioOpen = false;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(TRAY_PANEL_CLOSED_EVENT, () => {
+    }));
+    registerAsyncUnlistener(listen(TRAY_PANEL_CLOSED_EVENT, () => {
       trayOpen = false;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void listen(COMMAND_PANEL_CLOSED_EVENT, () => {
+    }));
+    registerAsyncUnlistener(listen(COMMAND_PANEL_CLOSED_EVENT, () => {
       commandOpen = false;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void getCurrentWindow().onDragDropEvent((event) => {
+    }));
+    registerAsyncUnlistener(getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop') {
         void pinAndOpenDroppedFolders(event.payload.paths, pinRailEl);
       }
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
     unlisteners.push(addShellPreferencesChangeListener((preferences) => {
       shellPreferences = preferences;
     }));
 
     return () => {
+      disposed = true;
       window.clearInterval(timer);
       window.clearInterval(searchRefreshTimer);
       window.clearTimeout(runtimeMetricsTimer);

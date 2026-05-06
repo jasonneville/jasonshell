@@ -1,6 +1,6 @@
 # Persistent Surface Lifecycle Cleanup P4
 
-Status: Draft, implementation not started  
+Status: Complete, validated 2026-05-06
 Source: `findings.md`, Suggested Fix Order item 4  
 Priority: P4, run after `windows_key_chord_preservation_p3.md`
 
@@ -20,6 +20,8 @@ Findings show:
 Context7 Svelte docs say `onMount` cleanup must be returned synchronously; async setup needs explicit destroy/disposed handling.
 
 ## Phase 1: RED Lifecycle Tests
+
+Status: Complete, 2026-05-06. RED confirmed with `node --test tests\persistentSurfaceLifecycle.test.mjs tests\audioAutoRefresh.test.mjs` failing lifecycle assertions before implementation; `npx tsc -p tsconfig.test.json` passed.
 
 Acceptance criteria:
 
@@ -52,6 +54,8 @@ Validation gate:
 
 ## Phase 2: Audio Hidden Polling Fix
 
+Status: Complete, 2026-05-06. `AudioPanelSurface.svelte` stays hidden-idle on startup, refreshes immediately on `audio-panel:open`, starts fallback polling after that refresh request, and stops polling on close and destroy.
+
 Acceptance criteria:
 
 - Audio panel is idle while hidden at startup.
@@ -78,6 +82,8 @@ Validation gate:
 - `npm run check`
 
 ## Phase 3: Async Listener Disposed Guards
+
+Status: Complete, 2026-05-06. `AudioPanelSurface.svelte`, `TopBar.svelte`, `BottomBar.svelte`, `TaskPreviewSurface.svelte`, `SearchPanelSurface.svelte`, and `ProcessManagerSurface.svelte` now guard async listener registration with a disposed flag so late-resolving unlisteners are called immediately.
 
 Acceptance criteria:
 
@@ -106,6 +112,8 @@ Validation gate:
 
 ## Phase 4: QA And Smoke
 
+Status: Complete, 2026-05-06. Initial adversarial QA found hidden audio refresh debounce work after close and stale Process Manager refresh mutation after close; both were fixed and re-reviewed CLEAN. Full `npm run validate` passed.
+
 Acceptance criteria:
 
 - Audio open/close does not leave polling active.
@@ -125,4 +133,3 @@ Implementation tasks:
 Validation gate:
 
 - `npm run validate` when feasible.
-

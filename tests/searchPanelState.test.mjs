@@ -443,8 +443,8 @@ test('top-bar defers expensive search render work out of the input handler', () 
 
 test('top-bar cancels search work on native panel close and listens only to app index refreshes', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
-  const closeHandler = source.match(/void listen\(SEARCH_PANEL_CLOSED_EVENT,[\s\S]*?\}\)\.then/)?.[0] ?? '';
-  const refreshHandler = source.match(/void listen<SearchIndexRefreshedPayload>\(SEARCH_INDEX_REFRESHED_EVENT,[\s\S]*?\}\)\.then/)?.[0] ?? '';
+  const closeHandler = source.match(/(?:void listen|registerAsyncUnlistener\(listen)\(SEARCH_PANEL_CLOSED_EVENT,[\s\S]*?\}\)\)?/)?.[0] ?? '';
+  const refreshHandler = source.match(/(?:void listen<SearchIndexRefreshedPayload>|registerAsyncUnlistener\(listen<SearchIndexRefreshedPayload>)\(SEARCH_INDEX_REFRESHED_EVENT,[\s\S]*?\}\)\)?/)?.[0] ?? '';
   const immediate = source.match(/function publishImmediateSearchInputState\(nextQuery: string\)[\s\S]*?\n  \}/)?.[0] ?? '';
   const start = source.match(/function startImmediateSearchQueryExecution\(request: SearchEngineQueryRequestState\)[\s\S]*?\n  \}/)?.[0] ?? '';
 
@@ -516,4 +516,21 @@ test('search panel keyboard and aria state follow visibleRows order', () => {
   assert.match(source, /activateRow\(selectedRow\)/);
   assert.match(source, /searchVisibleRowIdentity\(row\)/);
   assert.doesNotMatch(source, /use:trackResultRow=\{index\}/);
+});
+
+test('search panel minimum layout keeps header outside internal result scroller', () => {
+  const css = readFileSync(new URL('../src/components/SearchPanelSurface.css', import.meta.url), 'utf8');
+  const rootRule = css.match(/\.search-panel\s*\{(?<body>[\s\S]*?)\}/)?.groups?.body ?? '';
+  const headerRule = css.match(/\.search-panel-header\s*\{(?<body>[\s\S]*?)\}/)?.groups?.body ?? '';
+  const resultsRule = css.match(/\.result-list\s*\{(?<body>[\s\S]*?)\}/)?.groups?.body ?? '';
+
+  assert.match(rootRule, /display:\s*flex;/);
+  assert.match(rootRule, /flex-direction:\s*column;/);
+  assert.match(rootRule, /min-height:\s*0;/);
+  assert.match(rootRule, /overflow:\s*hidden;/);
+  assert.match(headerRule, /flex:\s*0 0 auto;/);
+  assert.match(resultsRule, /flex:\s*1 1 auto;/);
+  assert.match(resultsRule, /min-height:\s*0;/);
+  assert.match(resultsRule, /overflow-y:\s*auto;/);
+  assert.doesNotMatch(resultsRule, /max-height:\s*calc\(/);
 });

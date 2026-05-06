@@ -551,25 +551,29 @@
   }
   onMount(() => {
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
     void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
-    void listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
+    registerAsyncUnlistener(listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
       void refreshTaskbarWindows();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
-    void listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
+    registerAsyncUnlistener(listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
       void refreshLauncherSections();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
-    void listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
+    registerAsyncUnlistener(listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
       clearPreviewHideTimer();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
     const taskbarPollTimer = window.setInterval(() => {
       void refreshTaskbarWindows();
@@ -584,6 +588,7 @@
     }, 250);
 
     return () => {
+      disposed = true;
       clearPreviewShowTimer();
       clearPreviewHideTimer();
       const requestId = nextPreviewRequestId();

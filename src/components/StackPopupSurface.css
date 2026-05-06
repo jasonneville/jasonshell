@@ -567,9 +567,12 @@
   border-radius: var(--js-radius-md);
   box-shadow: var(--js-shadow-raised);
   display: grid;
+  max-height: min(var(--stack-context-menu-max-height), calc(100vh - 16px));
   min-width: 8.5rem;
+  overflow-y: auto;
   padding: 0.25rem;
   position: fixed;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
   z-index: 50;
 }
 
@@ -594,9 +597,12 @@
 .context-submenu-panel {
   display: none;
   left: 100%;
+  max-height: min(var(--stack-context-submenu-max-height), calc(100vh - 16px));
   min-width: 9rem;
+  overflow-y: auto;
   position: absolute;
   top: 0;
+  z-index: 60;
 }
 
 .context-submenu.left .context-submenu-panel {

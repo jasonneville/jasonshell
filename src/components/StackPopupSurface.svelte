@@ -73,7 +73,7 @@
     type StackSortColumn
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
-  import { positionContextMenuInViewport } from '../lib/contextMenuPosition';
+  import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
   import {
     STACK_BROWSER_FRONTEND_EVENTS,
     STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
@@ -97,14 +97,24 @@
   const STACK_POPUP_MIN_HEIGHT = 280;
   const STACK_ICON_RESOLVE_BATCH_SIZE = 24;
   const STACK_ICON_RESOLVE_MAX_CONCURRENCY = 2;
+  const STACK_CONTEXT_MENU_VIEWPORT_PADDING = 8;
+
+  type StackContextMenuPlacement = {
+    x: number;
+    y: number;
+    maxHeight?: number;
+    width?: number;
+    submenuMaxHeight?: number;
+  };
 
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
   let errorMessage = '';
-  let rowMenu: { x: number; y: number; path: string } | null = null;
-  let backgroundMenu: { x: number; y: number } | null = null;
+  let rowMenu: (StackContextMenuPlacement & { path: string }) | null = null;
+  let backgroundMenu: StackContextMenuPlacement | null = null;
   let rowMenuElement: HTMLDivElement | null = null;
   let backgroundMenuElement: HTMLDivElement | null = null;
+  let rowSubmenuElement: HTMLDivElement | null = null;
   let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
   let deleteCancelButton: HTMLButtonElement | null = null;
   let rowSubmenuOpensLeft = false;
@@ -1172,22 +1182,64 @@
     if (rowMenu && rowMenuElement) {
       rowMenu = positionedMenu(rowMenu, rowMenuElement);
       rowSubmenuOpensLeft = rowMenu.x + rowMenuElement.getBoundingClientRect().width + 154 > window.innerWidth;
+      await tick();
+      if (rowMenu && rowMenuElement) {
+        rowMenu = positionedSubmenu(rowMenu, rowMenuElement);
+      }
     }
     if (backgroundMenu && backgroundMenuElement) {
       backgroundMenu = positionedMenu(backgroundMenu, backgroundMenuElement);
     }
   }
 
-  function positionedMenu<T extends { x: number; y: number }>(menu: T, element: HTMLElement): T {
+  function positionedMenu<T extends StackContextMenuPlacement>(menu: T, element: HTMLElement): T {
     const rect = element.getBoundingClientRect();
+    const placement = positionScrollableContextMenuInViewport(
+      menu,
+      { width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight },
+      STACK_CONTEXT_MENU_VIEWPORT_PADDING
+    );
     return {
       ...menu,
-      ...positionContextMenuInViewport(
-        menu,
-        { width: rect.width, height: rect.height },
-        { width: window.innerWidth, height: window.innerHeight }
-      )
+      ...placement,
+      width: rect.width,
+      submenuMaxHeight: placement.maxHeight
     };
+  }
+
+  function positionedSubmenu<T extends StackContextMenuPlacement>(menu: T, element: HTMLElement): T {
+    const rect = element.getBoundingClientRect();
+    const triggerTop = rowSubmenuElement?.getBoundingClientRect().top ?? rect.top;
+    const maxHeight = availableContextMenuHeightFromTop(triggerTop);
+    return {
+      ...menu,
+      width: rect.width,
+      submenuMaxHeight: maxHeight
+    };
+  }
+
+  function availableContextMenuHeight() {
+    return Math.max(0, window.innerHeight - STACK_CONTEXT_MENU_VIEWPORT_PADDING * 2);
+  }
+
+  function availableContextMenuHeightFromTop(top: number) {
+    return Math.max(
+      0,
+      window.innerHeight - Math.max(top, STACK_CONTEXT_MENU_VIEWPORT_PADDING) - STACK_CONTEXT_MENU_VIEWPORT_PADDING
+    );
+  }
+
+  function contextMenuMaxHeightCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.maxHeight ?? availableContextMenuHeight()))}px`;
+  }
+
+  function contextMenuWidthCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.width ?? 0))}px`;
+  }
+
+  function contextSubmenuMaxHeightCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.submenuMaxHeight ?? menu.maxHeight ?? availableContextMenuHeight()))}px`;
   }
 
   function focusDetailsGrid() {
@@ -2014,16 +2066,17 @@
   {#if rowMenu}
     <div
       class="context-menu"
-      style={`left:${rowMenu.x}px;top:${rowMenu.y}px`}
+      style={`left:${rowMenu.x}px;top:${rowMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(rowMenu)};--stack-context-menu-left:${rowMenu.x}px;--stack-context-menu-top:${rowMenu.y}px;--stack-context-menu-width:${contextMenuWidthCss(rowMenu)};--stack-context-submenu-max-height:${contextSubmenuMaxHeightCss(rowMenu)}`}
       role="menu"
       tabindex="-1"
       bind:this={rowMenuElement}
       on:click|stopPropagation
       on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
+      on:scroll={() => void positionOpenMenus()}
     >
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</MeltActionButton>
-      <div class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
+      <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
         <MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</MeltActionButton>
         <div class="context-menu context-submenu-panel" role="menu">
           {#each openWithSuggestions as app (app.id)}
@@ -2053,7 +2106,7 @@
   {#if backgroundMenu}
     <div
       class="context-menu"
-      style={`left:${backgroundMenu.x}px;top:${backgroundMenu.y}px`}
+      style={`left:${backgroundMenu.x}px;top:${backgroundMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(backgroundMenu)}`}
       role="menu"
       tabindex="-1"
       bind:this={backgroundMenuElement}

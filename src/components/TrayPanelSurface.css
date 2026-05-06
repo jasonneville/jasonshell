@@ -4,9 +4,21 @@
   border-radius: 0.55rem;
   box-shadow: var(--js-shadow-raised);
   box-sizing: border-box;
-  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: 0.55rem;
   width: 100%;
+}
+
+.tray-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.1rem;
 }
 
 .tray-grid {
@@ -48,11 +60,11 @@
   align-items: center;
   color: var(--js-color-text);
   display: flex;
+  flex: 1 1 auto;
   font-size: 0.74rem;
   font-weight: 640;
-  height: 100%;
+  min-height: 0;
   justify-content: center;
-  min-height: 180px;
   text-align: center;
 }
 

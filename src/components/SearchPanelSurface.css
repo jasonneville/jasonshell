@@ -4,7 +4,11 @@
   border-radius: var(--js-radius-lg);
   box-shadow: var(--js-shadow-panel);
   color: var(--js-color-text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--js-space-3);
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   padding: var(--js-space-4);
   position: relative;
@@ -15,6 +19,7 @@
   align-items: center;
   border-bottom: 1px solid var(--js-color-border-soft);
   display: flex;
+  flex: 0 0 auto;
   gap: var(--js-space-3);
   padding: 0 var(--js-space-1) var(--js-space-3);
 }
@@ -92,10 +97,10 @@
 
 .result-list {
   display: grid;
+  flex: 1 1 auto;
   gap: var(--js-space-3);
-  max-height: calc(100% - 2rem);
+  min-height: 0;
   overflow-y: auto;
-  padding-top: var(--js-space-3);
   scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
 }
 
@@ -175,8 +180,7 @@
 }
 
 .result-copy small,
-.result-kind,
-.empty-state {
+.result-kind {
   color: var(--js-color-text-muted);
   font-size: 0.62rem;
 }
@@ -236,8 +240,11 @@
 }
 
 .empty-state {
+  color: var(--js-color-text-muted);
   display: grid;
-  height: calc(100% - 2rem);
+  flex: 1 1 auto;
+  font-size: 0.62rem;
+  min-height: 0;
   place-items: center;
 }
 

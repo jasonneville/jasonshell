@@ -16,11 +16,12 @@ test('audio refresh event has typed reasons and centralized event name', () => {
 test('audio panel subscribes to refresh events on mount and unsubscribes on destroy', () => {
   assert.match(audioPanelSource, /AUDIO_REFRESH_EVENT/);
   assert.match(audioPanelSource, /type AudioRefreshPayload/);
-  assert.match(audioPanelSource, /let unlistenRefresh: \(\(\) => void\) \| null = null/);
-  assert.match(audioPanelSource, /listen<AudioRefreshPayload>\(AUDIO_REFRESH_EVENT, \(event\) => \{/);
+  assert.match(audioPanelSource, /const unlisteners: Array<\(\) => void> = \[\]/);
+  assert.match(audioPanelSource, /let disposed = false/);
+  assert.match(audioPanelSource, /registerAsyncUnlistener\(listen<AudioRefreshPayload>\(AUDIO_REFRESH_EVENT, \(event\) => \{/);
   assert.match(audioPanelSource, /scheduleAudioRefresh\(event\.payload\.reason\)/);
-  assert.match(audioPanelSource, /unlistenRefresh = unlisten/);
-  assert.match(audioPanelSource, /unlistenRefresh\?\.\(\)/);
+  assert.match(audioPanelSource, /if \(disposed\) \{\s*unlisten\(\);\s*return;\s*\}/);
+  assert.match(audioPanelSource, /unlisteners\.push\(unlisten\)/);
 });
 
 test('audio panel debounces event bursts while keeping manual refresh button', () => {

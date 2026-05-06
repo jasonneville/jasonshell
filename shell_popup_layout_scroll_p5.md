@@ -1,6 +1,6 @@
 # Shell Popup Layout Scroll P5
 
-Status: Draft, implementation not started  
+Status: Complete, validated 2026-05-06
 Source: `findings.md`, Suggested Fix Order item 5  
 Priority: P5, run after `persistent_surface_lifecycle_cleanup_p4.md`
 
@@ -21,6 +21,8 @@ JasonShell root surfaces commonly disable page scrolling, so each constrained po
 
 ## Phase 1: RED Layout Contracts
 
+Status: Complete, 2026-05-06. RED confirmed with `node --test tests\shellPopupLayoutScrollPhase1.test.mjs` failing all four layout contracts before implementation; `npx tsc -p tsconfig.test.json` passed.
+
 Acceptance criteria:
 
 - Tests fail for each affected surface before layout fixes.
@@ -39,16 +41,14 @@ Implementation tasks:
 - No production changes in this phase.
 - Make tests resilient to class rename by checking structural intent where possible.
 
-Subagents to run:
-
-- `layout-contract-test-worker`: use `senior-frontend`, `tdd-guide`.
-
 Validation gate:
 
 - Focused Node layout/source tests.
 - `npx tsc -p tsconfig.test.json`
 
 ## Phase 2: Stack Context Menu Scroll And Clamp
+
+Status: Complete, 2026-05-06. Stack root context menus clamp and scroll internally; row submenus stay anchored to the trigger row and compute max-height from trigger top so pointer travel remains reachable.
 
 Acceptance criteria:
 
@@ -67,9 +67,6 @@ Implementation tasks:
 - Add computed max height or CSS variable for available viewport height.
 - Add internal vertical scrolling to menu and submenu surfaces.
 
-Subagents to run:
-
-- `stack-menu-layout-worker`: use `senior-frontend`, `tdd-guide`.
 
 Validation gate:
 
@@ -77,6 +74,8 @@ Validation gate:
 - `npm run check`
 
 ## Phase 3: Tray And Search Scrollers
+
+Status: Complete, 2026-05-06. Tray icon grids now scroll inside `.tray-content` while loading/error/empty states stay outside; Search Panel root/results use flex/min-height internal scrolling without approximate result `max-height: calc(...)`.
 
 Acceptance criteria:
 
@@ -97,16 +96,14 @@ Implementation tasks:
 - Add `min-height: 0` to flex ancestors that constrain scroll children.
 - Rework search panel root/body/results to a flex column layout.
 
-Subagents to run:
-
-- `tray-search-layout-worker`: use `senior-frontend`, `tdd-guide`.
-
 Validation gate:
 
 - `node --test tests/trayPanelWiring.test.mjs tests/searchPanelState.test.mjs`
 - `npm run check`
 
 ## Phase 4: Process Manager Horizontal Scroll Sync
+
+Status: Complete, 2026-05-06. Process Manager header and rows now live under one focusable `.process-table-scroll` grid scroller with sticky header/group rows and a 48rem content minimum for default-width horizontal reachability.
 
 Acceptance criteria:
 
@@ -124,9 +121,6 @@ Implementation tasks:
 - Place header and rows under a single horizontal scroll container, or use CSS grid with shared column template and sticky header inside the same scroller.
 - Preserve metric cell centering and icon/name layout.
 
-Subagents to run:
-
-- `process-manager-layout-worker`: use `senior-frontend`, `tdd-guide`.
 
 Validation gate:
 
@@ -134,6 +128,8 @@ Validation gate:
 - `npm run check`
 
 ## Phase 5: Visual QA
+
+Status: Complete, 2026-05-06. Adversarial UI QA initially blocked on detached fixed submenus and non-focusable Process Manager scrollbox; both were fixed and re-reviewed CLEAN. Automated validation passed; live Tauri/browser smoke was not run in this turn.
 
 Acceptance criteria:
 
@@ -150,11 +146,7 @@ Implementation tasks:
 
 - Run adversarial UI review focused on clipping, keyboard reachability, and regressions from nested scroll containers.
 
-Subagents to run:
-
-- `layout-adversarial-reviewer`: use `adversarial-reviewer`, `senior-frontend`.
 
 Validation gate:
 
 - `npm run validate` when feasible.
-

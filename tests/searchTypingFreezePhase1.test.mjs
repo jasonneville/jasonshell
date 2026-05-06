@@ -131,7 +131,7 @@ test('top-bar input events enqueue exact current value instead of prior draft st
 test('centered search query events reject stale source-order payloads and use exact query', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   const listener =
-    source.match(/void listen<SearchPanelQueryPayload>\(SEARCH_PANEL_QUERY_EVENT, \(event\) => \{[\s\S]*?\n    \}\)\.then/)?.[0] ?? '';
+    source.match(/(?:void listen<SearchPanelQueryPayload>|registerAsyncUnlistener\(listen<SearchPanelQueryPayload>)\(SEARCH_PANEL_QUERY_EVENT, \(event\) => \{[\s\S]*?\n    \}\)\)?/)?.[0] ?? '';
 
   assert.match(source, /let lastSearchPanelInputSequence = 0;/);
   assert.match(listener, /isSearchPanelQueryPayload\(event\.payload\)/);
@@ -165,7 +165,7 @@ test('centered search out-of-order Wi event cannot overwrite later Windows setti
 test('app-index refresh uses current draft query during deferred apply window', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   const refreshHandler =
-    source.match(/void listen<SearchIndexRefreshedPayload>\(SEARCH_INDEX_REFRESHED_EVENT, \(event\) => \{[\s\S]*?\n    \}\)\.then/)?.[0] ?? '';
+    source.match(/(?:void listen<SearchIndexRefreshedPayload>|registerAsyncUnlistener\(listen<SearchIndexRefreshedPayload>)\(SEARCH_INDEX_REFRESHED_EVENT, \(event\) => \{[\s\S]*?\n    \}\)\)?/)?.[0] ?? '';
 
   assert.match(refreshHandler, /const refreshQuery = searchInputDraft !== searchQuery \? searchInputDraft : searchQuery;/);
   assert.match(refreshHandler, /if \(!searchOpen \|\| !refreshQuery\.trim\(\)\) \{/);
