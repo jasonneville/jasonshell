@@ -149,6 +149,7 @@
   let pathDraftBase = '';
   let pathInput: HTMLInputElement | null = null;
   let pathInputFocused = false;
+  let pathBlurResetTimer: number | null = null;
   let pathSuggestions: StackPathSuggestion[] = [];
   let pathSuggestionRequestSeq = 0;
   let searchQuery = '';
@@ -156,8 +157,10 @@
   let openWithCandidatePath: string | null = null;
   let iconCache = new Map<string, string | null>();
   let iconHydrationJobToken = 0;
+  let iconHydrationVisiblePriority: string[] = [];
   let iconHydrationPending: string[] = [];
   let iconHydrationInFlight = 0;
+  let iconHydrationInFlightPathCount = 0;
   let iconHydrationResolvedCount = 0;
   let iconHydrationTargetCount = 0;
   let iconHydrationStatusMessage = '';
@@ -216,6 +219,7 @@
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
       }
+      cancelPathBlurReset();
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
@@ -351,7 +355,12 @@
 
   async function refreshPathSuggestions(input: HTMLInputElement) {
     pathDraft = input.value;
-    const query = getStackPathAutocompleteQuery(pathDraft, input.selectionStart ?? pathDraft.length);
+    await refreshPathSuggestionsForValue(input.value, input.selectionStart ?? input.value.length);
+  }
+
+  async function refreshPathSuggestionsForValue(value: string, caret: number) {
+    pathDraft = value;
+    const query = getStackPathAutocompleteQuery(value, caret);
     const requestSeq = ++pathSuggestionRequestSeq;
     if (!query) {
       clearPathSuggestions();
@@ -362,7 +371,7 @@
 
     try {
       const suggestions = await suggestStackPaths({ ...query, limit: 20 });
-      if (requestSeq !== pathSuggestionRequestSeq || input.value !== pathDraft) {
+      if (requestSeq !== pathSuggestionRequestSeq || value !== pathDraft) {
         return;
       }
       pathSuggestions = suggestions;
@@ -384,9 +393,29 @@
     if (!pathInlineCompletion) {
       return;
     }
+    cancelPathBlurReset();
+    const committedPath = pathInlineCompletion.commitPath;
     pathDraft = pathInlineCompletion.commitPath;
     clearPathSuggestions();
-    focusPathInput(pathDraft.length);
+    void focusPathInput(committedPath.length);
+    void refreshPathSuggestionsForValue(committedPath, committedPath.length);
+  }
+
+  function schedulePathBlurReset() {
+    cancelPathBlurReset();
+    pathBlurResetTimer = window.setTimeout(() => {
+      pathBlurResetTimer = null;
+      if (!pathInputFocused) {
+        resetPathDraft();
+      }
+    }, 100);
+  }
+
+  function cancelPathBlurReset() {
+    if (pathBlurResetTimer !== null) {
+      window.clearTimeout(pathBlurResetTimer);
+      pathBlurResetTimer = null;
+    }
   }
 
   async function focusPathInput(caret = pathDraft.length) {
@@ -446,8 +475,10 @@
 
   function startNewIconHydrationSession(folderPath: string) {
     iconHydrationJobToken += 1;
+    iconHydrationVisiblePriority = [];
     iconHydrationPending = [];
     iconHydrationInFlight = 0;
+    iconHydrationInFlightPathCount = 0;
     iconHydrationResolvedCount = 0;
     iconHydrationTargetCount = 0;
     iconHydrationStatusMessage = '';
@@ -468,7 +499,7 @@
     }
 
     const cachedUpdates: StackEntryIconUpdate[] = [];
-    const pending = new Set(iconHydrationPending);
+    const pending = new Set([...iconHydrationVisiblePriority, ...iconHydrationPending]);
     let targetCount = 0;
     for (const entry of stackState.entries) {
       if (entry.iconDataUrl) {
@@ -493,9 +524,10 @@
       stackState = applyStackEntryIconUpdates(stackState, folderPath, cachedUpdates);
     }
 
-    iconHydrationPending = [...pending];
+    iconHydrationPending = mergeIconHydrationPending([], [...pending]);
+    queueVisibleIconHydrationPriority(folderPath, loadSequence);
     iconHydrationTargetCount = targetCount;
-    iconHydrationResolvedCount = Math.max(0, targetCount - iconHydrationPending.length);
+    iconHydrationResolvedCount = resolvedIconHydrationCount();
     updateIconHydrationStatusMessage();
     void drainIconHydrationQueue(folderPath, loadSequence, iconHydrationJobToken);
   }
@@ -506,13 +538,57 @@
       && folderPath === stackState.currentPath
       && jobToken === iconHydrationJobToken
       && iconHydrationInFlight < STACK_ICON_RESOLVE_MAX_CONCURRENCY
-      && iconHydrationPending.length > 0
+      && (iconHydrationVisiblePriority.length > 0 || iconHydrationPending.length > 0)
     ) {
-      const batchPaths = iconHydrationPending.slice(0, STACK_ICON_RESOLVE_BATCH_SIZE);
-      iconHydrationPending = iconHydrationPending.slice(batchPaths.length);
+      const batchPaths = nextIconHydrationBatch();
       iconHydrationInFlight += 1;
+      iconHydrationInFlightPathCount += batchPaths.length;
       void resolveIconBatch(folderPath, loadSequence, jobToken, batchPaths);
     }
+  }
+
+  function nextIconHydrationBatch() {
+    const priorityBatch = iconHydrationVisiblePriority.slice(0, STACK_ICON_RESOLVE_BATCH_SIZE);
+    iconHydrationVisiblePriority = iconHydrationVisiblePriority.slice(priorityBatch.length);
+    const remaining = STACK_ICON_RESOLVE_BATCH_SIZE - priorityBatch.length;
+    if (remaining <= 0) {
+      return priorityBatch;
+    }
+    const backlogBatch = iconHydrationPending
+      .filter((path) => !priorityBatch.includes(path))
+      .slice(0, remaining);
+    iconHydrationPending = iconHydrationPending.filter(
+      (path) => !priorityBatch.includes(path) && !backlogBatch.includes(path)
+    );
+    return [...priorityBatch, ...backlogBatch];
+  }
+
+  function queueVisibleIconHydrationPriority(folderPath: string, loadSequence: number) {
+    if (loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
+      return;
+    }
+    const visiblePaths = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight)
+      .rows
+      .map((row) => row.item)
+      .filter((entry) => !entry.iconDataUrl && !iconCache.has(normalizeIconCacheKey(entry.path)))
+      .map((entry) => entry.path);
+    iconHydrationVisiblePriority = mergeIconHydrationPending(iconHydrationVisiblePriority, visiblePaths);
+    iconHydrationPending = iconHydrationPending.filter((path) => !iconHydrationVisiblePriority.includes(path));
+    void drainIconHydrationQueue(folderPath, loadSequence, iconHydrationJobToken);
+  }
+
+  function mergeIconHydrationPending(existing: string[], incoming: string[]) {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const path of [...existing, ...incoming]) {
+      const key = normalizeIconCacheKey(path);
+      if (!key || iconCache.has(key) || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(path);
+    }
+    return merged;
   }
 
   async function resolveIconBatch(
@@ -549,7 +625,8 @@
         return;
       }
       iconHydrationInFlight = Math.max(0, iconHydrationInFlight - 1);
-      iconHydrationResolvedCount = Math.max(0, iconHydrationTargetCount - iconHydrationPending.length);
+      iconHydrationInFlightPathCount = Math.max(0, iconHydrationInFlightPathCount - paths.length);
+      iconHydrationResolvedCount = resolvedIconHydrationCount();
       updateIconHydrationStatusMessage();
       maybeEmitIconQueueCompletionDiagnostics(folderPath, loadSequence, jobToken);
       await drainIconHydrationQueue(folderPath, loadSequence, jobToken);
@@ -563,6 +640,14 @@
         path: item.path,
         iconDataUrl: item.iconDataUrl
       }));
+  }
+
+  function unresolvedIconHydrationCount() {
+    return iconHydrationPending.length + iconHydrationVisiblePriority.length + iconHydrationInFlightPathCount;
+  }
+
+  function resolvedIconHydrationCount() {
+    return Math.max(0, iconHydrationTargetCount - unresolvedIconHydrationCount());
   }
 
   function normalizeIconCacheKey(path: string) {
@@ -591,6 +676,7 @@
       || loadSequence !== folderLoadSequence
       || folderPath !== stackState.currentPath
       || iconHydrationPending.length > 0
+      || iconHydrationVisiblePriority.length > 0
       || iconHydrationInFlight > 0
       || !iconHydrationTargetCount
       || iconDiagnosticsPath !== folderPath
@@ -803,9 +889,11 @@
       const listing = await listStackFolder(currentPath);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
       stackState = selectStackEntry(stackState, created.path);
+      createFolderDraft = null;
+      renameDraft = created.name;
       errorMessage = '';
       updateDetailsViewport();
-      focusDetailsGrid();
+      focusEditorInput();
     } catch (error) {
       console.error('Failed to create text file', error);
       errorMessage = operationErrorMessage(error, 'New Text File unavailable');
@@ -1137,14 +1225,26 @@
     emitVisibleRowsWindowChanged();
   }
 
+  async function handleStackSearchInput(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    searchQuery = input.value;
+    detailsBodyScrollTop = 0;
+    if (detailsBody) {
+      detailsBody.scrollTop = 0;
+    }
+    await tick();
+    emitVisibleRowsWindowChanged();
+  }
+
   function emitVisibleRowsWindowChanged() {
-    const windowSlice = stackBrowserVirtualWindow(entries, detailsBodyScrollTop, detailsBodyHeight);
+    const windowSlice = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
     void emit(STACK_BROWSER_FRONTEND_EVENTS.folderRowsWindowChanged, {
       path: currentPath,
       startIndex: windowSlice.startIndex,
       endIndex: windowSlice.endIndex,
-      totalRows: entries.length
+      totalRows: visibleEntries.length
     }).catch(() => undefined);
+    queueVisibleIconHydrationPriority(currentPath, folderLoadSequence);
   }
 
   function sortBy(column: StackSortColumn) {
@@ -1712,12 +1812,13 @@
             spellcheck="false"
             autocomplete="off"
             on:focus={(event) => {
+              cancelPathBlurReset();
               pathInputFocused = true;
               void refreshPathSuggestions(event.currentTarget);
             }}
             on:blur={() => {
               pathInputFocused = false;
-              window.setTimeout(() => resetPathDraft(), 100);
+              schedulePathBlurReset();
             }}
             on:input={(event) => void refreshPathSuggestions(event.currentTarget)}
             on:keydown={handlePathKeydown}
@@ -1769,13 +1870,7 @@
           placeholder="Search folder"
           spellcheck="false"
           autocomplete="off"
-          on:input={(event) => {
-            searchQuery = event.currentTarget.value;
-            detailsBodyScrollTop = 0;
-            if (detailsBody) {
-              detailsBody.scrollTop = 0;
-            }
-          }}
+          on:input={handleStackSearchInput}
           on:keydown={(event) => event.stopPropagation()}
         />
       </label>

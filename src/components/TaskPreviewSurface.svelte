@@ -18,6 +18,8 @@
   let preview: TaskPreviewPayload | null = null;
   $: isNativeLivePreview = preview ? isNativeLiveTaskPreviewPayload(preview) : false;
   $: previewSurfaceClass = `surface preview-surface${isNativeLivePreview ? ' preview-surface-native' : ''}`;
+  $: previewPrimaryTitle = preview ? (preview.title || preview.processName) : '';
+  $: previewSecondaryText = preview && preview.processName !== previewPrimaryTitle ? preview.processName : '';
 
   async function hidePreviewSurface() {
     preview = null;
@@ -116,8 +118,15 @@
     onKeyDown={(event) => void handlePreviewKeydown(event)}
   >
   {#if preview}
-    <span><div class="preview-title" aria-hidden="true">{preview.title || preview.processName}</div></span>
-    
+    <div class="preview-header" aria-hidden="true">
+      <div class="preview-copy">
+        <div class="preview-title">{previewPrimaryTitle}</div>
+        {#if previewSecondaryText}
+          <div class="preview-process">{previewSecondaryText}</div>
+        {/if}
+      </div>
+    </div>
+
     {#if isNativeLivePreview}
       <div class="preview-frame preview-frame-native" aria-hidden="true"></div>
     {:else if preview.imageDataUrl}

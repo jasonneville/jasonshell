@@ -29,3 +29,22 @@ test('native hook installs during setup and cleans up on exit', () => {
   assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\)\)/);
   assert.match(main, /windows_key_hook::uninstall_windows_key_hook\(\)/);
 });
+
+test('startup fails when required Windows-key hook cannot install', () => {
+  const main = readSource('../src-tauri/src/main.rs');
+
+  assert.doesNotMatch(main, /Windows-key hook disabled/);
+  assert.match(main, /Windows-key hook is required to suppress the Start Menu: \{error\}/);
+  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\)\)\s*\.map_err\(/);
+});
+
+test('native hook fails closed for Windows-key events when hook state is unavailable', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+
+  assert.match(rust, /left_win_down: bool/);
+  assert.match(rust, /right_win_down: bool/);
+  assert.doesNotMatch(rust, /\bwin_down: bool/);
+  assert.match(rust, /pub fn unavailable_hook_state_decision\(event: WindowsKeyEvent\) -> WindowsKeyDecision/);
+  assert.match(rust, /if is_windows_key\(event\.key\) \{\s*WindowsKeyDecision::Suppress\s*\} else \{\s*WindowsKeyDecision::PassThrough\s*\}/s);
+  assert.match(rust, /\(unavailable_hook_state_decision\(event\), None\)/);
+});

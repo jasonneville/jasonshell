@@ -168,7 +168,10 @@ pub(crate) use file_ops::{
     next_new_text_document_path,
 };
 #[cfg(test)]
-pub(crate) use icons::{resolve_stack_item_icons_batch, resolve_stack_item_icons_for_paths};
+pub(crate) use icons::{
+    resolve_stack_item_icons_batch, resolve_stack_item_icons_for_paths,
+    resolve_stack_item_icons_for_paths_async,
+};
 #[cfg(test)]
 pub(crate) use items::{stack_file_attributes_from_bits, stack_item_from_path};
 #[cfg(test)]
@@ -325,8 +328,8 @@ pub fn suggest_stack_paths(
 }
 
 #[tauri::command]
-pub fn resolve_stack_item_icons(paths: Vec<String>) -> Result<StackItemIconResolutionBatch, String> {
-    icons::resolve_stack_item_icons_for_paths(paths)
+pub async fn resolve_stack_item_icons(paths: Vec<String>) -> Result<StackItemIconResolutionBatch, String> {
+    icons::resolve_stack_item_icons_for_paths_async(paths).await
 }
 
 #[tauri::command]
@@ -483,9 +486,10 @@ mod tests {
         open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
         paths_match_for_unpin, read_stack_folder_page, read_stack_folder_page_with_session,
         reorder_pins_by_paths, resolve_stack_item_icons_batch, resolve_stack_item_icons_for_paths,
-        resolve_stack_alias_with_profile, stack_file_attributes_from_bits, stack_folder_warning,
-        stack_item_from_path, validate_child_name, ClipboardMode, PinnedStackFolder,
-        ShowStackPopupRequest, StackClipboard, StackItem,
+        resolve_stack_item_icons_for_paths_async, resolve_stack_alias_with_profile,
+        stack_file_attributes_from_bits, stack_folder_warning, stack_item_from_path,
+        validate_child_name, ClipboardMode, PinnedStackFolder, ShowStackPopupRequest,
+        StackClipboard, StackItem,
     };
     use std::fs;
     use std::io;
@@ -1125,6 +1129,23 @@ mod tests {
         let bounded = resolve_stack_item_icons_batch(roots, 24);
 
         assert!(bounded.len() <= 24);
+    }
+
+    #[test]
+    fn async_stack_icon_resolution_preserves_batch_contract() {
+        let roots = (0..64usize)
+            .map(|index| format!(r"C:\temp\async-path-{index:03}.txt"))
+            .collect::<Vec<_>>();
+
+        let batch = tauri::async_runtime::block_on(resolve_stack_item_icons_for_paths_async(roots))
+            .unwrap();
+
+        assert_eq!(batch.requested_count, 64);
+        assert_eq!(batch.max_batch_size, 24);
+        assert!(batch.truncated);
+        assert!(batch.items.len() <= 24);
+        assert_eq!(batch.resolved_count, batch.items.len());
+        assert_eq!(batch.cache_hits + batch.cache_misses, batch.items.len());
     }
 
     #[test]

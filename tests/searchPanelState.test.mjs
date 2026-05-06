@@ -449,7 +449,8 @@ test('top-bar cancels search work on native panel close and listens only to app 
   const start = source.match(/function startImmediateSearchQueryExecution\(request: SearchEngineQueryRequestState\)[\s\S]*?\n  \}/)?.[0] ?? '';
 
   assert.match(source, /function cleanupSearchWorkAfterClose\(\)/);
-  assert.match(closeHandler, /cleanupSearchWorkAfterClose\(\)/);
+  assert.match(closeHandler, /resetActiveSearchState\(\)/);
+  assert.match(source, /function resetActiveSearchState\(\) \{[\s\S]*cleanupSearchWorkAfterClose\(\)[\s\S]*invalidateSearchEngineResponses\(\)/);
   assert.match(source, /function publishPendingSearchPayload\(sequence: number, results: SearchPanelResult\[\] = searchResults\)/);
   assert.match(immediate, /if \(!request\.query \|\| normalizedChanged\) \{[\s\S]*searchResults = \[\];[\s\S]*searchResultsQuery = '';/);
   assert.match(start, /publishPendingSearchPayload\(request\.sequence, searchResults\)/);

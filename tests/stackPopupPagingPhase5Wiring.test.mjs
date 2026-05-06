@@ -27,3 +27,15 @@ test('stack popup icon hydration tracks icon-cache hits and misses for completio
   assert.match(stackPopupSurfaceSource, /iconQueueCompleteDurationMs/);
   assert.match(stackPopupSurfaceSource, /phase: 'icon-queue-complete'/);
 });
+
+test('stack popup keeps stale guards around async icon diagnostics completion', () => {
+  const completionSource = stackPopupSurfaceSource.slice(
+    stackPopupSurfaceSource.indexOf('function maybeEmitIconQueueCompletionDiagnostics'),
+    stackPopupSurfaceSource.indexOf('function handleRowClick')
+  );
+  assert.match(completionSource, /jobToken !== iconHydrationJobToken/);
+  assert.match(completionSource, /loadSequence !== folderLoadSequence/);
+  assert.match(completionSource, /folderPath !== stackState\.currentPath/);
+  assert.match(completionSource, /iconHydrationPending\.length > 0/);
+  assert.match(completionSource, /iconHydrationInFlight > 0/);
+});

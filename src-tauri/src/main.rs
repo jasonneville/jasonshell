@@ -27,8 +27,8 @@ mod task_preview;
 mod task_windows;
 mod taskbar_menu;
 mod tray_panel;
-mod workspaces;
 mod windows_key_hook;
+mod workspaces;
 
 #[cfg(target_os = "windows")]
 mod system_tray;
@@ -278,9 +278,9 @@ fn main() {
             let windows = shell_windows::create_shell_windows(app)?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
-            if let Err(error) = windows_key_hook::install_windows_key_hook(app.handle().clone()) {
-                eprintln!("Windows-key hook disabled: {error}");
-            }
+            windows_key_hook::install_windows_key_hook(app.handle().clone()).map_err(|error| {
+                format!("Windows-key hook is required to suppress the Start Menu: {error}")
+            })?;
 
             #[cfg(target_os = "windows")]
             {

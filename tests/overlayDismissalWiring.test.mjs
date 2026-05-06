@@ -67,3 +67,14 @@ test('search panel has outside-dismiss and result-interaction handshake', () => 
   assert.match(main, /search_panel::SEARCH_PANEL_INTERACTION_EVENT/);
   assert.match(main, /search_panel::SEARCH_PANEL_CLOSED_EVENT/);
 });
+
+test('outside-click and blur search dismissal route through reset-closing path', () => {
+  const topBar = readFileSync('src/components/TopBar.svelte', 'utf8');
+
+  assert.match(topBar, /function resetActiveSearchState\(\)/);
+  assert.match(topBar, /on:pointerdown=\{handleTopBarPointerDown\}/);
+  assert.match(topBar, /on:blur=\{scheduleSearchBlurClose\}/);
+  assert.match(topBar, /function handleTopBarPointerDown[\s\S]*void closePanel\(\);[\s\S]*function openSettingsPanel/);
+  assert.match(topBar, /function scheduleSearchBlurClose[\s\S]*void closePanel\(\);[\s\S]*function handleTopBarPointerDown/);
+  assert.match(topBar, /async function closePanel\(\) \{[\s\S]*resetActiveSearchState\(\)/);
+});

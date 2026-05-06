@@ -12,7 +12,7 @@ const stackPopupRustSource = readFileSync(new URL('../src-tauri/src/stack_popup.
 test('stack popup exposes an icon-resolution command path distinct from metadata paging', () => {
   assert.match(stackPopupSource, /resolveStackItemIcons/);
   assert.match(stackPopupSource, /IPC_COMMANDS\.resolveStackItemIcons/);
-  assert.match(stackPopupRustSource, /pub fn resolve_stack_item_icons\(/);
+  assert.match(stackPopupRustSource, /pub async fn resolve_stack_item_icons\(/);
 });
 
 test('stack popup icon hydration queue is bounded and does not schedule unbounded work', () => {

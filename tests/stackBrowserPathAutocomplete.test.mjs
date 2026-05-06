@@ -58,6 +58,38 @@ test('path autocomplete has IPC wrapper and stale-aware UI wiring', () => {
   assert.match(surface, /focusPathInput/);
 });
 
+test('Tab accepting inline path completion keeps focus and caret for chained completion', () => {
+  const acceptSource = surface.slice(
+    surface.indexOf('function acceptInlinePathCompletion'),
+    surface.indexOf('async function focusPathInput')
+  );
+  assert.match(acceptSource, /pathDraft = pathInlineCompletion\.commitPath/);
+  assert.match(acceptSource, /const committedPath = pathInlineCompletion\.commitPath/);
+  assert.match(acceptSource, /void focusPathInput\(committedPath\.length\)/);
+  assert.doesNotMatch(acceptSource, /openFolder\(committedPath\)/);
+});
+
+test('Tab accept immediately refreshes suggestions for committed path', () => {
+  const acceptSource = surface.slice(
+    surface.indexOf('function acceptInlinePathCompletion'),
+    surface.indexOf('async function focusPathInput')
+  );
+  assert.match(acceptSource, /void refreshPathSuggestionsForValue\(committedPath,\s*committedPath\.length\)/);
+  assert.match(surface, /async function refreshPathSuggestionsForValue\(value: string,\s*caret: number\)/);
+});
+
+test('path blur timeout cannot reset draft during chained Tab accept flow', () => {
+  assert.match(surface, /let pathBlurResetTimer: number \| null = null/);
+  const acceptSource = surface.slice(
+    surface.indexOf('function acceptInlinePathCompletion'),
+    surface.indexOf('async function focusPathInput')
+  );
+  assert.match(acceptSource, /cancelPathBlurReset\(\)/);
+  assert.match(surface, /function schedulePathBlurReset\(\)/);
+  assert.match(surface, /function cancelPathBlurReset\(\)/);
+  assert.match(surface, /on:blur=\{\(\) => \{\s*pathInputFocused = false;\s*schedulePathBlurReset\(\);/);
+});
+
 test('builds inline path completion suffix for matching suggestion', () => {
   assert.deepEqual(
     getStackPathInlineCompletion('C:\\dev\\ja', { name: 'jasonshell', path: 'C:\\dev\\jasonshell' }),

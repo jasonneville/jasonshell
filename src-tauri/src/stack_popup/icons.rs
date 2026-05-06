@@ -42,6 +42,14 @@ pub(crate) fn resolve_stack_item_icons_for_paths(
     })
 }
 
+pub(crate) async fn resolve_stack_item_icons_for_paths_async(
+    paths: Vec<String>,
+) -> Result<StackItemIconResolutionBatch, String> {
+    tauri::async_runtime::spawn_blocking(move || resolve_stack_item_icons_for_paths(paths))
+        .await
+        .map_err(|error| format!("Failed to join stack icon resolver: {error}"))?
+}
+
 pub(crate) fn resolve_stack_item_icons_batch(paths: Vec<String>, max_batch_size: usize) -> Vec<String> {
     let bounded_limit = max_batch_size.max(1);
     let mut seen = HashSet::new();
@@ -74,19 +82,12 @@ fn resolve_stack_item_icon(path: &str) -> StackItemIconResolution {
     }
 
     let cache_key = normalize_icon_cache_key(&trimmed_path);
-    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache_hit = false;
-    let icon_data_url = if let Ok(mut cache_guard) = cache.lock() {
-        if let Some(cached) = cache_guard.get(&cache_key) {
-            cache_hit = true;
-            cached.clone()
-        } else {
-            let resolved = resolve_shell_icon_data_url(&trimmed_path);
-            cache_guard.insert(cache_key, resolved.clone());
-            resolved
-        }
+    let (icon_data_url, cache_hit) = if let Some(cached) = cached_stack_icon_lookup(&cache_key) {
+        (cached, true)
     } else {
-        resolve_shell_icon_data_url(&trimmed_path)
+        let icon_data_url = resolve_shell_icon_data_url(&trimmed_path);
+        store_stack_icon_cache_result(cache_key, icon_data_url.clone());
+        (icon_data_url, false)
     };
 
     StackItemIconResolution {
@@ -94,6 +95,21 @@ fn resolve_stack_item_icon(path: &str) -> StackItemIconResolution {
         icon_data_url,
         cache_hit,
         resolution_duration_ms: started.elapsed().as_millis(),
+    }
+}
+
+fn cached_stack_icon_lookup(cache_key: &str) -> Option<Option<String>> {
+    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    cache
+        .lock()
+        .ok()
+        .and_then(|cache_guard| cache_guard.get(cache_key).cloned())
+}
+
+fn store_stack_icon_cache_result(cache_key: String, icon_data_url: Option<String>) {
+    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut cache_guard) = cache.lock() {
+        cache_guard.insert(cache_key, icon_data_url);
     }
 }
 

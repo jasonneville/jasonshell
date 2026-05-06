@@ -340,7 +340,7 @@
   }
 
   async function closePanel() {
-    cleanupSearchWorkAfterClose();
+    resetActiveSearchState();
     searchOpen = false;
     searchPanelAnchor = null;
     lastSearchPanelPayloadSignature = null;
@@ -397,6 +397,18 @@
     cancelSearchFreshnessRetry();
     resetSearchProviderCacheRetry();
     invalidateSearchEngineResponses();
+  }
+
+  function resetActiveSearchState() {
+    cleanupSearchWorkAfterClose();
+    // cleanupSearchWorkAfterClose() calls invalidateSearchEngineResponses().
+    searchQuery = '';
+    searchInputDraft = '';
+    searchResults = [];
+    searchResultsQuery = '';
+    selectedIndex = 0;
+    searchStatus = 'Search is ready';
+    expandedVisibleGroups = new Set<SearchExpandableGroupId>();
   }
 
   function invalidateSearchEngineResponses() {
@@ -1029,9 +1041,6 @@
       return;
     }
 
-    searchQuery = '';
-    searchInputDraft = '';
-    selectedIndex = 0;
     await closePanel();
     await loadSearchCatalog();
   }
@@ -1254,7 +1263,7 @@
       unlisteners.push(unlisten);
     });
     void listen(SEARCH_PANEL_CLOSED_EVENT, () => {
-      cleanupSearchWorkAfterClose();
+      resetActiveSearchState();
       searchOpen = false;
       searchPanelAnchor = null;
       lastSearchPanelPayloadSignature = null;
