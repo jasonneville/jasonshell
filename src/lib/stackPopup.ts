@@ -29,6 +29,25 @@ type StackItem = {
   isReparsePoint: boolean;
 };
 
+export type StackGitFileStatusKind = 'modified' | 'added' | 'deleted' | 'untracked' | 'conflict';
+
+export type StackGitFileStatus = {
+  path: string;
+  relativePath: string;
+  status: StackGitFileStatusKind;
+};
+
+export type StackGitStatus = {
+  repositoryRoot: string;
+  branch: string;
+  modified: number;
+  added: number;
+  deleted: number;
+  untracked: number;
+  conflicts: number;
+  entries: StackGitFileStatus[];
+};
+
 export type StackFolderWarning = {
   path?: string | null;
   message: string;
@@ -419,6 +438,10 @@ export function listStackOpenWithCandidates(path: string): Promise<StackOpenWith
 
 export function resolveStackItemIcons(paths: string[]): Promise<StackItemIconResolutionBatch> {
   return invoke<StackItemIconResolutionBatch>(IPC_COMMANDS.resolveStackItemIcons, { paths });
+}
+
+export function getStackGitStatus(folderPath: string): Promise<StackGitStatus | null> {
+  return invoke<StackGitStatus | null>(IPC_COMMANDS.getStackGitStatus, { path: folderPath });
 }
 
 export function suggestStackPaths(request: StackPathSuggestionRequest): Promise<StackPathSuggestion[]> {

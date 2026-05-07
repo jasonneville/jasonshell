@@ -141,6 +141,36 @@
   color: var(--js-color-text-strong);
 }
 
+.stack-git-summary {
+  align-items: center;
+  color: var(--js-color-text-muted);
+  display: flex;
+  gap: 0.34rem;
+  min-width: 0;
+}
+
+.stack-git-summary span {
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-xs);
+  font-size: 0.55rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0.08rem 0.24rem;
+}
+
+.stack-git-summary .stack-git-branch {
+  color: var(--js-color-text);
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-summary .stack-git-count,
+.stack-git-summary .stack-git-clean {
+  background: var(--js-color-surface-overlay);
+}
+
 .stack-actions {
   display: flex;
   flex-wrap: wrap;
@@ -519,6 +549,23 @@
     inset 6px 0 0 var(--js-color-accent-border);
 }
 
+.details-body button.git-added {
+  box-shadow: inset 5px 0 0 #52f28a;
+}
+
+.details-body button.git-modified {
+  box-shadow: inset 5px 0 0 #ffd84d;
+}
+
+.details-body button.git-deleted,
+.details-body button.git-conflicted {
+  box-shadow: inset 5px 0 0 #ff6464;
+}
+
+.details-body button.git-untracked {
+  box-shadow: inset 5px 0 0 #8ab4ff;
+}
+
 .details-body button.retained {
   cursor: progress;
 }
@@ -554,6 +601,46 @@
   font-weight: 800;
   line-height: 1;
   padding: 0.12rem 0.25rem;
+}
+
+.git-file-badge,
+.git-status-badge {
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-xs);
+  color: var(--js-color-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.54rem;
+  font-weight: 900;
+  line-height: 1;
+  margin-left: 0.1rem;
+  min-width: 1rem;
+  padding: 0.1rem 0.2rem;
+  text-align: center;
+}
+
+.git-status-badge.git-status-added {
+  background: rgba(82, 242, 138, 0.14);
+  border-color: rgba(82, 242, 138, 0.72);
+  color: #52f28a;
+}
+
+.git-status-badge.git-status-modified {
+  background: rgba(255, 216, 77, 0.16);
+  border-color: rgba(255, 216, 77, 0.74);
+  color: #ffd84d;
+}
+
+.git-status-badge.git-status-deleted,
+.git-status-badge.git-status-conflict {
+  background: rgba(255, 100, 100, 0.14);
+  border-color: rgba(255, 100, 100, 0.74);
+  color: #ff6464;
+}
+
+.git-status-badge.git-status-untracked {
+  background: rgba(138, 180, 255, 0.14);
+  border-color: rgba(138, 180, 255, 0.72);
+  color: #8ab4ff;
 }
 
 .details-body button:focus-visible {

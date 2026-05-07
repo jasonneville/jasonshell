@@ -34,10 +34,12 @@ const SOURCE_CONTRACT_INTENTS = {
     'shellPopupLayoutScrollPhase1.test.mjs',
     'shellPreferences.test.mjs',
     'stackBrowserMarginSelection.test.mjs',
+    'stackBrowserGitStatus.test.mjs',
     'stackBrowserPathAutocomplete.test.mjs',
     'stackBrowserTopBarPinFlow.test.mjs',
     'stackPopupContextMenu.test.mjs',
     'stackPopupDiagnosticsWiring.test.mjs',
+    'stackPopupGitStatus.test.mjs',
     'stackPopupMarqueeWiring.test.mjs',
     'stackPopupNewTextFileFlow.test.mjs',
     'stackPopupPagingPhase1Wiring.test.mjs',
@@ -61,6 +63,8 @@ const SOURCE_CONTRACT_INTENTS = {
     'workspaces.test.mjs'
   ],
   registryParity: [
+    'changelogPolicy.test.mjs',
+    'changelogPolicyHygiene.test.mjs',
     'contractsSettings.test.mjs',
     'distTestsHygiene.test.mjs',
     'multiFixPhase6SpecValidation.test.mjs'

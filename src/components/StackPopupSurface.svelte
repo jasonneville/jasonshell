@@ -11,6 +11,7 @@
     endStackPopupFocusLossHold,
     emitStackFolderListingDiagnostics,
     extractStackArchive,
+    getStackGitStatus,
     getStackPopupRequest,
     hideStackPopup,
     listStackOpenWithCandidates,
@@ -35,6 +36,8 @@
     type StackEntry,
     type StackArchiveDestinationMode,
     type StackArchiveExtractor,
+    type StackGitStatus,
+    type StackGitFileStatusKind,
     type StackItemIconResolution,
     type StackFolderListing,
     type StackOpenWithCandidate,
@@ -184,6 +187,9 @@
   let iconDiagnosticsPath: string | null = null;
   let iconDiagnosticsFirstPaintDurationMs = 0;
   let iconDiagnosticsMetadataCompleteDurationMs = 0;
+  let gitStatus: StackGitStatus | null = null;
+  let gitStatusPath = '';
+  let gitStatusRequestSequence = 0;
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -328,6 +334,7 @@
       iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
       iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
       stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
+      void refreshStackGitStatus(folderPath, loadSequence);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       pathDraft = stackState.currentPath;
       pathDraftBase = stackState.currentPath;
@@ -447,6 +454,7 @@
     let mergedListing: StackFolderListing | null = null;
     loadingPath = folderPath;
     errorMessage = '';
+    void refreshStackGitStatus(folderPath, loadSequence);
     try {
       const listing = await listStackFolder(folderPath, async (page) => {
         if (loadSequence !== folderLoadSequence) {
@@ -480,6 +488,28 @@
     } finally {
       if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
         loadingPath = null;
+      }
+    }
+  }
+
+  async function refreshStackGitStatus(folderPath: string, loadSequence: number) {
+    const requestSequence = ++gitStatusRequestSequence;
+    gitStatusPath = folderPath;
+    gitStatus = null;
+    try {
+      const status = await getStackGitStatus(folderPath);
+      if (
+        requestSequence !== gitStatusRequestSequence
+        || loadSequence !== folderLoadSequence
+        || folderPath !== stackState.currentPath
+      ) {
+        return;
+      }
+      gitStatus = status;
+    } catch (error) {
+      if (requestSequence === gitStatusRequestSequence && loadSequence === folderLoadSequence) {
+        console.debug('Stack git status unavailable', error);
+        gitStatus = null;
       }
     }
   }
@@ -1329,6 +1359,68 @@
     stackState = selectStackEntry(stackState, entry.path, mode);
   }
 
+  function stackGitStatusSymbol(status: StackGitFileStatusKind | null | undefined) {
+    if (status === 'added') return '+';
+    if (status === 'deleted') return '-';
+    if (status === 'modified') return 'M';
+    if (status === 'untracked') return '?';
+    if (status === 'conflict') return '!';
+    return null;
+  }
+
+  function stackGitStatusLabel(status: StackGitFileStatusKind | null | undefined) {
+    if (status === 'added') return 'Added';
+    if (status === 'deleted') return 'Deleted';
+    if (status === 'modified') return 'Modified';
+    if (status === 'untracked') return 'Untracked';
+    if (status === 'conflict') return 'Conflict';
+    return '';
+  }
+
+  function stackGitSummaryParts(status: StackGitStatus | null) {
+    if (!status) return [];
+    const parts: Array<{ status: StackGitFileStatusKind; label: string; title: string }> = [];
+    if (status.added) parts.push({ status: 'added', label: `+${status.added}`, title: `${status.added} added` });
+    if (status.modified) parts.push({ status: 'modified', label: `M${status.modified}`, title: `${status.modified} modified` });
+    if (status.deleted) parts.push({ status: 'deleted', label: `-${status.deleted}`, title: `${status.deleted} deleted` });
+    if (status.untracked) parts.push({ status: 'untracked', label: `?${status.untracked}`, title: `${status.untracked} untracked` });
+    if (status.conflicts) parts.push({ status: 'conflict', label: `!${status.conflicts}`, title: `${status.conflicts} conflict${status.conflicts === 1 ? '' : 's'}` });
+    return parts;
+  }
+
+  function stackGitStatusForEntry(entry: StackEntry) {
+    if (!gitStatus || gitStatusPath !== currentPath) {
+      return null;
+    }
+    const entryPath = normalizeStackPathKey(entry.path);
+    let nestedStatus: StackGitFileStatusKind | null = null;
+    for (const item of gitStatus.entries) {
+      const statusPath = normalizeStackPathKey(item.path);
+      if (statusPath === entryPath) {
+        return item.status;
+      }
+      if (entry.entryType === 'Folder' && statusPath.startsWith(`${entryPath}\\`)) {
+        nestedStatus = stackGitStatusPriority(nestedStatus, item.status);
+      }
+    }
+    return nestedStatus;
+  }
+
+  function normalizeStackPathKey(path: string) {
+    return path.replace(/\//g, '\\').replace(/\\+$/, '').toLocaleLowerCase();
+  }
+
+  function stackGitStatusPriority(current: StackGitFileStatusKind | null, next: StackGitFileStatusKind) {
+    const rank: Record<StackGitFileStatusKind, number> = {
+      modified: 1,
+      untracked: 2,
+      added: 3,
+      deleted: 4,
+      conflict: 5
+    };
+    return !current || rank[next] > rank[current] ? next : current;
+  }
+
   function beginMarqueeSelection(event: PointerEvent) {
     if (
       event.button !== 0
@@ -1905,6 +1997,18 @@
             {/each}
           </nav>
         {/if}
+        {#if gitStatus}
+          <div class="stack-git-summary" aria-label={`Git ${gitStatus.branch} ${stackGitSummaryParts(gitStatus).map((part) => part.title).join(', ') || 'clean'}`}>
+            <span class="stack-git-branch">{gitStatus.branch}</span>
+            {#if stackGitSummaryParts(gitStatus).length}
+              {#each stackGitSummaryParts(gitStatus) as part}
+                <span class={`stack-git-count git-status-${part.status}`} title={part.title}>{part.label}</span>
+              {/each}
+            {:else}
+              <span class="stack-git-clean">clean</span>
+            {/if}
+          </div>
+        {/if}
       </form>
     </div>
     <div class="stack-actions">
@@ -2004,12 +2108,19 @@
         {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
           {@const entry = virtualRow.item}
           {@const fileIcon = stackFileIconForEntry(entry)}
+          {@const gitEntryStatus = stackGitStatusForEntry(entry)}
           <button
             class:selected={stackState.selectedPaths.includes(entry.path)}
             class:subdued={entry.isHidden || entry.isSystem}
             class:readonly={entry.isReadonly}
             class:linked={entry.isSymlink || entry.isReparsePoint}
             class:retained={hasRetainedRows}
+            class:git-added={gitEntryStatus === 'added'}
+            class:git-modified={gitEntryStatus === 'modified'}
+            class:git-deleted={gitEntryStatus === 'deleted'}
+            class:git-untracked={gitEntryStatus === 'untracked'}
+            class:git-conflicted={gitEntryStatus === 'conflict'}
+            data-git-status={gitEntryStatus ?? undefined}
             type="button"
             role="row"
             aria-rowindex={virtualRow.index + 2}
@@ -2044,6 +2155,9 @@
                     <span>{label}</span>
                   {/each}
                 </span>
+              {/if}
+              {#if gitEntryStatus}
+                <span class={`git-file-badge git-status-badge git-status-${gitEntryStatus}`} aria-label={stackGitStatusLabel(gitEntryStatus)} title={stackGitStatusLabel(gitEntryStatus)}>{stackGitStatusSymbol(gitEntryStatus)}</span>
               {/if}
             </span>
             <span role="gridcell" aria-colindex="2">{entry.typeLabel}</span>

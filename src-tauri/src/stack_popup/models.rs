@@ -74,6 +74,37 @@ pub struct StackFolderPage {
     pub diagnostics: Option<StackFolderPageDiagnostics>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StackGitFileStatusKind {
+    Modified,
+    Added,
+    Deleted,
+    Untracked,
+    Conflict,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitFileStatus {
+    pub path: String,
+    pub relative_path: String,
+    pub status: StackGitFileStatusKind,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStatus {
+    pub repository_root: String,
+    pub branch: String,
+    pub modified: usize,
+    pub added: usize,
+    pub deleted: usize,
+    pub untracked: usize,
+    pub conflicts: usize,
+    pub entries: Vec<StackGitFileStatus>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackFolderPageDiagnostics {

@@ -135,6 +135,7 @@ fn main() {
             stack_popup::end_stack_popup_focus_loss_hold,
             stack_popup::resize_stack_popup,
             stack_popup::read_stack_folder,
+            stack_popup::get_stack_git_status,
             stack_popup::suggest_stack_paths,
             stack_popup::resolve_stack_item_icons,
             stack_popup::open_stack_item,

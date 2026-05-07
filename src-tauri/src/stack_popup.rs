@@ -1,5 +1,6 @@
 mod clipboard;
 mod file_ops;
+mod git_status;
 mod icons;
 mod items;
 mod models;
@@ -25,7 +26,7 @@ pub struct StackPathSuggestion {
 }
 
 pub use models::{
-    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackItem,
+    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitStatus, StackItem,
     StackItemIconResolutionBatch, StackNativeDragPreparation, StackOpenWithCandidate,
     StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
@@ -317,6 +318,11 @@ pub fn read_stack_folder(
         offset,
         limit.unwrap_or(paging::DEFAULT_PAGE_LIMIT),
     )
+}
+
+#[tauri::command]
+pub async fn get_stack_git_status(path: String) -> Result<Option<StackGitStatus>, String> {
+    git_status::stack_git_status_for_path_async(path).await
 }
 
 #[tauri::command]
