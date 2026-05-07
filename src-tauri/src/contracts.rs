@@ -12,6 +12,7 @@ pub mod surfaces {
     pub const TRAY_PANEL: &str = "tray-panel";
     pub const COMMAND_PANEL: &str = "command-panel";
     pub const AUDIO_PANEL: &str = "audio-panel";
+    pub const CALENDAR_PANEL: &str = "calendar-panel";
 
     pub const ALL: &[&str] = &[
         TOP_BAR,
@@ -25,6 +26,7 @@ pub mod surfaces {
         TRAY_PANEL,
         COMMAND_PANEL,
         AUDIO_PANEL,
+        CALENDAR_PANEL,
     ];
 }
 
@@ -58,6 +60,8 @@ pub mod commands {
     pub const HIDE_COMMAND_PANEL: &str = "hide_command_panel";
     pub const SHOW_AUDIO_PANEL: &str = "show_audio_panel";
     pub const HIDE_AUDIO_PANEL: &str = "hide_audio_panel";
+    pub const SHOW_CALENDAR_PANEL: &str = "show_calendar_panel";
+    pub const HIDE_CALENDAR_PANEL: &str = "hide_calendar_panel";
     pub const LIST_PROCESSES: &str = "list_processes";
     pub const KILL_PROCESS: &str = "kill_process";
     pub const GET_AUDIO_STATE: &str = "get_audio_state";
@@ -173,6 +177,8 @@ pub mod commands {
         HIDE_COMMAND_PANEL,
         SHOW_AUDIO_PANEL,
         HIDE_AUDIO_PANEL,
+        SHOW_CALENDAR_PANEL,
+        HIDE_CALENDAR_PANEL,
         LIST_PROCESSES,
         KILL_PROCESS,
         GET_AUDIO_STATE,
@@ -262,6 +268,8 @@ pub mod commands {
 pub mod events {
     pub const AUDIO_PANEL_OPEN: &str = "audio-panel:open";
     pub const AUDIO_PANEL_CLOSED: &str = "audio-panel:closed";
+    pub const CALENDAR_PANEL_OPEN: &str = "calendar-panel:open";
+    pub const CALENDAR_PANEL_CLOSED: &str = "calendar-panel:closed";
     pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
     pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
@@ -294,6 +302,8 @@ pub mod events {
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
         AUDIO_PANEL_CLOSED,
+        CALENDAR_PANEL_OPEN,
+        CALENDAR_PANEL_CLOSED,
         COMMAND_PANEL_CLOSED,
         PROCESS_MANAGER_OPEN,
         PROCESS_MANAGER_CLOSED,
@@ -347,6 +357,7 @@ mod tests {
                 "tray-panel",
                 "command-panel",
                 "audio-panel",
+                "calendar-panel",
             ]
         );
     }
@@ -416,6 +427,8 @@ mod tests {
         assert!(unique.contains("hide_command_panel"));
         assert!(unique.contains("show_audio_panel"));
         assert!(unique.contains("hide_audio_panel"));
+        assert!(unique.contains("show_calendar_panel"));
+        assert!(unique.contains("hide_calendar_panel"));
         assert!(unique.contains("get_audio_state"));
         assert!(unique.contains("list_audio_devices"));
         assert!(unique.contains("list_audio_sessions"));
@@ -440,6 +453,8 @@ mod tests {
             &[
                 "audio-panel:open",
                 "audio-panel:closed",
+                "calendar-panel:open",
+                "calendar-panel:closed",
                 "command-panel:closed",
                 "process-manager:open",
                 "process-manager:closed",

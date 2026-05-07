@@ -10,6 +10,7 @@ export type ShellSurface =
   | 'tray-panel'
   | 'command-panel'
   | 'audio-panel'
+  | 'calendar-panel'
   | 'unknown';
 
 type SurfaceMeta = {
@@ -62,6 +63,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Quick audio controls',
     title: 'JasonShell Sound'
   },
+  'calendar-panel': {
+    subtitle: 'Clock calendar and timezone details',
+    title: 'JasonShell Calendar'
+  },
   unknown: {
     subtitle: 'Surface route unavailable',
     title: 'JasonShell'
@@ -81,6 +86,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'tray-panel'
     || label === 'command-panel'
     || label === 'audio-panel'
+    || label === 'calendar-panel'
   ) {
     return label;
   }

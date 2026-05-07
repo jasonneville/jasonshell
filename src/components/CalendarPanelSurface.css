@@ -1,0 +1,120 @@
+.calendar-panel {
+  background: var(--js-bg-panel);
+  border: 1px solid var(--js-color-border);
+  box-shadow: var(--js-shadow-floating);
+  color: var(--js-color-text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--js-space-3);
+  height: 100vh;
+  overflow-y: auto;
+  padding: var(--js-space-4);
+}
+
+.calendar-panel-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--js-space-3);
+}
+
+.calendar-panel-header strong {
+  color: var(--js-color-text-strong);
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 750;
+}
+
+.calendar-panel-header span,
+.calendar-info span {
+  color: var(--js-color-text-muted);
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.calendar-close,
+.calendar-nav-button {
+  align-items: center;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.7rem;
+  justify-content: center;
+  width: 1.7rem;
+}
+
+.calendar-close:hover,
+.calendar-nav-button:hover {
+  background: var(--js-color-control-hover);
+}
+
+.calendar-nav {
+  align-items: center;
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  gap: var(--js-space-2);
+}
+
+.calendar-nav strong {
+  color: var(--js-color-text-strong);
+  font-size: 0.92rem;
+  font-weight: 750;
+  text-align: center;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.2rem;
+}
+
+.calendar-weekday {
+  color: var(--js-color-text-muted);
+  font-size: 0.64rem;
+  font-weight: 800;
+  padding: 0.2rem 0;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.calendar-grid button {
+  aspect-ratio: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.calendar-grid button:hover {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-border-soft);
+}
+
+.calendar-grid button.outside {
+  color: var(--js-color-text-subtle);
+}
+
+.calendar-grid button.today {
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text-strong);
+}
+
+.calendar-grid button.selected {
+  background: var(--js-bg-active);
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text-strong);
+}
+
+.calendar-info {
+  border-top: 1px solid var(--js-color-border-soft);
+  display: grid;
+  gap: var(--js-space-1);
+  padding-top: var(--js-space-3);
+}

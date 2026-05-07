@@ -9,6 +9,8 @@ export const IPC_EVENTS = {
   trayPanelOpen: 'tray-panel:open',
   trayPanelClosed: 'tray-panel:closed',
   commandPanelClosed: 'command-panel:closed',
+  calendarPanelOpen: 'calendar-panel:open',
+  calendarPanelClosed: 'calendar-panel:closed',
   searchPanelUpdate: 'search-panel:update',
   searchPanelActivate: 'search-panel:activate',
   searchPanelSelect: 'search-panel:select',

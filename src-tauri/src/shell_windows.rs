@@ -23,6 +23,7 @@ pub const SETTINGS_PANEL_LABEL: &str = "settings-panel";
 pub const TRAY_PANEL_LABEL: &str = "tray-panel";
 pub const COMMAND_PANEL_LABEL: &str = "command-panel";
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
+pub const CALENDAR_PANEL_LABEL: &str = "calendar-panel";
 #[cfg(test)]
 pub const ALL_LABELS: &[&str] = &[
     TOP_BAR_LABEL,
@@ -36,6 +37,7 @@ pub const ALL_LABELS: &[&str] = &[
     TRAY_PANEL_LABEL,
     COMMAND_PANEL_LABEL,
     AUDIO_PANEL_LABEL,
+    CALENDAR_PANEL_LABEL,
 ];
 pub const TOP_BAR_HEIGHT_LOGICAL: f64 = 23.4;
 pub const BOTTOM_BAR_HEIGHT_LOGICAL: f64 = 32.4;
@@ -57,6 +59,8 @@ pub const COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460.0;
 pub const COMMAND_PANEL_HEIGHT_LOGICAL: f64 = 420.0;
 pub const AUDIO_PANEL_WIDTH_LOGICAL: f64 = 320.0;
 pub const AUDIO_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
+pub const CALENDAR_PANEL_WIDTH_LOGICAL: f64 = 360.0;
+pub const CALENDAR_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
 const DISABLE_NATIVE_CONTEXT_MENU_SCRIPT: &str =
     "window.addEventListener('contextmenu', (event) => event.preventDefault());";
 
@@ -108,6 +112,7 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _tray_panel = build_tray_panel_window(app)?;
     let _command_panel = build_command_panel_window(app)?;
     let _audio_panel = build_audio_panel_window(app)?;
+    let _calendar_panel = build_calendar_panel_window(app)?;
 
     Ok(CreatedShellWindows { top, bottom })
 }
@@ -300,6 +305,29 @@ fn build_audio_panel_window(app: &App) -> AppResult<WebviewWindow> {
             .visible(false)
             .build()?,
     )
+}
+
+fn build_calendar_panel_window(app: &App) -> AppResult<WebviewWindow> {
+    Ok(WebviewWindowBuilder::new(
+        app,
+        CALENDAR_PANEL_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .always_on_top(true)
+    .devtools(false)
+    .decorations(false)
+    .focused(false)
+    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+    .inner_size(CALENDAR_PANEL_WIDTH_LOGICAL, CALENDAR_PANEL_HEIGHT_LOGICAL)
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(false)
+    .shadow(true)
+    .skip_taskbar(true)
+    .theme(Some(Theme::Dark))
+    .title("JasonShell Calendar")
+    .visible(false)
+    .build()?)
 }
 
 fn build_tray_panel_window(app: &App) -> AppResult<WebviewWindow> {

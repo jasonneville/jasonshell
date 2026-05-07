@@ -72,6 +72,11 @@
     showAudioPanel
   } from '../lib/audio';
   import {
+    CALENDAR_PANEL_CLOSED_EVENT,
+    hideCalendarPanel,
+    showCalendarPanel
+  } from '../lib/calendarPanel';
+  import {
     TRAY_PANEL_CLOSED_EVENT,
     hideTrayPanel,
     showTrayPanel
@@ -139,6 +144,7 @@
   let commandControl: HTMLDivElement | null = null;
   let trayControl: HTMLDivElement | null = null;
   let soundControl: HTMLDivElement | null = null;
+  let timeControl: HTMLDivElement | null = null;
   let showRailScrollLeft = false;
   let showRailScrollRight = false;
   let focusedPinIndex: number | null = null;
@@ -172,6 +178,7 @@
   let audioOpen = false;
   let trayOpen = false;
   let commandOpen = false;
+  let calendarOpen = false;
 
   const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
   const PIN_REORDER_DRAG_THRESHOLD_PX = 4;
@@ -183,6 +190,7 @@
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
+  const CALENDAR_PANEL_ID = 'calendar-panel';
   type OpenSearchPanelOptions = {
     publishCurrentPayload?: boolean;
   };
@@ -506,6 +514,13 @@
     });
   }
 
+  async function closeCalendarPanel() {
+    calendarOpen = false;
+    await hideCalendarPanel().catch((error) => {
+      console.error('Failed to hide calendar panel', error);
+    });
+  }
+
   async function toggleSoundPanel(target: EventTarget | null) {
     if (audioOpen) {
       await closeAudioPanel();
@@ -521,6 +536,9 @@
     }
     if (commandOpen) {
       await closeCommandPanel();
+    }
+    if (calendarOpen) {
+      await closeCalendarPanel();
     }
     await closePanel();
     audioOpen = true;
@@ -546,6 +564,7 @@
     await closePanel();
     await closeAudioPanel();
     await closeCommandPanel();
+    await closeCalendarPanel();
     trayOpen = true;
     await showTrayPanel({
       anchorLeft: rect.left,
@@ -569,6 +588,7 @@
     await closePanel();
     await closeAudioPanel();
     await closeTrayPanel();
+    await closeCalendarPanel();
     commandOpen = true;
     await showCommandPanel({
       anchorLeft: rect.left,
@@ -576,6 +596,30 @@
     }).catch((error) => {
       commandOpen = false;
       console.error('Failed to show command panel', error);
+    });
+  }
+
+  async function toggleCalendarPanel(target: EventTarget | null) {
+    if (calendarOpen) {
+      await closeCalendarPanel();
+      return;
+    }
+    const button = target instanceof HTMLElement ? target : null;
+    const rect = button?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    await closePanel();
+    await closeAudioPanel();
+    await closeTrayPanel();
+    await closeCommandPanel();
+    calendarOpen = true;
+    await showCalendarPanel({
+      anchorLeft: rect.left,
+      anchorWidth: rect.width
+    }).catch((error) => {
+      calendarOpen = false;
+      console.error('Failed to show calendar panel', error);
     });
   }
 
@@ -1365,6 +1409,9 @@
     registerAsyncUnlistener(listen(AUDIO_PANEL_CLOSED_EVENT, () => {
       audioOpen = false;
     }));
+    registerAsyncUnlistener(listen(CALENDAR_PANEL_CLOSED_EVENT, () => {
+      calendarOpen = false;
+    }));
     registerAsyncUnlistener(listen(TRAY_PANEL_CLOSED_EVENT, () => {
       trayOpen = false;
     }));
@@ -1507,11 +1554,18 @@
       <span class="sound-icon" aria-hidden="true"></span>
     </MeltActionButton>
   </div>
-  <div
-    class="time-pill"
-    aria-label={`Current time ${shellTime} on ${shellDate}`}
-  >
-    <strong>{shellTime} {shellDate}</strong>
+  <div class="time-control" bind:this={timeControl}>
+    <MeltActionButton
+      class="time-pill"
+      ariaLabel={`Open calendar. Current time ${shellTime} on ${shellDate}`}
+      ariaHaspopup="dialog"
+      ariaExpanded={calendarOpen}
+      ariaControls={CALENDAR_PANEL_ID}
+      tooltip="Calendar"
+      onClick={(event) => void toggleCalendarPanel(event.currentTarget)}
+    >
+      <strong>{shellTime} {shellDate}</strong>
+    </MeltActionButton>
   </div>
   <div class="search-control" bind:this={searchControl}>
     <input
