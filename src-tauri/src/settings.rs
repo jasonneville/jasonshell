@@ -82,6 +82,8 @@ pub struct QuickCommandEntry {
     pub target_path: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
     pub cwd: Option<String>,
 }
 
@@ -90,6 +92,7 @@ pub struct QuickCommandEntry {
 pub enum QuickCommandMode {
     #[default]
     Direct,
+    CommandBlock,
     PowershellFile,
     CmdFile,
 }
@@ -328,40 +331,54 @@ pub(crate) fn validate_quick_command_entry(
     }
 
     let target_path = entry.target_path.trim();
-    if target_path.is_empty() {
-        return Err(format!(
-            "quick command '{}' target path must not be empty",
-            id
-        ));
-    }
     let target_is_absolute = Path::new(target_path).is_absolute();
-    match entry.mode {
+    let (mode, commands) = match entry.mode {
         QuickCommandMode::Direct => {
+            if target_path.is_empty() {
+                return Err(format!(
+                    "quick command '{}' target path must not be empty",
+                    id
+                ));
+            }
             if !target_is_absolute && !is_safe_command_token(target_path) {
                 return Err(format!(
                     "quick command '{}' direct mode target must be an absolute path or safe command token",
                     id
                 ));
             }
+            (QuickCommandMode::Direct, Vec::new())
         }
-        QuickCommandMode::PowershellFile | QuickCommandMode::CmdFile => {
-            if !target_is_absolute {
-                return Err(format!(
-                    "quick command '{}' script mode target must be an absolute path",
-                    id
-                ));
-            }
+        QuickCommandMode::CommandBlock => {
+            let commands = validate_quick_command_commands(&entry.commands, id)?;
+            (QuickCommandMode::CommandBlock, commands)
         }
-    }
+        QuickCommandMode::PowershellFile => (
+            QuickCommandMode::CommandBlock,
+            vec![legacy_powershell_file_command(target_path, &entry.args)],
+        ),
+        QuickCommandMode::CmdFile => (
+            QuickCommandMode::CommandBlock,
+            vec![legacy_cmd_file_command(target_path, &entry.args)],
+        ),
+    };
 
     let args = validate_quick_command_args(&entry.args, id)?;
     let cwd = normalize_optional_absolute_dir(entry.cwd.as_deref(), id)?;
     Ok(QuickCommandEntry {
         id: id.to_string(),
         label: label.to_string(),
-        mode: entry.mode,
-        target_path: target_path.to_string(),
-        args,
+        mode,
+        target_path: if mode == QuickCommandMode::Direct {
+            target_path.to_string()
+        } else {
+            String::new()
+        },
+        args: if mode == QuickCommandMode::Direct {
+            args
+        } else {
+            Vec::new()
+        },
+        commands,
         cwd,
     })
 }
@@ -389,6 +406,78 @@ pub(crate) fn validate_quick_command_args(
         normalized.push(arg.to_string());
     }
     Ok(normalized)
+}
+
+pub(crate) fn validate_quick_command_commands(
+    commands: &[String],
+    command_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::with_capacity(commands.len());
+    for command in commands {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(format!(
+                "quick command '{}' command block must not include empty commands",
+                command_id
+            ));
+        }
+        reject_control_chars(command, command_id)?;
+        if contains_secret_like_arg(command) {
+            return Err(format!(
+                "quick command '{}' contains secret-like command content",
+                command_id
+            ));
+        }
+        normalized.push(command.to_string());
+    }
+    if normalized.is_empty() {
+        return Err(format!(
+            "quick command '{}' command block must include at least one command",
+            command_id
+        ));
+    }
+    Ok(normalized)
+}
+
+fn legacy_powershell_file_command(target_path: &str, args: &[String]) -> String {
+    format!(
+        "pwsh.exe -NoLogo -NoProfile -File {}{}",
+        quote_command_part(target_path),
+        format_inline_args(args)
+    )
+}
+
+fn legacy_cmd_file_command(target_path: &str, args: &[String]) -> String {
+    format!(
+        "cmd.exe /C {}{}",
+        quote_command_part(target_path),
+        format_inline_args(args)
+    )
+}
+
+fn format_inline_args(args: &[String]) -> String {
+    if args.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {}",
+            args.iter()
+                .map(|arg| quote_command_part(arg))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    }
+}
+
+fn quote_command_part(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':' | '/' | '\\'))
+    {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    }
 }
 
 fn normalize_optional_absolute_dir(
@@ -723,6 +812,7 @@ mod tests {
             mode: QuickCommandMode::Direct,
             target_path: "git.exe".to_string(),
             args: vec!["status".to_string()],
+            commands: Vec::new(),
             cwd: Some("C:\\dev\\jasonshell".to_string()),
         }];
 
@@ -737,6 +827,7 @@ mod tests {
             mode: QuickCommandMode::Direct,
             target_path: "git.exe".to_string(),
             args: vec!["--token".to_string(), "abc".to_string()],
+            commands: Vec::new(),
             cwd: None,
         }];
         assert!(validate_settings(invalid)
@@ -745,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_quick_command_unique_ids_and_absolute_script_modes() {
+    fn validates_quick_command_unique_ids_and_command_blocks() {
         let mut settings = ShellSettings::default();
         settings.quick_commands.entries = vec![
             QuickCommandEntry {
@@ -754,6 +845,7 @@ mod tests {
                 mode: QuickCommandMode::Direct,
                 target_path: "git.exe".to_string(),
                 args: vec!["status".to_string()],
+                commands: Vec::new(),
                 cwd: None,
             },
             QuickCommandEntry {
@@ -762,22 +854,26 @@ mod tests {
                 mode: QuickCommandMode::Direct,
                 target_path: "git.exe".to_string(),
                 args: vec!["status".to_string()],
+                commands: Vec::new(),
                 cwd: None,
             },
         ];
         assert!(validate_settings(settings).unwrap_err().contains("unique"));
 
-        let mut powershell = ShellSettings::default();
-        powershell.quick_commands.entries = vec![QuickCommandEntry {
-            id: "ps-file".to_string(),
-            label: "PowerShell".to_string(),
-            mode: QuickCommandMode::PowershellFile,
-            target_path: ".\\script.ps1".to_string(),
-            args: vec!["arg".to_string()],
+        let mut block = ShellSettings::default();
+        block.quick_commands.entries = vec![QuickCommandEntry {
+            id: "block".to_string(),
+            label: "Block".to_string(),
+            mode: QuickCommandMode::CommandBlock,
+            target_path: String::new(),
+            args: Vec::new(),
+            commands: vec!["cd C:\\dev\\jasonshell".to_string(), "python app.py".to_string()],
             cwd: None,
         }];
-        assert!(validate_settings(powershell)
-            .unwrap_err()
-            .contains("absolute path"));
+        let validated = validate_settings(block).unwrap();
+        assert_eq!(
+            validated.quick_commands.entries[0].commands,
+            vec!["cd C:\\dev\\jasonshell", "python app.py"]
+        );
     }
 }
