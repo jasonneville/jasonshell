@@ -5,8 +5,10 @@
   import {
     QUICK_COMMAND_MODES,
     formatQuickCommandArgsTextarea,
+    formatQuickCommandCommandsTextarea,
     loadQuickCommandsSettings,
     parseQuickCommandArgsTextarea,
+    parseQuickCommandCommandsTextarea,
     runQuickCommand,
     saveQuickCommandsSettings,
     type QuickCommandEntry,
@@ -21,12 +23,12 @@
     targetPath: string;
     cwd: string;
     argsText: string;
+    commandsText: string;
   };
 
   const modeLabels: Record<QuickCommandMode, string> = {
-    direct: 'Direct executable',
-    powershellFile: 'PowerShell script',
-    cmdFile: 'Command script'
+    direct: 'Program',
+    commandBlock: 'Command block'
   };
 
   let entries: QuickCommandEntry[] = [];
@@ -44,7 +46,8 @@
       mode: 'direct',
       targetPath: '',
       cwd: '',
-      argsText: ''
+      argsText: '',
+      commandsText: ''
     };
   }
 
@@ -63,7 +66,8 @@
       mode: entry.mode,
       targetPath: entry.targetPath,
       cwd: entry.cwd ?? '',
-      argsText: formatQuickCommandArgsTextarea(entry.args)
+      argsText: formatQuickCommandArgsTextarea(entry.args),
+      commandsText: formatQuickCommandCommandsTextarea(entry.commands)
     };
   }
 
@@ -84,8 +88,11 @@
     if (!editor.label.trim()) {
       errors.push('Label is required.');
     }
-    if (!editor.targetPath.trim()) {
-      errors.push('Program/Script path is required.');
+    if (editor.mode === 'direct' && !editor.targetPath.trim()) {
+      errors.push('Program is required.');
+    }
+    if (editor.mode === 'commandBlock' && parseQuickCommandCommandsTextarea(editor.commandsText).length === 0) {
+      errors.push('Add at least one command.');
     }
     const hasInvalidEmptyArg = editor.argsText
       .split(/\r?\n/u)
@@ -132,9 +139,11 @@
       id,
       label: editor.label.trim(),
       mode: editor.mode,
-      targetPath: editor.targetPath.trim(),
+      targetPath: editor.mode === 'direct' ? editor.targetPath.trim() : '',
       cwd: editor.cwd.trim() ? editor.cwd.trim() : null,
-      args: parseQuickCommandArgsTextarea(editor.argsText)
+      args: editor.mode === 'direct' ? parseQuickCommandArgsTextarea(editor.argsText) : [],
+      commands:
+        editor.mode === 'commandBlock' ? parseQuickCommandCommandsTextarea(editor.commandsText) : []
     };
 
     const current = entries.filter((entry) => entry.id !== id);
@@ -295,17 +304,19 @@
         </select>
       </label>
 
-      <label>
-        <span>Program/Script path</span>
-        <input
-          value={editor.targetPath}
-          spellcheck="false"
-          placeholder="C:\\Tools\\script.ps1"
-          on:input={(event) => {
-            editor = { ...editor, targetPath: (event.currentTarget as HTMLInputElement).value };
-          }}
-        />
-      </label>
+      {#if editor.mode === 'direct'}
+        <label>
+          <span>Program</span>
+          <input
+            value={editor.targetPath}
+            spellcheck="false"
+            placeholder="git.exe"
+            on:input={(event) => {
+              editor = { ...editor, targetPath: (event.currentTarget as HTMLInputElement).value };
+            }}
+          />
+        </label>
+      {/if}
 
       <label>
         <span>Working directory</span>
@@ -319,17 +330,32 @@
         />
       </label>
 
-      <label>
-        <span>Arguments (one per line)</span>
-        <textarea
-          rows="6"
-          spellcheck="false"
-          value={editor.argsText}
-          on:input={(event) => {
-            editor = { ...editor, argsText: (event.currentTarget as HTMLTextAreaElement).value };
-          }}
-        ></textarea>
-      </label>
+      {#if editor.mode === 'direct'}
+        <label>
+          <span>Arguments (one per line)</span>
+          <textarea
+            rows="5"
+            spellcheck="false"
+            value={editor.argsText}
+            on:input={(event) => {
+              editor = { ...editor, argsText: (event.currentTarget as HTMLTextAreaElement).value };
+            }}
+          ></textarea>
+        </label>
+      {:else}
+        <label>
+          <span>Commands (one per line)</span>
+          <textarea
+            rows="8"
+            spellcheck="false"
+            value={editor.commandsText}
+            placeholder={'cd C:\\dev\\my-app\npython app.py'}
+            on:input={(event) => {
+              editor = { ...editor, commandsText: (event.currentTarget as HTMLTextAreaElement).value };
+            }}
+          ></textarea>
+        </label>
+      {/if}
 
       <div class="command-editor-actions">
         <MeltActionButton

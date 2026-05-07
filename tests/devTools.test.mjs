@@ -54,11 +54,11 @@ function workspace() {
 
 test('developer tooling IPC constants and task events are centralized and registered', () => {
   assert.deepEqual(DEV_TOOL_COMMANDS, {
-    buildTerminalLaunchPlan: 'build_terminal_launch_plan',
-    buildEditorLaunchPlan: 'build_editor_launch_plan',
-    getWorkspaceGitStatus: 'get_workspace_git_status',
-    spawnWorkspaceTask: 'spawn_workspace_task',
-    cancelWorkspaceTask: 'cancel_workspace_task',
+      buildTerminalLaunchPlan: 'build_terminal_launch_plan',
+      buildEditorLaunchPlan: 'build_editor_launch_plan',
+      getWorkspaceGitStatus: 'get_workspace_git_status',
+      spawnWorkspaceTask: 'spawn_workspace_task',
+      cancelWorkspaceTask: 'cancel_workspace_task',
     listWorkspaceTaskHistory: 'list_workspace_task_history',
     listJasonshellTaskProcessMetadata: 'list_jasonshell_task_process_metadata'
   });
@@ -74,6 +74,16 @@ test('developer tooling IPC constants and task events are centralized and regist
   for (const event of Object.values(TASK_EVENTS)) {
     assert.match(eventsSource, new RegExp(event));
   }
+});
+
+test('top bar no longer exposes project context launcher', () => {
+  const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const commandIndex = topBarSource.indexOf('class="command-control"');
+
+  assert.ok(commandIndex > 0);
+  assert.doesNotMatch(topBarSource, /project-context-control|project-context-button|showProjectContextPanel/);
+  assert.doesNotMatch(commandsSource, /launchProjectContext|project_context/);
+  assert.doesNotMatch(mainSource, /project_context/);
 });
 
 test('tool launch requests derive safe terminal and editor argv templates from workspace state', () => {

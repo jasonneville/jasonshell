@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { IPC_COMMANDS } from '../ipc/commands.js';
 
-export const QUICK_COMMAND_MODES = ['direct', 'powershellFile', 'cmdFile'] as const;
+export const QUICK_COMMAND_MODES = ['direct', 'commandBlock'] as const;
 export type QuickCommandMode = (typeof QUICK_COMMAND_MODES)[number];
 
 export interface QuickCommandEntry {
@@ -10,6 +10,7 @@ export interface QuickCommandEntry {
   mode: QuickCommandMode;
   targetPath: string;
   args: string[];
+  commands: string[];
   cwd: string | null;
 }
 
@@ -70,6 +71,17 @@ export function formatQuickCommandArgsTextarea(args: readonly string[]): string 
   return args.map((value) => value.trim()).filter(Boolean).join('\n');
 }
 
+export function parseQuickCommandCommandsTextarea(value: string): string[] {
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+export function formatQuickCommandCommandsTextarea(commands: readonly string[]): string {
+  return commands.map((value) => value.trim()).filter(Boolean).join('\n');
+}
+
 export async function loadQuickCommandsSettings(): Promise<QuickCommandsSettings> {
   const settings = await invoke<ShellSettingsRecord>(IPC_COMMANDS.loadShellSettings);
   return coerceQuickCommandsSettings(settings.quickCommands ?? DEFAULT_QUICK_COMMANDS_SETTINGS);
@@ -114,13 +126,15 @@ function coerceQuickCommandEntry(value: unknown, index: number): QuickCommandEnt
   const mode = asMode(record.mode);
   const targetPath = asString(record.targetPath);
   const args = Array.isArray(record.args) ? record.args.map(asString).filter(Boolean) : [];
+  const commands = normalizeCommandLines(record, mode, targetPath, args);
   const cwd = asOptionalString(record.cwd);
   const normalized = {
     id: id.toLowerCase(),
     label,
     mode,
-    targetPath,
-    args,
+    targetPath: mode === 'direct' ? targetPath : '',
+    args: mode === 'direct' ? args : [],
+    commands,
     cwd
   } satisfies QuickCommandEntry;
   validateQuickCommandEntry(normalized, index);
@@ -134,17 +148,18 @@ function validateQuickCommandEntry(entry: QuickCommandEntry, index: number): voi
   if (!entry.label.trim()) {
     throw new Error(`Quick command '${entry.id}' label must not be empty.`);
   }
-  if (!entry.targetPath.trim()) {
-    throw new Error(`Quick command '${entry.id}' targetPath must not be empty.`);
-  }
-  const isAbsolutePath = isAbsoluteWindowsPath(entry.targetPath);
-  if (entry.mode === 'direct' && !isAbsolutePath && !isSafeCommandToken(entry.targetPath)) {
-    throw new Error(
-      `Quick command '${entry.id}' direct mode target must be an absolute path or safe command token.`
-    );
-  }
-  if ((entry.mode === 'powershellFile' || entry.mode === 'cmdFile') && !isAbsolutePath) {
-    throw new Error(`Quick command '${entry.id}' script mode target must be absolute.`);
+  if (entry.mode === 'direct') {
+    if (!entry.targetPath.trim()) {
+      throw new Error(`Quick command '${entry.id}' targetPath must not be empty.`);
+    }
+    const isAbsolutePath = isAbsoluteWindowsPath(entry.targetPath);
+    if (!isAbsolutePath && !isSafeCommandToken(entry.targetPath)) {
+      throw new Error(
+        `Quick command '${entry.id}' direct mode target must be an absolute path or safe command token.`
+      );
+    }
+  } else if (entry.commands.length === 0) {
+    throw new Error(`Quick command '${entry.id}' command block must include at least one command.`);
   }
   if (entry.cwd && !isAbsoluteWindowsPath(entry.cwd)) {
     throw new Error(`Quick command '${entry.id}' cwd must be absolute when provided.`);
@@ -158,6 +173,17 @@ function validateQuickCommandEntry(entry: QuickCommandEntry, index: number): voi
     }
     if (isSecretLikeArg(arg)) {
       throw new Error(`Quick command '${entry.id}' arguments must not include secret-like values.`);
+    }
+  }
+  for (const command of entry.commands) {
+    if (!command.trim()) {
+      throw new Error(`Quick command '${entry.id}' command block must not include empty commands.`);
+    }
+    if (/[\u0000-\u001F\u007F]/u.test(command)) {
+      throw new Error(`Quick command '${entry.id}' command block must not include control characters.`);
+    }
+    if (isSecretLikeArg(command)) {
+      throw new Error(`Quick command '${entry.id}' command block must not include secret-like values.`);
     }
   }
 }
@@ -207,7 +233,44 @@ function asOptionalString(value: unknown): string | null {
 }
 
 function asMode(value: unknown): QuickCommandMode {
-  return typeof value === 'string' && QUICK_COMMAND_MODES.includes(value as QuickCommandMode)
-    ? (value as QuickCommandMode)
-    : 'direct';
+  if (value === 'commandBlock' || value === 'powershellFile' || value === 'cmdFile') {
+    return 'commandBlock';
+  }
+  return 'direct';
+}
+
+function normalizeCommandLines(
+  record: Record<string, unknown>,
+  mode: QuickCommandMode,
+  targetPath: string,
+  args: readonly string[]
+): string[] {
+  const explicitCommands = Array.isArray(record.commands)
+    ? record.commands.map(asString).filter(Boolean)
+    : [];
+  if (explicitCommands.length > 0) {
+    return explicitCommands;
+  }
+  if (mode !== 'commandBlock') {
+    return [];
+  }
+  const originalMode = asString(record.mode);
+  if (originalMode === 'powershellFile') {
+    return [`pwsh.exe -NoLogo -NoProfile -File ${quoteCommandPart(targetPath)}${formatInlineArgs(args)}`];
+  }
+  if (originalMode === 'cmdFile') {
+    return [`cmd.exe /C ${quoteCommandPart(targetPath)}${formatInlineArgs(args)}`];
+  }
+  return [];
+}
+
+function formatInlineArgs(args: readonly string[]): string {
+  return args.length ? ` ${args.map(quoteCommandPart).join(' ')}` : '';
+}
+
+function quoteCommandPart(value: string): string {
+  if (/^[A-Za-z0-9._:/\\-]+$/u.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/gu, '\\"')}"`;
 }

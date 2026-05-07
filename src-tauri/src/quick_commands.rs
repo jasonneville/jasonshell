@@ -1,6 +1,6 @@
 use crate::settings::{
-    self, validate_quick_command_args, validate_quick_command_entry, QuickCommandEntry,
-    QuickCommandMode,
+    self, validate_quick_command_args, validate_quick_command_commands, validate_quick_command_entry,
+    QuickCommandEntry, QuickCommandMode,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -20,10 +20,11 @@ pub struct QuickCommandSpawnResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct QuickCommandSpawnPlan {
-    executable: String,
-    args: Vec<String>,
-    cwd: Option<String>,
+pub(crate) struct QuickCommandSpawnPlan {
+    pub(crate) label: String,
+    pub(crate) executable: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) cwd: Option<String>,
 }
 
 #[tauri::command]
@@ -46,7 +47,7 @@ fn validate_run_request(request: &RunQuickCommandRequest) -> Result<(), String> 
     Ok(())
 }
 
-fn resolve_quick_command_entry(
+pub(crate) fn resolve_quick_command_entry(
     settings: &settings::ShellSettings,
     command_id: &str,
 ) -> Result<QuickCommandEntry, String> {
@@ -61,7 +62,7 @@ fn resolve_quick_command_entry(
     validate_quick_command_entry(entry)
 }
 
-fn build_spawn_plan(entry: &QuickCommandEntry) -> Result<QuickCommandSpawnPlan, String> {
+pub(crate) fn build_spawn_plan(entry: &QuickCommandEntry) -> Result<QuickCommandSpawnPlan, String> {
     if let Some(cwd) = entry.cwd.as_deref() {
         if !Path::new(cwd).is_dir() {
             return Err(format!(
@@ -76,49 +77,56 @@ fn build_spawn_plan(entry: &QuickCommandEntry) -> Result<QuickCommandSpawnPlan, 
 
     match entry.mode {
         QuickCommandMode::Direct => Ok(QuickCommandSpawnPlan {
+            label: entry.label.clone(),
             executable: entry.target_path.clone(),
             args: entry.args.clone(),
             cwd: entry.cwd.clone(),
         }),
+        QuickCommandMode::CommandBlock => {
+            let commands = validate_quick_command_commands(&entry.commands, &entry.id)?;
+            Ok(QuickCommandSpawnPlan {
+                label: entry.label.clone(),
+                executable: "pwsh.exe".to_string(),
+                args: vec![
+                    "-NoLogo".to_string(),
+                    "-NoProfile".to_string(),
+                    "-Command".to_string(),
+                    commands.join("\r\n"),
+                ],
+                cwd: entry.cwd.clone(),
+            })
+        }
         QuickCommandMode::PowershellFile => {
-            if !Path::new(&entry.target_path).is_file() {
-                return Err(format!(
-                    "quick command '{}' powershell file does not exist: {}",
-                    entry.id, entry.target_path
-                ));
-            }
-            let mut args = vec![
+            let mut commands = vec![
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
                 "-File".to_string(),
                 entry.target_path.clone(),
             ];
-            args.extend(entry.args.clone());
-            Ok(QuickCommandSpawnPlan {
-                executable: "pwsh.exe".to_string(),
-                args,
-                cwd: entry.cwd.clone(),
+            commands.extend(entry.args.clone());
+            build_spawn_plan(&QuickCommandEntry {
+                mode: QuickCommandMode::CommandBlock,
+                target_path: String::new(),
+                args: Vec::new(),
+                commands: vec![format!("pwsh.exe {}", commands.join(" "))],
+                ..entry.clone()
             })
         }
         QuickCommandMode::CmdFile => {
-            if !Path::new(&entry.target_path).is_file() {
-                return Err(format!(
-                    "quick command '{}' cmd script does not exist: {}",
-                    entry.id, entry.target_path
-                ));
-            }
-            let mut args = vec!["/C".to_string(), entry.target_path.clone()];
-            args.extend(entry.args.clone());
-            Ok(QuickCommandSpawnPlan {
-                executable: "cmd.exe".to_string(),
-                args,
-                cwd: entry.cwd.clone(),
+            let mut commands = vec!["/C".to_string(), entry.target_path.clone()];
+            commands.extend(entry.args.clone());
+            build_spawn_plan(&QuickCommandEntry {
+                mode: QuickCommandMode::CommandBlock,
+                target_path: String::new(),
+                args: Vec::new(),
+                commands: vec![format!("cmd.exe {}", commands.join(" "))],
+                ..entry.clone()
             })
         }
     }
 }
 
-fn spawn_quick_command(plan: &QuickCommandSpawnPlan) -> Result<u32, String> {
+pub(crate) fn spawn_quick_command(plan: &QuickCommandSpawnPlan) -> Result<u32, String> {
     let mut command = Command::new(&plan.executable);
     command
         .args(&plan.args)
@@ -137,8 +145,6 @@ fn spawn_quick_command(plan: &QuickCommandSpawnPlan) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
-    use std::fs;
 
     fn entry(mode: QuickCommandMode, target_path: String, args: Vec<&str>) -> QuickCommandEntry {
         QuickCommandEntry {
@@ -147,6 +153,7 @@ mod tests {
             mode,
             target_path,
             args: args.into_iter().map(|value| value.to_string()).collect(),
+            commands: Vec::new(),
             cwd: None,
         }
     }
@@ -171,43 +178,17 @@ mod tests {
     }
 
     #[test]
-    fn builds_powershell_file_spawn_plan_with_explicit_file_mode() {
-        let path = env::temp_dir().join("jasonshell-quick-command-test.ps1");
-        fs::write(&path, "Write-Output 'ok'").unwrap();
-        let plan = build_spawn_plan(&entry(
-            QuickCommandMode::PowershellFile,
-            path.to_string_lossy().to_string(),
-            vec!["arg-a"],
-        ))
-        .unwrap();
+    fn builds_command_block_spawn_plan_as_powershell_command_text() {
+        let mut command = entry(QuickCommandMode::CommandBlock, String::new(), vec![]);
+        command.commands = vec![
+            "cd C:\\dev\\jasonshell".to_string(),
+            "python app.py".to_string(),
+        ];
+        let plan = build_spawn_plan(&command).unwrap();
         assert_eq!(plan.executable, "pwsh.exe");
-        assert_eq!(
-            plan.args[0..4],
-            [
-                "-NoLogo",
-                "-NoProfile",
-                "-File",
-                path.to_string_lossy().as_ref()
-            ]
-        );
-        assert_eq!(plan.args[4], "arg-a");
-    }
-
-    #[test]
-    fn builds_cmd_file_spawn_plan_with_c_flag() {
-        let path = env::temp_dir().join("jasonshell-quick-command-test.cmd");
-        fs::write(&path, "@echo off").unwrap();
-        let plan = build_spawn_plan(&entry(
-            QuickCommandMode::CmdFile,
-            path.to_string_lossy().to_string(),
-            vec!["arg-a", "arg-b"],
-        ))
-        .unwrap();
-        assert_eq!(plan.executable, "cmd.exe");
-        assert_eq!(plan.args[0], "/C");
-        assert_eq!(plan.args[1], path.to_string_lossy().as_ref());
-        assert_eq!(plan.args[2], "arg-a");
-        assert_eq!(plan.args[3], "arg-b");
+        assert_eq!(plan.args[0], "-NoLogo");
+        assert_eq!(plan.args[2], "-Command");
+        assert_eq!(plan.args[3], "cd C:\\dev\\jasonshell\r\npython app.py");
     }
 
     #[test]

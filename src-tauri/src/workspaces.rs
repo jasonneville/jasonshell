@@ -235,6 +235,13 @@ pub fn create_workspace(
     {
         return Err(format!("workspace already exists: {}", workspace.id));
     }
+    if settings
+        .workspaces
+        .iter()
+        .any(|existing| existing.name.eq_ignore_ascii_case(&workspace.name))
+    {
+        return Err(format!("context name must be unique: {}", workspace.name));
+    }
     settings.workspaces.push(workspace.clone());
     settings::save_shell_settings_for_app(&app_handle, settings)?;
     Ok(workspace)
@@ -247,6 +254,13 @@ pub fn update_workspace(
 ) -> Result<WorkspaceProfile, String> {
     let workspace = normalize_workspace(workspace)?;
     let mut settings = settings::load_shell_settings_for_app(&app_handle)?;
+    if settings
+        .workspaces
+        .iter()
+        .any(|existing| existing.id != workspace.id && existing.name.eq_ignore_ascii_case(&workspace.name))
+    {
+        return Err(format!("context name must be unique: {}", workspace.name));
+    }
     let Some(existing) = settings
         .workspaces
         .iter_mut()
@@ -351,7 +365,6 @@ pub(crate) fn validate_workspace(workspace: &WorkspaceProfile) -> Result<(), Str
         validate_env_declarations(&task.env)?;
         insert_unique(&mut task_ids, "workspace task id", &task.id)?;
     }
-
     for task_id in &workspace.startup.task_ids {
         validate_id("workspace startup task id", task_id)?;
         if !task_ids.contains(task_id) {

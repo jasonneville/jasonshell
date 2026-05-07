@@ -64,18 +64,21 @@ test('top bar command button is left of tray button and enforces popup exclusivi
   assert.match(topBarSource, />_\s*<\/span>/);
 });
 
-test('command panel surface includes list actions, editor fields, and one-arg-per-line textarea flow', () => {
+test('command panel surface includes list actions, editor fields, and command-block textarea flow', () => {
   assert.match(commandPanelSource, /id="command-panel" role="dialog"/);
   assert.match(commandPanelSource, /Run/);
   assert.match(commandPanelSource, /Edit/);
   assert.match(commandPanelSource, /Delete/);
   assert.match(commandPanelSource, /Label/);
   assert.match(commandPanelSource, /Mode/);
-  assert.match(commandPanelSource, /Program\/Script path/);
+  assert.match(commandPanelSource, /Program/);
   assert.match(commandPanelSource, /Working directory/);
   assert.match(commandPanelSource, /Arguments \(one per line\)/);
+  assert.match(commandPanelSource, /Commands \(one per line\)/);
   assert.match(commandPanelSource, /parseQuickCommandArgsTextarea/);
   assert.match(commandPanelSource, /formatQuickCommandArgsTextarea/);
+  assert.match(commandPanelSource, /parseQuickCommandCommandsTextarea/);
+  assert.match(commandPanelSource, /formatQuickCommandCommandsTextarea/);
   assert.match(commandPanelSource, /saveQuickCommandsSettings/);
   assert.match(commandPanelSource, /runQuickCommand/);
   assert.match(commandPanelSource, /hideCommandPanel/);

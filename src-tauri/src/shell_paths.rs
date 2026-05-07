@@ -209,7 +209,7 @@ const VSCODE_EXECUTABLE_CANDIDATES: &[&str] = &[
     "code.exe",
 ];
 
-fn resolve_vscode_executable() -> Option<std::path::PathBuf> {
+pub(crate) fn resolve_vscode_executable() -> Option<std::path::PathBuf> {
     resolve_vscode_executable_with(resolve_executable_candidate)
 }
 
