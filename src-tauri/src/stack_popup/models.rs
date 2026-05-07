@@ -128,6 +128,81 @@ pub struct StackGitOperationResult {
     pub summary: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitLogRequest {
+    pub folder_path: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitLogEntry {
+    pub commit_hash: String,
+    pub short_hash: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub authored_at: String,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitLog {
+    pub repository_root: String,
+    pub entries: Vec<StackGitLogEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitTreeRequest {
+    pub folder_path: String,
+    pub treeish: Option<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitTreeEntry {
+    pub mode: String,
+    pub kind: String,
+    pub object_hash: String,
+    pub size_bytes: Option<u64>,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitTree {
+    pub repository_root: String,
+    pub treeish: String,
+    pub entries: Vec<StackGitTreeEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitBranch {
+    pub name: String,
+    pub current: bool,
+    pub remote: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitBranches {
+    pub repository_root: String,
+    pub current_branch: Option<String>,
+    pub branches: Vec<StackGitBranch>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitBranchRequest {
+    pub folder_path: String,
+    pub branch_name: String,
+    pub checkout: Option<bool>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackFolderPageDiagnostics {

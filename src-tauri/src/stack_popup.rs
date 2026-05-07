@@ -26,10 +26,11 @@ pub struct StackPathSuggestion {
 }
 
 pub use models::{
-    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitCommitRequest,
-    StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackItem,
-    StackItemIconResolutionBatch, StackNativeDragPreparation, StackOpenWithCandidate,
-    StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
+    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
+    StackGitBranches, StackGitCommitRequest, StackGitLog, StackGitLogRequest,
+    StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackGitTree,
+    StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
+    StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,6 +339,50 @@ pub async fn stack_git_commit(
     request: StackGitCommitRequest,
 ) -> Result<StackGitOperationResult, String> {
     git_status::stack_git_commit_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_log(request: StackGitLogRequest) -> Result<StackGitLog, String> {
+    git_status::stack_git_log_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_tree(request: StackGitTreeRequest) -> Result<StackGitTree, String> {
+    git_status::stack_git_tree_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_branches(path: String) -> Result<StackGitBranches, String> {
+    git_status::stack_git_branches_async(path).await
+}
+
+#[tauri::command]
+pub async fn stack_git_fetch(folder_path: String) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_fetch_async(folder_path).await
+}
+
+#[tauri::command]
+pub async fn stack_git_pull(folder_path: String) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_pull_async(folder_path).await
+}
+
+#[tauri::command]
+pub async fn stack_git_push(folder_path: String) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_push_async(folder_path).await
+}
+
+#[tauri::command]
+pub async fn stack_git_checkout_branch(
+    request: StackGitBranchRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_checkout_branch_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_create_branch(
+    request: StackGitBranchRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_create_branch_async(request).await
 }
 
 #[tauri::command]

@@ -32,14 +32,25 @@
     revealStackItem,
     showStackItemProperties,
     stackGitAddPaths,
+    stackGitCheckoutBranch,
     stackGitCommit,
+    stackGitCreateBranch,
+    stackGitBranches,
+    stackGitFetch,
+    stackGitLog,
+    stackGitPull,
+    stackGitPush,
+    stackGitTree,
     suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
     type StackArchiveDestinationMode,
     type StackArchiveExtractor,
+    type StackGitBranches,
+    type StackGitLog,
     type StackGitStatus,
     type StackGitFileStatusKind,
+    type StackGitTree,
     type StackItemIconResolution,
     type StackFolderListing,
     type StackOpenWithCandidate,
@@ -112,6 +123,8 @@
     width?: number;
     submenuMaxHeight?: number;
   };
+
+  type StackGitWorkbenchView = 'changes' | 'log' | 'tree' | 'branches';
 
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
@@ -198,6 +211,22 @@
   let gitCommitMessage = '';
   let gitOperationPending = false;
   let gitOperationMessage = '';
+  let gitWorkbenchView: StackGitWorkbenchView = 'changes';
+  let gitWorkbenchExpanded = false;
+  let gitBranchDraft = '';
+  let gitNewBranchDraft = '';
+  let gitLog: StackGitLog | null = null;
+  let gitTree: StackGitTree | null = null;
+  let gitBranches: StackGitBranches | null = null;
+  let gitWorkbenchLoading = false;
+  let gitWorkbenchRequestSequence = 0;
+  let pendingGitMutation:
+    | { kind: 'add'; paths: string[] }
+    | { kind: 'commit'; message: string; paths: string[] }
+    | { kind: 'remote'; operation: 'pull' | 'push' }
+    | { kind: 'checkout'; branchName: string }
+    | { kind: 'createBranch'; branchName: string }
+    | null = null;
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -514,6 +543,9 @@
         return;
       }
       gitStatus = status;
+      if (status && gitStatusPopupOpen) {
+        void refreshGitWorkbenchData(gitWorkbenchView, folderPath);
+      }
     } catch (error) {
       if (requestSequence === gitStatusRequestSequence && loadSequence === folderLoadSequence) {
         console.debug('Stack git status unavailable', error);
@@ -1213,10 +1245,19 @@
     gitStatusPopupOpen = true;
     gitOperationMessage = '';
     reconcileGitStatusSelection();
+    void refreshGitWorkbenchData(gitWorkbenchView, currentPath);
   }
 
   function closeGitStatusPopup() {
     gitStatusPopupOpen = false;
+  }
+
+  function setGitWorkbenchView(view: StackGitWorkbenchView) {
+    gitWorkbenchView = view;
+    if (view === 'changes') {
+      reconcileGitStatusSelection();
+    }
+    void refreshGitWorkbenchData(view, currentPath);
   }
 
   function cancelInlineEditor() {
@@ -1439,10 +1480,17 @@
     if (!gitStatus || !gitStatusSelectedPaths.length || gitOperationPending) {
       return;
     }
+    pendingGitMutation = { kind: 'add', paths: [...gitStatusSelectedPaths] };
+  }
+
+  async function executeAddSelectedGitPaths(paths: string[]) {
+    if (!gitStatus || !paths.length || gitOperationPending) {
+      return;
+    }
     gitOperationPending = true;
     gitOperationMessage = '';
     try {
-      const result = await stackGitAddPaths(currentPath, gitStatusSelectedPaths);
+      const result = await stackGitAddPaths(currentPath, paths);
       gitOperationMessage = result.summary;
       gitStatusSelectedPaths = [];
       await refreshStackGitStatus(currentPath, folderLoadSequence);
@@ -1457,10 +1505,21 @@
     if (!gitStatus || !gitCommitMessage.trim() || gitOperationPending) {
       return;
     }
+    pendingGitMutation = {
+      kind: 'commit',
+      message: gitCommitMessage,
+      paths: stagedGitStatusEntries().map((entry) => entry.path)
+    };
+  }
+
+  async function executeCommitGitStatus(message: string, paths: string[]) {
+    if (!gitStatus || !message.trim() || !paths.length || gitOperationPending) {
+      return;
+    }
     gitOperationPending = true;
     gitOperationMessage = '';
     try {
-      const result = await stackGitCommit(currentPath, gitCommitMessage, stagedGitStatusEntries().map((entry) => entry.path));
+      const result = await stackGitCommit(currentPath, message, paths);
       gitOperationMessage = result.summary;
       gitCommitMessage = '';
       gitStatusSelectedPaths = [];
@@ -1469,6 +1528,186 @@
       gitOperationMessage = operationErrorMessage(error, 'Git commit failed');
     } finally {
       gitOperationPending = false;
+    }
+  }
+
+  async function runGitRemoteOperation(operation: 'fetch' | 'pull' | 'push') {
+    if (!gitStatus || gitOperationPending) {
+      return;
+    }
+    if (operation !== 'fetch') {
+      pendingGitMutation = { kind: 'remote', operation };
+      return;
+    }
+    await executeGitRemoteOperation(operation);
+  }
+
+  async function executeGitRemoteOperation(operation: 'fetch' | 'pull' | 'push') {
+    if (!gitStatus || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = operation === 'fetch'
+        ? await stackGitFetch(currentPath)
+        : operation === 'pull'
+          ? await stackGitPull(currentPath)
+          : await stackGitPush(currentPath);
+      gitOperationMessage = result.summary;
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+      await refreshGitWorkbenchData(gitWorkbenchView, currentPath, true);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, `Git ${operation} failed`);
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function checkoutGitBranch() {
+    if (!gitStatus || !gitBranchDraft.trim() || gitOperationPending) {
+      return;
+    }
+    pendingGitMutation = { kind: 'checkout', branchName: gitBranchDraft.trim() };
+  }
+
+  async function executeCheckoutGitBranch(branchName: string) {
+    if (!gitStatus || !branchName || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitCheckoutBranch(currentPath, branchName);
+      gitOperationMessage = result.summary;
+      gitBranchDraft = '';
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+      await refreshGitWorkbenchData(gitWorkbenchView, currentPath, true);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git checkout failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function createGitBranch() {
+    if (!gitStatus || !gitNewBranchDraft.trim() || gitOperationPending) {
+      return;
+    }
+    pendingGitMutation = { kind: 'createBranch', branchName: gitNewBranchDraft.trim() };
+  }
+
+  async function executeCreateGitBranch(branchName: string) {
+    if (!gitStatus || !branchName || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitCreateBranch(currentPath, branchName, true);
+      gitOperationMessage = result.summary;
+      gitNewBranchDraft = '';
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+      await refreshGitWorkbenchData(gitWorkbenchView, currentPath, true);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git branch create failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function refreshGitWorkbenchData(view: StackGitWorkbenchView, folderPath: string, force = false) {
+    if (!gitStatus || !gitStatusPopupOpen || !folderPath || view === 'changes') {
+      return;
+    }
+    if (!force) {
+      if (view === 'log' && gitLog?.repositoryRoot === gitStatus.repositoryRoot) return;
+      if (view === 'tree' && gitTree?.repositoryRoot === gitStatus.repositoryRoot) return;
+      if (view === 'branches' && gitBranches?.repositoryRoot === gitStatus.repositoryRoot) return;
+    }
+
+    const requestSequence = ++gitWorkbenchRequestSequence;
+    const requestedLoadSequence = folderLoadSequence;
+    const requestedRepoRoot = gitStatus.repositoryRoot;
+    gitWorkbenchLoading = true;
+    try {
+      if (view === 'log') {
+        const log = await stackGitLog(folderPath, 80);
+        if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, log.repositoryRoot)) gitLog = log;
+      } else if (view === 'tree') {
+        const tree = await stackGitTree(folderPath, 'HEAD');
+        if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, tree.repositoryRoot)) gitTree = tree;
+      } else if (view === 'branches') {
+        const branches = await stackGitBranches(folderPath);
+        if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, branches.repositoryRoot)) gitBranches = branches;
+      }
+    } catch (error) {
+      if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, requestedRepoRoot)) {
+        gitOperationMessage = operationErrorMessage(error, `Git ${view} load failed`);
+      }
+    } finally {
+      if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, requestedRepoRoot)) {
+        gitWorkbenchLoading = false;
+      }
+    }
+  }
+
+  function isCurrentGitWorkbenchResponse(
+    requestSequence: number,
+    requestedLoadSequence: number,
+    folderPath: string,
+    repositoryRoot: string,
+    responseRepositoryRoot: string
+  ) {
+    return requestSequence === gitWorkbenchRequestSequence
+      && requestedLoadSequence === folderLoadSequence
+      && folderPath === stackState.currentPath
+      && gitStatus?.repositoryRoot === repositoryRoot
+      && responseRepositoryRoot === repositoryRoot;
+  }
+
+  function gitMutationTitle() {
+    if (!pendingGitMutation) return '';
+    if (pendingGitMutation.kind === 'add') return 'Confirm git add';
+    if (pendingGitMutation.kind === 'commit') return 'Confirm git commit';
+    if (pendingGitMutation.kind === 'remote') return `Confirm git ${pendingGitMutation.operation}`;
+    if (pendingGitMutation.kind === 'checkout') return 'Confirm branch checkout';
+    return 'Confirm branch creation';
+  }
+
+  function gitMutationMessage() {
+    if (!pendingGitMutation) return '';
+    if (pendingGitMutation.kind === 'add') {
+      return `Add stages ${pendingGitMutation.paths.length} selected file(s) in this repository.`;
+    }
+    if (pendingGitMutation.kind === 'commit') {
+      return `Commit creates a new local commit from ${pendingGitMutation.paths.length} staged file(s).`;
+    }
+    if (pendingGitMutation.kind === 'remote') {
+      return pendingGitMutation.operation === 'push'
+        ? 'Push sends local commits to the configured remote for this repository.'
+        : 'Pull updates files in this working tree with fast-forward-only changes from the configured remote.';
+    }
+    if (pendingGitMutation.kind === 'checkout') {
+      return `Checkout switches this working tree to ${pendingGitMutation.branchName}.`;
+    }
+    return `Create branch makes and switches to ${pendingGitMutation.branchName}.`;
+  }
+
+  async function confirmGitMutation() {
+    const mutation = pendingGitMutation;
+    pendingGitMutation = null;
+    if (!mutation) return;
+    if (mutation.kind === 'add') {
+      await executeAddSelectedGitPaths(mutation.paths);
+    } else if (mutation.kind === 'commit') {
+      await executeCommitGitStatus(mutation.message, mutation.paths);
+    } else if (mutation.kind === 'remote') {
+      await executeGitRemoteOperation(mutation.operation);
+    } else if (mutation.kind === 'checkout') {
+      await executeCheckoutGitBranch(mutation.branchName);
+    } else {
+      await executeCreateGitBranch(mutation.branchName);
     }
   }
 
@@ -2160,6 +2399,7 @@
     <dialog
       open
       class="stack-git-popup"
+      class:expanded={gitWorkbenchExpanded}
       aria-label="Git status"
       on:click|stopPropagation
       on:contextmenu|stopPropagation
@@ -2170,49 +2410,159 @@
           <h2>{gitStatus.branch}</h2>
           <p>{gitStatus.repositoryRoot}</p>
         </div>
-        <button type="button" aria-label="Close git status" on:click={closeGitStatusPopup}>Close</button>
-      </header>
-      <div class="stack-git-popup-tabs" aria-label="Git status filter">
-        <button type="button" class:active={gitStatusPopupFilter === 'all'} on:click={() => { gitStatusPopupFilter = 'all'; gitStatusSelectedPaths = []; }}>All</button>
-        {#each stackGitSummaryParts(gitStatus) as part}
-          <button type="button" class:active={gitStatusPopupFilter === part.status} on:click={() => { gitStatusPopupFilter = part.status; gitStatusSelectedPaths = []; }}>{part.label}</button>
-        {/each}
-      </div>
-      <div class="stack-git-popup-toolbar">
-        <span>{gitStatusFilterLabel()} · {filteredGitStatusEntries().length} · {gitStatusSelectedPaths.length} selected</span>
-        <button type="button" disabled={!filteredGitStatusEntries().length || gitOperationPending} on:click={() => setAllGitPathsSelected(true)}>Select all</button>
-        <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => setAllGitPathsSelected(false)}>Clear</button>
-        <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => void addSelectedGitPaths()}>Add selected</button>
-      </div>
-      <div class="stack-git-file-list" role="list" aria-label="Git changed files">
-        {#if filteredGitStatusEntries().length}
-          {#each filteredGitStatusEntries() as entry (entry.path)}
-            <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
-              <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
-              <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
-              <span title={entry.path}>{entry.relativePath}</span>
-              <small>{entry.staged ? 'Staged' : stackGitStatusLabel(entry.status)}</small>
-            </label>
-          {/each}
-        {:else}
-          <div class="stack-git-empty" role="status">No files</div>
-        {/if}
-      </div>
-      <form class="stack-git-commit" on:submit|preventDefault={() => void commitGitStatus()}>
-        <label for="stack-git-commit-message">Commit message</label>
-        <textarea
-          id="stack-git-commit-message"
-          value={gitCommitMessage}
-          rows="3"
-          placeholder={stagedGitStatusEntries().length ? `${stagedGitStatusEntries().length} staged file(s)` : 'Add files before commit'}
-          on:input={(event) => gitCommitMessage = event.currentTarget.value}
-        ></textarea>
-        <div>
-          <span role="status">{gitOperationMessage}</span>
-          <button type="submit" disabled={!gitCommitMessage.trim() || gitOperationPending || !stagedGitStatusEntries().length}>Commit</button>
+        <div class="stack-git-window-actions">
+          <button type="button" aria-label={gitWorkbenchExpanded ? 'Restore git workbench' : 'Expand git workbench'} on:click={() => gitWorkbenchExpanded = !gitWorkbenchExpanded}>{gitWorkbenchExpanded ? 'Restore' : 'Expand'}</button>
+          <button type="button" aria-label="Close git status" on:click={closeGitStatusPopup}>Close</button>
         </div>
-      </form>
+      </header>
+
+      <div class="stack-git-remote-actions" aria-label="Git remote actions">
+        <button type="button" disabled={gitOperationPending} on:click={() => void runGitRemoteOperation('fetch')}>Fetch</button>
+        <button type="button" disabled={gitOperationPending} on:click={() => void runGitRemoteOperation('pull')}>Pull</button>
+        <button type="button" disabled={gitOperationPending} on:click={() => void runGitRemoteOperation('push')}>Push</button>
+        <span role="status">{gitOperationMessage}</span>
+      </div>
+
+      <div class="stack-git-workbench">
+        <aside class="stack-git-workbench-sidebar" aria-label="Git repository summary">
+          <div class="stack-git-repo-meta">
+            <span>Current branch</span>
+            <strong>{gitStatus.branch}</strong>
+            <small title={gitStatus.repositoryRoot}>{gitStatus.repositoryRoot}</small>
+          </div>
+          <nav class="stack-git-workbench-views" aria-label="Git workbench views">
+            <button type="button" class:active={gitWorkbenchView === 'changes'} on:click={() => setGitWorkbenchView('changes')}>Changes</button>
+            <button type="button" class:active={gitWorkbenchView === 'log'} on:click={() => setGitWorkbenchView('log')}>Log</button>
+            <button type="button" class:active={gitWorkbenchView === 'tree'} on:click={() => setGitWorkbenchView('tree')}>Tree</button>
+            <button type="button" class:active={gitWorkbenchView === 'branches'} on:click={() => setGitWorkbenchView('branches')}>Branches</button>
+          </nav>
+          <div class="stack-git-sidebar-counts">
+            <span>{filteredGitStatusEntries().length} shown</span>
+            <span>{stagedGitStatusEntries().length} staged</span>
+            <span>{gitStatus.entries.length} total</span>
+          </div>
+        </aside>
+
+        <div class="stack-git-workbench-main">
+          {#if gitWorkbenchView === 'changes'}
+            <div class="stack-git-popup-tabs" aria-label="Git status filter">
+              <button type="button" class:active={gitStatusPopupFilter === 'all'} on:click={() => { gitStatusPopupFilter = 'all'; gitStatusSelectedPaths = []; }}>All</button>
+              {#each stackGitSummaryParts(gitStatus) as part}
+                <button type="button" class:active={gitStatusPopupFilter === part.status} on:click={() => { gitStatusPopupFilter = part.status; gitStatusSelectedPaths = []; }}>{part.label}</button>
+              {/each}
+            </div>
+            <div class="stack-git-popup-toolbar">
+              <span>{gitStatusFilterLabel()} · {filteredGitStatusEntries().length} · {gitStatusSelectedPaths.length} selected</span>
+              <button type="button" disabled={!filteredGitStatusEntries().length || gitOperationPending} on:click={() => setAllGitPathsSelected(true)}>Select all</button>
+              <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => setAllGitPathsSelected(false)}>Clear</button>
+              <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => void addSelectedGitPaths()}>Add selected</button>
+            </div>
+            <div class="stack-git-file-list" role="list" aria-label="Git changed files">
+              {#if filteredGitStatusEntries().length}
+                {#each filteredGitStatusEntries() as entry (entry.path)}
+                  <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
+                    <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
+                    <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
+                    <span title={entry.path}>{entry.relativePath}</span>
+                    <small>{entry.staged ? 'Staged' : stackGitStatusLabel(entry.status)}</small>
+                  </label>
+                {/each}
+              {:else}
+                <div class="stack-git-empty" role="status">No files</div>
+              {/if}
+            </div>
+            <form class="stack-git-commit" on:submit|preventDefault={() => void commitGitStatus()}>
+              <label for="stack-git-commit-message">Commit message</label>
+              <textarea
+                id="stack-git-commit-message"
+                value={gitCommitMessage}
+                rows="3"
+                placeholder={stagedGitStatusEntries().length ? `${stagedGitStatusEntries().length} staged file(s)` : 'Add files before commit'}
+                on:input={(event) => gitCommitMessage = event.currentTarget.value}
+              ></textarea>
+              <div>
+                <span role="status">{gitOperationMessage}</span>
+                <button type="submit" disabled={!gitCommitMessage.trim() || gitOperationPending || !stagedGitStatusEntries().length}>Commit</button>
+              </div>
+            </form>
+          {:else if gitWorkbenchView === 'log'}
+            <div class="stack-git-log-list" role="list" aria-label="Git log">
+              {#if gitWorkbenchLoading && !gitLog}
+                <div class="stack-git-empty" role="status">Loading log...</div>
+              {:else if gitLog?.entries.length}
+                {#each gitLog.entries as entry (entry.commitHash)}
+                  <div class="stack-git-log-entry" role="listitem">
+                    <strong class="stack-git-log-subject" title={entry.subject}>{entry.subject}</strong>
+                    <div class="stack-git-log-meta">
+                      <code title={entry.commitHash}>{entry.shortHash}</code>
+                      <span title={entry.authorEmail}>{entry.authorName}</span>
+                      <time datetime={entry.authoredAt}>{entry.authoredAt}</time>
+                    </div>
+                  </div>
+                {/each}
+              {:else}
+                <div class="stack-git-empty" role="status">No commits</div>
+              {/if}
+            </div>
+          {:else if gitWorkbenchView === 'tree'}
+            <div class="stack-git-tree-list" role="list" aria-label="Git tree">
+              {#if gitWorkbenchLoading && !gitTree}
+                <div class="stack-git-empty" role="status">Loading tree...</div>
+              {:else if gitTree?.entries.length}
+                {#each gitTree.entries as entry (entry.objectHash + entry.path)}
+                  <div role="listitem">
+                    <span class="git-status-badge">{entry.kind === 'tree' ? 'dir' : 'file'}</span>
+                    <span title={entry.objectHash}>{entry.path}</span>
+                  </div>
+                {/each}
+              {:else}
+                <div class="stack-git-empty" role="status">No tree entries</div>
+              {/if}
+            </div>
+          {:else}
+            <div class="stack-git-branch-panel">
+              <div class="stack-git-branch-list" role="list" aria-label="Git branches">
+                {#if gitWorkbenchLoading && !gitBranches}
+                  <div class="stack-git-empty" role="status">Loading branches...</div>
+                {:else if gitBranches?.branches.length}
+                  {#each gitBranches.branches as branch (branch.name)}
+                    <button type="button" class:active={branch.current} disabled={gitOperationPending || branch.current} on:click={() => gitBranchDraft = branch.name}>
+                      <span>{branch.current ? '*' : branch.remote ? 'remote' : 'local'}</span>
+                      <strong>{branch.name}</strong>
+                    </button>
+                  {/each}
+                {:else}
+                  <div class="stack-git-empty" role="status">No branches</div>
+                {/if}
+              </div>
+              <form class="stack-git-branch-controls" on:submit|preventDefault={() => void checkoutGitBranch()}>
+                <label for="stack-git-checkout-branch">Checkout branch</label>
+                <input id="stack-git-checkout-branch" value={gitBranchDraft} placeholder="branch name" on:input={(event) => gitBranchDraft = event.currentTarget.value} />
+                <button type="submit" disabled={!gitBranchDraft.trim() || gitOperationPending}>Checkout branch</button>
+              </form>
+              <form class="stack-git-branch-controls" on:submit|preventDefault={() => void createGitBranch()}>
+                <label for="stack-git-create-branch">Create branch</label>
+                <input id="stack-git-create-branch" value={gitNewBranchDraft} placeholder="new branch" on:input={(event) => gitNewBranchDraft = event.currentTarget.value} />
+                <button type="submit" disabled={!gitNewBranchDraft.trim() || gitOperationPending}>Create branch</button>
+              </form>
+            </div>
+          {/if}
+        </div>
+      </div>
     </dialog>
+  {/if}
+
+  {#if pendingGitMutation}
+    <div class="git-confirm-backdrop" role="presentation" on:click|stopPropagation>
+      <div class="git-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="stack-git-confirm-title" aria-describedby="stack-git-confirm-message">
+        <h2 id="stack-git-confirm-title">{gitMutationTitle()}</h2>
+        <p id="stack-git-confirm-message">{gitMutationMessage()}</p>
+        <div class="git-confirm-actions">
+          <button type="button" on:click={() => pendingGitMutation = null}>Cancel</button>
+          <button type="button" class="danger" disabled={gitOperationPending} on:click={() => void confirmGitMutation()}>Confirm</button>
+        </div>
+      </div>
+    </div>
   {/if}
 
   <div
