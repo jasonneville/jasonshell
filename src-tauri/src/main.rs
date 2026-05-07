@@ -13,7 +13,6 @@ mod layout;
 mod process_manager;
 mod providers;
 mod quick_commands;
-mod quick_icons;
 mod search;
 mod search_panel;
 mod search_sources;
@@ -67,10 +66,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
-            quick_icons::list_quick_icons,
-            quick_icons::pin_task_window_quick_icon,
-            quick_icons::unpin_quick_icon,
-            quick_icons::launch_quick_icon,
             task_windows::list_open_task_windows,
             task_windows::list_taskbar_process_windows,
             task_windows::activate_task_window,
@@ -80,7 +75,6 @@ fn main() {
             task_preview::hide_task_window_preview,
             taskbar_menu::show_task_window_context_menu,
             taskbar_menu::show_launcher_context_menu,
-            taskbar_menu::show_quick_icon_context_menu,
             taskbar_menu::show_top_bar_pin_context_menu,
             search_panel::show_search_panel,
             search_panel::show_centered_search_panel,

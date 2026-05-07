@@ -719,7 +719,6 @@ mod tests {
             }],
             task_history: Vec::new(),
             quick_commands: Default::default(),
-            quick_icons: Default::default(),
         }
     }
 }

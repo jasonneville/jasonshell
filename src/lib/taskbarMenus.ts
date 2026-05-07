@@ -14,22 +14,6 @@ export type ShowLauncherContextMenuRequest = {
   y: number;
 };
 
-export type ShowQuickIconContextMenuRequest = {
-  quickIconId: string;
-  x: number;
-  y: number;
-};
-
-export const QUICK_ICON_MENU_ACTIONS = {
-  launchQuickIcon: 'launchQuickIcon',
-  unpinQuickIcon: 'unpinQuickIcon'
-} as const;
-
-export type QuickIconMenuActionPayload = {
-  action: (typeof QUICK_ICON_MENU_ACTIONS)[keyof typeof QUICK_ICON_MENU_ACTIONS];
-  quickIconId: string;
-};
-
 export type ShowTopBarPinContextMenuRequest = {
   path: string;
   x: number;
@@ -53,12 +37,6 @@ export function showLauncherContextMenu(
   request: ShowLauncherContextMenuRequest
 ): Promise<void> {
   return invoke(IPC_COMMANDS.showLauncherContextMenu, { request });
-}
-
-export function showQuickIconContextMenu(
-  request: ShowQuickIconContextMenuRequest
-): Promise<void> {
-  return invoke(IPC_COMMANDS.showQuickIconContextMenu, { request });
 }
 
 export function showTopBarPinContextMenu(

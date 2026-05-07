@@ -10,19 +10,9 @@
     listPinnedTaskbarLaunchers,
     type PinnedTaskbarLauncher
   } from '../lib/taskbarLaunchers';
-  import {
-    buildQuickIconLaunchFailureState,
-    filterExplorerLaunchersForQuickIcons,
-    launchQuickIcon,
-    listQuickIcons,
-    quickIconLaunchErrorFromUnknown,
-    unpinQuickIcon,
-    type QuickIcon,
-    type QuickIconLaunchError
-  } from '../lib/quickIcons';
+  import { preserveExplorerTaskbarPins } from '../lib/taskbarPins';
   import {
     showLauncherContextMenu,
-    showQuickIconContextMenu,
     showTaskWindowContextMenu
   } from '../lib/taskbarMenus';
   import {
@@ -62,11 +52,7 @@
     taskbarOverflowState,
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
-  let quickIconMessage = 'Loading quick icons…';
   let launcherMessage = 'Loading Explorer taskbar pins…';
-  let quickIcons: QuickIcon[] = [];
-  let quickIconLaunchErrors: Record<string, QuickIconLaunchError> = {};
-  let launchingQuickIconId: string | null = null;
   let launchers: PinnedTaskbarLauncher[] = [];
   let taskbarMessage = 'Loading open windows…';
   let openWindows: TaskbarWindow[] = [];
@@ -185,7 +171,7 @@
     launcherMessage = 'Loading Explorer taskbar pins…';
     try {
       const explorerLaunchers = await listPinnedTaskbarLaunchers();
-      launchers = filterExplorerLaunchersForQuickIcons(quickIcons, explorerLaunchers);
+      launchers = preserveExplorerTaskbarPins(explorerLaunchers);
       launcherMessage = launchers.length
         ? 'Pinned Explorer shortcuts'
         : 'No supported Explorer taskbar pins';
@@ -196,22 +182,7 @@
     }
   }
   async function refreshLauncherSections() {
-    await loadQuickIconLaunchers();
     await loadPinnedLaunchers();
-  }
-  async function loadQuickIconLaunchers() {
-    quickIconMessage = 'Loading quick icons…';
-    try {
-      quickIcons = await listQuickIcons();
-      quickIconLaunchErrors = {};
-      quickIconMessage = quickIcons.length
-        ? 'Pinned quick icons'
-        : 'No pinned quick icons';
-    } catch (error) {
-      console.error('Failed to load quick icons', error);
-      quickIcons = [];
-      quickIconMessage = 'Quick icons unavailable';
-    }
   }
   async function launchApp(launcher: PinnedTaskbarLauncher) {
     if (launchingShortcutPath) {
@@ -224,61 +195,10 @@
       await refreshTaskbarWindows();
     } catch (error) {
       console.error(`Failed to launch pinned app ${launcher.name}`, error);
-      launchers = launchers.filter((item) => item.shortcutPath !== launcher.shortcutPath);
-      launcherMessage = `Skipped unavailable launcher: ${launcher.name}`;
+      launcherMessage = `Launch unavailable: ${launcher.name}`;
       await refreshTaskbarWindows();
     } finally {
       launchingShortcutPath = null;
-    }
-  }
-  async function launchQuickIconFromBottomBar(quickIcon: QuickIcon) {
-    if (launchingQuickIconId) {
-      return;
-    }
-    launchingQuickIconId = quickIcon.id;
-    const { [quickIcon.id]: _clearedLaunchError, ...remainingLaunchErrors } = quickIconLaunchErrors;
-    void _clearedLaunchError;
-    quickIconLaunchErrors = remainingLaunchErrors;
-    try {
-      await launchQuickIcon({ id: quickIcon.id });
-      quickIconMessage = `Launched ${quickIcon.name}`;
-      await refreshTaskbarWindows();
-    } catch (error) {
-      console.error(`Failed to launch quick icon ${quickIcon.name}`, error);
-      const failure = buildQuickIconLaunchFailureState(
-        quickIcons,
-        quickIcon.id,
-        quickIconLaunchErrorFromUnknown(error, quickIcon.id)
-      );
-      quickIcons = failure.quickIcons;
-      quickIconLaunchErrors = { ...quickIconLaunchErrors, ...failure.errorById };
-      quickIconMessage = `Launch unavailable: ${quickIcon.name}`;
-      await refreshTaskbarWindows();
-    } finally {
-      launchingQuickIconId = null;
-    }
-  }
-  async function openQuickIconMenu(quickIcon: QuickIcon, event: MouseEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    await hidePreview();
-    try {
-      await showQuickIconContextMenu({
-        quickIconId: quickIcon.id,
-        x: event.clientX,
-        y: event.clientY
-      });
-    } catch (error) {
-      console.error(`Failed to open quick icon menu for ${quickIcon.name}`, error);
-    }
-  }
-  async function unpinQuickIconFromBottomBar(quickIcon: QuickIcon) {
-    try {
-      quickIcons = await unpinQuickIcon({ id: quickIcon.id });
-      quickIconMessage = `Unpinned ${quickIcon.name}`;
-    } catch (error) {
-      console.error(`Failed to unpin quick icon ${quickIcon.name}`, error);
-      quickIconMessage = `Unpin unavailable: ${quickIcon.name}`;
     }
   }
   async function toggleWindow(taskWindow: TaskbarWindow) {
@@ -638,39 +558,6 @@
 
 <div class="surface bottom-bar">
   <section class="taskbar-strip" aria-label="Taskbar">
-    <div class="launcher-strip quick-icon-strip" aria-label="Pinned quick icons">
-      {#if quickIcons.length}
-        {#each quickIcons as icon (icon.id)}
-          <span class="quick-icon-slot">
-            <MeltActionButton
-              class="launcher-button quick-icon-button"
-              type="button"
-              title={icon.name}
-              ariaLabel={`Launch ${icon.name}`}
-              disabled={launchingQuickIconId === icon.id}
-              onClick={() => void launchQuickIconFromBottomBar(icon)}
-              onContextMenu={(event) => void openQuickIconMenu(icon, event)}
-            >
-              <img class="launcher-icon" src={icon.iconDataUrl} alt="" draggable="false" />
-            </MeltActionButton>
-            {#if quickIconLaunchErrors[icon.id]}
-              <span
-                class="quick-icon-error"
-                role="status"
-                aria-live="polite"
-                aria-label={quickIconLaunchErrors[icon.id].message}
-              >
-                <span aria-hidden="true">!</span>
-                <span class="quick-icon-error-text">{quickIconLaunchErrors[icon.id].message}</span>
-              </span>
-            {/if}
-          </span>
-        {/each}
-      {:else}
-        <div class="strip-fallback">{quickIconMessage}</div>
-      {/if}
-    </div>
-
     <div class="launcher-strip" aria-label="Pinned Explorer taskbar apps">
       {#if launchers.length}
         {#each launchers as launcher (launcher.id)}

@@ -1,35 +1,29 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  defaultQuickIconsSettings,
-  filterExplorerLaunchersForQuickIcons,
-  normalizeQuickIconTargetKey
-} from '../dist-tests/lib/quickIcons.js';
+  normalizeTaskbarPinTargetKey,
+  preserveExplorerTaskbarPins
+} from '../dist-tests/lib/taskbarPins.js';
 
-test('quick icon settings default to empty entries', () => {
-  assert.deepEqual(defaultQuickIconsSettings(), { entries: [] });
-});
+const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
+const bottomBarCss = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
+const commandsSource = readFileSync(new URL('../src/ipc/commands.ts', import.meta.url), 'utf8');
+const settingsSource = readFileSync(new URL('../src/lib/settings.ts', import.meta.url), 'utf8');
+const taskbarMenusSource = readFileSync(new URL('../src/lib/taskbarMenus.ts', import.meta.url), 'utf8');
 
-test('normalizes Windows-like quick icon target keys for duplicate detection', () => {
+test('normalizes Windows-like taskbar pin target keys for diagnostics', () => {
   assert.equal(
-    normalizeQuickIconTargetKey('C:/Program Files/Google/Chrome/Application/chrome.exe'),
+    normalizeTaskbarPinTargetKey('C:/Program Files/Google/Chrome/Application/chrome.exe'),
     'c:\\program files\\google\\chrome\\application\\chrome.exe'
   );
   assert.equal(
-    normalizeQuickIconTargetKey('  \\\\Server\\Share\\Tool.exe  '),
+    normalizeTaskbarPinTargetKey('  \\\\Server\\Share\\Tool.exe  '),
     '\\\\server\\share\\tool.exe'
   );
 });
 
-test('keeps Explorer launchers even when legacy quick icons duplicate targets', () => {
-  const quickIcons = [
-    {
-      id: 'chrome',
-      name: 'Chrome',
-      targetPath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      iconDataUrl: 'data:image/png;base64,aaa'
-    }
-  ];
+test('preserves Explorer launchers without app-managed quick icon dedupe', () => {
   const launchers = [
     {
       id: 'launcher-chrome',
@@ -47,6 +41,21 @@ test('keeps Explorer launchers even when legacy quick icons duplicate targets', 
     }
   ];
 
-  const filtered = filterExplorerLaunchersForQuickIcons(quickIcons, launchers);
+  const filtered = preserveExplorerTaskbarPins(launchers);
   assert.deepEqual(filtered.map((launcher) => launcher.name), ['Chrome', 'Code']);
+});
+
+test('bottom bar renders only Explorer taskbar pins before open windows', () => {
+  assert.match(bottomBarSource, /listPinnedTaskbarLaunchers/);
+  assert.match(bottomBarSource, /Pinned Explorer taskbar apps/);
+  assert.doesNotMatch(bottomBarSource, /listQuickIcons|launchQuickIcon|showQuickIconContextMenu/);
+  assert.doesNotMatch(bottomBarSource, /quickIcons|quick-icon|Pinned quick icons/);
+  assert.doesNotMatch(bottomBarCss, /quick-icon/);
+});
+
+test('frontend no longer exposes app-managed quick icon IPC or settings path', () => {
+  assert.doesNotMatch(commandsSource, /listQuickIcons|pinTaskWindowQuickIcon|unpinQuickIcon|launchQuickIcon/);
+  assert.doesNotMatch(commandsSource, /showQuickIconContextMenu/);
+  assert.doesNotMatch(settingsSource, /quickIcons|QuickIconsSettings|defaultQuickIconsSettings/);
+  assert.doesNotMatch(taskbarMenusSource, /QuickIcon|showQuickIconContextMenu|QUICK_ICON_MENU_ACTIONS/);
 });

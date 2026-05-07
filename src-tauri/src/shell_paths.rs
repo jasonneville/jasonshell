@@ -55,16 +55,6 @@ fn classify_shell_open_target(path: &str) -> Result<ShellOpenTarget<'_>, String>
     Ok(ShellOpenTarget::LocalPath(path))
 }
 
-pub fn launch_audited_app_path(path: String) -> Result<(), String> {
-    let path = path.trim();
-    if path.is_empty() {
-        return Err("Application path is empty".to_string());
-    }
-
-    let target = classify_app_launch_target(path)?;
-    open_path(target)
-}
-
 fn classify_app_launch_target(path: &str) -> Result<&str, String> {
     if path.contains("://") || path.to_ascii_lowercase().starts_with("file:") || looks_like_protocol(path) {
         return Err("Application path protocol is not allowed".to_string());
