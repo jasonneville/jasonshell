@@ -84,6 +84,18 @@ function parseRustSurfaceContractLabels(source) {
   return regexCaptureAll(moduleMatch[1], /pub const [A-Z_]+: &str = "([^"]+)"/g);
 }
 
+function parseIpcEventNames(source) {
+  const objectMatch = source.match(/export const IPC_EVENTS = \{([\s\S]*?)\} as const;/);
+  assert.ok(objectMatch, 'src/ipc/events.ts must export IPC_EVENTS');
+  return regexCaptureAll(objectMatch[1], /:\s*'([^']+)'/g);
+}
+
+function parseRustEventContractLabels(source) {
+  const moduleMatch = source.match(/pub mod events \{([\s\S]*?)\n\}/);
+  assert.ok(moduleMatch, 'src-tauri/src/contracts.rs must define events module');
+  return regexCaptureAll(moduleMatch[1], /pub const [A-Z_]+: &str = "([^"]+)"/g);
+}
+
 function parseCapabilityWindows(sources) {
   const labelsToFiles = new Map();
 
@@ -158,6 +170,13 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
   }
 });
 
+test('event registry documents subset authority and excludes removed audio refresh event', () => {
+  assert.match(eventsSource, /Convenience subset/);
+  assert.match(eventsSource, /Rust event\s*\r?\n?\s*\/\/ authority lives in src-tauri\/src\/contracts\.rs/);
+  assert.doesNotMatch(eventsSource, /audioRefresh: 'audio:refresh'/);
+  assert.doesNotMatch(rustContractsSource, /AUDIO_REFRESH|audio:refresh/);
+});
+
 test('shipped shell window surfaces have matching frontend routes, IPC registry entries, and capability targets', () => {
   const shippedLabels = parseShellWindowLabels(shellWindowsSource);
   const shellSurfaceLabels = parseShellSurfaceTypeLabels(shellSurfaceSource);
@@ -215,6 +234,72 @@ test('surface parity failure output names future missing capability targets', ()
     ]),
     'src-tauri/capabilities/*.json: future-panel'
   );
+});
+
+test('Rust event contracts are authoritative and cover frontend event constants', () => {
+  const rustEvents = parseRustEventContractLabels(rustContractsSource);
+  const ipcEvents = parseIpcEventNames(eventsSource);
+
+  assert.match(
+    eventsSource,
+    /Convenience subset[\s\S]*Rust event\s*\r?\n?\s*\/\/ authority lives in src-tauri\/src\/contracts\.rs/,
+    'src/ipc/events.ts must document that it is a convenience subset, not the exhaustive event registry'
+  );
+
+  const missingIpcEvents = missingFrom(ipcEvents, rustEvents);
+  assert.deepEqual(
+    missingIpcEvents,
+    [],
+    `src/ipc/events.ts contains events missing from Rust authority: ${missingIpcEvents.join(', ')}`
+  );
+
+  const expectedRuntimeEvents = [
+    'audio-panel:open',
+    'audio-panel:closed',
+    'command-panel:closed',
+    'process-manager:open',
+    'process-manager:closed',
+    'search:open-centered',
+    'search-engine:progress',
+    'search-index:refreshed',
+    'search-panel:activate',
+    'search-panel:closed',
+    'search-panel:expand-group',
+    'search-panel:interaction',
+    'search-panel:key',
+    'search-panel:pin-folder',
+    'search-panel:query',
+    'search-panel:select',
+    'search-panel:update',
+    'stack-popup:open',
+    'stack-pins:updated',
+    'task-preview:hide',
+    'task-preview:hover-enter',
+    'task-preview:update',
+    'task:completed',
+    'task:output',
+    'task:started',
+    'taskbar:refresh-launchers',
+    'taskbar:refresh-windows',
+    'top-bar:pin-menu-action',
+    'tray-panel:closed',
+    'tray-panel:open'
+  ].sort();
+
+  assert.deepEqual(
+    rustEvents,
+    expectedRuntimeEvents,
+    'contracts::events::ALL must remain the exhaustive Tauri shell runtime event registry'
+  );
+});
+
+test('dead audio refresh event contract is not exposed without a Rust emitter', () => {
+  const audioWrapper = readFileSync(new URL('../src/lib/audio.ts', import.meta.url), 'utf8');
+  const audioPanelSource = readFileSync(new URL('../src/components/AudioPanelSurface.svelte', import.meta.url), 'utf8');
+  const audioRustSource = readFileSync(new URL('../src-tauri/src/audio_panel.rs', import.meta.url), 'utf8');
+  const joinedSource = [eventsSource, audioWrapper, audioPanelSource, audioRustSource].join('\n');
+
+  assert.doesNotMatch(joinedSource, /audio:refresh|AUDIO_REFRESH_EVENT|AudioRefreshPayload/);
 });
 
 test('settings wrapper declares versioned schema and stable command names', () => {

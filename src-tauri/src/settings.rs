@@ -339,7 +339,9 @@ fn validate_quick_commands_settings(
     Ok(quick_commands)
 }
 
-fn validate_quick_icons_settings(mut quick_icons: QuickIconsSettings) -> Result<QuickIconsSettings, String> {
+fn validate_quick_icons_settings(
+    mut quick_icons: QuickIconsSettings,
+) -> Result<QuickIconsSettings, String> {
     let mut seen_ids = HashSet::new();
     let mut seen_targets = HashSet::new();
     let mut normalized = Vec::with_capacity(quick_icons.entries.len());
@@ -375,17 +377,20 @@ pub(crate) fn validate_quick_icon_entry(entry: &QuickIconEntry) -> Result<QuickI
         return Err(format!("quick icon '{}' target path must not be empty", id));
     }
     if !Path::new(target_path).is_absolute() {
-        return Err(format!(
-            "quick icon '{}' target path must be absolute",
-            id
-        ));
+        return Err(format!("quick icon '{}' target path must be absolute", id));
     }
     let icon_data_url = entry.icon_data_url.trim();
     if icon_data_url.is_empty() {
-        return Err(format!("quick icon '{}' icon data url must not be empty", id));
+        return Err(format!(
+            "quick icon '{}' icon data url must not be empty",
+            id
+        ));
     }
     if !icon_data_url.starts_with("data:image/") {
-        return Err(format!("quick icon '{}' icon data url must be an image data URL", id));
+        return Err(format!(
+            "quick icon '{}' icon data url must be an image data URL",
+            id
+        ));
     }
 
     Ok(QuickIconEntry {

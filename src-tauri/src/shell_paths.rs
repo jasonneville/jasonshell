@@ -7,7 +7,150 @@ pub fn open_shell_path(path: String) -> Result<(), String> {
         return Err("Shell path is empty".to_string());
     }
 
-    open_path(path)
+    let target = classify_shell_open_target(path)?;
+    open_path(target.as_shell_value())
+}
+
+#[tauri::command]
+pub fn launch_app_path(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Application path is empty".to_string());
+    }
+
+    let target = classify_app_launch_target(path)?;
+    open_path(target)
+}
+
+#[derive(Debug)]
+enum ShellOpenTarget<'a> {
+    LocalPath(&'a str),
+    WindowsSettings(&'a str),
+}
+
+impl<'a> ShellOpenTarget<'a> {
+    fn as_shell_value(&self) -> &'a str {
+        match self {
+            ShellOpenTarget::LocalPath(path) | ShellOpenTarget::WindowsSettings(path) => path,
+        }
+    }
+}
+
+fn classify_shell_open_target(path: &str) -> Result<ShellOpenTarget<'_>, String> {
+    let lower = path.to_ascii_lowercase();
+    if lower.starts_with("ms-settings:") {
+        return validate_ms_settings_uri(path).map(|_| ShellOpenTarget::WindowsSettings(path));
+    }
+    if lower.contains("://") || lower.starts_with("file:") || looks_like_protocol(path) {
+        return Err("Shell path protocol is not allowed".to_string());
+    }
+
+    let local_path = Path::new(path);
+    if !local_path.exists() {
+        return Err(format!("Shell path does not exist: {path}"));
+    }
+    if is_executable_shell_path(local_path) {
+        return Err("Shell path executable or script launch is not allowed".to_string());
+    }
+    Ok(ShellOpenTarget::LocalPath(path))
+}
+
+pub fn launch_audited_app_path(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Application path is empty".to_string());
+    }
+
+    let target = classify_app_launch_target(path)?;
+    open_path(target)
+}
+
+fn classify_app_launch_target(path: &str) -> Result<&str, String> {
+    if path.contains("://") || path.to_ascii_lowercase().starts_with("file:") || looks_like_protocol(path) {
+        return Err("Application path protocol is not allowed".to_string());
+    }
+
+    let local_path = Path::new(path);
+    if !local_path.exists() {
+        return Err(format!("Application path does not exist: {path}"));
+    }
+    if !is_audited_app_launch_path(local_path) {
+        return Err("Application path extension is not allowed".to_string());
+    }
+    Ok(path)
+}
+
+fn validate_ms_settings_uri(path: &str) -> Result<(), String> {
+    let Some((scheme, suffix)) = path.split_once(':') else {
+        return Err("Windows Settings URI is invalid".to_string());
+    };
+    if !scheme.eq_ignore_ascii_case("ms-settings") {
+        return Err("Windows Settings URI is invalid".to_string());
+    }
+    if suffix
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Ok(());
+    }
+    Err("Windows Settings URI is invalid".to_string())
+}
+
+fn looks_like_protocol(path: &str) -> bool {
+    let Some((scheme, _)) = path.split_once(':') else {
+        return false;
+    };
+    !scheme.is_empty()
+        && scheme.chars().all(|ch| {
+            ch.is_ascii_alphabetic() || ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.')
+        })
+        && !is_windows_drive_path(path)
+}
+
+fn is_windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+        && bytes[0].is_ascii_alphabetic()
+}
+
+fn is_executable_shell_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "exe"
+                    | "com"
+                    | "bat"
+                    | "cmd"
+                    | "ps1"
+                    | "psm1"
+                    | "vbs"
+                    | "js"
+                    | "jse"
+                    | "wsf"
+                    | "msi"
+                    | "msc"
+                    | "scr"
+                    | "lnk"
+                    | "url"
+                    | "cpl"
+                    | "reg"
+            )
+        })
+}
+
+fn is_audited_app_launch_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "exe" | "lnk" | "appref-ms"
+            )
+        })
 }
 
 #[tauri::command]
@@ -31,7 +174,9 @@ pub fn open_folder_in_vscode(path: String) -> Result<(), String> {
     }
 
     let Some(vscode_executable) = resolve_vscode_executable() else {
-        return Err("Visual Studio Code was not found in standard install paths or PATH".to_string());
+        return Err(
+            "Visual Studio Code was not found in standard install paths or PATH".to_string(),
+        );
     };
 
     std::process::Command::new(&vscode_executable)
@@ -238,7 +383,10 @@ fn to_wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_control_panel_arg, resolve_vscode_executable_with};
+    use super::{
+        classify_app_launch_target, classify_shell_open_target, is_safe_control_panel_arg,
+        resolve_vscode_executable_with, ShellOpenTarget,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -265,5 +413,95 @@ mod tests {
     #[test]
     fn vscode_resolver_returns_none_when_missing() {
         assert_eq!(resolve_vscode_executable_with(|_| None), None);
+    }
+
+    #[test]
+    fn shell_open_boundary_allows_existing_local_files_and_folders() {
+        let root =
+            std::env::temp_dir().join(format!("jasonshell-shell-open-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("notes.txt");
+        std::fs::write(&file, b"hello").unwrap();
+
+        assert!(matches!(
+            classify_shell_open_target(&root.to_string_lossy()).unwrap(),
+            ShellOpenTarget::LocalPath(_)
+        ));
+        assert!(matches!(
+            classify_shell_open_target(&file.to_string_lossy()).unwrap(),
+            ShellOpenTarget::LocalPath(_)
+        ));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn shell_open_boundary_rejects_execution_and_protocol_inputs() {
+        let root = std::env::temp_dir().join(format!(
+            "jasonshell-shell-open-reject-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        for name in [
+            "cmd.exe",
+            "script.ps1",
+            "batch.bat",
+            "batch.cmd",
+            "shortcut.lnk",
+            "website.url",
+        ] {
+            let path = root.join(name);
+            std::fs::write(&path, b"echo bad").unwrap();
+            assert!(classify_shell_open_target(&path.to_string_lossy())
+                .unwrap_err()
+                .contains("not allowed"));
+        }
+        for path in [
+            "http://example.com",
+            "file:///C:/Temp/a.txt",
+            "unknown-protocol:value",
+        ] {
+            assert!(classify_shell_open_target(path)
+                .unwrap_err()
+                .contains("protocol is not allowed"));
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn shell_open_boundary_allows_ms_settings_only_as_vetted_protocol() {
+        assert!(matches!(
+            classify_shell_open_target("ms-settings:display").unwrap(),
+            ShellOpenTarget::WindowsSettings(_)
+        ));
+        assert!(classify_shell_open_target("ms-settings:display&calc.exe").is_err());
+        assert!(classify_shell_open_target("Ms-Settings:display&calc.exe").is_err());
+    }
+
+    #[test]
+    fn audited_app_launch_boundary_allows_apps_without_weakening_generic_shell_open() {
+        let root =
+            std::env::temp_dir().join(format!("jasonshell-app-launch-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let app = root.join("code.exe");
+        let shortcut = root.join("spotify.lnk");
+        let text = root.join("notes.txt");
+        std::fs::write(&app, b"app").unwrap();
+        std::fs::write(&shortcut, b"shortcut").unwrap();
+        std::fs::write(&text, b"text").unwrap();
+
+        assert!(classify_shell_open_target(&app.to_string_lossy()).is_err());
+        assert_eq!(
+            classify_app_launch_target(&app.to_string_lossy()).unwrap(),
+            app.to_string_lossy()
+        );
+        assert_eq!(
+            classify_app_launch_target(&shortcut.to_string_lossy()).unwrap(),
+            shortcut.to_string_lossy()
+        );
+        assert!(classify_app_launch_target(&text.to_string_lossy()).is_err());
+        assert!(classify_app_launch_target("http://example.com/app.exe").is_err());
+
+        std::fs::remove_dir_all(root).ok();
     }
 }

@@ -125,7 +125,9 @@ pub fn close_task_window(hwnd: String) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn reject_internal_shell_hwnd(hwnd: &str) -> Result<(), String> {
     if is_jasonshell_window(hwnd)? {
-        return Err("Refusing to close an internal JasonShell window from task preview".to_string());
+        return Err(
+            "Refusing to close an internal JasonShell window from task preview".to_string(),
+        );
     }
     Ok(())
 }

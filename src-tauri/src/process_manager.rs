@@ -537,8 +537,9 @@ mod windows_impl {
         PROCESS_TERMINATE, PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
     };
 
-    static PROCESS_ICON_DATA_URLS: OnceLock<Mutex<HashMap<String, Option<String>>>> =
-        OnceLock::new();
+    type ProcessIconCache = Mutex<HashMap<String, Option<String>>>;
+
+    static PROCESS_ICON_DATA_URLS: OnceLock<ProcessIconCache> = OnceLock::new();
 
     pub(super) fn list_processes() -> Result<Vec<ProcessInfo>, String> {
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
@@ -660,23 +661,60 @@ mod windows_impl {
     }
 
     fn process_icon_data_url(executable_path: Option<&str>) -> Option<String> {
+        let cache = PROCESS_ICON_DATA_URLS.get_or_init(|| Mutex::new(HashMap::new()));
+        process_icon_data_url_from_cache_with_extractor(
+            cache,
+            executable_path,
+            resolve_process_icon_data_url,
+        )
+    }
+
+    fn process_icon_data_url_from_cache_with_extractor<F>(
+        cache: &ProcessIconCache,
+        executable_path: Option<&str>,
+        extractor: F,
+    ) -> Option<String>
+    where
+        F: FnOnce(&Path) -> Option<String>,
+    {
         let executable_path = executable_path?.trim();
         if executable_path.is_empty() {
             return None;
         }
+        let icon_cache_key = executable_path.to_string();
 
-        let cache = PROCESS_ICON_DATA_URLS.get_or_init(|| Mutex::new(HashMap::new()));
-        let Ok(mut cache) = cache.lock() else {
-            return crate::task_windows::shell_file_icon_data_url(Path::new(executable_path)).ok();
-        };
-        if let Some(cached) = cache.get(executable_path) {
-            return cached.clone();
+        if let Some(cached) = cached_process_icon_data_url(cache, &icon_cache_key) {
+            return cached;
         }
 
-        let icon_data_url =
-            crate::task_windows::shell_file_icon_data_url(Path::new(executable_path)).ok();
-        cache.insert(executable_path.to_string(), icon_data_url.clone());
+        let icon_data_url = extractor(Path::new(&icon_cache_key));
+        store_process_icon_data_url(cache, &icon_cache_key, icon_data_url.clone());
         icon_data_url
+    }
+
+    fn cached_process_icon_data_url(
+        cache: &ProcessIconCache,
+        executable_path: &str,
+    ) -> Option<Option<String>> {
+        let Ok(cache) = cache.lock() else {
+            return None;
+        };
+        cache.get(executable_path).cloned()
+    }
+
+    fn resolve_process_icon_data_url(executable_path: &Path) -> Option<String> {
+        crate::task_windows::shell_file_icon_data_url(executable_path).ok()
+    }
+
+    fn store_process_icon_data_url(
+        cache: &ProcessIconCache,
+        executable_path: &str,
+        icon_data_url: Option<String>,
+    ) {
+        let Ok(mut cache) = cache.lock() else {
+            return;
+        };
+        cache.insert(executable_path.to_string(), icon_data_url);
     }
 
     fn gpu_percent_by_pid() -> HashMap<u32, f64> {
@@ -1029,6 +1067,124 @@ mod windows_impl {
         ticks
             .checked_sub(UNIX_EPOCH_FILETIME_TICKS)
             .map(|unix_ticks| unix_ticks / 10_000)
+    }
+
+    #[cfg(test)]
+    mod icon_cache_tests {
+        use super::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{mpsc, Arc, Mutex};
+        use std::thread;
+
+        #[test]
+        fn process_icon_cache_hit_is_reused_without_extraction() {
+            let cache = Mutex::new(HashMap::new());
+            let calls = AtomicUsize::new(0);
+
+            let first = process_icon_data_url_from_cache_with_extractor(
+                &cache,
+                Some("C:\\Tools\\app.exe"),
+                |_| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Some("data:image/png;base64,first".to_string())
+                },
+            );
+            let second = process_icon_data_url_from_cache_with_extractor(
+                &cache,
+                Some("C:\\Tools\\app.exe"),
+                |_| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Some("data:image/png;base64,second".to_string())
+                },
+            );
+
+            assert_eq!(first.as_deref(), Some("data:image/png;base64,first"));
+            assert_eq!(second.as_deref(), Some("data:image/png;base64,first"));
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+
+        #[test]
+        fn process_icon_cache_hit_is_available_while_miss_extracts() {
+            let cache = Arc::new(Mutex::new(HashMap::new()));
+            cache.lock().unwrap().insert(
+                "C:\\Tools\\cached.exe".to_string(),
+                Some("data:image/png;base64,cached".to_string()),
+            );
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let slow_cache = Arc::clone(&cache);
+
+            let slow_miss = thread::spawn(move || {
+                process_icon_data_url_from_cache_with_extractor(
+                    &slow_cache,
+                    Some("C:\\Tools\\slow.exe"),
+                    |_| {
+                        started_tx.send(()).unwrap();
+                        release_rx
+                            .recv_timeout(Duration::from_secs(2))
+                            .expect("test should release slow icon extraction");
+                        Some("data:image/png;base64,slow".to_string())
+                    },
+                )
+            });
+
+            started_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("slow icon extraction should start");
+            let started_at = Instant::now();
+            let cached = process_icon_data_url_from_cache_with_extractor(
+                &cache,
+                Some("C:\\Tools\\cached.exe"),
+                |_| panic!("cache hit must not invoke shell extraction"),
+            );
+
+            assert_eq!(cached.as_deref(), Some("data:image/png;base64,cached"));
+            assert!(
+                started_at.elapsed() < Duration::from_millis(200),
+                "cache hit waited behind slow miss for {:?}",
+                started_at.elapsed()
+            );
+            release_tx.send(()).unwrap();
+            assert_eq!(
+                slow_miss.join().unwrap().as_deref(),
+                Some("data:image/png;base64,slow")
+            );
+        }
+
+        #[test]
+        fn process_icon_cache_source_splits_lookup_resolve_and_store() {
+            let source = include_str!("process_manager.rs");
+            let helper = source
+                .split("fn process_icon_data_url_from_cache_with_extractor")
+                .nth(1)
+                .expect("process icon cache helper should exist");
+            let lookup = helper
+                .find("cached_process_icon_data_url")
+                .expect("helper should look up cached icon first");
+            let resolve = helper
+                .find("extractor(Path::new(&icon_cache_key))")
+                .expect("helper should resolve misses outside cache helpers");
+            let store = helper
+                .find("store_process_icon_data_url")
+                .expect("helper should store resolved miss after extraction");
+
+            assert!(lookup < resolve);
+            assert!(resolve < store);
+
+            let lookup_helper = source
+                .split("fn cached_process_icon_data_url")
+                .nth(1)
+                .and_then(|tail| tail.split("fn resolve_process_icon_data_url").next())
+                .expect("lookup helper should be isolated");
+            let store_helper = source
+                .split("fn store_process_icon_data_url")
+                .nth(1)
+                .and_then(|tail| tail.split("fn gpu_percent_by_pid").next())
+                .expect("store helper should be isolated");
+
+            assert!(!lookup_helper.contains("shell_file_icon_data_url"));
+            assert!(!store_helper.contains("shell_file_icon_data_url"));
+        }
     }
 }
 

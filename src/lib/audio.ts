@@ -8,10 +8,6 @@ export type AudioRefreshReason =
   | 'default-changed'
   | 'session-changed';
 
-export type AudioRefreshPayload = {
-  reason: AudioRefreshReason;
-};
-
 export type AudioDevice = {
   id: string;
   name: string;
@@ -51,9 +47,8 @@ export interface ShowAudioPanelRequest {
   anchorWidth: number;
 }
 
-export const AUDIO_PANEL_OPEN_EVENT = 'audio-panel:open';
-export const AUDIO_PANEL_CLOSED_EVENT = 'audio-panel:closed';
-export const AUDIO_REFRESH_EVENT = IPC_EVENTS.audioRefresh;
+export const AUDIO_PANEL_OPEN_EVENT = IPC_EVENTS.audioPanelOpen;
+export const AUDIO_PANEL_CLOSED_EVENT = IPC_EVENTS.audioPanelClosed;
 
 export const AUDIO_COMMANDS = {
   showPanel: IPC_COMMANDS.showAudioPanel,

@@ -104,8 +104,7 @@ pub fn show_task_window_preview(
         let mut state = state
             .lock()
             .map_err(|_| "task preview runtime state is poisoned".to_string())?;
-        state.latest_request_id = request.request_id;
-        clear_active_live_thumbnail(&mut state);
+        begin_task_preview_request(&mut state, request.request_id);
     }
 
     let bottom_bar = app_handle
@@ -231,8 +230,7 @@ pub fn hide_task_window_preview(
         let mut state = state
             .lock()
             .map_err(|_| "task preview runtime state is poisoned".to_string())?;
-        state.latest_request_id = request_id;
-        clear_active_live_thumbnail(&mut state);
+        begin_task_preview_hide(&mut state, request_id);
     }
 
     let preview_window = app_handle
@@ -254,30 +252,54 @@ fn publish_and_show_preview(
     state: &tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
     request_id: u64,
 ) -> Result<(), String> {
-    let mut state = state
-        .lock()
-        .map_err(|_| "task preview runtime state is poisoned".to_string())?;
-    if !preview_request_is_current(&state, request_id) {
-        clear_active_live_thumbnail(&mut state);
+    if !ensure_preview_request_is_current(state, request_id)? {
         return Ok(());
     }
-
     preview_window
         .emit(TASK_PREVIEW_UPDATE_EVENT, payload)
         .map_err(|error| {
-            clear_active_live_thumbnail(&mut state);
+            let _ = clear_active_live_thumbnail_if_current(state, request_id);
             format!("Failed to publish task preview data: {error}")
         })?;
+    if !ensure_preview_request_is_current(state, request_id)? {
+        return Ok(());
+    }
     preview_window
         .set_position(PhysicalPosition::new(preview_x, preview_y))
         .map_err(|error| {
-            clear_active_live_thumbnail(&mut state);
+            let _ = clear_active_live_thumbnail_if_current(state, request_id);
             format!("Failed to position the task preview window: {error}")
         })?;
+    if !ensure_preview_request_is_current(state, request_id)? {
+        return Ok(());
+    }
     preview_window.show().map_err(|error| {
-        clear_active_live_thumbnail(&mut state);
+        let _ = clear_active_live_thumbnail_if_current(state, request_id);
         format!("Failed to show the task preview window: {error}")
     })
+}
+
+fn ensure_preview_request_is_current(
+    state: &tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
+    request_id: u64,
+) -> Result<bool, String> {
+    let state = state
+        .lock()
+        .map_err(|_| "task preview runtime state is poisoned".to_string())?;
+    Ok(preview_request_is_current(&state, request_id))
+}
+
+fn clear_active_live_thumbnail_if_current(
+    state: &tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
+    request_id: u64,
+) -> Result<(), String> {
+    let mut state = state
+        .lock()
+        .map_err(|_| "task preview runtime state is poisoned".to_string())?;
+    if preview_request_is_current(&state, request_id) {
+        clear_active_live_thumbnail(&mut state);
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -396,6 +418,16 @@ fn clear_active_live_thumbnail(state: &mut TaskPreviewRuntimeState) {
     state.live_thumbnail = None;
 }
 
+fn begin_task_preview_request(state: &mut TaskPreviewRuntimeState, request_id: u64) {
+    state.latest_request_id = request_id;
+    clear_active_live_thumbnail(state);
+}
+
+fn begin_task_preview_hide(state: &mut TaskPreviewRuntimeState, request_id: u64) {
+    state.latest_request_id = request_id;
+    clear_active_live_thumbnail(state);
+}
+
 fn preview_request_is_current(state: &TaskPreviewRuntimeState, request_id: u64) -> bool {
     state.latest_request_id == request_id
 }
@@ -487,6 +519,23 @@ mod tests {
 
         assert!(super::preview_request_is_current(&state, 42));
         assert!(!super::preview_request_is_current(&state, 41));
+    }
+
+    #[test]
+    fn request_hide_request_sequence_rejects_stale_hover_and_hide_generations() {
+        let mut state = super::TaskPreviewRuntimeState::default();
+
+        super::begin_task_preview_request(&mut state, 10);
+        assert!(super::preview_request_is_current(&state, 10));
+
+        super::begin_task_preview_hide(&mut state, 11);
+        assert!(!super::preview_request_is_current(&state, 10));
+        assert!(super::preview_request_is_current(&state, 11));
+
+        super::begin_task_preview_request(&mut state, 12);
+        assert!(!super::preview_request_is_current(&state, 10));
+        assert!(!super::preview_request_is_current(&state, 11));
+        assert!(super::preview_request_is_current(&state, 12));
     }
 
     #[test]

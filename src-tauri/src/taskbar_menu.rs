@@ -103,9 +103,14 @@ pub fn show_task_window_context_menu(
     .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
     let menu = Menu::with_items(
         &app_handle,
-        &[&focus_item, &minimize_item, &pin_quick_icon_item, &close_item],
+        &[
+            &focus_item,
+            &minimize_item,
+            &pin_quick_icon_item,
+            &close_item,
+        ],
     )
-        .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
+    .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
 
     bottom_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -253,8 +258,11 @@ pub fn show_top_bar_pin_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build top-bar pin unpin item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&open_item, &open_in_vscode_item, &unpin_item])
-        .map_err(|error| format!("Failed to build top-bar pin context menu: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[&open_item, &open_in_vscode_item, &unpin_item],
+    )
+    .map_err(|error| format!("Failed to build top-bar pin context menu: {error}"))?;
 
     top_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -432,7 +440,10 @@ mod tests {
             parse_menu_payload("quick-icon:launch:abcd", LAUNCHER_MENU_PREFIX),
             None
         );
-        assert_eq!(parse_menu_payload("invalid-payload", QUICK_ICON_MENU_PREFIX), None);
+        assert_eq!(
+            parse_menu_payload("invalid-payload", QUICK_ICON_MENU_PREFIX),
+            None
+        );
     }
 
     #[test]

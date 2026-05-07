@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import {
+  stackBrowserCreatedTextFileRenamePlan
+} from '../dist-tests/lib/stackPopupViewModel.js';
 
 const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte', import.meta.url), 'utf8');
 
@@ -26,14 +29,27 @@ function extractFunctionBody(source, functionName) {
   assert.fail(`${functionName} body should close`);
 }
 
-test('new text file creation selects created row and immediately enters rename editor', () => {
+test('created text file rename plan selects created row and immediately enters rename editor', () => {
+  assert.deepEqual(
+    stackBrowserCreatedTextFileRenamePlan({
+      path: 'C:\\Users\\me\\Documents\\New Text Document.txt',
+      name: 'New Text Document.txt'
+    }),
+    {
+      selectedPath: 'C:\\Users\\me\\Documents\\New Text Document.txt',
+      renameDraft: 'New Text Document.txt',
+      focusTarget: 'inline-editor'
+    }
+  );
+});
+
+test('new text file creation delegates rename behavior to the view-model helper', () => {
   const body = extractFunctionBody(surface, 'beginCreateTextFile');
 
-  assert.match(body, /const created = await newStackTextFile\(currentPath\);/);
-  assert.match(body, /stackState = selectStackEntry\(stackState, created\.path\);/);
-  assert.match(body, /renameDraft = created\.name;/);
-  assert.match(body, /focusEditorInput\(\);/);
-  assert.doesNotMatch(body, /focusDetailsGrid\(\);/);
+  assert.match(body, /const renamePlan = stackBrowserCreatedTextFileRenamePlan\(created\);/);
+  assert.match(body, /stackState = selectStackEntry\(stackState, renamePlan\.selectedPath\);/);
+  assert.match(body, /renameDraft = renamePlan\.renameDraft;/);
+  assert.match(body, /if \(renamePlan\.focusTarget === 'inline-editor'\) \{/);
 });
 
 test('new folder and ordinary rename still use the existing inline editor focus path', () => {

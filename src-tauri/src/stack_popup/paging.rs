@@ -44,7 +44,9 @@ pub(crate) fn read_stack_folder_page_with_session(
         let requested_session_id = session_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Missing stack folder listing session id for continuation".to_string())?;
+            .ok_or_else(|| {
+                "Missing stack folder listing session id for continuation".to_string()
+            })?;
         let snapshot = with_session_store(|store| {
             store
                 .continue_session(path, requested_session_id)
@@ -71,10 +73,12 @@ pub(crate) fn read_stack_folder_page_with_session(
     let mut items = Vec::with_capacity(page_len);
     for entry in page_entries {
         match entry.item {
-            StackFolderEntryItem::Filesystem(path) => match stack_item_metadata_from_path(path.clone()) {
-                Ok(item) => items.push(item),
-                Err(message) => warnings.push(stack_folder_warning(Some(path), message)),
-            },
+            StackFolderEntryItem::Filesystem(path) => {
+                match stack_item_metadata_from_path(path.clone()) {
+                    Ok(item) => items.push(item),
+                    Err(message) => warnings.push(stack_folder_warning(Some(path), message)),
+                }
+            }
             StackFolderEntryItem::Virtual(item) => items.push(item),
         }
     }
@@ -170,15 +174,21 @@ fn collect_zip_folder_entries(
     archive_path: &Path,
     prefix: &str,
 ) -> Result<(Vec<StackFolderEntrySummary>, Vec<StackFolderWarning>), String> {
-    let file = File::open(archive_path).map_err(|error| format!("Failed to open zip archive: {error}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|error| format!("Failed to read zip archive: {error}"))?;
+    let file =
+        File::open(archive_path).map_err(|error| format!("Failed to open zip archive: {error}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|error| format!("Failed to read zip archive: {error}"))?;
     let mut by_name = HashMap::<String, StackItem>::new();
     for index in 0..archive.len() {
-        let file = archive.by_index(index).map_err(|error| format!("Failed to read zip entry: {error}"))?;
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("Failed to read zip entry: {error}"))?;
         let Some((name, is_dir)) = zip_child_entry(prefix, file.name(), file.is_dir()) else {
             continue;
         };
-        by_name.entry(name.clone()).or_insert_with(|| virtual_zip_stack_item(archive_path, prefix, &name, is_dir, file.size()));
+        by_name.entry(name.clone()).or_insert_with(|| {
+            virtual_zip_stack_item(archive_path, prefix, &name, is_dir, file.size())
+        });
     }
     let mut entries = by_name
         .into_values()
@@ -212,8 +222,18 @@ fn zip_child_entry(prefix: &str, name: &str, is_dir: bool) -> Option<(String, bo
     Some((first, is_dir || parts.next().is_some()))
 }
 
-fn virtual_zip_stack_item(archive_path: &Path, prefix: &str, name: &str, is_dir: bool, size: u64) -> StackItem {
-    let relative_path = if prefix.is_empty() { name.to_string() } else { format!("{}\\{}", prefix.trim_matches('\\'), name) };
+fn virtual_zip_stack_item(
+    archive_path: &Path,
+    prefix: &str,
+    name: &str,
+    is_dir: bool,
+    size: u64,
+) -> StackItem {
+    let relative_path = if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}\\{}", prefix.trim_matches('\\'), name)
+    };
     StackItem {
         path: format!("{}\\{}", archive_path.to_string_lossy(), relative_path),
         name: name.to_string(),
@@ -243,7 +263,9 @@ fn split_zip_virtual_path(path: &str) -> Option<(PathBuf, String)> {
     if !archive.is_file() || !is_zip_path(&archive) {
         return None;
     }
-    let prefix = path[zip_index..].trim_start_matches(['\\', '/']).to_string();
+    let prefix = path[zip_index..]
+        .trim_start_matches(['\\', '/'])
+        .to_string();
     Some((archive, prefix))
 }
 
@@ -354,7 +376,8 @@ impl StackFolderListingSessionStore {
 static STACK_FOLDER_SESSIONS: OnceLock<Mutex<StackFolderListingSessionStore>> = OnceLock::new();
 
 fn with_session_store<R>(callback: impl FnOnce(&mut StackFolderListingSessionStore) -> R) -> R {
-    let state = STACK_FOLDER_SESSIONS.get_or_init(|| Mutex::new(StackFolderListingSessionStore::default()));
+    let state =
+        STACK_FOLDER_SESSIONS.get_or_init(|| Mutex::new(StackFolderListingSessionStore::default()));
     let mut guard = state
         .lock()
         .expect("stack folder listing session state is poisoned");
@@ -386,7 +409,11 @@ fn stack_folder_entry_summary(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
 
-    Ok(StackFolderEntrySummary { name, is_dir, item: StackFolderEntryItem::Filesystem(path) })
+    Ok(StackFolderEntrySummary {
+        name,
+        is_dir,
+        item: StackFolderEntryItem::Filesystem(path),
+    })
 }
 
 fn folder_sort_rank(is_dir: bool) -> u8 {
@@ -446,10 +473,16 @@ mod tests {
         let fifth =
             read_stack_folder_page_with_session(&path, Some(&session_id), 480, 120).unwrap();
 
-        let all = [first.items, second.items, third.items, fourth.items, fifth.items]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let all = [
+            first.items,
+            second.items,
+            third.items,
+            fourth.items,
+            fifth.items,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         let unique = all
             .iter()
             .map(|item| item.path.clone())
@@ -525,7 +558,8 @@ mod tests {
 
         loop {
             let page =
-                read_stack_folder_page_with_session(&path, session_id.as_deref(), offset, 75).unwrap();
+                read_stack_folder_page_with_session(&path, session_id.as_deref(), offset, 75)
+                    .unwrap();
             session_id = page.session_id.clone().or(session_id);
             if total == 0 {
                 total = page.total;

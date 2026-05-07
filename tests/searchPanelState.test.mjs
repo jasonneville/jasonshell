@@ -431,6 +431,10 @@ test('top-bar defers expensive search render work out of the input handler', () 
   assert.match(source, /payload\.sequence === undefined/);
   assert.doesNotMatch(source, /await publishSearchPanel\(sequencedPayload\)/);
   assert.match(source, /result\.kind === 'setting' && result\.path/);
+  const appActivationBranch = source.match(/else if \(result\.kind === 'app'\) \{[\s\S]*?\n    \} else if \(result\.kind === 'window'\)/)?.[0] ?? '';
+  assert.match(source, /launchAppPath/);
+  assert.match(appActivationBranch, /await launchAppPath\(result\.path\)/);
+  assert.doesNotMatch(appActivationBranch, /await openShellPath\(result\.path\)/);
   assert.match(source, /await openShellPath\(result\.path\)/);
   assert.match(source, /const needsNativeShow = !searchOpen \|\| searchPresentation !== 'centered'/);
   assert.match(source, /if \(needsNativeShow\) \{[\s\S]*showCenteredSearchPanel\(readCenteredSearchPanelSize\(\)\)/);
@@ -460,6 +464,24 @@ test('top-bar cancels search work on native panel close and listens only to app 
   assert.match(source, /if \(!shouldRetry\) \{[\s\S]*resetSearchProviderCacheRetry\(\)/);
   assert.match(refreshHandler, /isAppSearchIndexRefreshedPayload\(event\.payload\)/);
   assert.match(refreshHandler, /lastAppIndexRefreshGeneration/);
+});
+
+test('top-bar tracks and clears delayed rail scroll button updates', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const scheduler = source.match(/function scheduleRailScrollButtonUpdate\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const canceler = source.match(/function cancelRailScrollButtonUpdate\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const cleanup = source.match(/return \(\) => \{[\s\S]*?\n    \};/)?.[0] ?? '';
+
+  assert.match(source, /let railScrollUpdateTimeout: number \| null = null;/);
+  assert.match(source, /let railScrollButtonsDisposed = false;/);
+  assert.match(source, /function updateRailScrollButtons\(\) \{[\s\S]*if \(railScrollButtonsDisposed\) \{[\s\S]*return;[\s\S]*\}/);
+  assert.match(scheduler, /if \(railScrollUpdateTimeout !== null\) \{[\s\S]*window\.clearTimeout\(railScrollUpdateTimeout\)/);
+  assert.match(scheduler, /railScrollUpdateTimeout = window\.setTimeout\(\(\) => \{[\s\S]*railScrollUpdateTimeout = null;[\s\S]*updateRailScrollButtons\(\);[\s\S]*\}, 160\)/);
+  assert.match(canceler, /window\.clearTimeout\(railScrollUpdateTimeout\)/);
+  assert.match(canceler, /railScrollUpdateTimeout = null;/);
+  assert.match(cleanup, /railScrollButtonsDisposed = true;/);
+  assert.match(cleanup, /cancelRailScrollButtonUpdate\(\)/);
+  assert.doesNotMatch(source, /(?<!window\.)setTimeout\(updateRailScrollButtons, 160\)/);
 });
 
 test('search-panel fallback fetches cannot overwrite newer event payloads', () => {

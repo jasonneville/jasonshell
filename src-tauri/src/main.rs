@@ -121,6 +121,7 @@ fn main() {
             search_sources::get_search_provider_health,
             search_sources::request_everything_setup,
             shell_paths::open_shell_path,
+            shell_paths::launch_app_path,
             shell_paths::run_control_panel,
             quick_commands::run_quick_command,
             stack_popup::list_pinned_stack_folders,

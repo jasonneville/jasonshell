@@ -71,17 +71,19 @@ pub fn unpin_quick_icon(
 }
 
 #[tauri::command]
-pub fn launch_quick_icon(
-    app_handle: AppHandle,
-    request: QuickIconIdRequest,
-) -> Result<(), String> {
+pub fn launch_quick_icon(app_handle: AppHandle, request: QuickIconIdRequest) -> Result<(), String> {
     let id = request.id.trim();
     if id.is_empty() {
         return Err("quick icon id must not be empty".to_string());
     }
 
     let settings = settings::load_shell_settings_for_app(&app_handle)?;
-    let Some(entry) = settings.quick_icons.entries.iter().find(|entry| entry.id == id) else {
+    let Some(entry) = settings
+        .quick_icons
+        .entries
+        .iter()
+        .find(|entry| entry.id == id)
+    else {
         return Err(format!("quick icon '{}' is not configured", id));
     };
     let entry = settings::validate_quick_icon_entry(entry)?;
@@ -91,7 +93,7 @@ pub fn launch_quick_icon(
             entry.id
         ));
     }
-    shell_paths::open_shell_path(entry.target_path)
+    shell_paths::launch_audited_app_path(entry.target_path)
 }
 
 fn map_quick_icon_entries(entries: Vec<QuickIconEntry>) -> Vec<QuickIcon> {

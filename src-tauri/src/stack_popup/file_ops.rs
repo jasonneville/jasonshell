@@ -23,9 +23,11 @@ pub(crate) fn rename_stack_item_path(path: String, new_name: String) -> Result<S
     stack_item_from_path(destination)
 }
 
-pub(crate) fn delete_stack_item_path(path: String) -> Result<(), String> {
+pub(crate) async fn delete_stack_item_path_async(path: String) -> Result<(), String> {
     let target = PathBuf::from(normalize_existing_path(&path)?);
-    delete_path(&target)
+    tauri::async_runtime::spawn_blocking(move || delete_path(&target))
+        .await
+        .map_err(|error| format!("Failed to join stack delete task: {error}"))?
 }
 
 pub(crate) fn new_stack_folder_path(parent: String, name: String) -> Result<StackItem, String> {

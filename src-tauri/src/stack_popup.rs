@@ -11,10 +11,10 @@ mod pins;
 mod popup_window;
 
 use crate::shell_paths;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
-use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,7 +41,12 @@ impl ArchiveKind {
         if !path.is_file() {
             return None;
         }
-        match path.extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        match path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
             Some("zip") => Some(Self::Zip),
             Some("rar") => Some(Self::Rar),
             _ => None,
@@ -77,7 +82,9 @@ pub(crate) struct StackItemPropertiesPlan {
     pub args: Vec<String>,
 }
 
-pub(crate) fn build_stack_item_properties_plan(path: &Path) -> Result<StackItemPropertiesPlan, String> {
+pub(crate) fn build_stack_item_properties_plan(
+    path: &Path,
+) -> Result<StackItemPropertiesPlan, String> {
     if !path.exists() {
         return Err("Path unavailable".to_string());
     }
@@ -98,7 +105,11 @@ pub(crate) fn seven_zip_discovery_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(program_files).join("7-Zip").join("7z.exe"));
     }
     if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
-        candidates.push(PathBuf::from(program_files_x86).join("7-Zip").join("7z.exe"));
+        candidates.push(
+            PathBuf::from(program_files_x86)
+                .join("7-Zip")
+                .join("7z.exe"),
+        );
     }
     candidates.push(PathBuf::from("7z.exe"));
     candidates
@@ -107,7 +118,10 @@ pub(crate) fn seven_zip_discovery_candidates() -> Vec<PathBuf> {
 fn find_seven_zip() -> Option<PathBuf> {
     seven_zip_discovery_candidates()
         .into_iter()
-        .find(|candidate| candidate.file_name().and_then(|name| name.to_str()) == Some("7z.exe") && (candidate.is_relative() || candidate.exists()))
+        .find(|candidate| {
+            candidate.file_name().and_then(|name| name.to_str()) == Some("7z.exe")
+                && (candidate.is_relative() || candidate.exists())
+        })
 }
 
 pub(crate) fn build_archive_extraction_plan(
@@ -116,9 +130,15 @@ pub(crate) fn build_archive_extraction_plan(
     extractor: ArchiveExtractor,
     seven_zip: Option<PathBuf>,
 ) -> Result<ArchiveExtractionPlan, String> {
-    let kind = ArchiveKind::from_path(archive).ok_or_else(|| "Unsupported archive type".to_string())?;
-    let parent = archive.parent().ok_or_else(|| "Archive parent folder unavailable".to_string())?;
-    let stem = archive.file_stem().and_then(|value| value.to_str()).ok_or_else(|| "Archive name unavailable".to_string())?;
+    let kind =
+        ArchiveKind::from_path(archive).ok_or_else(|| "Unsupported archive type".to_string())?;
+    let parent = archive
+        .parent()
+        .ok_or_else(|| "Archive parent folder unavailable".to_string())?;
+    let stem = archive
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Archive name unavailable".to_string())?;
     let destination_path = match destination_mode {
         ArchiveDestinationMode::Here => parent.to_path_buf(),
         ArchiveDestinationMode::Folder => parent.join(stem),
@@ -142,11 +162,13 @@ pub(crate) fn build_archive_extraction_plan(
                 destination_path.to_string_lossy().to_string(),
             ],
             destination_path,
-            expected_created_folder: matches!(destination_mode, ArchiveDestinationMode::Folder).then(|| parent.join(stem)),
+            expected_created_folder: matches!(destination_mode, ArchiveDestinationMode::Folder)
+                .then(|| parent.join(stem)),
         });
     }
 
-    let seven_zip = seven_zip.ok_or_else(|| "7-Zip is required to use 7-Zip extraction".to_string())?;
+    let seven_zip =
+        seven_zip.ok_or_else(|| "7-Zip is required to use 7-Zip extraction".to_string())?;
     Ok(ArchiveExtractionPlan {
         executable: seven_zip,
         args: vec![
@@ -156,7 +178,8 @@ pub(crate) fn build_archive_extraction_plan(
             "-y".to_string(),
         ],
         destination_path,
-        expected_created_folder: matches!(destination_mode, ArchiveDestinationMode::Folder).then(|| parent.join(stem)),
+        expected_created_folder: matches!(destination_mode, ArchiveDestinationMode::Folder)
+            .then(|| parent.join(stem)),
     })
 }
 
@@ -307,7 +330,9 @@ pub fn suggest_stack_paths(
     let normalized_segment = segment.to_lowercase();
     let max = limit.unwrap_or(20).clamp(1, 50);
     let mut suggestions = Vec::new();
-    for entry in std::fs::read_dir(&parent).map_err(|error| format!("Folder unavailable: {error}"))? {
+    for entry in
+        std::fs::read_dir(&parent).map_err(|error| format!("Folder unavailable: {error}"))?
+    {
         let entry = entry.map_err(|error| format!("Folder unavailable: {error}"))?;
         let path = entry.path();
         if !path.is_dir() {
@@ -328,7 +353,9 @@ pub fn suggest_stack_paths(
 }
 
 #[tauri::command]
-pub async fn resolve_stack_item_icons(paths: Vec<String>) -> Result<StackItemIconResolutionBatch, String> {
+pub async fn resolve_stack_item_icons(
+    paths: Vec<String>,
+) -> Result<StackItemIconResolutionBatch, String> {
     icons::resolve_stack_item_icons_for_paths_async(paths).await
 }
 
@@ -393,21 +420,21 @@ pub fn cut_stack_items(
 }
 
 #[tauri::command]
-pub fn paste_stack_items(
+pub async fn paste_stack_items(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     destination: String,
 ) -> Result<StackPasteResult, String> {
-    clipboard::paste_stack_clipboard_items(&state, destination)
+    clipboard::paste_stack_clipboard_items_async(&state, destination).await
 }
 
 #[tauri::command]
-pub fn delete_stack_item(
+pub async fn delete_stack_item(
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     path: String,
 ) -> Result<(), String> {
     popup_window::begin_stack_popup_focus_hold(&state);
-    let result = file_ops::delete_stack_item_path(path);
+    let result = file_ops::delete_stack_item_path_async(path).await;
     popup_window::end_stack_popup_focus_hold(&app_handle, &state);
     result
 }
@@ -439,7 +466,7 @@ pub fn reveal_stack_item(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn extract_stack_archive(
+pub async fn extract_stack_archive(
     archive_path: String,
     destination_mode: ArchiveDestinationMode,
     extractor: ArchiveExtractor,
@@ -451,9 +478,20 @@ pub fn extract_stack_archive(
     if !archive.is_file() {
         return Err("Archive path must be a file".to_string());
     }
-    let kind = ArchiveKind::from_path(&archive).ok_or_else(|| "Unsupported archive type".to_string())?;
-    let seven_zip = if extractor == ArchiveExtractor::SevenZip || kind == ArchiveKind::Rar { find_seven_zip() } else { None };
+    let kind =
+        ArchiveKind::from_path(&archive).ok_or_else(|| "Unsupported archive type".to_string())?;
+    let seven_zip = if extractor == ArchiveExtractor::SevenZip || kind == ArchiveKind::Rar {
+        find_seven_zip()
+    } else {
+        None
+    };
     let plan = build_archive_extraction_plan(&archive, destination_mode, extractor, seven_zip)?;
+    tauri::async_runtime::spawn_blocking(move || run_archive_extraction_plan(plan))
+        .await
+        .map_err(|error| format!("Failed to join archive extraction task: {error}"))?
+}
+
+fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String> {
     Command::new(&plan.executable)
         .args(&plan.args)
         .status()
@@ -485,8 +523,8 @@ mod tests {
         copy_dir, move_path_with_rename, native_drag_mechanism, next_new_text_document_path,
         open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
         paths_match_for_unpin, read_stack_folder_page, read_stack_folder_page_with_session,
-        reorder_pins_by_paths, resolve_stack_item_icons_batch, resolve_stack_item_icons_for_paths,
-        resolve_stack_item_icons_for_paths_async, resolve_stack_alias_with_profile,
+        reorder_pins_by_paths, resolve_stack_alias_with_profile, resolve_stack_item_icons_batch,
+        resolve_stack_item_icons_for_paths, resolve_stack_item_icons_for_paths_async,
         stack_file_attributes_from_bits, stack_folder_warning, stack_item_from_path,
         validate_child_name, ClipboardMode, PinnedStackFolder, ShowStackPopupRequest,
         StackClipboard, StackItem,
@@ -741,7 +779,9 @@ mod tests {
         fs::create_dir_all(root.join("Alpha")).unwrap();
         fs::write(root.join("aardvark.txt"), b"x").unwrap();
 
-        let suggestions = super::suggest_stack_paths(root.to_string_lossy().into_owned(), "".into(), Some(1)).unwrap();
+        let suggestions =
+            super::suggest_stack_paths(root.to_string_lossy().into_owned(), "".into(), Some(1))
+                .unwrap();
 
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].name, "Alpha");
@@ -756,7 +796,9 @@ mod tests {
         let file = root.join("file.txt");
         fs::write(&file, b"x").unwrap();
 
-        let error = super::suggest_stack_paths(file.to_string_lossy().into_owned(), "".into(), Some(20)).unwrap_err();
+        let error =
+            super::suggest_stack_paths(file.to_string_lossy().into_owned(), "".into(), Some(20))
+                .unwrap_err();
 
         assert!(error.contains("Folder unavailable"));
         fs::remove_dir_all(root).ok();
@@ -1079,15 +1121,82 @@ mod tests {
         let root = test_dir("delete-test");
         fs::create_dir_all(root.join("Folder")).unwrap();
         fs::write(root.join("File.txt"), b"x").unwrap();
-        super::file_ops::delete_stack_item_path(
+        tauri::async_runtime::block_on(super::file_ops::delete_stack_item_path_async(
             root.join("File.txt").to_str().unwrap().to_string(),
-        )
+        ))
         .unwrap();
         assert!(!root.join("File.txt").exists());
-        super::file_ops::delete_stack_item_path(root.join("Folder").to_str().unwrap().to_string())
-            .unwrap();
+        tauri::async_runtime::block_on(super::file_ops::delete_stack_item_path_async(
+            root.join("Folder").to_str().unwrap().to_string(),
+        ))
+        .unwrap();
         assert!(!root.join("Folder").exists());
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn async_delete_deletes_nested_folder_and_preserves_missing_error() {
+        let root = test_dir("async-delete-test");
+        fs::create_dir_all(root.join("Folder").join("Nested")).unwrap();
+        fs::write(root.join("Folder").join("Nested").join("File.txt"), b"x").unwrap();
+
+        tauri::async_runtime::block_on(super::file_ops::delete_stack_item_path_async(
+            root.join("Folder").to_string_lossy().to_string(),
+        ))
+        .unwrap();
+
+        assert!(!root.join("Folder").exists());
+        let missing =
+            tauri::async_runtime::block_on(super::file_ops::delete_stack_item_path_async(
+                root.join("Missing").to_string_lossy().to_string(),
+            ))
+            .unwrap_err();
+        assert!(missing.contains("Failed to resolve stack path"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn archive_extraction_runner_preserves_process_error_contract() {
+        let root = test_dir("archive-runner-error");
+        fs::create_dir_all(&root).unwrap();
+        let plan = super::ArchiveExtractionPlan {
+            executable: root.join("missing-extractor.exe"),
+            args: Vec::new(),
+            destination_path: root.clone(),
+            expected_created_folder: None,
+        };
+
+        let error = super::run_archive_extraction_plan(plan).unwrap_err();
+
+        assert!(error.starts_with("Failed to extract archive:"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn stack_long_running_file_op_commands_use_spawn_blocking_boundaries() {
+        let stack_source = include_str!("stack_popup.rs");
+        let file_ops_source = include_str!("stack_popup/file_ops.rs");
+        let clipboard_source = include_str!("stack_popup/clipboard.rs");
+
+        assert!(stack_source.contains("pub async fn paste_stack_items("));
+        assert!(stack_source
+            .contains("clipboard::paste_stack_clipboard_items_async(&state, destination).await"));
+        assert!(stack_source.contains("pub async fn delete_stack_item("));
+        assert!(stack_source.contains("file_ops::delete_stack_item_path_async(path).await"));
+        assert!(stack_source.contains("pub async fn extract_stack_archive("));
+        assert!(stack_source.contains(
+            "tauri::async_runtime::spawn_blocking(move || run_archive_extraction_plan(plan))"
+        ));
+
+        assert!(file_ops_source.contains("pub(crate) async fn delete_stack_item_path_async("));
+        assert!(file_ops_source
+            .contains("tauri::async_runtime::spawn_blocking(move || delete_path(&target))"));
+        assert!(clipboard_source.contains("pub(crate) async fn paste_stack_clipboard_items_async("));
+        assert!(clipboard_source.contains(
+            "tauri::async_runtime::spawn_blocking(move || {\r\n        paste_clipboard_items(&clipboard, &destination)\r\n    })"
+        ) || clipboard_source.contains(
+            "tauri::async_runtime::spawn_blocking(move || {\n        paste_clipboard_items(&clipboard, &destination)\n    })"
+        ));
     }
 
     #[test]
@@ -1158,12 +1267,24 @@ mod tests {
         fs::write(root.join("bundle.7z"), b"7z").unwrap();
         fs::write(root.join("bundle"), b"none").unwrap();
 
-        assert_eq!(super::ArchiveKind::from_path(&root.join("bundle.zip")), Some(super::ArchiveKind::Zip));
-        assert_eq!(super::ArchiveKind::from_path(&root.join("BUNDLE.ZIP")), Some(super::ArchiveKind::Zip));
-        assert_eq!(super::ArchiveKind::from_path(&root.join("bundle.rar")), Some(super::ArchiveKind::Rar));
+        assert_eq!(
+            super::ArchiveKind::from_path(&root.join("bundle.zip")),
+            Some(super::ArchiveKind::Zip)
+        );
+        assert_eq!(
+            super::ArchiveKind::from_path(&root.join("BUNDLE.ZIP")),
+            Some(super::ArchiveKind::Zip)
+        );
+        assert_eq!(
+            super::ArchiveKind::from_path(&root.join("bundle.rar")),
+            Some(super::ArchiveKind::Rar)
+        );
         assert_eq!(super::ArchiveKind::from_path(&root.join("bundle.7z")), None);
         assert_eq!(super::ArchiveKind::from_path(&root.join("bundle")), None);
-        assert_eq!(super::ArchiveKind::from_path(&root.join("folder.zip")), None);
+        assert_eq!(
+            super::ArchiveKind::from_path(&root.join("folder.zip")),
+            None
+        );
 
         fs::remove_dir_all(root).ok();
     }
@@ -1171,8 +1292,12 @@ mod tests {
     #[test]
     fn archive_7zip_candidates_include_program_files_and_path_fallback() {
         let candidates = super::seven_zip_discovery_candidates();
-        assert!(candidates.iter().any(|candidate| candidate.ends_with(r"7-Zip\7z.exe")));
-        assert!(candidates.iter().any(|candidate| candidate == Path::new("7z.exe")));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.ends_with(r"7-Zip\7z.exe")));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate == Path::new("7z.exe")));
     }
 
     #[test]
@@ -1187,11 +1312,18 @@ mod tests {
             super::ArchiveDestinationMode::Folder,
             super::ArchiveExtractor::SevenZip,
             Some(root.join("Tools Dir").join("7z.exe")),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(plan.executable, root.join("Tools Dir").join("7z.exe"));
-        assert!(plan.args.iter().any(|arg| arg == &archive.to_string_lossy().to_string()));
-        assert!(plan.args.iter().any(|arg| arg == &format!("-o{}", root.join("release build").to_string_lossy())));
+        assert!(plan
+            .args
+            .iter()
+            .any(|arg| arg == &archive.to_string_lossy().to_string()));
+        assert!(plan
+            .args
+            .iter()
+            .any(|arg| arg == &format!("-o{}", root.join("release build").to_string_lossy())));
         assert!(!plan.args.join(" ").contains('"'));
 
         fs::remove_dir_all(root).ok();
@@ -1209,9 +1341,13 @@ mod tests {
             super::ArchiveDestinationMode::Folder,
             super::ArchiveExtractor::Builtin,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(builtin.executable, Path::new("powershell.exe"));
-        assert!(builtin.args.iter().any(|arg| arg.contains("Expand-Archive")));
+        assert!(builtin
+            .args
+            .iter()
+            .any(|arg| arg.contains("Expand-Archive")));
 
         let seven_zip_path = root.join("7z.exe");
         let seven_zip = super::build_archive_extraction_plan(
@@ -1219,7 +1355,8 @@ mod tests {
             super::ArchiveDestinationMode::Folder,
             super::ArchiveExtractor::SevenZip,
             Some(seven_zip_path.clone()),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(seven_zip.executable, seven_zip_path);
         assert!(seven_zip.args.iter().any(|arg| arg == "x"));
 
@@ -1228,8 +1365,12 @@ mod tests {
             super::ArchiveDestinationMode::Folder,
             super::ArchiveExtractor::SevenZip,
             None,
-        ).unwrap_err();
-        assert_eq!(missing_seven_zip, "7-Zip is required to use 7-Zip extraction");
+        )
+        .unwrap_err();
+        assert_eq!(
+            missing_seven_zip,
+            "7-Zip is required to use 7-Zip extraction"
+        );
 
         fs::remove_dir_all(root).ok();
     }
@@ -1252,12 +1393,31 @@ mod tests {
 
         let page = super::read_stack_folder_page(archive.to_str().unwrap(), 0, 20).unwrap();
         assert_eq!(page.path, archive.to_string_lossy());
-        assert_eq!(page.items.iter().map(|item| (&item.name, &item.kind)).collect::<Vec<_>>(), vec![(&"docs".to_string(), &"folder".to_string()), (&"app.exe".to_string(), &"file".to_string())]);
-        assert!(page.items.iter().any(|item| item.path.ends_with(r"bundle.zip\docs")));
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|item| (&item.name, &item.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                (&"docs".to_string(), &"folder".to_string()),
+                (&"app.exe".to_string(), &"file".to_string())
+            ]
+        );
+        assert!(page
+            .items
+            .iter()
+            .any(|item| item.path.ends_with(r"bundle.zip\docs")));
 
         let nested_path = format!(r"{}\docs", archive.to_string_lossy());
         let nested = super::read_stack_folder_page(&nested_path, 0, 20).unwrap();
-        assert_eq!(nested.items.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["readme.md"]);
+        assert_eq!(
+            nested
+                .items
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["readme.md"]
+        );
 
         fs::remove_dir_all(root).ok();
     }
@@ -1275,8 +1435,16 @@ mod tests {
         writer.write_all(b"exe").unwrap();
         writer.finish().unwrap();
 
-        let page = super::read_stack_folder(archive.to_string_lossy().to_string(), 0, Some(20), None).unwrap();
-        assert_eq!(page.items.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["app.exe"]);
+        let page =
+            super::read_stack_folder(archive.to_string_lossy().to_string(), 0, Some(20), None)
+                .unwrap();
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["app.exe"]
+        );
 
         fs::remove_dir_all(root).ok();
     }
@@ -1290,8 +1458,14 @@ mod tests {
 
         let plan = super::build_stack_item_properties_plan(&file).unwrap();
         assert_eq!(plan.executable, Path::new("powershell.exe"));
-        assert!(plan.args.iter().any(|arg| arg.contains("InvokeVerb('properties')")));
-        assert!(plan.args.iter().any(|arg| arg == &file.to_string_lossy().to_string()));
+        assert!(plan
+            .args
+            .iter()
+            .any(|arg| arg.contains("InvokeVerb('properties')")));
+        assert!(plan
+            .args
+            .iter()
+            .any(|arg| arg == &file.to_string_lossy().to_string()));
         assert!(!plan.args.join(" ").contains('"'));
 
         assert!(super::build_stack_item_properties_plan(&root.join("missing.ts")).is_err());

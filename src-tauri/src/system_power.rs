@@ -75,11 +75,17 @@ mod tests {
 
     #[test]
     fn deserializes_only_known_power_actions() {
-        let sleep: SystemPowerActionRequest = serde_json::from_str(r#"{"action":"sleep"}"#).unwrap();
+        let sleep: SystemPowerActionRequest =
+            serde_json::from_str(r#"{"action":"sleep"}"#).unwrap();
         assert_eq!(sleep.action, SystemPowerAction::Sleep);
 
-        assert!(serde_json::from_str::<SystemPowerActionRequest>(r#"{"action":"hibernate"}"#).is_err());
-        assert!(serde_json::from_str::<SystemPowerActionRequest>(r#"{"action":"restart && calc"}"#).is_err());
+        assert!(
+            serde_json::from_str::<SystemPowerActionRequest>(r#"{"action":"hibernate"}"#).is_err()
+        );
+        assert!(serde_json::from_str::<SystemPowerActionRequest>(
+            r#"{"action":"restart && calc"}"#
+        )
+        .is_err());
     }
 
     #[test]

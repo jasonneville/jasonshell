@@ -8,6 +8,7 @@ const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte
 const taskbarMenusSource = readFileSync(new URL('../src/lib/taskbarMenus.ts', import.meta.url), 'utf8');
 const taskbarMenuRs = readFileSync(new URL('../src-tauri/src/taskbar_menu.rs', import.meta.url), 'utf8');
 const settingsRs = readFileSync(new URL('../src-tauri/src/settings.rs', import.meta.url), 'utf8');
+const quickIconsRs = readFileSync(new URL('../src-tauri/src/quick_icons.rs', import.meta.url), 'utf8');
 
 test('phase 3 wires quick-icon IPC commands and shell settings contracts', () => {
   assert.match(commandsSource, /listQuickIcons: 'list_quick_icons'/);
@@ -41,4 +42,9 @@ test('phase 3 bottom bar renders quick icons and keeps Explorer launchers availa
   assert.match(bottomBarSource, /quick-icon-button/);
   assert.match(bottomBarSource, /Pinned quick icons/);
   assert.match(bottomBarSource, /Pinned Explorer taskbar apps/);
+});
+
+test('quick icon launch uses audited app launcher instead of generic shell open', () => {
+  assert.match(quickIconsRs, /launch_audited_app_path\(entry\.target_path\)/);
+  assert.doesNotMatch(quickIconsRs, /open_shell_path\(entry\.target_path\)/);
 });

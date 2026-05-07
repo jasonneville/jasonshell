@@ -30,7 +30,7 @@
 }
 
 .preview-surface-native {
-  background: transparent;
+  background: var(--js-bg-surface);
   box-shadow: none;
 }
 

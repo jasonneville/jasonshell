@@ -207,6 +207,10 @@ export function openShellPath(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openShellPath, { path });
 }
 
+export function launchAppPath(path: string): Promise<void> {
+  return invoke(IPC_COMMANDS.launchAppPath, { path });
+}
+
 export function runControlPanel(args?: string[]): Promise<void> {
   return invoke(IPC_COMMANDS.runControlPanel, { args });
 }

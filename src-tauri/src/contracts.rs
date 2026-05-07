@@ -77,6 +77,7 @@ pub mod commands {
     pub const GET_SEARCH_PROVIDER_HEALTH: &str = "get_search_provider_health";
     pub const REQUEST_EVERYTHING_SETUP: &str = "request_everything_setup";
     pub const OPEN_SHELL_PATH: &str = "open_shell_path";
+    pub const LAUNCH_APP_PATH: &str = "launch_app_path";
     pub const RUN_CONTROL_PANEL: &str = "run_control_panel";
     pub const RUN_QUICK_COMMAND: &str = "run_quick_command";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
@@ -180,6 +181,7 @@ pub mod commands {
         GET_SEARCH_PROVIDER_HEALTH,
         REQUEST_EVERYTHING_SETUP,
         OPEN_SHELL_PATH,
+        LAUNCH_APP_PATH,
         RUN_CONTROL_PANEL,
         RUN_QUICK_COMMAND,
         LIST_PINNED_STACK_FOLDERS,
@@ -236,37 +238,75 @@ pub mod commands {
 }
 
 pub mod events {
+    pub const AUDIO_PANEL_OPEN: &str = "audio-panel:open";
+    pub const AUDIO_PANEL_CLOSED: &str = "audio-panel:closed";
+    pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
+    pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
+    pub const SEARCH_OPEN_CENTERED: &str = "search:open-centered";
+    pub const SEARCH_ENGINE_PROGRESS: &str = "search-engine:progress";
+    pub const SEARCH_INDEX_REFRESHED: &str = "search-index:refreshed";
+    pub const SEARCH_PANEL_ACTIVATE: &str = "search-panel:activate";
+    pub const SEARCH_PANEL_CLOSED: &str = "search-panel:closed";
+    pub const SEARCH_PANEL_EXPAND_GROUP: &str = "search-panel:expand-group";
+    pub const SEARCH_PANEL_INTERACTION: &str = "search-panel:interaction";
+    pub const SEARCH_PANEL_KEY: &str = "search-panel:key";
+    pub const SEARCH_PANEL_PIN_FOLDER: &str = "search-panel:pin-folder";
+    pub const SEARCH_PANEL_QUERY: &str = "search-panel:query";
+    pub const SEARCH_PANEL_SELECT: &str = "search-panel:select";
+    pub const SEARCH_PANEL_UPDATE: &str = "search-panel:update";
+    pub const STACK_POPUP_OPEN: &str = "stack-popup:open";
+    pub const STACK_PINS_UPDATED: &str = "stack-pins:updated";
+    pub const TASK_PREVIEW_HIDE: &str = "task-preview:hide";
+    pub const TASK_PREVIEW_HOVER_ENTER: &str = "task-preview:hover-enter";
+    pub const TASK_PREVIEW_UPDATE: &str = "task-preview:update";
+    pub const TASK_COMPLETED: &str = "task:completed";
+    pub const TASK_OUTPUT: &str = "task:output";
+    pub const TASK_STARTED: &str = "task:started";
+    pub const TASKBAR_REFRESH_LAUNCHERS: &str = "taskbar:refresh-launchers";
+    pub const TASKBAR_REFRESH_WINDOWS: &str = "taskbar:refresh-windows";
+    pub const TOP_BAR_PIN_MENU_ACTION: &str = "top-bar:pin-menu-action";
     pub const TRAY_PANEL_OPEN: &str = "tray-panel:open";
     pub const TRAY_PANEL_CLOSED: &str = "tray-panel:closed";
-    pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
-    pub const SEARCH_PANEL_INTERACTION: &str = "search-panel:interaction";
-    pub const SEARCH_PANEL_CLOSED: &str = "search-panel:closed";
-    pub const SEARCH_INDEX_REFRESHED: &str = "search-index:refreshed";
-    pub const STACK_PINS_UPDATED: &str = "stack-pins:updated";
-    pub const TASK_STARTED: &str = "task:started";
-    pub const TASK_OUTPUT: &str = "task:output";
-    pub const TASK_COMPLETED: &str = "task:completed";
 
     pub const ALL: &[&str] = &[
-        PROCESS_MANAGER_CLOSED,
-        TRAY_PANEL_OPEN,
-        TRAY_PANEL_CLOSED,
+        AUDIO_PANEL_OPEN,
+        AUDIO_PANEL_CLOSED,
         COMMAND_PANEL_CLOSED,
-        SEARCH_PANEL_INTERACTION,
-        SEARCH_PANEL_CLOSED,
+        PROCESS_MANAGER_OPEN,
+        PROCESS_MANAGER_CLOSED,
+        SEARCH_OPEN_CENTERED,
+        SEARCH_ENGINE_PROGRESS,
         SEARCH_INDEX_REFRESHED,
+        SEARCH_PANEL_ACTIVATE,
+        SEARCH_PANEL_CLOSED,
+        SEARCH_PANEL_EXPAND_GROUP,
+        SEARCH_PANEL_INTERACTION,
+        SEARCH_PANEL_KEY,
+        SEARCH_PANEL_PIN_FOLDER,
+        SEARCH_PANEL_QUERY,
+        SEARCH_PANEL_SELECT,
+        SEARCH_PANEL_UPDATE,
+        STACK_POPUP_OPEN,
         STACK_PINS_UPDATED,
-        TASK_STARTED,
-        TASK_OUTPUT,
+        TASK_PREVIEW_HIDE,
+        TASK_PREVIEW_HOVER_ENTER,
+        TASK_PREVIEW_UPDATE,
         TASK_COMPLETED,
+        TASK_OUTPUT,
+        TASK_STARTED,
+        TASKBAR_REFRESH_LAUNCHERS,
+        TASKBAR_REFRESH_WINDOWS,
+        TOP_BAR_PIN_MENU_ACTION,
+        TRAY_PANEL_CLOSED,
+        TRAY_PANEL_OPEN,
     ];
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::shell_windows;
     use super::{commands, events, surfaces};
+    use crate::shell_windows;
     use std::collections::HashSet;
 
     #[test]
@@ -365,17 +405,36 @@ mod tests {
         assert_eq!(
             events::ALL,
             &[
-                "process-manager:closed",
-                "tray-panel:open",
-                "tray-panel:closed",
+                "audio-panel:open",
+                "audio-panel:closed",
                 "command-panel:closed",
-                "search-panel:interaction",
-                "search-panel:closed",
+                "process-manager:open",
+                "process-manager:closed",
+                "search:open-centered",
+                "search-engine:progress",
                 "search-index:refreshed",
+                "search-panel:activate",
+                "search-panel:closed",
+                "search-panel:expand-group",
+                "search-panel:interaction",
+                "search-panel:key",
+                "search-panel:pin-folder",
+                "search-panel:query",
+                "search-panel:select",
+                "search-panel:update",
+                "stack-popup:open",
                 "stack-pins:updated",
-                "task:started",
-                "task:output",
+                "task-preview:hide",
+                "task-preview:hover-enter",
+                "task-preview:update",
                 "task:completed",
+                "task:output",
+                "task:started",
+                "taskbar:refresh-launchers",
+                "taskbar:refresh-windows",
+                "top-bar:pin-menu-action",
+                "tray-panel:closed",
+                "tray-panel:open",
             ]
         );
     }

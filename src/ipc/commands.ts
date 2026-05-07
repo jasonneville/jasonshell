@@ -47,6 +47,7 @@ export const IPC_COMMANDS = {
   getSearchProviderHealth: 'get_search_provider_health',
   requestEverythingSetup: 'request_everything_setup',
   openShellPath: 'open_shell_path',
+  launchAppPath: 'launch_app_path',
   runControlPanel: 'run_control_panel',
   runQuickCommand: 'run_quick_command',
   listPinnedStackFolders: 'list_pinned_stack_folders',

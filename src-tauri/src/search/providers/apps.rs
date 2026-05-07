@@ -503,7 +503,10 @@ fn app_identity_key(entry: &AppIndexEntry) -> String {
 }
 
 fn is_windows_apps_path(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('/', r"\").to_ascii_lowercase();
+    let normalized = path
+        .to_string_lossy()
+        .replace('/', r"\")
+        .to_ascii_lowercase();
     normalized.contains(r"\microsoft\windowsapps\")
 }
 
@@ -636,14 +639,14 @@ fn has_lnk_extension(path: &Path) -> bool {
 #[cfg(target_os = "windows")]
 fn resolve_shortcut_target(shortcut_path: &Path) -> Option<PathBuf> {
     use windows::core::{Interface, PCWSTR};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
-    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
     use windows::Win32::UI::Shell::{SLR_NOSEARCH, SLR_NOTRACK, SLR_NO_UI};
-    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 
     struct ComGuard {
         initialized: bool,
@@ -659,7 +662,8 @@ fn resolve_shortcut_target(shortcut_path: &Path) -> Option<PathBuf> {
     let _com_guard = ComGuard {
         initialized: unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() },
     };
-    let shell_link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }.ok()?;
+    let shell_link: IShellLinkW =
+        unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }.ok()?;
     let persist_file: IPersistFile = shell_link.cast().ok()?;
     let shortcut_wide = to_wide(shortcut_path);
     unsafe { persist_file.Load(PCWSTR(shortcut_wide.as_ptr()), STGM_READ) }.ok()?;
@@ -691,7 +695,10 @@ fn to_wide(path: &Path) -> Vec<u16> {
 
 #[cfg(target_os = "windows")]
 fn trim_wide_buffer(buffer: &[u16]) -> String {
-    let end = buffer.iter().position(|value| *value == 0).unwrap_or(buffer.len());
+    let end = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
     String::from_utf16_lossy(&buffer[..end]).trim().to_string()
 }
 
@@ -1020,10 +1027,7 @@ mod tests {
 
         assert_eq!(deduped.len(), 1);
         assert_eq!(
-            deduped
-                .values()
-                .next()
-                .map(|entry| entry.source.as_str()),
+            deduped.values().next().map(|entry| entry.source.as_str()),
             Some("startMenuA")
         );
     }
@@ -1048,7 +1052,10 @@ mod tests {
         let collapsed = collapse_duplicate_app_identities(vec![windows_apps_entry, native_entry]);
 
         assert_eq!(collapsed.len(), 1);
-        assert!(collapsed[0].path.to_string_lossy().contains(r"\Roaming\Spotify\Spotify.exe"));
+        assert!(collapsed[0]
+            .path
+            .to_string_lossy()
+            .contains(r"\Roaming\Spotify\Spotify.exe"));
         assert!(collapsed[0].aliases.iter().any(|alias| alias == "Music"));
     }
 

@@ -6,20 +6,19 @@ const audioWrapper = readFileSync(new URL('../src/lib/audio.ts', import.meta.url
 const audioPanelSource = readFileSync(new URL('../src/components/AudioPanelSurface.svelte', import.meta.url), 'utf8');
 const ipcEventsSource = readFileSync(new URL('../src/ipc/events.ts', import.meta.url), 'utf8');
 
-test('audio refresh event has typed reasons and centralized event name', () => {
-  assert.match(ipcEventsSource, /audioRefresh: 'audio:refresh'/);
-  assert.match(audioWrapper, /export const AUDIO_REFRESH_EVENT = IPC_EVENTS\.audioRefresh/);
+test('audio refresh has typed reasons without dead cross-window event contract', () => {
+  assert.doesNotMatch(ipcEventsSource, /audioRefresh: 'audio:refresh'/);
+  assert.doesNotMatch(audioWrapper, /AUDIO_REFRESH_EVENT|AudioRefreshPayload|audio:refresh/);
+  assert.doesNotMatch(audioPanelSource, /AUDIO_REFRESH_EVENT|AudioRefreshPayload|audio:refresh/);
   assert.match(audioWrapper, /export type AudioRefreshReason =\s*\| 'device-added'\s*\| 'device-removed'\s*\| 'default-changed'\s*\| 'session-changed'/);
-  assert.match(audioWrapper, /export type AudioRefreshPayload = \{\s*reason: AudioRefreshReason;\s*\}/);
 });
 
-test('audio panel subscribes to refresh events on mount and unsubscribes on destroy', () => {
-  assert.match(audioPanelSource, /AUDIO_REFRESH_EVENT/);
-  assert.match(audioPanelSource, /type AudioRefreshPayload/);
+test('audio panel does not subscribe to removed refresh event contract', () => {
+  assert.doesNotMatch(audioPanelSource, /AUDIO_REFRESH_EVENT/);
+  assert.doesNotMatch(audioPanelSource, /type AudioRefreshPayload/);
   assert.match(audioPanelSource, /const unlisteners: Array<\(\) => void> = \[\]/);
   assert.match(audioPanelSource, /let disposed = false/);
-  assert.match(audioPanelSource, /registerAsyncUnlistener\(listen<AudioRefreshPayload>\(AUDIO_REFRESH_EVENT, \(event\) => \{/);
-  assert.match(audioPanelSource, /scheduleAudioRefresh\(event\.payload\.reason\)/);
+  assert.doesNotMatch(audioPanelSource, /registerAsyncUnlistener\(listen<AudioRefreshPayload>\(AUDIO_REFRESH_EVENT/);
   assert.match(audioPanelSource, /if \(disposed\) \{\s*unlisten\(\);\s*return;\s*\}/);
   assert.match(audioPanelSource, /unlisteners\.push\(unlisten\)/);
 });

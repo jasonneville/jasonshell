@@ -50,7 +50,10 @@ pub(crate) async fn resolve_stack_item_icons_for_paths_async(
         .map_err(|error| format!("Failed to join stack icon resolver: {error}"))?
 }
 
-pub(crate) fn resolve_stack_item_icons_batch(paths: Vec<String>, max_batch_size: usize) -> Vec<String> {
+pub(crate) fn resolve_stack_item_icons_batch(
+    paths: Vec<String>,
+    max_batch_size: usize,
+) -> Vec<String> {
     let bounded_limit = max_batch_size.max(1);
     let mut seen = HashSet::new();
     let mut batch = Vec::with_capacity(paths.len().min(bounded_limit));

@@ -377,6 +377,22 @@ export type StackBrowserDeletePrompt = {
   message: string;
 };
 
+export type StackBrowserCreatedTextFileRenamePlan = {
+  selectedPath: string;
+  renameDraft: string;
+  focusTarget: 'inline-editor';
+};
+
+export function stackBrowserCreatedTextFileRenamePlan(
+  created: Pick<StackEntry, 'path' | 'name'>
+): StackBrowserCreatedTextFileRenamePlan {
+  return {
+    selectedPath: created.path,
+    renameDraft: created.name,
+    focusTarget: 'inline-editor'
+  };
+}
+
 export function stackBrowserDeletePrompt(
   entries: StackEntry[],
   selectedPaths: string[],

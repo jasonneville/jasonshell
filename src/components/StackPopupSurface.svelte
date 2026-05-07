@@ -79,6 +79,7 @@
     STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
     classifyStackMarqueeStartTarget,
     stackBrowserBreadcrumbOverflow,
+    stackBrowserCreatedTextFileRenamePlan,
     stackBrowserDeletePrompt,
     getStackPathAutocompleteQuery,
     getStackPathInlineCompletion,
@@ -898,12 +899,15 @@
       const created = await newStackTextFile(currentPath);
       const listing = await listStackFolder(currentPath);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
-      stackState = selectStackEntry(stackState, created.path);
+      const renamePlan = stackBrowserCreatedTextFileRenamePlan(created);
+      stackState = selectStackEntry(stackState, renamePlan.selectedPath);
       createFolderDraft = null;
-      renameDraft = created.name;
+      renameDraft = renamePlan.renameDraft;
       errorMessage = '';
       updateDetailsViewport();
-      focusEditorInput();
+      if (renamePlan.focusTarget === 'inline-editor') {
+        focusEditorInput();
+      }
     } catch (error) {
       console.error('Failed to create text file', error);
       errorMessage = operationErrorMessage(error, 'New Text File unavailable');

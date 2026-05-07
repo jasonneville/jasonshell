@@ -16,6 +16,7 @@
   } from '../lib/taskbarWindows';
   import {
     hideSearchPanel,
+    launchAppPath,
     openShellPath,
     publishSearchPanel,
     runControlPanel,
@@ -143,6 +144,8 @@
   let focusedPinIndex: number | null = null;
   let searchEngineTimer: number | null = null;
   let searchFreshnessRetryTimer: number | null = null;
+  let railScrollUpdateTimeout: number | null = null;
+  let railScrollButtonsDisposed = false;
   let searchFreshnessRetriedQuery = '';
   let searchProviderCacheRetryTimer: number | null = null;
   let searchProviderCacheRetryQuery = '';
@@ -677,6 +680,9 @@
   }
 
   function updateRailScrollButtons() {
+    if (railScrollButtonsDisposed) {
+      return;
+    }
     if (!pinRailEl) {
       showRailScrollLeft = false;
       showRailScrollRight = false;
@@ -692,8 +698,24 @@
       return;
     }
     pinRailEl.scrollBy({ left: delta, behavior: 'smooth' });
-    // schedule update
-    setTimeout(updateRailScrollButtons, 160);
+    scheduleRailScrollButtonUpdate();
+  }
+
+  function scheduleRailScrollButtonUpdate() {
+    if (railScrollUpdateTimeout !== null) {
+      window.clearTimeout(railScrollUpdateTimeout);
+    }
+    railScrollUpdateTimeout = window.setTimeout(() => {
+      railScrollUpdateTimeout = null;
+      updateRailScrollButtons();
+    }, 160);
+  }
+
+  function cancelRailScrollButtonUpdate() {
+    if (railScrollUpdateTimeout !== null) {
+      window.clearTimeout(railScrollUpdateTimeout);
+      railScrollUpdateTimeout = null;
+    }
   }
 
   function scrollRailLeft() {
@@ -1018,7 +1040,7 @@
       await openShellPath(result.path as string);
     } else if (result.kind === 'app') {
       if (result.path) {
-        await openShellPath(result.path);
+        await launchAppPath(result.path);
       } else {
         await launchPinnedTaskbarLauncher(result.id.replace('app:', ''));
       }
@@ -1187,6 +1209,7 @@
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     let disposed = false;
+    railScrollButtonsDisposed = false;
     const registerAsyncUnlistener = (registration: Promise<() => void>) => {
       void registration.then((unlisten) => {
         if (disposed) {
@@ -1321,12 +1344,14 @@
 
     return () => {
       disposed = true;
+      railScrollButtonsDisposed = true;
       window.clearInterval(timer);
       window.clearInterval(searchRefreshTimer);
       window.clearTimeout(runtimeMetricsTimer);
       cancelSearchEngineTimer();
       cancelSearchFreshnessRetry();
       cancelSearchProviderCacheRetry();
+      cancelRailScrollButtonUpdate();
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);
       }

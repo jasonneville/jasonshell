@@ -1249,7 +1249,10 @@ mod tests {
             resolved_tray_label(Some("  Volume\x00 ".to_string()), 0),
             "Volume"
         );
-        assert_eq!(resolved_tray_label(Some("".to_string()), 2), "Notification area icon 3");
+        assert_eq!(
+            resolved_tray_label(Some("".to_string()), 2),
+            "Notification area icon 3"
+        );
         assert_eq!(resolved_tray_label(None, 4), "Notification area icon 5");
     }
 

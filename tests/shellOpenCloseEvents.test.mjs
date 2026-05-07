@@ -52,7 +52,7 @@ test('audio panel surface listens for own close event and stops polling', () => 
   const audioLib = readSource('../src/lib/audio.ts');
   const initialMountBody = audioSurface.match(/onMount\(\(\) => \{[\s\S]*?void listen\(AUDIO_PANEL_OPEN_EVENT/)?.[0] ?? '';
 
-  assert.match(audioLib, /AUDIO_PANEL_CLOSED_EVENT = 'audio-panel:closed'/);
+  assert.match(audioLib, /AUDIO_PANEL_CLOSED_EVENT = IPC_EVENTS\.audioPanelClosed/);
   assert.match(audioSurface, /AUDIO_PANEL_CLOSED_EVENT/);
   assert.match(audioSurface, /listen\(AUDIO_PANEL_CLOSED_EVENT, \(\) => \{/);
   assert.match(audioSurface, /audioPanelVisible = false;[\s\S]*stopAudioRefreshPolling\(\)/);

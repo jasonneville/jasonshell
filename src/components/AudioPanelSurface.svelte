@@ -4,7 +4,6 @@
   import {
     AUDIO_PANEL_CLOSED_EVENT,
     AUDIO_PANEL_OPEN_EVENT,
-    AUDIO_REFRESH_EVENT,
     getAudioState,
     hideAudioPanel,
     normalizeVolumePercent,
@@ -12,7 +11,6 @@
     setDefaultAudioInputDevice,
     setDefaultAudioOutputDevice,
     setMasterVolume,
-    type AudioRefreshPayload,
     type AudioRefreshReason,
     type AudioState
   } from '../lib/audio';
@@ -212,10 +210,6 @@
       stopPendingAudioRefresh();
       stopAudioRefreshPolling();
     }));
-    registerAsyncUnlistener(listen<AudioRefreshPayload>(AUDIO_REFRESH_EVENT, (event) => {
-      scheduleAudioRefresh(event.payload.reason);
-    }));
-
     return () => {
       disposed = true;
       stopPendingAudioRefresh();

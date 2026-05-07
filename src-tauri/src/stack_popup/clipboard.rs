@@ -37,7 +37,7 @@ pub(crate) fn set_stack_clipboard(
     Ok(())
 }
 
-pub(crate) fn paste_stack_clipboard_items(
+pub(crate) async fn paste_stack_clipboard_items_async(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     destination: String,
 ) -> Result<StackPasteResult, String> {
@@ -48,9 +48,14 @@ pub(crate) fn paste_stack_clipboard_items(
         .clipboard
         .is_some();
     let clipboard = clipboard_for_paste(state)?;
-    let result = paste_clipboard_items(&clipboard, &destination);
+    let mode = clipboard.mode;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        paste_clipboard_items(&clipboard, &destination)
+    })
+    .await
+    .map_err(|error| format!("Failed to join stack paste task: {error}"))?;
 
-    if matches!(clipboard.mode, ClipboardMode::Cut) {
+    if matches!(mode, ClipboardMode::Cut) {
         update_cut_clipboard_after_paste(state, used_internal_clipboard, &result);
     }
 

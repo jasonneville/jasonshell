@@ -303,26 +303,24 @@ fn build_audio_panel_window(app: &App) -> AppResult<WebviewWindow> {
 }
 
 fn build_tray_panel_window(app: &App) -> AppResult<WebviewWindow> {
-    Ok(WebviewWindowBuilder::new(
-        app,
-        TRAY_PANEL_LABEL,
-        WebviewUrl::App("index.html".into()),
+    Ok(
+        WebviewWindowBuilder::new(app, TRAY_PANEL_LABEL, WebviewUrl::App("index.html".into()))
+            .always_on_top(true)
+            .devtools(false)
+            .decorations(false)
+            .focused(false)
+            .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+            .inner_size(TRAY_PANEL_WIDTH_LOGICAL, TRAY_PANEL_HEIGHT_LOGICAL)
+            .maximizable(false)
+            .minimizable(false)
+            .resizable(false)
+            .shadow(true)
+            .skip_taskbar(true)
+            .theme(Some(Theme::Dark))
+            .title("JasonShell Tray")
+            .visible(false)
+            .build()?,
     )
-    .always_on_top(true)
-    .devtools(false)
-    .decorations(false)
-    .focused(false)
-    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
-    .inner_size(TRAY_PANEL_WIDTH_LOGICAL, TRAY_PANEL_HEIGHT_LOGICAL)
-    .maximizable(false)
-    .minimizable(false)
-    .resizable(false)
-    .shadow(true)
-    .skip_taskbar(true)
-    .theme(Some(Theme::Dark))
-    .title("JasonShell Tray")
-    .visible(false)
-    .build()?)
 }
 
 fn build_command_panel_window(app: &App) -> AppResult<WebviewWindow> {

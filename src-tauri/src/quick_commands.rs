@@ -153,7 +153,8 @@ mod tests {
 
     #[test]
     fn validates_run_request_requires_id() {
-        let error = validate_run_request(&RunQuickCommandRequest { id: "".to_string() }).unwrap_err();
+        let error =
+            validate_run_request(&RunQuickCommandRequest { id: "".to_string() }).unwrap_err();
         assert!(error.contains("must not be empty"));
     }
 
@@ -180,7 +181,15 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(plan.executable, "pwsh.exe");
-        assert_eq!(plan.args[0..4], ["-NoLogo", "-NoProfile", "-File", path.to_string_lossy().as_ref()]);
+        assert_eq!(
+            plan.args[0..4],
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                path.to_string_lossy().as_ref()
+            ]
+        );
         assert_eq!(plan.args[4], "arg-a");
     }
 

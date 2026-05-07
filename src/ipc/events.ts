@@ -1,10 +1,14 @@
 export const IPC_EVENTS = {
+  // Convenience subset for shared cross-window frontend wrappers. Rust event
+  // authority lives in src-tauri/src/contracts.rs; feature-local constants may
+  // exist for events not consumed across generic wrappers.
+  audioPanelOpen: 'audio-panel:open',
+  audioPanelClosed: 'audio-panel:closed',
   processManagerOpen: 'process-manager:open',
   processManagerClosed: 'process-manager:closed',
   trayPanelOpen: 'tray-panel:open',
   trayPanelClosed: 'tray-panel:closed',
   commandPanelClosed: 'command-panel:closed',
-  audioRefresh: 'audio:refresh',
   searchPanelUpdate: 'search-panel:update',
   searchPanelActivate: 'search-panel:activate',
   searchPanelSelect: 'search-panel:select',

@@ -16,10 +16,7 @@ pub struct ShowTrayPanelRequest {
 }
 
 #[tauri::command]
-pub fn show_tray_panel(
-    app_handle: AppHandle,
-    request: ShowTrayPanelRequest,
-) -> Result<(), String> {
+pub fn show_tray_panel(app_handle: AppHandle, request: ShowTrayPanelRequest) -> Result<(), String> {
     let panel = app_handle
         .get_webview_window(TRAY_PANEL_LABEL)
         .ok_or_else(|| "Tray panel window is unavailable".to_string())?;

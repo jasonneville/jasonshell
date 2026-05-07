@@ -1,9 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-use crate::shell_windows::{
-    COMMAND_PANEL_LABEL, COMMAND_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL,
-};
+use crate::shell_windows::{COMMAND_PANEL_LABEL, COMMAND_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 pub const COMMAND_PANEL_CLOSED_EVENT: &str = "command-panel:closed";
 const COMMAND_PANEL_MARGIN_PHYSICAL: i32 = 6;
