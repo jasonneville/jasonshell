@@ -62,6 +62,8 @@ export const IPC_COMMANDS = {
   resizeStackPopup: 'resize_stack_popup',
   readStackFolder: 'read_stack_folder',
   getStackGitStatus: 'get_stack_git_status',
+  stackGitAddPaths: 'stack_git_add_paths',
+  stackGitCommit: 'stack_git_commit',
   suggestStackPaths: 'suggest_stack_paths',
   resolveStackItemIcons: 'resolve_stack_item_icons',
   openStackItem: 'open_stack_item',

@@ -149,13 +149,23 @@
   min-width: 0;
 }
 
-.stack-git-summary span {
+.stack-git-summary span,
+.stack-git-summary button {
+  background: transparent;
   border: 1px solid var(--js-color-border-soft);
   border-radius: var(--js-radius-xs);
+  color: inherit;
+  cursor: pointer;
   font-size: 0.55rem;
   font-weight: 800;
   line-height: 1;
   padding: 0.08rem 0.24rem;
+}
+
+.stack-git-summary button:hover,
+.stack-git-summary button:focus-visible {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
 }
 
 .stack-git-summary .stack-git-branch {
@@ -169,6 +179,149 @@
 .stack-git-summary .stack-git-count,
 .stack-git-summary .stack-git-clean {
   background: var(--js-color-surface-overlay);
+}
+
+.stack-git-popup {
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-md);
+  box-shadow: var(--js-shadow-panel);
+  display: grid;
+  gap: var(--js-space-3);
+  left: var(--js-space-4);
+  max-height: min(28rem, calc(100% - 2rem));
+  overflow: hidden;
+  padding: var(--js-space-3);
+  position: absolute;
+  top: 5.8rem;
+  width: min(38rem, calc(100% - 2rem));
+  z-index: 30;
+}
+
+.stack-git-popup header,
+.stack-git-popup-toolbar,
+.stack-git-commit > div {
+  align-items: center;
+  display: flex;
+  gap: var(--js-space-2);
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.stack-git-popup h2 {
+  color: var(--js-color-text-strong);
+  font-size: 0.88rem;
+  margin: 0;
+}
+
+.stack-git-popup p {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  margin: 0.12rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-popup button {
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font-size: 0.62rem;
+  font-weight: 750;
+  min-height: 1.45rem;
+  padding: 0 0.42rem;
+}
+
+.stack-git-popup button:not(:disabled):hover,
+.stack-git-popup button:not(:disabled):focus-visible,
+.stack-git-popup button.active {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
+}
+
+.stack-git-popup-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--js-space-2);
+}
+
+.stack-git-popup-toolbar {
+  color: var(--js-color-text-muted);
+  font-size: 0.64rem;
+  font-weight: 760;
+}
+
+.stack-git-file-list {
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  display: grid;
+  max-height: 12.5rem;
+  min-height: 5rem;
+  overflow: auto;
+}
+
+.stack-git-file {
+  align-items: center;
+  border-bottom: 1px solid var(--js-color-border-soft);
+  color: var(--js-color-text);
+  display: grid;
+  gap: var(--js-space-2);
+  grid-template-columns: 1rem 1.6rem minmax(0, 1fr) 5.5rem;
+  min-height: 1.75rem;
+  padding: 0 0.42rem;
+}
+
+.stack-git-file:last-child {
+  border-bottom: 0;
+}
+
+.stack-git-file > span:nth-of-type(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-file small,
+.stack-git-empty {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 760;
+}
+
+.stack-git-empty {
+  padding: var(--js-space-3);
+}
+
+.stack-git-commit {
+  display: grid;
+  gap: var(--js-space-2);
+}
+
+.stack-git-commit label {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stack-git-commit textarea {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font: inherit;
+  font-size: 0.68rem;
+  min-height: 4rem;
+  padding: var(--js-space-2);
+  resize: vertical;
+}
+
+.stack-git-commit span {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  min-width: 0;
 }
 
 .stack-actions {

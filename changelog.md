@@ -2,6 +2,12 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-07 `[USER]` REQUESTED: Add a Stack Browser Git status popup from the branch/modified/untracked/deleted chips in a separate worktree, keeping the Stack Browser open underneath and supporting git add plus commit-message commit flow.
+- 2026-05-07 `[CODE]` IMPLEMENTED: Created branch/worktree `stack-git-status-popup` at `C:\dev\jasonshell-git-status-popup`. Added Stack Browser Git status dialog UI, status-chip opening/filtering, selected-file `stack_git_add_paths`, staged-change `stack_git_commit`, TypeScript wrappers, Rust command contracts, safe pathspec stdin handling, source tests, and updated `master_spec.md`.
+- 2026-05-07 `[CODE]` QA-FIXED: Scoped Stack Browser Git commits to the dialog's staged paths, preserved staged flags from porcelain index status, rejected dot-dot pathspec components before spawning git, and removed misleading tablist semantics from the Git status filter row.
+- 2026-05-07 `[CODE]` FIXED: Rewired Stack Browser Git dialog controls to raw native buttons with explicit click/submit handlers, including `Select all`, `Clear`, `Add selected`, filter buttons, close, and commit; added visible selected-count text and source-test coverage for those handlers.
+- 2026-05-07 `[CODE]` FIXED: Changed Git status file checkboxes to Svelte `bind:group={gitStatusSelectedPaths}` so `Select all` and `Clear` update checkbox visuals in the same state path as direct checkbox clicks.
+
 - 2026-05-07 `[USER]` REQUESTED: Change JasonShell search activation from the Windows key to `Ctrl+Space` so it is easier to use and does not interfere with Windows shell settings.
 - 2026-05-07 `[CODE]` COMPLETED: Reworked the Windows low-level search hook to open centered search on `Ctrl+Space`, suppress only the Space keydown/up for that chord, suppress repeat Space keydowns while held, pass other Ctrl chords through, and stop capturing Windows-key behavior. Updated TopBar event constant naming, focused source/Rust tests, startup error wording, and `master_spec.md` search-hotkey behavior.
 - 2026-05-07 `[TOOL]` VALIDATED: Focused hotkey validation passed with `node --test tests\windowsKeyOverride.test.mjs`, `cargo test --manifest-path src-tauri\Cargo.toml windows_key_hook`, `npm run check`, and `npm run cargo:check`.

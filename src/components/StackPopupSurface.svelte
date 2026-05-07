@@ -31,6 +31,8 @@
     resizeStackPopup,
     revealStackItem,
     showStackItemProperties,
+    stackGitAddPaths,
+    stackGitCommit,
     suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
@@ -190,6 +192,12 @@
   let gitStatus: StackGitStatus | null = null;
   let gitStatusPath = '';
   let gitStatusRequestSequence = 0;
+  let gitStatusPopupOpen = false;
+  let gitStatusPopupFilter: StackGitFileStatusKind | 'all' = 'all';
+  let gitStatusSelectedPaths: string[] = [];
+  let gitCommitMessage = '';
+  let gitOperationPending = false;
+  let gitOperationMessage = '';
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -1199,6 +1207,18 @@
     backgroundMenu = null;
   }
 
+  function openGitStatusPopup(filter: StackGitFileStatusKind | 'all' = 'all') {
+    closeMenus();
+    gitStatusPopupFilter = filter;
+    gitStatusPopupOpen = true;
+    gitOperationMessage = '';
+    reconcileGitStatusSelection();
+  }
+
+  function closeGitStatusPopup() {
+    gitStatusPopupOpen = false;
+  }
+
   function cancelInlineEditor() {
     createFolderDraft = null;
     renameDraft = null;
@@ -1386,6 +1406,70 @@
     if (status.untracked) parts.push({ status: 'untracked', label: `?${status.untracked}`, title: `${status.untracked} untracked` });
     if (status.conflicts) parts.push({ status: 'conflict', label: `!${status.conflicts}`, title: `${status.conflicts} conflict${status.conflicts === 1 ? '' : 's'}` });
     return parts;
+  }
+
+  function filteredGitStatusEntries() {
+    if (!gitStatus) return [];
+    if (gitStatusPopupFilter === 'all') {
+      return gitStatus.entries;
+    }
+    return gitStatus.entries.filter((entry) => entry.status === gitStatusPopupFilter);
+  }
+
+  function stagedGitStatusEntries() {
+    if (!gitStatus) return [];
+    return gitStatus.entries.filter((entry) => entry.staged);
+  }
+
+  function gitStatusFilterLabel() {
+    if (gitStatusPopupFilter === 'all') return 'All changes';
+    return stackGitStatusLabel(gitStatusPopupFilter);
+  }
+
+  function setAllGitPathsSelected(selected: boolean) {
+    gitStatusSelectedPaths = selected ? filteredGitStatusEntries().map((entry) => entry.path) : [];
+  }
+
+  function reconcileGitStatusSelection() {
+    const available = new Set(filteredGitStatusEntries().map((entry) => entry.path));
+    gitStatusSelectedPaths = gitStatusSelectedPaths.filter((path) => available.has(path));
+  }
+
+  async function addSelectedGitPaths() {
+    if (!gitStatus || !gitStatusSelectedPaths.length || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitAddPaths(currentPath, gitStatusSelectedPaths);
+      gitOperationMessage = result.summary;
+      gitStatusSelectedPaths = [];
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git add failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function commitGitStatus() {
+    if (!gitStatus || !gitCommitMessage.trim() || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitCommit(currentPath, gitCommitMessage, stagedGitStatusEntries().map((entry) => entry.path));
+      gitOperationMessage = result.summary;
+      gitCommitMessage = '';
+      gitStatusSelectedPaths = [];
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git commit failed');
+    } finally {
+      gitOperationPending = false;
+    }
   }
 
   function stackGitStatusForEntry(entry: StackEntry) {
@@ -1999,13 +2083,13 @@
         {/if}
         {#if gitStatus}
           <div class="stack-git-summary" aria-label={`Git ${gitStatus.branch} ${stackGitSummaryParts(gitStatus).map((part) => part.title).join(', ') || 'clean'}`}>
-            <span class="stack-git-branch">{gitStatus.branch}</span>
+            <button type="button" class="stack-git-branch" on:click={() => openGitStatusPopup('all')}>{gitStatus.branch}</button>
             {#if stackGitSummaryParts(gitStatus).length}
               {#each stackGitSummaryParts(gitStatus) as part}
-                <span class={`stack-git-count git-status-${part.status}`} title={part.title}>{part.label}</span>
+                <button type="button" class={`stack-git-count git-status-${part.status}`} title={part.title} on:click={() => openGitStatusPopup(part.status)}>{part.label}</button>
               {/each}
             {:else}
-              <span class="stack-git-clean">clean</span>
+              <button type="button" class="stack-git-clean" on:click={() => openGitStatusPopup('all')}>clean</button>
             {/if}
           </div>
         {/if}
@@ -2070,6 +2154,65 @@
       <MeltActionButton type="submit">OK</MeltActionButton>
       <MeltActionButton onClick={cancelInlineEditor}>Cancel</MeltActionButton>
     </form>
+  {/if}
+
+  {#if gitStatusPopupOpen && gitStatus}
+    <dialog
+      open
+      class="stack-git-popup"
+      aria-label="Git status"
+      on:click|stopPropagation
+      on:contextmenu|stopPropagation
+      on:keydown={(event) => event.key === 'Escape' && closeGitStatusPopup()}
+    >
+      <header>
+        <div>
+          <h2>{gitStatus.branch}</h2>
+          <p>{gitStatus.repositoryRoot}</p>
+        </div>
+        <button type="button" aria-label="Close git status" on:click={closeGitStatusPopup}>Close</button>
+      </header>
+      <div class="stack-git-popup-tabs" aria-label="Git status filter">
+        <button type="button" class:active={gitStatusPopupFilter === 'all'} on:click={() => { gitStatusPopupFilter = 'all'; gitStatusSelectedPaths = []; }}>All</button>
+        {#each stackGitSummaryParts(gitStatus) as part}
+          <button type="button" class:active={gitStatusPopupFilter === part.status} on:click={() => { gitStatusPopupFilter = part.status; gitStatusSelectedPaths = []; }}>{part.label}</button>
+        {/each}
+      </div>
+      <div class="stack-git-popup-toolbar">
+        <span>{gitStatusFilterLabel()} · {filteredGitStatusEntries().length} · {gitStatusSelectedPaths.length} selected</span>
+        <button type="button" disabled={!filteredGitStatusEntries().length || gitOperationPending} on:click={() => setAllGitPathsSelected(true)}>Select all</button>
+        <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => setAllGitPathsSelected(false)}>Clear</button>
+        <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => void addSelectedGitPaths()}>Add selected</button>
+      </div>
+      <div class="stack-git-file-list" role="list" aria-label="Git changed files">
+        {#if filteredGitStatusEntries().length}
+          {#each filteredGitStatusEntries() as entry (entry.path)}
+            <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
+              <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
+              <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
+              <span title={entry.path}>{entry.relativePath}</span>
+              <small>{entry.staged ? 'Staged' : stackGitStatusLabel(entry.status)}</small>
+            </label>
+          {/each}
+        {:else}
+          <div class="stack-git-empty" role="status">No files</div>
+        {/if}
+      </div>
+      <form class="stack-git-commit" on:submit|preventDefault={() => void commitGitStatus()}>
+        <label for="stack-git-commit-message">Commit message</label>
+        <textarea
+          id="stack-git-commit-message"
+          value={gitCommitMessage}
+          rows="3"
+          placeholder={stagedGitStatusEntries().length ? `${stagedGitStatusEntries().length} staged file(s)` : 'Add files before commit'}
+          on:input={(event) => gitCommitMessage = event.currentTarget.value}
+        ></textarea>
+        <div>
+          <span role="status">{gitOperationMessage}</span>
+          <button type="submit" disabled={!gitCommitMessage.trim() || gitOperationPending || !stagedGitStatusEntries().length}>Commit</button>
+        </div>
+      </form>
+    </dialog>
   {/if}
 
   <div
