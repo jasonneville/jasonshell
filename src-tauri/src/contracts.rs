@@ -92,6 +92,8 @@ pub mod commands {
     pub const RESIZE_STACK_POPUP: &str = "resize_stack_popup";
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
+    pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
+    pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
     pub const SUGGEST_STACK_PATHS: &str = "suggest_stack_paths";
     pub const RESOLVE_STACK_ITEM_ICONS: &str = "resolve_stack_item_icons";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
@@ -197,6 +199,8 @@ pub mod commands {
         RESIZE_STACK_POPUP,
         READ_STACK_FOLDER,
         GET_STACK_GIT_STATUS,
+        STACK_GIT_ADD_PATHS,
+        STACK_GIT_COMMIT,
         SUGGEST_STACK_PATHS,
         RESOLVE_STACK_ITEM_ICONS,
         OPEN_STACK_ITEM,
@@ -361,6 +365,8 @@ mod tests {
         assert!(unique.contains("resize_stack_popup"));
         assert!(unique.contains("read_stack_folder"));
         assert!(unique.contains("get_stack_git_status"));
+        assert!(unique.contains("stack_git_add_paths"));
+        assert!(unique.contains("stack_git_commit"));
         assert!(unique.contains("list_stack_open_with_candidates"));
         assert!(unique.contains("open_stack_item_with_app"));
         assert!(unique.contains("prepare_stack_file_drag"));

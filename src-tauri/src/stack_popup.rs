@@ -26,7 +26,8 @@ pub struct StackPathSuggestion {
 }
 
 pub use models::{
-    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitStatus, StackItem,
+    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitCommitRequest,
+    StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackItem,
     StackItemIconResolutionBatch, StackNativeDragPreparation, StackOpenWithCandidate,
     StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
@@ -323,6 +324,20 @@ pub fn read_stack_folder(
 #[tauri::command]
 pub async fn get_stack_git_status(path: String) -> Result<Option<StackGitStatus>, String> {
     git_status::stack_git_status_for_path_async(path).await
+}
+
+#[tauri::command]
+pub async fn stack_git_add_paths(
+    request: StackGitStageRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_add_paths_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_commit(
+    request: StackGitCommitRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_status::stack_git_commit_async(request).await
 }
 
 #[tauri::command]

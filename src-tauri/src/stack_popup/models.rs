@@ -90,6 +90,7 @@ pub struct StackGitFileStatus {
     pub path: String,
     pub relative_path: String,
     pub status: StackGitFileStatusKind,
+    pub staged: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -103,6 +104,28 @@ pub struct StackGitStatus {
     pub untracked: usize,
     pub conflicts: usize,
     pub entries: Vec<StackGitFileStatus>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStageRequest {
+    pub folder_path: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitCommitRequest {
+    pub folder_path: String,
+    pub message: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitOperationResult {
+    pub repository_root: String,
+    pub summary: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

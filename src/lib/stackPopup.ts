@@ -35,6 +35,7 @@ export type StackGitFileStatus = {
   path: string;
   relativePath: string;
   status: StackGitFileStatusKind;
+  staged: boolean;
 };
 
 export type StackGitStatus = {
@@ -46,6 +47,11 @@ export type StackGitStatus = {
   untracked: number;
   conflicts: number;
   entries: StackGitFileStatus[];
+};
+
+export type StackGitOperationResult = {
+  repositoryRoot: string;
+  summary: string;
 };
 
 export type StackFolderWarning = {
@@ -442,6 +448,18 @@ export function resolveStackItemIcons(paths: string[]): Promise<StackItemIconRes
 
 export function getStackGitStatus(folderPath: string): Promise<StackGitStatus | null> {
   return invoke<StackGitStatus | null>(IPC_COMMANDS.getStackGitStatus, { path: folderPath });
+}
+
+export function stackGitAddPaths(folderPath: string, paths: string[]): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitAddPaths, {
+    request: { folderPath, paths }
+  });
+}
+
+export function stackGitCommit(folderPath: string, message: string, paths: string[]): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitCommit, {
+    request: { folderPath, message, paths }
+  });
 }
 
 export function suggestStackPaths(request: StackPathSuggestionRequest): Promise<StackPathSuggestion[]> {
