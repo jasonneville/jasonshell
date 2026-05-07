@@ -259,7 +259,7 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'command-panel:closed',
     'process-manager:open',
     'process-manager:closed',
-    'search:open-centered',
+    'search:toggle-centered',
     'search-engine:progress',
     'search-index:refreshed',
     'search-panel:activate',
