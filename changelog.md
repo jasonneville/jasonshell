@@ -2,6 +2,10 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-07 `[USER]` REQUESTED: Make the JasonShell bottom bar about 10% shorter and the top bar about 10% shorter. Expected affected surfaces/modules: `src-tauri/src/shell_windows.rs`, top/bottom bar CSS, AppBar/layout tests, anchored top-bar panel tests, `master_spec.md`, and focused validation.
+- 2026-05-07 `[CODE]` IMPLEMENTED: Changed top-bar height from `26.0` to `23.4` logical pixels and bottom-bar height from `36.0` to `32.4` logical pixels. Compact top-bar controls and bottom-bar icon/button widths were adjusted to fit the shorter AppBar windows; layout/tray fixtures and current spec text were updated.
+- 2026-05-07 `[TOOL]` VALIDATED: Focused `node --test tests\audioControls.test.mjs tests\taskbarUxState.test.mjs tests\trayPanelWiring.test.mjs`, `cargo test --manifest-path src-tauri\Cargo.toml layout`, `cargo test --manifest-path src-tauri\Cargo.toml tray_panel`, `cargo test --manifest-path src-tauri\Cargo.toml appbar`, and `npm run check` passed. Full `npm run validate` passed; `git diff --check` reported line-ending warnings only.
+
 - 2026-05-07 `[USER]` REQUESTED: Change JasonShell search activation from the Windows key to `Ctrl+Space` so it is easier to use and does not interfere with Windows shell settings.
 - 2026-05-07 `[CODE]` COMPLETED: Reworked the Windows low-level search hook to open centered search on `Ctrl+Space`, suppress only the Space keydown/up for that chord, suppress repeat Space keydowns while held, pass other Ctrl chords through, and stop capturing Windows-key behavior. Updated TopBar event constant naming, focused source/Rust tests, startup error wording, and `master_spec.md` search-hotkey behavior.
 - 2026-05-07 `[TOOL]` VALIDATED: Focused hotkey validation passed with `node --test tests\windowsKeyOverride.test.mjs`, `cargo test --manifest-path src-tauri\Cargo.toml windows_key_hook`, `npm run check`, and `npm run cargo:check`.

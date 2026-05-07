@@ -78,7 +78,7 @@ test('audio panel ignores stale failed commands and reverts current failures', (
   );
 });
 
-test('audio panel is a dedicated top-bar anchored webview so controls are not clipped by the 26px bar', () => {
+test('audio panel is a dedicated top-bar anchored webview so controls are not clipped by the compact top bar', () => {
   assert.match(shellWindowsSource, /pub const AUDIO_PANEL_LABEL: &str = "audio-panel"/);
   assert.match(shellWindowsSource, /AUDIO_PANEL_HEIGHT_LOGICAL: f64 = 430\.0/);
   assert.match(shellWindowsSource, /build_audio_panel_window\(app\)/);

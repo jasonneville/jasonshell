@@ -97,6 +97,6 @@ mod tests {
     #[test]
     fn clamps_tray_panel_inside_top_bar_edges() {
         assert_eq!(anchored_panel_x(0, 240, 6.0, 24.0, 252, 1.0), 8);
-        assert_eq!(anchored_panel_x(0, 780, 770.0, 26.0, 252, 1.0), 520);
+        assert_eq!(anchored_panel_x(0, 780, 770.0, 23.4, 252, 1.0), 520);
     }
 }

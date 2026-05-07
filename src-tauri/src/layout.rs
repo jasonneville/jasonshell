@@ -266,20 +266,20 @@ mod tests {
     fn monitor_shell_layout_uses_per_monitor_dpi_for_mixed_dpi_strips() {
         let monitors = mixed_dpi_monitors();
 
-        let plans = plan_monitor_shell_layout(&monitors, 26.0, 36.0);
+        let plans = plan_monitor_shell_layout(&monitors, 23.4, 32.4);
 
-        assert_eq!(plans[0].top_bar.unwrap().height(), 26);
-        assert_eq!(plans[0].bottom_strip.height(), 36);
+        assert_eq!(plans[0].top_bar.unwrap().height(), 23);
+        assert_eq!(plans[0].bottom_strip.height(), 32);
         assert_eq!(plans[1].top_bar, None);
-        assert_eq!(plans[1].bottom_strip.height(), 54);
-        assert_eq!(plans[1].work_area.bottom, 1440 - 54);
+        assert_eq!(plans[1].bottom_strip.height(), 49);
+        assert_eq!(plans[1].work_area.bottom, 1440 - 49);
     }
 
     #[test]
     fn monitor_shell_layout_assigns_primary_shell_and_secondary_task_strip_ownership() {
         let monitors = mixed_dpi_monitors();
 
-        let plans = plan_monitor_shell_layout(&monitors, 26.0, 36.0);
+        let plans = plan_monitor_shell_layout(&monitors, 23.4, 32.4);
 
         assert_eq!(plans[0].ownership, MonitorShellOwnership::PrimaryShell);
         assert!(plans[0].top_bar.is_some());
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn popup_anchor_uses_source_monitor_scale_and_clamps_to_monitor_bounds() {
         let monitors = mixed_dpi_monitors();
-        let plans = plan_monitor_shell_layout(&monitors, 26.0, 36.0);
+        let plans = plan_monitor_shell_layout(&monitors, 23.4, 32.4);
         let secondary = monitors[1];
         let secondary_plan = plans[1];
 
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn popup_anchor_places_primary_top_popups_below_the_primary_top_bar() {
         let monitors = mixed_dpi_monitors();
-        let plans = plan_monitor_shell_layout(&monitors, 26.0, 36.0);
+        let plans = plan_monitor_shell_layout(&monitors, 23.4, 32.4);
         let primary_top = plans[0]
             .top_bar
             .expect("primary shell should own the only top bar");
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn task_strip_assignment_prefers_current_monitor_then_stable_previous_then_primary() {
-        let plans = plan_monitor_shell_layout(&mixed_dpi_monitors(), 26.0, 36.0);
+        let plans = plan_monitor_shell_layout(&mixed_dpi_monitors(), 23.4, 32.4);
 
         assert_eq!(
             assign_task_strip_monitor(&plans, Some(MonitorId(2)), Some(MonitorId(1))),

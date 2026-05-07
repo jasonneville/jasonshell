@@ -29,7 +29,7 @@
   color: var(--js-color-text-muted);
   cursor: pointer;
   display: inline-flex;
-  flex: 0 0 1.72rem;
+  flex: 0 0 1.55rem;
   font-size: 0.86rem;
   font-weight: 800;
   height: 100%;
@@ -83,11 +83,11 @@
     border-color 140ms ease,
     background 140ms ease,
     box-shadow 140ms ease;
-  width: 1.62rem;
+  width: 1.46rem;
 }
 
 .bottom-bar .quick-icon-button {
-  width: 1.62rem;
+  width: 1.46rem;
 }
 
 .bottom-bar .quick-icon-slot {
@@ -155,9 +155,9 @@
 
 .bottom-bar .launcher-icon {
   display: block;
-  height: 0.96rem;
+  height: 0.86rem;
   pointer-events: none;
-  width: 0.96rem;
+  width: 0.86rem;
 }
 
 .bottom-bar .task-strip {
@@ -350,9 +350,9 @@
 .bottom-bar .task-icon {
   display: block;
   flex: 0 0 auto;
-  height: 0.82rem;
+  height: 0.74rem;
   pointer-events: none;
-  width: 0.82rem;
+  width: 0.74rem;
 }
 
 .bottom-bar .task-label {
