@@ -176,18 +176,30 @@
   opacity: 0.55;
 }
 
+.top-bar .time-control {
+  flex: 0 0 auto;
+}
+
 .top-bar .time-pill {
   align-items: flex-end;
   background: transparent;
-  border: transparent;
+  border: 1px solid transparent;
   border-radius: var(--js-radius-sm);
   box-shadow: var(--js-inset-highlight);
+  color: var(--js-color-text);
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 0.08rem;
   min-width: 5.6rem;
   padding: 0.12rem 0.46rem;
   text-align: right;
+}
+
+.top-bar .time-pill:hover,
+.top-bar .time-pill[aria-expanded="true"] {
+  background: var(--js-color-surface-sunken);
+  border-color: var(--js-color-border-soft);
 }
 
 .top-bar .time-pill strong {

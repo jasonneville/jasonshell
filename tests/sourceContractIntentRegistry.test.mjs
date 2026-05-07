@@ -55,6 +55,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'taskPreviewRetention.test.mjs',
     'taskPreviewTextPolish.test.mjs',
     'themeRegistry.test.mjs',
+    'topBarCalendar.test.mjs',
     'topBarFolderReorder.test.mjs',
     'topBarPins.test.mjs',
     'topBarTimeoutHygiene.test.mjs',

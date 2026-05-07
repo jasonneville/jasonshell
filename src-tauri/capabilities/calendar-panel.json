@@ -1,0 +1,11 @@
+{
+  "identifier": "calendar-panel",
+  "description": "Calendar panel auxiliary surface capability: local date/time and timezone details.",
+  "windows": [
+    "calendar-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

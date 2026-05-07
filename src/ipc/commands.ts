@@ -31,6 +31,8 @@ export const IPC_COMMANDS = {
   hideCommandPanel: 'hide_command_panel',
   showAudioPanel: 'show_audio_panel',
   hideAudioPanel: 'hide_audio_panel',
+  showCalendarPanel: 'show_calendar_panel',
+  hideCalendarPanel: 'hide_calendar_panel',
   getAudioState: 'get_audio_state',
   setMasterVolume: 'set_master_volume',
   setAppVolume: 'set_app_volume',

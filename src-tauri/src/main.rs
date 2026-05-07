@@ -2,6 +2,7 @@
 
 mod audio;
 mod audio_panel;
+mod calendar_panel;
 mod automation;
 mod command_panel;
 mod contracts;
@@ -95,6 +96,8 @@ fn main() {
             command_panel::hide_command_panel,
             audio_panel::show_audio_panel,
             audio_panel::hide_audio_panel,
+            calendar_panel::show_calendar_panel,
+            calendar_panel::hide_calendar_panel,
             process_manager::list_processes,
             process_manager::kill_process,
             audio::get_audio_state,
@@ -233,6 +236,14 @@ fn main() {
                 && matches!(event, WindowEvent::Focused(false))
             {
                 let _ = audio_panel::emit_audio_panel_closed(window.app_handle());
+                let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::CALENDAR_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = calendar_panel::emit_calendar_panel_closed(window.app_handle());
                 let _ = window.hide();
                 return;
             }

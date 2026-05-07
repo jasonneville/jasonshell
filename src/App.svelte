@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import BottomBar from './components/BottomBar.svelte';
   import AudioPanelSurface from './components/AudioPanelSurface.svelte';
+  import CalendarPanelSurface from './components/CalendarPanelSurface.svelte';
   import CommandPanelSurface from './components/CommandPanelSurface.svelte';
   import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
   import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
@@ -73,6 +74,8 @@
   <CommandPanelSurface />
 {:else if surface === 'audio-panel'}
   <AudioPanelSurface />
+{:else if surface === 'calendar-panel'}
+  <CalendarPanelSurface />
 {:else}
   <main class="unsupported-surface">
     <div class="panel">

@@ -256,6 +256,8 @@ test('Rust event contracts are authoritative and cover frontend event constants'
   const expectedRuntimeEvents = [
     'audio-panel:open',
     'audio-panel:closed',
+    'calendar-panel:open',
+    'calendar-panel:closed',
     'command-panel:closed',
     'process-manager:open',
     'process-manager:closed',
@@ -407,7 +409,8 @@ test('backend settings and diagnostics commands are registered with hardened app
     'command-panel',
     'settings-panel',
     'tray-panel',
-    'audio-panel'
+    'audio-panel',
+    'calendar-panel'
   ]) {
     assert.match(capabilitySource, new RegExp(surface));
   }
@@ -416,6 +419,7 @@ test('backend settings and diagnostics commands are registered with hardened app
     [
       ['audio-panel'],
       ['bottom-bar'],
+      ['calendar-panel'],
       ['command-panel'],
       ['control-plane'],
       ['process-manager'],

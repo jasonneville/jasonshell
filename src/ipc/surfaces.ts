@@ -9,7 +9,8 @@ export const SHELL_SURFACES = {
   settingsPanel: 'settings-panel',
   trayPanel: 'tray-panel',
   commandPanel: 'command-panel',
-  audioPanel: 'audio-panel'
+  audioPanel: 'audio-panel',
+  calendarPanel: 'calendar-panel'
 } as const;
 
 export type KnownShellSurface = (typeof SHELL_SURFACES)[keyof typeof SHELL_SURFACES];
@@ -26,7 +27,8 @@ export const SHELL_SURFACE_TITLES: Record<KnownShellSurface, string> = {
   [SHELL_SURFACES.settingsPanel]: 'Settings Panel',
   [SHELL_SURFACES.trayPanel]: 'Tray Panel',
   [SHELL_SURFACES.commandPanel]: 'Command Panel',
-  [SHELL_SURFACES.audioPanel]: 'Audio Panel'
+  [SHELL_SURFACES.audioPanel]: 'Audio Panel',
+  [SHELL_SURFACES.calendarPanel]: 'Calendar Panel'
 };
 
 export function isKnownShellSurface(label: string): label is KnownShellSurface {
