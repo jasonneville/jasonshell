@@ -1,10 +1,6 @@
 export const IPC_COMMANDS = {
   listPinnedTaskbarApps: 'list_pinned_taskbar_apps',
   launchPinnedTaskbarApp: 'launch_pinned_taskbar_app',
-  listQuickIcons: 'list_quick_icons',
-  pinTaskWindowQuickIcon: 'pin_task_window_quick_icon',
-  unpinQuickIcon: 'unpin_quick_icon',
-  launchQuickIcon: 'launch_quick_icon',
   listOpenTaskWindows: 'list_open_task_windows',
   listTaskbarProcessWindows: 'list_taskbar_process_windows',
   activateTaskWindow: 'activate_task_window',
@@ -14,7 +10,6 @@ export const IPC_COMMANDS = {
   hideTaskWindowPreview: 'hide_task_window_preview',
   showTaskWindowContextMenu: 'show_task_window_context_menu',
   showLauncherContextMenu: 'show_launcher_context_menu',
-  showQuickIconContextMenu: 'show_quick_icon_context_menu',
   showTopBarPinContextMenu: 'show_top_bar_pin_context_menu',
   showSearchPanel: 'show_search_panel',
   showCenteredSearchPanel: 'show_centered_search_panel',
