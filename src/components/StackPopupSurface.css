@@ -182,20 +182,34 @@
 }
 
 .stack-git-popup {
-  background: var(--js-color-surface-raised);
-  border: 1px solid var(--js-color-border);
+  background: color-mix(in srgb, var(--js-color-surface-raised) 94%, #101827);
+  border: 1px solid color-mix(in srgb, var(--js-color-border) 76%, var(--js-color-accent-border));
   border-radius: var(--js-radius-md);
   box-shadow: var(--js-shadow-panel);
+  container-type: inline-size;
   display: grid;
-  gap: var(--js-space-3);
+  gap: var(--js-space-2);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: min(32rem, calc(100% - 2rem));
   left: var(--js-space-4);
-  max-height: min(28rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  max-width: calc(100% - 2rem);
+  min-height: 20rem;
+  min-width: min(34rem, calc(100% - 2rem));
   overflow: hidden;
-  padding: var(--js-space-3);
+  padding: 0;
   position: absolute;
+  resize: both;
   top: 5.8rem;
-  width: min(38rem, calc(100% - 2rem));
+  width: min(48rem, calc(100% - 2rem));
   z-index: 30;
+}
+
+.stack-git-popup.expanded {
+  height: calc(100% - 2rem);
+  left: var(--js-space-4);
+  top: var(--js-space-4);
+  width: calc(100% - 2rem);
 }
 
 .stack-git-popup header,
@@ -208,9 +222,41 @@
   min-width: 0;
 }
 
+.stack-git-popup header {
+  background: color-mix(in srgb, var(--js-color-surface-overlay) 86%, transparent);
+  border-bottom: 1px solid var(--js-color-border-soft);
+  padding: var(--js-space-3) var(--js-space-3) var(--js-space-2);
+}
+
+.stack-git-window-actions,
+.stack-git-remote-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--js-space-2);
+  min-width: 0;
+}
+
+.stack-git-remote-actions {
+  background: color-mix(in srgb, var(--js-color-surface-sunken) 72%, transparent);
+  border-bottom: 1px solid var(--js-color-border-soft);
+  min-height: 2.25rem;
+  padding: 0.38rem var(--js-space-3);
+}
+
+.stack-git-remote-actions span {
+  color: var(--js-color-text-muted);
+  flex: 1 1 auto;
+  font-size: 0.62rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stack-git-popup h2 {
   color: var(--js-color-text-strong);
-  font-size: 0.88rem;
+  font-size: 0.95rem;
+  letter-spacing: 0;
   margin: 0;
 }
 
@@ -224,42 +270,364 @@
 }
 
 .stack-git-popup button {
-  background: var(--js-bg-control);
-  border: 1px solid var(--js-color-border);
+  background: color-mix(in srgb, var(--js-bg-control) 88%, var(--js-color-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--js-color-border) 78%, transparent);
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text);
   font-size: 0.62rem;
   font-weight: 750;
-  min-height: 1.45rem;
-  padding: 0 0.42rem;
+  min-height: 1.65rem;
+  padding: 0 0.58rem;
 }
 
 .stack-git-popup button:not(:disabled):hover,
 .stack-git-popup button:not(:disabled):focus-visible,
 .stack-git-popup button.active {
-  background: var(--js-color-control-hover);
+  background: color-mix(in srgb, var(--js-color-control-hover) 82%, var(--js-color-accent-border));
   border-color: var(--js-color-accent-border);
+  color: var(--js-color-text-strong);
 }
 
 .stack-git-popup-tabs {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
   display: flex;
   flex-wrap: wrap;
+  gap: 0.16rem;
+  padding: 0.18rem;
+}
+
+.stack-git-popup-tabs button {
+  background: transparent;
+  border-color: transparent;
+  flex: 0 0 auto;
+}
+
+.stack-git-popup-tabs button.active {
+  background: var(--js-bg-active);
+  border-color: var(--js-color-accent-border);
+}
+
+.stack-git-workbench {
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(11rem, 0.34fr) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+.stack-git-workbench-sidebar {
+  background: color-mix(in srgb, var(--js-color-surface-sunken) 82%, transparent);
+  border-right: 1px solid var(--js-color-border-soft);
+  display: grid;
+  gap: var(--js-space-3);
+  grid-template-rows: auto auto 1fr;
+  min-height: 0;
+  padding: var(--js-space-3);
+}
+
+.stack-git-repo-meta,
+.stack-git-sidebar-counts {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.stack-git-repo-meta span,
+.stack-git-sidebar-counts span {
+  color: var(--js-color-text-muted);
+  font-size: 0.56rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stack-git-repo-meta strong {
+  color: var(--js-color-text-strong);
+  font-size: 0.94rem;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-repo-meta small {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-workbench-views {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.stack-git-workbench-views button {
+  align-items: center;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text-muted);
+  display: flex;
+  font-size: 0.68rem;
+  gap: 0.36rem;
+  justify-content: flex-start;
+  min-height: 1.85rem;
+  text-align: left;
+}
+
+.stack-git-workbench-views button::before {
+  background: var(--js-color-text-subtle);
+  border-radius: 999px;
+  content: '';
+  height: 0.42rem;
+  width: 0.42rem;
+}
+
+.stack-git-workbench-views button.active {
+  background: var(--js-bg-active);
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text-strong);
+}
+
+.stack-git-workbench-views button.active::before {
+  background: var(--js-color-accent);
+}
+
+.stack-git-workbench-main {
+  display: grid;
   gap: var(--js-space-2);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--js-space-3);
+}
+
+.stack-git-workbench-main > .stack-git-log-list,
+.stack-git-workbench-main > .stack-git-tree-list,
+.stack-git-workbench-main > .stack-git-branch-panel {
+  grid-row: 1 / -1;
 }
 
 .stack-git-popup-toolbar {
+  background: color-mix(in srgb, var(--js-color-surface-overlay) 70%, transparent);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
   color: var(--js-color-text-muted);
   font-size: 0.64rem;
   font-weight: 760;
+  min-height: 2rem;
+  padding: 0.24rem 0.34rem;
 }
 
 .stack-git-file-list {
   border: 1px solid var(--js-color-border-soft);
   border-radius: var(--js-radius-sm);
   display: grid;
-  max-height: 12.5rem;
+  background: var(--js-color-surface-sunken);
   min-height: 5rem;
   overflow: auto;
+}
+
+.stack-git-log-list,
+.stack-git-tree-list,
+.stack-git-branch-panel {
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  background: var(--js-color-surface-sunken);
+  display: grid;
+  gap: 0;
+  grid-auto-rows: max-content;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+.stack-git-log-list > div,
+.stack-git-tree-list > div {
+  border-bottom: 1px solid var(--js-color-border-soft);
+  display: grid;
+  min-width: 0;
+}
+
+.stack-git-tree-list > div {
+  align-items: center;
+  gap: 0.24rem;
+  grid-template-columns: 1.6rem minmax(0, 1fr);
+  min-height: 2.15rem;
+  padding: 0.36rem 0.48rem;
+}
+
+.stack-git-log-entry {
+  gap: 0.38rem;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.44fr);
+  min-height: 3rem;
+  padding: 0.48rem 0.62rem;
+}
+
+.stack-git-log-entry:hover {
+  background: color-mix(in srgb, var(--js-color-control-hover) 72%, transparent);
+}
+
+.stack-git-log-list > div:last-child,
+.stack-git-tree-list > div:last-child {
+  border-bottom: 0;
+}
+
+.stack-git-log-subject {
+  align-self: center;
+  color: var(--js-color-text-strong);
+  font-size: 0.72rem;
+  font-weight: 780;
+  line-height: 1.25;
+}
+
+.stack-git-log-meta {
+  align-items: center;
+  display: grid;
+  gap: 0.28rem;
+  grid-template-columns: 4.8rem minmax(0, 1fr) minmax(7.5rem, auto);
+  min-width: 0;
+}
+
+.stack-git-log-meta code {
+  background: color-mix(in srgb, var(--js-bg-control) 74%, transparent);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-xs);
+  color: var(--js-color-text);
+  font-family: var(--js-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 0.62rem;
+  line-height: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.2rem 0.34rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-log-meta span,
+.stack-git-log-meta time {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-log-list strong,
+.stack-git-tree-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stack-git-branch-panel {
+  align-content: start;
+  gap: var(--js-space-3);
+  padding: var(--js-space-2);
+}
+
+.stack-git-branch-list {
+  display: grid;
+  gap: 0.26rem;
+}
+
+.stack-git-branch-list button {
+  background: color-mix(in srgb, var(--js-color-surface-overlay) 60%, transparent);
+  display: grid;
+  gap: 0.18rem;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  justify-content: stretch;
+  text-align: left;
+}
+
+.stack-git-branch-list span,
+.stack-git-branch-list strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stack-git-branch-list span {
+  color: var(--js-color-text-muted);
+  font-size: 0.55rem;
+  text-transform: uppercase;
+}
+
+.stack-git-branch-controls {
+  align-items: end;
+  background: color-mix(in srgb, var(--js-color-surface-overlay) 68%, transparent);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  display: grid;
+  gap: var(--js-space-2);
+  grid-template-columns: 7rem minmax(0, 1fr) auto;
+  padding: var(--js-space-2);
+}
+
+@container (max-width: 42rem) {
+  .stack-git-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stack-git-workbench-sidebar {
+    border-bottom: 1px solid var(--js-color-border-soft);
+    border-right: 0;
+    gap: var(--js-space-2);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    padding: var(--js-space-2);
+  }
+
+  .stack-git-workbench-views {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .stack-git-sidebar-counts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stack-git-log-entry {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 3.35rem;
+  }
+
+  .stack-git-log-meta {
+    grid-template-columns: 4.8rem minmax(0, 1fr);
+  }
+
+  .stack-git-log-meta time {
+    grid-column: 2;
+  }
+
+  .stack-git-branch-controls {
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.stack-git-branch-controls label {
+  color: var(--js-color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stack-git-branch-controls input {
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font: inherit;
+  font-size: 0.68rem;
+  min-height: 1.45rem;
+  min-width: 0;
+  padding: 0 0.42rem;
 }
 
 .stack-git-file {
@@ -269,8 +637,12 @@
   display: grid;
   gap: var(--js-space-2);
   grid-template-columns: 1rem 1.6rem minmax(0, 1fr) 5.5rem;
-  min-height: 1.75rem;
-  padding: 0 0.42rem;
+  min-height: 2rem;
+  padding: 0 0.56rem;
+}
+
+.stack-git-file:hover {
+  background: var(--js-color-control-hover);
 }
 
 .stack-git-file:last-child {
@@ -322,6 +694,70 @@
   color: var(--js-color-text-muted);
   font-size: 0.62rem;
   min-width: 0;
+}
+
+.git-confirm-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.56);
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  padding: var(--js-space-4);
+  position: fixed;
+  z-index: 90;
+}
+
+.git-confirm-dialog {
+  background: color-mix(in srgb, var(--js-color-surface-raised) 94%, #101827);
+  border: 1px solid color-mix(in srgb, var(--js-color-border) 72%, var(--js-color-accent-border));
+  border-radius: var(--js-radius-md);
+  box-shadow: var(--js-shadow-raised);
+  display: grid;
+  gap: var(--js-space-3);
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: var(--js-space-4);
+}
+
+.git-confirm-dialog h2 {
+  color: var(--js-color-text-strong);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.git-confirm-dialog p {
+  color: var(--js-color-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.git-confirm-actions {
+  display: flex;
+  gap: var(--js-space-2);
+  justify-content: flex-end;
+}
+
+.git-confirm-actions button {
+  background: color-mix(in srgb, var(--js-bg-control) 88%, var(--js-color-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--js-color-border) 78%, transparent);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font: inherit;
+  font-size: 0.72rem;
+  min-height: 1.8rem;
+  padding: 0 0.75rem;
+}
+
+.git-confirm-actions .danger {
+  background: var(--js-color-error);
+  border-color: var(--js-color-error-border);
+  color: var(--js-color-text-strong);
+}
+
+.git-confirm-actions button:not(:disabled):hover,
+.git-confirm-actions button:not(:disabled):focus-visible {
+  box-shadow: var(--js-focus-ring);
+  outline: 0;
 }
 
 .stack-actions {

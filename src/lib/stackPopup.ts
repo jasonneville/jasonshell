@@ -54,6 +54,48 @@ export type StackGitOperationResult = {
   summary: string;
 };
 
+export type StackGitBranchOperationResult = StackGitOperationResult;
+
+export type StackGitLogEntry = {
+  commitHash: string;
+  shortHash: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  subject: string;
+};
+
+export type StackGitLog = {
+  repositoryRoot: string;
+  entries: StackGitLogEntry[];
+};
+
+export type StackGitTreeEntry = {
+  mode: string;
+  kind: string;
+  objectHash: string;
+  sizeBytes: number | null;
+  path: string;
+};
+
+export type StackGitTree = {
+  repositoryRoot: string;
+  treeish: string;
+  entries: StackGitTreeEntry[];
+};
+
+export type StackGitBranch = {
+  name: string;
+  current: boolean;
+  remote: boolean;
+};
+
+export type StackGitBranches = {
+  repositoryRoot: string;
+  currentBranch?: string | null;
+  branches: StackGitBranch[];
+};
+
 export type StackFolderWarning = {
   path?: string | null;
   message: string;
@@ -459,6 +501,46 @@ export function stackGitAddPaths(folderPath: string, paths: string[]): Promise<S
 export function stackGitCommit(folderPath: string, message: string, paths: string[]): Promise<StackGitOperationResult> {
   return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitCommit, {
     request: { folderPath, message, paths }
+  });
+}
+
+export function stackGitLog(folderPath: string, limit?: number): Promise<StackGitLog> {
+  return invoke<StackGitLog>(IPC_COMMANDS.stackGitLog, {
+    request: { folderPath, limit: limit ?? null }
+  });
+}
+
+export function stackGitTree(folderPath: string, treeish = 'HEAD', path?: string): Promise<StackGitTree> {
+  return invoke<StackGitTree>(IPC_COMMANDS.stackGitTree, {
+    request: { folderPath, treeish, path: path ?? null }
+  });
+}
+
+export function stackGitBranches(folderPath: string): Promise<StackGitBranches> {
+  return invoke<StackGitBranches>(IPC_COMMANDS.stackGitBranches, { path: folderPath });
+}
+
+export function stackGitFetch(folderPath: string): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitFetch, { folderPath });
+}
+
+export function stackGitPull(folderPath: string): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitPull, { folderPath });
+}
+
+export function stackGitPush(folderPath: string): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitPush, { folderPath });
+}
+
+export function stackGitCheckoutBranch(folderPath: string, branchName: string): Promise<StackGitBranchOperationResult> {
+  return invoke<StackGitBranchOperationResult>(IPC_COMMANDS.stackGitCheckoutBranch, {
+    request: { folderPath, branchName }
+  });
+}
+
+export function stackGitCreateBranch(folderPath: string, branchName: string, checkout = true): Promise<StackGitBranchOperationResult> {
+  return invoke<StackGitBranchOperationResult>(IPC_COMMANDS.stackGitCreateBranch, {
+    request: { folderPath, branchName, checkout }
   });
 }
 

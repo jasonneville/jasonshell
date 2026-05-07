@@ -94,6 +94,14 @@ pub mod commands {
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
     pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
+    pub const STACK_GIT_LOG: &str = "stack_git_log";
+    pub const STACK_GIT_TREE: &str = "stack_git_tree";
+    pub const STACK_GIT_BRANCHES: &str = "stack_git_branches";
+    pub const STACK_GIT_FETCH: &str = "stack_git_fetch";
+    pub const STACK_GIT_PULL: &str = "stack_git_pull";
+    pub const STACK_GIT_PUSH: &str = "stack_git_push";
+    pub const STACK_GIT_CHECKOUT_BRANCH: &str = "stack_git_checkout_branch";
+    pub const STACK_GIT_CREATE_BRANCH: &str = "stack_git_create_branch";
     pub const SUGGEST_STACK_PATHS: &str = "suggest_stack_paths";
     pub const RESOLVE_STACK_ITEM_ICONS: &str = "resolve_stack_item_icons";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
@@ -201,6 +209,14 @@ pub mod commands {
         GET_STACK_GIT_STATUS,
         STACK_GIT_ADD_PATHS,
         STACK_GIT_COMMIT,
+        STACK_GIT_LOG,
+        STACK_GIT_TREE,
+        STACK_GIT_BRANCHES,
+        STACK_GIT_FETCH,
+        STACK_GIT_PULL,
+        STACK_GIT_PUSH,
+        STACK_GIT_CHECKOUT_BRANCH,
+        STACK_GIT_CREATE_BRANCH,
         SUGGEST_STACK_PATHS,
         RESOLVE_STACK_ITEM_ICONS,
         OPEN_STACK_ITEM,
@@ -367,6 +383,14 @@ mod tests {
         assert!(unique.contains("get_stack_git_status"));
         assert!(unique.contains("stack_git_add_paths"));
         assert!(unique.contains("stack_git_commit"));
+        assert!(unique.contains("stack_git_log"));
+        assert!(unique.contains("stack_git_tree"));
+        assert!(unique.contains("stack_git_branches"));
+        assert!(unique.contains("stack_git_fetch"));
+        assert!(unique.contains("stack_git_pull"));
+        assert!(unique.contains("stack_git_push"));
+        assert!(unique.contains("stack_git_checkout_branch"));
+        assert!(unique.contains("stack_git_create_branch"));
         assert!(unique.contains("list_stack_open_with_candidates"));
         assert!(unique.contains("open_stack_item_with_app"));
         assert!(unique.contains("prepare_stack_file_drag"));
