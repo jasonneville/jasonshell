@@ -179,7 +179,7 @@
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
   const SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS = 220;
   const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
-  const WINDOWS_KEY_OPEN_SEARCH_EVENT = 'search:open-centered';
+  const SEARCH_HOTKEY_OPEN_SEARCH_EVENT = 'search:open-centered';
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
@@ -1249,7 +1249,7 @@
       expandedVisibleGroups = new Set([...expandedVisibleGroups, event.payload]);
       queueSearchPanelPublish();
     }));
-    registerAsyncUnlistener(listen(WINDOWS_KEY_OPEN_SEARCH_EVENT, () => {
+    registerAsyncUnlistener(listen(SEARCH_HOTKEY_OPEN_SEARCH_EVENT, () => {
       void openCenteredPanel({ publishCurrentPayload: true });
       void tick().then(() => searchInput?.focus({ preventScroll: true }));
     }));

@@ -2,6 +2,9 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-07 `[USER]` REQUESTED: Change JasonShell search activation from the Windows key to `Ctrl+Space` so it is easier to use and does not interfere with Windows shell settings.
+- 2026-05-07 `[CODE]` COMPLETED: Reworked the Windows low-level search hook to open centered search on `Ctrl+Space`, suppress only the Space keydown/up for that chord, suppress repeat Space keydowns while held, pass other Ctrl chords through, and stop capturing Windows-key behavior. Updated TopBar event constant naming, focused source/Rust tests, startup error wording, and `master_spec.md` search-hotkey behavior.
+- 2026-05-07 `[TOOL]` VALIDATED: Focused hotkey validation passed with `node --test tests\windowsKeyOverride.test.mjs`, `cargo test --manifest-path src-tauri\Cargo.toml windows_key_hook`, `npm run check`, and `npm run cargo:check`.
 - 2026-05-07 `[CODE]` COMPLETED: Added Stack Browser Git status support. Backend exposes async `get_stack_git_status` with porcelain parsing on a blocking thread; frontend loads it separately from folder listing, shows compact branch/count info near the path segments, and renders minimal row badges/colors for modified, added, deleted, untracked, and conflict states.
 - 2026-05-07 `[TOOL]` VALIDATED: Stack Browser Git status and changelog split passed focused Node source tests, `npm run check`, `cargo test --manifest-path src-tauri\Cargo.toml porcelain`, `cargo test --manifest-path src-tauri\Cargo.toml contracts`, full `npm run test:node`, full `npm run validate`, and adversarial QA follow-up fixes.
 - 2026-05-07 `[CODE]` COMPLETED: Brightened Stack Browser Git status row markers and badges for added, modified, deleted, untracked, and conflict states; badge-specific status selectors now override the muted badge base color.

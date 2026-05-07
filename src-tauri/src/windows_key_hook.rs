@@ -8,125 +8,118 @@ use tauri::{AppHandle, Emitter};
 #[cfg(windows)]
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LWIN, VK_RWIN};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_SPACE};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
     WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-pub const WINDOWS_KEY_OPEN_SEARCH_EVENT: &str = "search:open-centered";
+pub const SEARCH_HOTKEY_OPEN_SEARCH_EVENT: &str = "search:open-centered";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WindowsKeyCode {
-    LeftWin,
-    RightWin,
+pub enum SearchHotkeyCode {
+    LeftControl,
+    RightControl,
+    Space,
     Other(u32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WindowsKeyEventKind {
+pub enum SearchHotkeyEventKind {
     KeyDown,
     KeyUp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WindowsKeyEvent {
-    pub key: WindowsKeyCode,
-    pub kind: WindowsKeyEventKind,
+pub struct SearchHotkeyEvent {
+    pub key: SearchHotkeyCode,
+    pub kind: SearchHotkeyEventKind,
     pub repeat: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WindowsKeyDecision {
+pub enum SearchHotkeyDecision {
     OpenSearch,
     Suppress,
     PassThrough,
 }
 
-fn is_windows_key(key: WindowsKeyCode) -> bool {
-    matches!(key, WindowsKeyCode::LeftWin | WindowsKeyCode::RightWin)
-}
-
-pub fn unavailable_hook_state_decision(event: WindowsKeyEvent) -> WindowsKeyDecision {
-    if is_windows_key(event.key) {
-        WindowsKeyDecision::Suppress
-    } else {
-        WindowsKeyDecision::PassThrough
-    }
+pub fn unavailable_hook_state_decision(_event: SearchHotkeyEvent) -> SearchHotkeyDecision {
+    SearchHotkeyDecision::PassThrough
 }
 
 #[derive(Default)]
-pub struct WindowsKeyClassifier {
-    left_win_down: bool,
-    right_win_down: bool,
-    chorded: bool,
-    emitted_for_tap: bool,
+pub struct SearchHotkeyClassifier {
+    left_control_down: bool,
+    right_control_down: bool,
+    emitted_for_chord: bool,
 }
 
-impl WindowsKeyClassifier {
-    fn any_windows_key_down(&self) -> bool {
-        self.left_win_down || self.right_win_down
+impl SearchHotkeyClassifier {
+    fn any_control_down(&self) -> bool {
+        self.left_control_down || self.right_control_down
     }
 
-    fn set_windows_key_down(&mut self, key: WindowsKeyCode, is_down: bool) {
+    fn set_control_down(&mut self, key: SearchHotkeyCode, is_down: bool) {
         match key {
-            WindowsKeyCode::LeftWin => self.left_win_down = is_down,
-            WindowsKeyCode::RightWin => self.right_win_down = is_down,
-            WindowsKeyCode::Other(_) => {}
+            SearchHotkeyCode::LeftControl => self.left_control_down = is_down,
+            SearchHotkeyCode::RightControl => self.right_control_down = is_down,
+            SearchHotkeyCode::Space | SearchHotkeyCode::Other(_) => {}
         }
     }
 
-    pub fn handle_event(&mut self, event: WindowsKeyEvent) -> WindowsKeyDecision {
+    pub fn handle_event(&mut self, event: SearchHotkeyEvent) -> SearchHotkeyDecision {
         match (event.key, event.kind) {
-            (WindowsKeyCode::LeftWin | WindowsKeyCode::RightWin, WindowsKeyEventKind::KeyDown) => {
-                if !self.any_windows_key_down() {
-                    self.chorded = false;
-                    self.emitted_for_tap = false;
-                }
-                self.set_windows_key_down(event.key, true);
-                WindowsKeyDecision::PassThrough
+            (
+                SearchHotkeyCode::LeftControl | SearchHotkeyCode::RightControl,
+                SearchHotkeyEventKind::KeyDown,
+            ) => {
+                self.set_control_down(event.key, true);
+                SearchHotkeyDecision::PassThrough
             }
-            (WindowsKeyCode::LeftWin | WindowsKeyCode::RightWin, WindowsKeyEventKind::KeyUp) => {
-                let had_windows_key_down = self.any_windows_key_down();
-                self.set_windows_key_down(event.key, false);
-                if !had_windows_key_down {
-                    self.emitted_for_tap = false;
-                    self.chorded = false;
-                    return WindowsKeyDecision::Suppress;
+            (
+                SearchHotkeyCode::LeftControl | SearchHotkeyCode::RightControl,
+                SearchHotkeyEventKind::KeyUp,
+            ) => {
+                self.set_control_down(event.key, false);
+                if !self.any_control_down() {
+                    self.emitted_for_chord = false;
                 }
-                if self.any_windows_key_down() {
-                    return WindowsKeyDecision::PassThrough;
-                }
-
-                let should_open = !self.chorded && !self.emitted_for_tap;
-                self.chorded = false;
-                if should_open {
-                    self.emitted_for_tap = true;
-                    WindowsKeyDecision::OpenSearch
+                SearchHotkeyDecision::PassThrough
+            }
+            (SearchHotkeyCode::Space, SearchHotkeyEventKind::KeyDown) => {
+                if self.any_control_down() {
+                    if !self.emitted_for_chord {
+                        self.emitted_for_chord = true;
+                        SearchHotkeyDecision::OpenSearch
+                    } else {
+                        SearchHotkeyDecision::Suppress
+                    }
                 } else {
-                    self.emitted_for_tap = false;
-                    WindowsKeyDecision::PassThrough
+                    SearchHotkeyDecision::PassThrough
                 }
             }
-            (WindowsKeyCode::Other(_), _) => {
-                if self.any_windows_key_down() {
-                    self.chorded = true;
+            (SearchHotkeyCode::Space, SearchHotkeyEventKind::KeyUp) => {
+                if self.emitted_for_chord {
+                    SearchHotkeyDecision::Suppress
+                } else {
+                    SearchHotkeyDecision::PassThrough
                 }
-                WindowsKeyDecision::PassThrough
             }
+            (SearchHotkeyCode::Other(_), _) => SearchHotkeyDecision::PassThrough,
         }
     }
 }
 
 #[derive(Default)]
 #[cfg(test)]
-pub struct WindowsKeyHookLifecycle {
+pub struct SearchHotkeyHookLifecycle {
     installed: AtomicBool,
 }
 
 #[cfg(test)]
-impl WindowsKeyHookLifecycle {
+impl SearchHotkeyHookLifecycle {
     pub fn install_once(&self) -> bool {
         self.installed
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -152,7 +145,7 @@ pub fn open_search_event_target_label() -> &'static str {
 #[cfg(windows)]
 struct NativeHookState {
     app_handle: AppHandle,
-    classifier: WindowsKeyClassifier,
+    classifier: SearchHotkeyClassifier,
     hook: isize,
 }
 
@@ -168,16 +161,16 @@ fn native_hook_state() -> &'static Mutex<Option<NativeHookState>> {
 pub fn install_windows_key_hook(app_handle: AppHandle) -> Result<(), String> {
     let mut guard = native_hook_state()
         .lock()
-        .map_err(|_| "Windows-key hook state is poisoned".to_string())?;
+        .map_err(|_| "search hotkey hook state is poisoned".to_string())?;
     if guard.is_some() {
         return Ok(());
     }
 
     let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(windows_key_hook_proc), None, 0) }
-        .map_err(|error| format!("Failed to install Windows-key hook: {error}"))?;
+        .map_err(|error| format!("failed to install search hotkey hook: {error}"))?;
     *guard = Some(NativeHookState {
         app_handle,
-        classifier: WindowsKeyClassifier::default(),
+        classifier: SearchHotkeyClassifier::default(),
         hook: hook.0 as isize,
     });
     Ok(())
@@ -214,7 +207,7 @@ unsafe extern "system" fn windows_key_hook_proc(
             let (decision, app_handle) = if let Ok(mut guard) = native_hook_state().lock() {
                 if let Some(state) = guard.as_mut() {
                     let decision = state.classifier.handle_event(event);
-                    let app_handle = if matches!(decision, WindowsKeyDecision::OpenSearch) {
+                    let app_handle = if matches!(decision, SearchHotkeyDecision::OpenSearch) {
                         Some(state.app_handle.clone())
                     } else {
                         None
@@ -228,18 +221,18 @@ unsafe extern "system" fn windows_key_hook_proc(
             };
 
             match decision {
-                WindowsKeyDecision::OpenSearch => {
+                SearchHotkeyDecision::OpenSearch => {
                     if let Some(app_handle) = app_handle {
                         let _ = app_handle.emit_to(
                             crate::shell_windows::TOP_BAR_LABEL,
-                            WINDOWS_KEY_OPEN_SEARCH_EVENT,
+                            SEARCH_HOTKEY_OPEN_SEARCH_EVENT,
                             (),
                         );
                     }
                     return LRESULT(1);
                 }
-                WindowsKeyDecision::Suppress => return LRESULT(1),
-                WindowsKeyDecision::PassThrough => {}
+                SearchHotkeyDecision::Suppress => return LRESULT(1),
+                SearchHotkeyDecision::PassThrough => {}
             }
         }
     }
@@ -247,21 +240,23 @@ unsafe extern "system" fn windows_key_hook_proc(
 }
 
 #[cfg(windows)]
-fn keyboard_hook_event(wparam: WPARAM, lparam: LPARAM) -> Option<WindowsKeyEvent> {
+fn keyboard_hook_event(wparam: WPARAM, lparam: LPARAM) -> Option<SearchHotkeyEvent> {
     let kind = match wparam.0 as u32 {
-        WM_KEYDOWN | WM_SYSKEYDOWN => WindowsKeyEventKind::KeyDown,
-        WM_KEYUP | WM_SYSKEYUP => WindowsKeyEventKind::KeyUp,
+        WM_KEYDOWN | WM_SYSKEYDOWN => SearchHotkeyEventKind::KeyDown,
+        WM_KEYUP | WM_SYSKEYUP => SearchHotkeyEventKind::KeyUp,
         _ => return None,
     };
     let info = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
-    let key = if info.vkCode == VK_LWIN.0 as u32 {
-        WindowsKeyCode::LeftWin
-    } else if info.vkCode == VK_RWIN.0 as u32 {
-        WindowsKeyCode::RightWin
+    let key = if info.vkCode == VK_LCONTROL.0 as u32 || info.vkCode == VK_CONTROL.0 as u32 {
+        SearchHotkeyCode::LeftControl
+    } else if info.vkCode == VK_RCONTROL.0 as u32 {
+        SearchHotkeyCode::RightControl
+    } else if info.vkCode == VK_SPACE.0 as u32 {
+        SearchHotkeyCode::Space
     } else {
-        WindowsKeyCode::Other(info.vkCode)
+        SearchHotkeyCode::Other(info.vkCode)
     };
-    Some(WindowsKeyEvent {
+    Some(SearchHotkeyEvent {
         key,
         kind,
         repeat: false,
@@ -272,241 +267,155 @@ fn keyboard_hook_event(wparam: WPARAM, lparam: LPARAM) -> Option<WindowsKeyEvent
 mod tests {
     use super::*;
 
-    fn down(key: WindowsKeyCode) -> WindowsKeyEvent {
-        WindowsKeyEvent {
+    fn down(key: SearchHotkeyCode) -> SearchHotkeyEvent {
+        SearchHotkeyEvent {
             key,
-            kind: WindowsKeyEventKind::KeyDown,
+            kind: SearchHotkeyEventKind::KeyDown,
             repeat: false,
         }
     }
 
-    fn up(key: WindowsKeyCode) -> WindowsKeyEvent {
-        WindowsKeyEvent {
+    fn up(key: SearchHotkeyCode) -> SearchHotkeyEvent {
+        SearchHotkeyEvent {
             key,
-            kind: WindowsKeyEventKind::KeyUp,
+            kind: SearchHotkeyEventKind::KeyUp,
             repeat: false,
         }
     }
 
     #[test]
-    fn left_windows_tap_opens_search_and_suppresses_default() {
-        let mut classifier = WindowsKeyClassifier::default();
+    fn ctrl_space_opens_search_and_suppresses_space() {
+        let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::OpenSearch
+            classifier.handle_event(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::OpenSearch
+        );
+        assert_eq!(
+            classifier.handle_event(up(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::Suppress
+        );
+        assert_eq!(
+            classifier.handle_event(up(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
     }
 
     #[test]
-    fn right_windows_tap_opens_search() {
-        let mut classifier = WindowsKeyClassifier::default();
+    fn right_ctrl_space_opens_search() {
+        let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::RightControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::OpenSearch
+            classifier.handle_event(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::OpenSearch
         );
     }
 
     #[test]
-    fn windows_shortcuts_pass_through() {
-        let mut classifier = WindowsKeyClassifier::default();
+    fn bare_space_and_other_ctrl_chords_pass_through() {
+        let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::Other(u32::from(b'R')))),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(up(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::Other(u32::from(b'R')))),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
-        );
-
-        let mut classifier = WindowsKeyClassifier::default();
-        assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::Other(u32::from(b'D')))),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::Other(u32::from(b'R')))),
+            SearchHotkeyDecision::PassThrough
         );
     }
 
     #[test]
-    fn native_windows_chords_preserve_modifier_down_and_release_paths() {
-        for key in [b'R', b'D', b'E', b'L'] {
-            let mut classifier = WindowsKeyClassifier::default();
-            assert_eq!(
-                classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-                WindowsKeyDecision::PassThrough
-            );
-            assert_eq!(
-                classifier.handle_event(down(WindowsKeyCode::Other(u32::from(key)))),
-                WindowsKeyDecision::PassThrough
-            );
-            assert_eq!(
-                classifier.handle_event(up(WindowsKeyCode::Other(u32::from(key)))),
-                WindowsKeyDecision::PassThrough
-            );
-            assert_eq!(
-                classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-                WindowsKeyDecision::PassThrough
-            );
-        }
-    }
-
-    #[test]
-    fn repeated_windows_keydown_does_not_duplicate_open_search() {
-        let mut classifier = WindowsKeyClassifier::default();
+    fn repeated_space_down_does_not_duplicate_open_search() {
+        let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(WindowsKeyEvent {
-                key: WindowsKeyCode::LeftWin,
-                kind: WindowsKeyEventKind::KeyDown,
+            classifier.handle_event(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::OpenSearch
+        );
+        assert_eq!(
+            classifier.handle_event(SearchHotkeyEvent {
+                key: SearchHotkeyCode::Space,
+                kind: SearchHotkeyEventKind::KeyDown,
                 repeat: true
             }),
-            WindowsKeyDecision::PassThrough
+            SearchHotkeyDecision::Suppress
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::OpenSearch
-        );
-        assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            classifier.handle_event(up(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::Suppress
         );
     }
 
     #[test]
-    fn duplicate_bare_windows_key_up_events_do_not_leak_start_activation() {
-        let mut classifier = WindowsKeyClassifier::default();
+    fn ctrl_release_resets_chord() {
+        let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::OpenSearch
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::OpenSearch
+            classifier.handle_event(up(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::Suppress
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
-        );
-
-        assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::PassThrough
+            classifier.handle_event(up(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::OpenSearch
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
+            classifier.handle_event(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::OpenSearch
         );
     }
 
     #[test]
-    fn left_right_windows_overlap_opens_only_on_final_bare_release() {
-        let mut classifier = WindowsKeyClassifier::default();
-
+    fn unavailable_hook_state_passes_through() {
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
+            unavailable_hook_state_decision(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::PassThrough
+            unavailable_hook_state_decision(down(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::OpenSearch
-        );
-        assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
-        );
-    }
-
-    #[test]
-    fn left_right_windows_overlap_with_chord_never_opens_search() {
-        let mut classifier = WindowsKeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(WindowsKeyCode::Other(u32::from(b'R')))),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn unavailable_hook_state_fails_closed_only_for_windows_key_events() {
-        assert_eq!(
-            unavailable_hook_state_decision(down(WindowsKeyCode::LeftWin)),
-            WindowsKeyDecision::Suppress
-        );
-        assert_eq!(
-            unavailable_hook_state_decision(up(WindowsKeyCode::RightWin)),
-            WindowsKeyDecision::Suppress
-        );
-        assert_eq!(
-            unavailable_hook_state_decision(down(WindowsKeyCode::Other(u32::from(b'R')))),
-            WindowsKeyDecision::PassThrough
+            unavailable_hook_state_decision(down(SearchHotkeyCode::Other(u32::from(b'R')))),
+            SearchHotkeyDecision::PassThrough
         );
     }
 
     #[test]
     fn lifecycle_install_once_and_uninstall_are_idempotent() {
-        let lifecycle = WindowsKeyHookLifecycle::default();
+        let lifecycle = SearchHotkeyHookLifecycle::default();
 
         assert!(lifecycle.install_once());
         assert!(!lifecycle.install_once());
@@ -518,7 +427,7 @@ mod tests {
 
     #[test]
     fn emitted_event_targets_top_bar_existing_open_path() {
-        assert_eq!(WINDOWS_KEY_OPEN_SEARCH_EVENT, "search:open-centered");
+        assert_eq!(SEARCH_HOTKEY_OPEN_SEARCH_EVENT, "search:open-centered");
         assert_eq!(
             open_search_event_target_label(),
             crate::shell_windows::TOP_BAR_LABEL

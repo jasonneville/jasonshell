@@ -276,9 +276,8 @@ fn main() {
             let windows = shell_windows::create_shell_windows(app)?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
-            windows_key_hook::install_windows_key_hook(app.handle().clone()).map_err(|error| {
-                format!("Windows-key hook is required to suppress the Start Menu: {error}")
-            })?;
+            windows_key_hook::install_windows_key_hook(app.handle().clone())
+                .map_err(|error| format!("search hotkey hook is required: {error}"))?;
 
             #[cfg(target_os = "windows")]
             {
