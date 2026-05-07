@@ -8,14 +8,16 @@ use tauri::{AppHandle, Emitter};
 #[cfg(windows)]
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_SPACE};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_SPACE,
+};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
     WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-pub const SEARCH_HOTKEY_OPEN_SEARCH_EVENT: &str = "search:open-centered";
+pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str = "search:toggle-centered";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SearchHotkeyCode {
@@ -40,7 +42,7 @@ pub struct SearchHotkeyEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SearchHotkeyDecision {
-    OpenSearch,
+    ToggleSearch,
     Suppress,
     PassThrough,
 }
@@ -54,6 +56,7 @@ pub struct SearchHotkeyClassifier {
     left_control_down: bool,
     right_control_down: bool,
     emitted_for_chord: bool,
+    space_down: bool,
 }
 
 impl SearchHotkeyClassifier {
@@ -69,7 +72,16 @@ impl SearchHotkeyClassifier {
         }
     }
 
+    #[cfg(test)]
     pub fn handle_event(&mut self, event: SearchHotkeyEvent) -> SearchHotkeyDecision {
+        self.handle_event_with_control_override(event, None)
+    }
+
+    pub fn handle_event_with_control_override(
+        &mut self,
+        event: SearchHotkeyEvent,
+        control_down_override: Option<bool>,
+    ) -> SearchHotkeyDecision {
         match (event.key, event.kind) {
             (
                 SearchHotkeyCode::LeftControl | SearchHotkeyCode::RightControl,
@@ -89,25 +101,40 @@ impl SearchHotkeyClassifier {
                 SearchHotkeyDecision::PassThrough
             }
             (SearchHotkeyCode::Space, SearchHotkeyEventKind::KeyDown) => {
-                if self.any_control_down() {
-                    if !self.emitted_for_chord {
+                self.space_down = true;
+                let control_down = control_down_override.unwrap_or_else(|| self.any_control_down());
+                if control_down {
+                    if !self.emitted_for_chord && !event.repeat {
                         self.emitted_for_chord = true;
-                        SearchHotkeyDecision::OpenSearch
+                        SearchHotkeyDecision::ToggleSearch
                     } else {
                         SearchHotkeyDecision::Suppress
                     }
                 } else {
+                    self.emitted_for_chord = false;
                     SearchHotkeyDecision::PassThrough
                 }
             }
             (SearchHotkeyCode::Space, SearchHotkeyEventKind::KeyUp) => {
+                self.space_down = false;
                 if self.emitted_for_chord {
+                    if !self.any_control_down() {
+                        self.emitted_for_chord = false;
+                    }
                     SearchHotkeyDecision::Suppress
                 } else {
                     SearchHotkeyDecision::PassThrough
                 }
             }
-            (SearchHotkeyCode::Other(_), _) => SearchHotkeyDecision::PassThrough,
+            (SearchHotkeyCode::Other(_), SearchHotkeyEventKind::KeyDown) => {
+                if !self.space_down {
+                    self.emitted_for_chord = false;
+                }
+                SearchHotkeyDecision::PassThrough
+            }
+            (SearchHotkeyCode::Other(_), SearchHotkeyEventKind::KeyUp) => {
+                SearchHotkeyDecision::PassThrough
+            }
         }
     }
 }
@@ -138,7 +165,7 @@ impl SearchHotkeyHookLifecycle {
 }
 
 #[cfg(test)]
-pub fn open_search_event_target_label() -> &'static str {
+pub fn toggle_search_event_target_label() -> &'static str {
     crate::shell_windows::TOP_BAR_LABEL
 }
 
@@ -206,8 +233,10 @@ unsafe extern "system" fn windows_key_hook_proc(
         if let Some(event) = event {
             let (decision, app_handle) = if let Ok(mut guard) = native_hook_state().lock() {
                 if let Some(state) = guard.as_mut() {
-                    let decision = state.classifier.handle_event(event);
-                    let app_handle = if matches!(decision, SearchHotkeyDecision::OpenSearch) {
+                    let decision = state
+                        .classifier
+                        .handle_event_with_control_override(event, control_key_is_down());
+                    let app_handle = if matches!(decision, SearchHotkeyDecision::ToggleSearch) {
                         Some(state.app_handle.clone())
                     } else {
                         None
@@ -221,11 +250,11 @@ unsafe extern "system" fn windows_key_hook_proc(
             };
 
             match decision {
-                SearchHotkeyDecision::OpenSearch => {
+                SearchHotkeyDecision::ToggleSearch => {
                     if let Some(app_handle) = app_handle {
                         let _ = app_handle.emit_to(
                             crate::shell_windows::TOP_BAR_LABEL,
-                            SEARCH_HOTKEY_OPEN_SEARCH_EVENT,
+                            SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT,
                             (),
                         );
                     }
@@ -237,6 +266,15 @@ unsafe extern "system" fn windows_key_hook_proc(
         }
     }
     CallNextHookEx(None, code, wparam, lparam)
+}
+
+#[cfg(windows)]
+fn control_key_is_down() -> Option<bool> {
+    Some(
+        unsafe { GetAsyncKeyState(VK_CONTROL.0.into()) } < 0
+            || unsafe { GetAsyncKeyState(VK_LCONTROL.0.into()) } < 0
+            || unsafe { GetAsyncKeyState(VK_RCONTROL.0.into()) } < 0,
+    )
 }
 
 #[cfg(windows)]
@@ -284,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_space_opens_search_and_suppresses_space() {
+    fn ctrl_space_toggles_search_and_suppresses_space() {
         let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
@@ -293,7 +331,7 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::OpenSearch
+            SearchHotkeyDecision::ToggleSearch
         );
         assert_eq!(
             classifier.handle_event(up(SearchHotkeyCode::Space)),
@@ -306,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn right_ctrl_space_opens_search() {
+    fn right_ctrl_space_toggles_search() {
         let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
@@ -315,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::OpenSearch
+            SearchHotkeyDecision::ToggleSearch
         );
     }
 
@@ -351,7 +389,7 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::OpenSearch
+            SearchHotkeyDecision::ToggleSearch
         );
         assert_eq!(
             classifier.handle_event(SearchHotkeyEvent {
@@ -377,7 +415,7 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::OpenSearch
+            SearchHotkeyDecision::ToggleSearch
         );
         assert_eq!(
             classifier.handle_event(up(SearchHotkeyCode::Space)),
@@ -393,7 +431,35 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::OpenSearch
+            SearchHotkeyDecision::ToggleSearch
+        );
+    }
+
+    #[test]
+    fn async_control_state_opens_when_control_down_was_not_observed() {
+        let mut classifier = SearchHotkeyClassifier::default();
+
+        assert_eq!(
+            classifier.handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(true)),
+            SearchHotkeyDecision::ToggleSearch
+        );
+        assert_eq!(
+            classifier.handle_event(up(SearchHotkeyCode::Space)),
+            SearchHotkeyDecision::Suppress
+        );
+    }
+
+    #[test]
+    fn released_control_state_passes_through_stale_classifier_control() {
+        let mut classifier = SearchHotkeyClassifier::default();
+
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
+        );
+        assert_eq!(
+            classifier.handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(false)),
+            SearchHotkeyDecision::PassThrough
         );
     }
 
@@ -427,9 +493,9 @@ mod tests {
 
     #[test]
     fn emitted_event_targets_top_bar_existing_open_path() {
-        assert_eq!(SEARCH_HOTKEY_OPEN_SEARCH_EVENT, "search:open-centered");
+        assert_eq!(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, "search:toggle-centered");
         assert_eq!(
-            open_search_event_target_label(),
+            toggle_search_event_target_label(),
             crate::shell_windows::TOP_BAR_LABEL
         );
     }

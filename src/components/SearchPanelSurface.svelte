@@ -204,7 +204,20 @@
     queryInput?.focus({ preventScroll: true });
   }
 
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+
+  function closeCenteredPanelFromHotkey() {
+    hideCenteredPanelImmediately();
+  }
+
   function handleQueryKeydown(event: KeyboardEvent) {
+    if (isCtrlSpaceHotkey(event)) {
+      event.preventDefault();
+      closeCenteredPanelFromHotkey();
+      return;
+    }
     if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
       return;
     }
@@ -260,7 +273,10 @@
   }
 
   function handleResultKeydown(event: KeyboardEvent, row: SearchVisibleRow) {
-    if (event.key === 'Enter') {
+    if (isCtrlSpaceHotkey(event)) {
+      event.preventDefault();
+      closeCenteredPanelFromHotkey();
+    } else if (event.key === 'Enter') {
       event.preventDefault();
       activateRow(row);
     } else if (event.key === 'ArrowDown') {

@@ -245,7 +245,7 @@ pub mod events {
     pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
     pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
-    pub const SEARCH_OPEN_CENTERED: &str = "search:open-centered";
+    pub const SEARCH_TOGGLE_CENTERED: &str = "search:toggle-centered";
     pub const SEARCH_ENGINE_PROGRESS: &str = "search-engine:progress";
     pub const SEARCH_INDEX_REFRESHED: &str = "search-index:refreshed";
     pub const SEARCH_PANEL_ACTIVATE: &str = "search-panel:activate";
@@ -277,7 +277,7 @@ pub mod events {
         COMMAND_PANEL_CLOSED,
         PROCESS_MANAGER_OPEN,
         PROCESS_MANAGER_CLOSED,
-        SEARCH_OPEN_CENTERED,
+        SEARCH_TOGGLE_CENTERED,
         SEARCH_ENGINE_PROGRESS,
         SEARCH_INDEX_REFRESHED,
         SEARCH_PANEL_ACTIVATE,
@@ -413,7 +413,7 @@ mod tests {
                 "command-panel:closed",
                 "process-manager:open",
                 "process-manager:closed",
-                "search:open-centered",
+                "search:toggle-centered",
                 "search-engine:progress",
                 "search-index:refreshed",
                 "search-panel:activate",

@@ -1,7 +1,7 @@
 <script lang="ts">
   import './BottomBar.css';
   import { onMount, tick } from 'svelte';
-  import { listen } from '@tauri-apps/api/event';
+  import { emit, listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import { showProcessManager } from '../lib/processManager';
@@ -90,6 +90,7 @@
   let suppressClickTaskWindowHwnd: string | null = null;
   let taskStripEl: HTMLDivElement | null = null;
   let taskbarOverflow = taskbarOverflowState(0, 0, 0);
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
 
   $: taskGroupDragDeltaX = taskGroupDragStarted
     ? taskbarGroupDragDelta(taskGroupDragStartX, taskGroupDragCurrentX)
@@ -536,6 +537,12 @@
     buttons[nextIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     updateTaskbarOverflow();
   }
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+  function isSpaceKey(event: KeyboardEvent) {
+    return event.code === 'Space';
+  }
   async function openProcessManager(event: MouseEvent) {
     const button = event.currentTarget as HTMLButtonElement | null;
     if (!button) {
@@ -579,7 +586,29 @@
       void refreshTaskbarWindows();
     }, 1_000);
     const resizeHandler = () => updateTaskbarOverflow();
+    let shellSurfaceHotkeyHandled = false;
+    const keydownHandler = (event: KeyboardEvent) => {
+      if (!isCtrlSpaceHotkey(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!shellSurfaceHotkeyHandled && !event.repeat) {
+        shellSurfaceHotkeyHandled = true;
+        void emit(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
+      }
+    };
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      shellSurfaceHotkeyHandled = false;
+    };
     window.addEventListener('resize', resizeHandler);
+    window.addEventListener('keydown', keydownHandler, true);
+    window.addEventListener('keyup', keyupHandler, true);
 
     const runtimeMetricsTimer = window.setTimeout(() => {
       void reportShellSurfaceRuntimeMetrics('bottom-bar').catch((error) => {
@@ -596,6 +625,8 @@
       window.clearInterval(taskbarPollTimer);
       window.clearTimeout(runtimeMetricsTimer);
       window.removeEventListener('resize', resizeHandler);
+      window.removeEventListener('keydown', keydownHandler, true);
+      window.removeEventListener('keyup', keyupHandler, true);
       for (const unlisten of unlisteners) {
         unlisten();
       }

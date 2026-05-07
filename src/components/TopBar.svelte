@@ -179,7 +179,7 @@
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
   const SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS = 220;
   const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
-  const SEARCH_HOTKEY_OPEN_SEARCH_EVENT = 'search:open-centered';
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
@@ -336,6 +336,23 @@
 
   function openConfiguredPanel(options: OpenSearchPanelOptions = {}) {
     void (searchMode === 'topRight' ? openPanel(options) : openCenteredPanel(options));
+  }
+
+  function toggleCenteredSearchFromHotkey() {
+    if (searchOpen) {
+      void closePanel();
+      return;
+    }
+    void openCenteredPanel({ publishCurrentPayload: true });
+    void tick().then(() => searchInput?.focus({ preventScroll: true }));
+  }
+
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+
+  function isSpaceKey(event: KeyboardEvent) {
+    return event.code === 'Space';
   }
 
   function handleSearchFocus() {
@@ -1249,10 +1266,31 @@
       expandedVisibleGroups = new Set([...expandedVisibleGroups, event.payload]);
       queueSearchPanelPublish();
     }));
-    registerAsyncUnlistener(listen(SEARCH_HOTKEY_OPEN_SEARCH_EVENT, () => {
-      void openCenteredPanel({ publishCurrentPayload: true });
-      void tick().then(() => searchInput?.focus({ preventScroll: true }));
+    registerAsyncUnlistener(listen(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, () => {
+      toggleCenteredSearchFromHotkey();
     }));
+    let shellSurfaceHotkeyHandled = false;
+    const keydownHandler = (event: KeyboardEvent) => {
+      if (!isCtrlSpaceHotkey(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!shellSurfaceHotkeyHandled && !event.repeat) {
+        shellSurfaceHotkeyHandled = true;
+        toggleCenteredSearchFromHotkey();
+      }
+    };
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      shellSurfaceHotkeyHandled = false;
+    };
+    window.addEventListener('keydown', keydownHandler, true);
+    window.addEventListener('keyup', keyupHandler, true);
     registerAsyncUnlistener(listen<SearchPanelQueryPayload>(SEARCH_PANEL_QUERY_EVENT, (event) => {
       markSearchPanelInteraction();
       if (!isSearchPanelQueryPayload(event.payload)) {
@@ -1352,6 +1390,8 @@
       cancelSearchFreshnessRetry();
       cancelSearchProviderCacheRetry();
       cancelRailScrollButtonUpdate();
+      window.removeEventListener('keydown', keydownHandler, true);
+      window.removeEventListener('keyup', keyupHandler, true);
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);
       }

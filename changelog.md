@@ -2,6 +2,13 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-07 `[USER]` REQUESTED: Fix `Ctrl+Space` search behavior in a new worktree so the chord toggles search closed when already open and opens reliably from foreground apps plus focused top/bottom shell bars.
+- 2026-05-07 `[CODE]` COMPLETED: Changed the hotkey event from open-only `search:open-centered` to `search:toggle-centered`; TopBar now closes/reset/hides search when the toggle arrives while open and opens/focuses centered search when closed. Hardened Rust Ctrl+Space classification with live `GetAsyncKeyState` Ctrl-state checks and added focused top/bottom shell-webview fallback handlers so focused bars can forward the same toggle event.
+- 2026-05-07 `[TOOL]` VALIDATED: Hotkey fix validation passed with `cargo test --manifest-path src-tauri\Cargo.toml windows_key_hook`, `npm run cargo:check`, focused `node --test tests\windowsKeyOverride.test.mjs`, full `npm run test:node`, `npm run check`, and `git diff --check`. Adversarial QA found and fixed a shell-webview fallback latch bug when Ctrl is released before Space.
+- 2026-05-07 `[USER]` REQUESTED: Fix the remaining case where pressing `Ctrl+Space` while the centered search panel itself has focus does not close search.
+- 2026-05-07 `[CODE]` COMPLETED: Added a search-panel focused `Ctrl+Space` keydown path in `SearchPanelSurface.svelte` for the centered query input and focused result rows. The path prevents the typed space and closes through the existing centered-panel Escape sync instead of emitting a second toggle event, so duplicate native delivery cannot reopen search.
+- 2026-05-07 `[TOOL]` VALIDATED: Search-panel focused close fix passed `node --test tests\windowsKeyOverride.test.mjs`, `npm run check`, `npm run test:node`, and `git diff --check`.
+
 - 2026-05-07 `[USER]` REQUESTED: Change JasonShell search activation from the Windows key to `Ctrl+Space` so it is easier to use and does not interfere with Windows shell settings.
 - 2026-05-07 `[CODE]` COMPLETED: Reworked the Windows low-level search hook to open centered search on `Ctrl+Space`, suppress only the Space keydown/up for that chord, suppress repeat Space keydowns while held, pass other Ctrl chords through, and stop capturing Windows-key behavior. Updated TopBar event constant naming, focused source/Rust tests, startup error wording, and `master_spec.md` search-hotkey behavior.
 - 2026-05-07 `[TOOL]` VALIDATED: Focused hotkey validation passed with `node --test tests\windowsKeyOverride.test.mjs`, `cargo test --manifest-path src-tauri\Cargo.toml windows_key_hook`, `npm run check`, and `npm run cargo:check`.
