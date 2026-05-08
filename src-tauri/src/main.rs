@@ -251,6 +251,11 @@ fn main() {
             if window.label() == shell_windows::TRAY_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
+                if tray_panel::take_tray_panel_focus_loss_suppression() {
+                    // Keep the tray visible under Explorer-owned native icon menus. The user can
+                    // dismiss it through the top-bar tray toggle or another mutually exclusive popup.
+                    return;
+                }
                 let _ = window.app_handle().emit_to(
                     shell_windows::TOP_BAR_LABEL,
                     tray_panel::TRAY_PANEL_CLOSED_EVENT,

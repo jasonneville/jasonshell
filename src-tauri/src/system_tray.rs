@@ -228,6 +228,7 @@ fn click_toolbar_button(
         // SAFETY: The toolbar HWND was discovered from Explorer immediately before dispatch.
         // Focusing it and posting mouse messages at a button-local point mirrors user input without
         // mutating Explorer settings or taking ownership of notification-area registration.
+        crate::tray_panel::suppress_next_tray_panel_focus_loss();
         let _ = SetForegroundWindow(button.toolbar);
         PostMessageW(Some(button.toolbar), down, WPARAM(0), lparam)
             .map_err(|error| format!("Failed to post tray mouse-down: {error}"))?;
