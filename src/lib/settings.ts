@@ -39,7 +39,9 @@ export interface ShellSettings {
 
 export const SETTINGS_COMMANDS = {
   load: 'load_shell_settings',
-  save: 'save_shell_settings'
+  save: 'save_shell_settings',
+  saveShellBarHeight: 'save_shell_bar_height',
+  saveShellBarLock: 'save_shell_bar_lock'
 } as const;
 
 export function defaultShellSettings(): ShellSettings {
@@ -95,6 +97,28 @@ export async function loadShellSettings(): Promise<ShellSettings> {
 export async function saveShellSettings(settings: ShellSettings): Promise<ShellSettings> {
   assertNoSecretSettingKeys(settings);
   const saved = await invoke<ShellSettings>(SETTINGS_COMMANDS.save, { settings });
+  broadcastShellSettings(saved);
+  return saved;
+}
+
+export async function saveShellBarHeight(
+  edge: 'top' | 'bottom',
+  heightLogical: number
+): Promise<ShellSettings> {
+  const saved = await invoke<ShellSettings>(SETTINGS_COMMANDS.saveShellBarHeight, {
+    request: { edge, heightLogical }
+  });
+  broadcastShellSettings(saved);
+  return saved;
+}
+
+export async function saveShellBarLock(
+  edge: 'top' | 'bottom',
+  locked: boolean
+): Promise<ShellSettings> {
+  const saved = await invoke<ShellSettings>(SETTINGS_COMMANDS.saveShellBarLock, {
+    request: { edge, locked }
+  });
   broadcastShellSettings(saved);
   return saved;
 }

@@ -90,13 +90,14 @@
   import {
     addShellSettingsChangeListener,
     loadShellSettings,
-    saveShellSettings,
+    saveShellBarHeight,
     type ShellSettings
   } from '../lib/settings';
   import {
     clampShellBarHeight,
     createShellBarResizeScheduler,
     resizeShellBar,
+    shellBarHeightForSettingsUpdate,
     shellBarHeightFromDrag
   } from '../lib/shellBarResize';
   import type { SearchMode } from '../lib/searchSettings';
@@ -149,6 +150,7 @@
   let topBarResizePointerId: number | null = null;
   let topBarResizeStartY = 0;
   let topBarResizeStartHeight = 23.4;
+  let topBarPendingPersistedHeight: number | null = null;
   const topBarResizeScheduler = createShellBarResizeScheduler('top', (error) => {
     console.error('Failed to resize top bar', error);
   });
@@ -276,7 +278,17 @@
     shellSettings = settings;
     searchMode = searchModeFromSettings(settings.ui.searchMode);
     topBarHeightLocked = settings.ui.lockTopBarHeight;
-    topBarHeightLogical = clampShellBarHeight('top', settings.ui.topBarHeightLogical);
+    const persistedHeight = clampShellBarHeight('top', settings.ui.topBarHeightLogical);
+    const pendingHeightSettled = topBarPendingPersistedHeight === persistedHeight;
+    topBarHeightLogical = shellBarHeightForSettingsUpdate(
+      'top',
+      persistedHeight,
+      topBarHeightLogical,
+      topBarResizePointerId !== null || (topBarPendingPersistedHeight !== null && !pendingHeightSettled)
+    );
+    if (pendingHeightSettled) {
+      topBarPendingPersistedHeight = null;
+    }
     await resizeShellBar({ edge: 'top', heightLogical: topBarHeightLogical });
   }
 
@@ -318,6 +330,7 @@
     if (!shellSettings) {
       return;
     }
+    topBarPendingPersistedHeight = nextHeight;
     shellSettings = {
       ...shellSettings,
       ui: {
@@ -325,9 +338,17 @@
         topBarHeightLogical: nextHeight
       }
     };
-    void saveShellSettings(shellSettings).catch((error) => {
-      console.error('Failed to save top bar height', error);
-    });
+    void saveShellBarHeight('top', nextHeight)
+      .then((savedSettings) => {
+        shellSettings = savedSettings;
+        if (clampShellBarHeight('top', savedSettings.ui.topBarHeightLogical) === topBarPendingPersistedHeight) {
+          topBarPendingPersistedHeight = null;
+        }
+      })
+      .catch((error) => {
+        topBarPendingPersistedHeight = null;
+        console.error('Failed to save top bar height', error);
+      });
   }
 
   async function loadStackPins() {

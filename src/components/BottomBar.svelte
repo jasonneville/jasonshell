@@ -7,13 +7,14 @@
   import {
     addShellSettingsChangeListener,
     loadShellSettings,
-    saveShellSettings,
+    saveShellBarHeight,
     type ShellSettings
   } from '../lib/settings';
   import {
     clampShellBarHeight,
     createShellBarResizeScheduler,
     resizeShellBar,
+    shellBarHeightForSettingsUpdate,
     shellBarHeightFromDrag
   } from '../lib/shellBarResize';
   import { showProcessManager } from '../lib/processManager';
@@ -81,6 +82,7 @@
   let bottomBarResizePointerId: number | null = null;
   let bottomBarResizeStartY = 0;
   let bottomBarResizeStartHeight = 32.4;
+  let bottomBarPendingPersistedHeight: number | null = null;
   const bottomBarResizeScheduler = createShellBarResizeScheduler('bottom', (error) => {
     console.error('Failed to resize bottom bar', error);
   });
@@ -141,7 +143,17 @@
   async function applyBottomBarSettings(settings: ShellSettings) {
     shellSettings = settings;
     bottomBarHeightLocked = settings.ui.lockBottomBarHeight;
-    bottomBarHeightLogical = clampShellBarHeight('bottom', settings.ui.bottomBarHeightLogical);
+    const persistedHeight = clampShellBarHeight('bottom', settings.ui.bottomBarHeightLogical);
+    const pendingHeightSettled = bottomBarPendingPersistedHeight === persistedHeight;
+    bottomBarHeightLogical = shellBarHeightForSettingsUpdate(
+      'bottom',
+      persistedHeight,
+      bottomBarHeightLogical,
+      bottomBarResizePointerId !== null || (bottomBarPendingPersistedHeight !== null && !pendingHeightSettled)
+    );
+    if (pendingHeightSettled) {
+      bottomBarPendingPersistedHeight = null;
+    }
     await resizeShellBar({ edge: 'bottom', heightLogical: bottomBarHeightLogical });
   }
 
@@ -183,6 +195,7 @@
     if (!shellSettings) {
       return;
     }
+    bottomBarPendingPersistedHeight = nextHeight;
     shellSettings = {
       ...shellSettings,
       ui: {
@@ -190,9 +203,17 @@
         bottomBarHeightLogical: nextHeight
       }
     };
-    void saveShellSettings(shellSettings).catch((error) => {
-      console.error('Failed to save bottom bar height', error);
-    });
+    void saveShellBarHeight('bottom', nextHeight)
+      .then((savedSettings) => {
+        shellSettings = savedSettings;
+        if (clampShellBarHeight('bottom', savedSettings.ui.bottomBarHeightLogical) === bottomBarPendingPersistedHeight) {
+          bottomBarPendingPersistedHeight = null;
+        }
+      })
+      .catch((error) => {
+        bottomBarPendingPersistedHeight = null;
+        console.error('Failed to save bottom bar height', error);
+      });
   }
 
   function writePersistedLauncherOrder(order: string[]) {

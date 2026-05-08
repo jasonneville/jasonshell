@@ -28,6 +28,7 @@
   import {
     defaultShellSettings,
     loadShellSettings,
+    saveShellBarLock,
     saveShellSettings,
     type ShellSettings
   } from '../lib/settings';
@@ -89,17 +90,21 @@
     preferences = patchShellPreferences(patch);
   }
 
-  function updateShellUiSettings(patch: Partial<ShellSettings['ui']>) {
+  function updateShellBarLock(edge: 'top' | 'bottom', locked: boolean) {
     shellSettings = {
       ...shellSettings,
       ui: {
         ...shellSettings.ui,
-        ...patch
+        ...(edge === 'top' ? { lockTopBarHeight: locked } : { lockBottomBarHeight: locked })
       }
     };
-    void saveShellSettings(shellSettings).catch((error) => {
-      console.error('Failed to save shell settings', error);
-    });
+    void saveShellBarLock(edge, locked)
+      .then((settings) => {
+        shellSettings = settings;
+      })
+      .catch((error) => {
+        console.error('Failed to save shell bar lock setting', error);
+      });
   }
 
   function handleThemeChange(value: string) {
@@ -314,12 +319,12 @@
       <MeltToggle
         checked={shellSettings.ui.lockTopBarHeight}
         label="Lock top bar"
-        onChange={(lockTopBarHeight) => updateShellUiSettings({ lockTopBarHeight })}
+        onChange={(lockTopBarHeight) => updateShellBarLock('top', lockTopBarHeight)}
       />
       <MeltToggle
         checked={shellSettings.ui.lockBottomBarHeight}
         label="Lock bottom bar"
-        onChange={(lockBottomBarHeight) => updateShellUiSettings({ lockBottomBarHeight })}
+        onChange={(lockBottomBarHeight) => updateShellBarLock('bottom', lockBottomBarHeight)}
       />
     </div>
   </section>

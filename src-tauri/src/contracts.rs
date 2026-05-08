@@ -133,6 +133,8 @@ pub mod commands {
     pub const REPORT_SHELL_SURFACE_RUNTIME_METRICS: &str = "report_shell_surface_runtime_metrics";
     pub const LOAD_SHELL_SETTINGS: &str = "load_shell_settings";
     pub const SAVE_SHELL_SETTINGS: &str = "save_shell_settings";
+    pub const SAVE_SHELL_BAR_HEIGHT: &str = "save_shell_bar_height";
+    pub const SAVE_SHELL_BAR_LOCK: &str = "save_shell_bar_lock";
     pub const LIST_WORKSPACES: &str = "list_workspaces";
     pub const CREATE_WORKSPACE: &str = "create_workspace";
     pub const UPDATE_WORKSPACE: &str = "update_workspace";
@@ -256,6 +258,8 @@ pub mod commands {
         REPORT_SHELL_SURFACE_RUNTIME_METRICS,
         LOAD_SHELL_SETTINGS,
         SAVE_SHELL_SETTINGS,
+        SAVE_SHELL_BAR_HEIGHT,
+        SAVE_SHELL_BAR_LOCK,
         LIST_WORKSPACES,
         CREATE_WORKSPACE,
         UPDATE_WORKSPACE,

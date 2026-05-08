@@ -143,7 +143,9 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'run_quick_command',
     'show_control_plane',
     'hide_control_plane',
-    'resize_shell_bar'
+    'resize_shell_bar',
+    'save_shell_bar_height',
+    'save_shell_bar_lock'
   ]) {
     assert.match(commandsSource, new RegExp(command));
   }
@@ -316,7 +318,9 @@ test('settings wrapper declares versioned schema and stable command names', () =
   assert.equal(CURRENT_SETTINGS_VERSION, 1);
   assert.deepEqual(SETTINGS_COMMANDS, {
     load: 'load_shell_settings',
-    save: 'save_shell_settings'
+    save: 'save_shell_settings',
+    saveShellBarHeight: 'save_shell_bar_height',
+    saveShellBarLock: 'save_shell_bar_lock'
   });
   assert.deepEqual(defaultShellSettings(), {
     schema: 'jasonshell.settings',

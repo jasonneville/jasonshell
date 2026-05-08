@@ -37,6 +37,17 @@ export function shellBarHeightFromDrag(
   return clampShellBarHeight(edge, startHeightLogical + delta);
 }
 
+export function shellBarHeightForSettingsUpdate(
+  edge: ShellBarResizeEdge,
+  persistedHeightLogical: number,
+  currentHeightLogical: number,
+  preserveLocalHeight: boolean
+): number {
+  return preserveLocalHeight
+    ? clampShellBarHeight(edge, currentHeightLogical)
+    : clampShellBarHeight(edge, persistedHeightLogical);
+}
+
 export function resizeShellBar(request: ResizeShellBarRequest): Promise<ResizeShellBarResponse> {
   return invoke<ResizeShellBarResponse>(IPC_COMMANDS.resizeShellBar, {
     request: {

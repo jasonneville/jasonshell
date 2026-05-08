@@ -84,6 +84,8 @@ fn main() {
             search_panel::publish_search_panel,
             search_panel::get_search_panel_payload,
             appbar::resize_shell_bar,
+            settings::save_shell_bar_height,
+            settings::save_shell_bar_lock,
             process_manager::show_process_manager,
             process_manager::hide_process_manager,
             control_plane::show_control_plane,

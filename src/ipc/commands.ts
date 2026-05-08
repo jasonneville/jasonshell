@@ -98,6 +98,8 @@ export const IPC_COMMANDS = {
   resizeShellBar: 'resize_shell_bar',
   loadShellSettings: 'load_shell_settings',
   saveShellSettings: 'save_shell_settings',
+  saveShellBarHeight: 'save_shell_bar_height',
+  saveShellBarLock: 'save_shell_bar_lock',
   listWorkspaces: 'list_workspaces',
   createWorkspace: 'create_workspace',
   updateWorkspace: 'update_workspace',

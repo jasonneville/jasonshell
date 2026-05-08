@@ -5,12 +5,14 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 const SETTINGS_SCHEMA: &str = "jasonshell.settings";
 const SETTINGS_VERSION: u32 = 1;
 const SETTINGS_FILE: &str = "jasonshell-settings-v1.json";
+static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -252,6 +254,36 @@ pub fn save_shell_settings(
     save_shell_settings_for_app(&app_handle, settings)
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveShellBarHeightRequest {
+    pub edge: crate::appbar::ShellBarResizeEdge,
+    pub height_logical: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveShellBarLockRequest {
+    pub edge: crate::appbar::ShellBarResizeEdge,
+    pub locked: bool,
+}
+
+#[tauri::command]
+pub fn save_shell_bar_height(
+    app_handle: AppHandle,
+    request: SaveShellBarHeightRequest,
+) -> Result<ShellSettings, String> {
+    save_shell_bar_height_for_app(&app_handle, request)
+}
+
+#[tauri::command]
+pub fn save_shell_bar_lock(
+    app_handle: AppHandle,
+    request: SaveShellBarLockRequest,
+) -> Result<ShellSettings, String> {
+    save_shell_bar_lock_for_app(&app_handle, request)
+}
+
 pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<ShellSettings, String> {
     let path = settings_path(app_handle)?;
     load_settings_from_path(&path)
@@ -262,6 +294,63 @@ pub(crate) fn save_shell_settings_for_app(
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
     let path = settings_path(app_handle)?;
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|_| "settings write lock is poisoned".to_string())?;
+    save_settings_to_path(&path, settings)
+}
+
+pub(crate) fn save_shell_bar_height_for_app(
+    app_handle: &AppHandle,
+    request: SaveShellBarHeightRequest,
+) -> Result<ShellSettings, String> {
+    let path = settings_path(app_handle)?;
+    save_shell_bar_height_to_path(&path, request)
+}
+
+pub(crate) fn save_shell_bar_lock_for_app(
+    app_handle: &AppHandle,
+    request: SaveShellBarLockRequest,
+) -> Result<ShellSettings, String> {
+    let path = settings_path(app_handle)?;
+    save_shell_bar_lock_to_path(&path, request)
+}
+
+fn save_shell_bar_height_to_path(
+    path: &Path,
+    request: SaveShellBarHeightRequest,
+) -> Result<ShellSettings, String> {
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|_| "settings write lock is poisoned".to_string())?;
+    let mut settings = load_settings_from_path(&path)?;
+    match request.edge {
+        crate::appbar::ShellBarResizeEdge::Top => {
+            settings.ui.top_bar_height_logical = request.height_logical;
+        }
+        crate::appbar::ShellBarResizeEdge::Bottom => {
+            settings.ui.bottom_bar_height_logical = request.height_logical;
+        }
+    }
+    save_settings_to_path(&path, settings)
+}
+
+fn save_shell_bar_lock_to_path(
+    path: &Path,
+    request: SaveShellBarLockRequest,
+) -> Result<ShellSettings, String> {
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|_| "settings write lock is poisoned".to_string())?;
+    let mut settings = load_settings_from_path(&path)?;
+    match request.edge {
+        crate::appbar::ShellBarResizeEdge::Top => {
+            settings.ui.lock_top_bar_height = request.locked;
+        }
+        crate::appbar::ShellBarResizeEdge::Bottom => {
+            settings.ui.lock_bottom_bar_height = request.locked;
+        }
+    }
     save_settings_to_path(&path, settings)
 }
 
@@ -828,6 +917,60 @@ mod tests {
         assert_eq!(settings.ui.lock_bottom_bar_height, false);
         assert_eq!(settings.ui.top_bar_height_logical, 120.0);
         assert_eq!(settings.ui.bottom_bar_height_logical, 24.0);
+    }
+
+    #[test]
+    fn shell_bar_height_save_preserves_unrelated_settings() {
+        let path = test_dir("height-merge").join(SETTINGS_FILE);
+        let mut settings = ShellSettings::default();
+        settings.ui.lock_top_bar_height = false;
+        settings.ui.lock_bottom_bar_height = false;
+        settings.ui.search_mode = SearchMode::TopRight;
+        settings.ui.top_bar_height_logical = 44.0;
+        settings.ui.bottom_bar_height_logical = 55.0;
+        settings.search.result_limit = 77;
+        save_settings_to_path(&path, settings).unwrap();
+
+        let saved = save_shell_bar_height_to_path(
+            &path,
+            SaveShellBarHeightRequest {
+                edge: crate::appbar::ShellBarResizeEdge::Bottom,
+                height_logical: 66.0,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.ui.top_bar_height_logical, 44.0);
+        assert_eq!(saved.ui.bottom_bar_height_logical, 66.0);
+        assert_eq!(saved.ui.search_mode, SearchMode::TopRight);
+        assert_eq!(saved.search.result_limit, 77);
+        assert_eq!(load_settings_from_path(&path).unwrap(), saved);
+    }
+
+    #[test]
+    fn shell_bar_lock_save_preserves_current_heights() {
+        let path = test_dir("lock-merge").join(SETTINGS_FILE);
+        let mut settings = ShellSettings::default();
+        settings.ui.lock_top_bar_height = false;
+        settings.ui.lock_bottom_bar_height = false;
+        settings.ui.top_bar_height_logical = 44.0;
+        settings.ui.bottom_bar_height_logical = 55.0;
+        save_settings_to_path(&path, settings).unwrap();
+
+        let saved = save_shell_bar_lock_to_path(
+            &path,
+            SaveShellBarLockRequest {
+                edge: crate::appbar::ShellBarResizeEdge::Top,
+                locked: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.ui.lock_top_bar_height, true);
+        assert_eq!(saved.ui.lock_bottom_bar_height, false);
+        assert_eq!(saved.ui.top_bar_height_logical, 44.0);
+        assert_eq!(saved.ui.bottom_bar_height_logical, 55.0);
+        assert_eq!(load_settings_from_path(&path).unwrap(), saved);
     }
 
     #[test]
