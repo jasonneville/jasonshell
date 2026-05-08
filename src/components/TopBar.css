@@ -8,8 +8,29 @@
   gap: var(--js-space-2);
   height: 100%;
   justify-content: flex-end;
+  min-height: var(--top-bar-height-logical, 23.4px);
   padding: 0 var(--js-space-4);
+  position: relative;
   width: 100%;
+}
+
+.top-bar .bar-resize-handle {
+  background: transparent;
+  border: 0;
+  bottom: 0;
+  cursor: ns-resize;
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  touch-action: none;
+  z-index: 20;
+}
+
+.top-bar .bar-resize-handle:hover,
+.top-bar .bar-resize-handle:focus-visible {
+  background: var(--js-color-accent);
+  outline: none;
 }
 
 .top-bar .shell-home-button {

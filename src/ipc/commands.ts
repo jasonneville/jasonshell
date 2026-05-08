@@ -95,6 +95,7 @@ export const IPC_COMMANDS = {
   showStackItemProperties: 'show_stack_item_properties',
   openStackFolderInVscode: 'open_stack_folder_in_vscode',
   reportShellSurfaceRuntimeMetrics: 'report_shell_surface_runtime_metrics',
+  resizeShellBar: 'resize_shell_bar',
   loadShellSettings: 'load_shell_settings',
   saveShellSettings: 'save_shell_settings',
   listWorkspaces: 'list_workspaces',

@@ -1,4 +1,5 @@
 <script lang="ts">
+  // @ts-ignore: CSS side-effect import handled by bundler
   import './SettingsPanelSurface.css';
   import { onMount } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
@@ -19,12 +20,17 @@
     triggerSystemPowerAction,
     type SystemPowerAction
   } from '../lib/settingsPanel';
-  import { loadShellSettings, saveShellSettings, type ShellSettings } from '../lib/settings';
   import {
     normalizeStackTerminalProfile,
     STACK_TERMINAL_PROFILE_OPTIONS,
     type StackTerminalProfile
   } from '../lib/stackPopup';
+  import {
+    defaultShellSettings,
+    loadShellSettings,
+    saveShellSettings,
+    type ShellSettings
+  } from '../lib/settings';
   import {
     getInitialShellThemeId,
     normalizeShellThemeId,
@@ -50,13 +56,13 @@
   const dateFormatOptions = dateFormatExamples.map((format) => ({ value: format, label: format }));
 
   let preferences: ShellPreferences = getInitialShellPreferences();
+  let shellSettings: ShellSettings = defaultShellSettings();
   let selectedThemeId: ShellThemeId = getInitialShellThemeId();
   let now = new Date();
   let pendingPowerAction: SystemPowerAction | null = null;
   let powerError = '';
   let powerBusy = false;
   let selectedStackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
-  let shellSettings: ShellSettings | null = null;
   let settingsError = '';
 
   const powerActionLabels: Record<SystemPowerAction, string> = {
@@ -71,9 +77,29 @@
   onMount(() => {
     void loadJsonShellSettings();
   });
+  loadShellSettings()
+    .then((settings) => {
+      shellSettings = settings;
+    })
+    .catch((error) => {
+      console.error('Failed to load shell settings', error);
+    });
 
   function updatePreferences(patch: Partial<ShellPreferences>) {
     preferences = patchShellPreferences(patch);
+  }
+
+  function updateShellUiSettings(patch: Partial<ShellSettings['ui']>) {
+    shellSettings = {
+      ...shellSettings,
+      ui: {
+        ...shellSettings.ui,
+        ...patch
+      }
+    };
+    void saveShellSettings(shellSettings).catch((error) => {
+      console.error('Failed to save shell settings', error);
+    });
   }
 
   function handleThemeChange(value: string) {
@@ -282,6 +308,20 @@
     {#if settingsError}
       <p class="settings-error" role="alert">{settingsError}</p>
     {/if}
+  <section class="settings-section" aria-labelledby="shell-bars-heading">
+    <h2 id="shell-bars-heading">Shell bars</h2>
+    <div class="settings-toggle-grid two">
+      <MeltToggle
+        checked={shellSettings.ui.lockTopBarHeight}
+        label="Lock top bar"
+        onChange={(lockTopBarHeight) => updateShellUiSettings({ lockTopBarHeight })}
+      />
+      <MeltToggle
+        checked={shellSettings.ui.lockBottomBarHeight}
+        label="Lock bottom bar"
+        onChange={(lockBottomBarHeight) => updateShellUiSettings({ lockBottomBarHeight })}
+      />
+    </div>
   </section>
 
   <section class="settings-section" aria-labelledby="power-heading">

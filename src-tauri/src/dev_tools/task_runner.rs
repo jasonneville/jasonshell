@@ -691,6 +691,7 @@ mod tests {
                 active_workspace_id: Some("workspace-a".to_string()),
                 enable_diagnostics_export: false,
                 search_mode: Default::default(),
+                ..Default::default()
             },
             search: Default::default(),
             workspaces: vec![crate::workspaces::WorkspaceProfile {

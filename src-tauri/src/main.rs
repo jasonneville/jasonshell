@@ -83,6 +83,7 @@ fn main() {
             search_panel::hide_search_panel,
             search_panel::publish_search_panel,
             search_panel::get_search_panel_payload,
+            appbar::resize_shell_bar,
             process_manager::show_process_manager,
             process_manager::hide_process_manager,
             control_plane::show_control_plane,

@@ -31,6 +31,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'searchPanelState.test.mjs',
     'searchTypingFreezePhase1.test.mjs',
     'settingsPanelWiring.test.mjs',
+    'shellBarResize.test.mjs',
     'shellOpenCloseEvents.test.mjs',
     'shellPopupLayoutScrollPhase1.test.mjs',
     'shellPreferences.test.mjs',

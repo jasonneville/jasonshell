@@ -4,6 +4,18 @@
   import { emit, listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
+  import {
+    addShellSettingsChangeListener,
+    loadShellSettings,
+    saveShellSettings,
+    type ShellSettings
+  } from '../lib/settings';
+  import {
+    clampShellBarHeight,
+    createShellBarResizeScheduler,
+    resizeShellBar,
+    shellBarHeightFromDrag
+  } from '../lib/shellBarResize';
   import { showProcessManager } from '../lib/processManager';
   import {
     launchPinnedTaskbarLauncher,
@@ -63,6 +75,15 @@
   } from '../features/bottom-bar/taskbarUxState';
   const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
   let launcherMessage = 'Loading Explorer taskbar pins…';
+  let shellSettings: ShellSettings | null = null;
+  let bottomBarHeightLogical = 32.4;
+  let bottomBarHeightLocked = true;
+  let bottomBarResizePointerId: number | null = null;
+  let bottomBarResizeStartY = 0;
+  let bottomBarResizeStartHeight = 32.4;
+  const bottomBarResizeScheduler = createShellBarResizeScheduler('bottom', (error) => {
+    console.error('Failed to resize bottom bar', error);
+  });
   let launchers: PinnedTaskbarLauncher[] = [];
   let launcherOrder: string[] = readPersistedLauncherOrder();
   let draggingLauncherPath: string | null = null;
@@ -106,6 +127,72 @@
     } catch {
       return [];
     }
+  }
+
+  async function loadBottomBarResizeSettings() {
+    try {
+      const settings = await loadShellSettings();
+      await applyBottomBarSettings(settings);
+    } catch (error) {
+      console.error('Failed to load bottom bar resize settings', error);
+    }
+  }
+
+  async function applyBottomBarSettings(settings: ShellSettings) {
+    shellSettings = settings;
+    bottomBarHeightLocked = settings.ui.lockBottomBarHeight;
+    bottomBarHeightLogical = clampShellBarHeight('bottom', settings.ui.bottomBarHeightLogical);
+    await resizeShellBar({ edge: 'bottom', heightLogical: bottomBarHeightLogical });
+  }
+
+  function startBottomBarHeightResize(event: PointerEvent) {
+    if (bottomBarHeightLocked || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    bottomBarResizePointerId = event.pointerId;
+    bottomBarResizeStartY = event.clientY;
+    bottomBarResizeStartHeight = bottomBarHeightLogical;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function moveBottomBarHeightResize(event: PointerEvent) {
+    if (bottomBarResizePointerId !== event.pointerId || bottomBarHeightLocked) {
+      return;
+    }
+    const nextHeight = shellBarHeightFromDrag(
+      'bottom',
+      bottomBarResizeStartHeight,
+      bottomBarResizeStartY,
+      event.clientY
+    );
+    if (nextHeight === bottomBarHeightLogical) {
+      return;
+    }
+    bottomBarHeightLogical = nextHeight;
+    bottomBarResizeScheduler.schedule(nextHeight);
+  }
+
+  function finishBottomBarHeightResize(event: PointerEvent) {
+    if (bottomBarResizePointerId !== event.pointerId) {
+      return;
+    }
+    bottomBarResizePointerId = null;
+    const nextHeight = clampShellBarHeight('bottom', bottomBarHeightLogical);
+    void bottomBarResizeScheduler.flush(nextHeight);
+    if (!shellSettings) {
+      return;
+    }
+    shellSettings = {
+      ...shellSettings,
+      ui: {
+        ...shellSettings.ui,
+        bottomBarHeightLogical: nextHeight
+      }
+    };
+    void saveShellSettings(shellSettings).catch((error) => {
+      console.error('Failed to save bottom bar height', error);
+    });
   }
 
   function writePersistedLauncherOrder(order: string[]) {
@@ -669,6 +756,7 @@
         unlisteners.push(unlisten);
       });
     };
+    void loadBottomBarResizeSettings();
     void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
     registerAsyncUnlistener(listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
@@ -681,6 +769,11 @@
 
     registerAsyncUnlistener(listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
       clearPreviewHideTimer();
+    }));
+    unlisteners.push(addShellSettingsChangeListener((settings) => {
+      void applyBottomBarSettings(settings).catch((error) => {
+        console.error('Failed to apply bottom bar settings update', error);
+      });
     }));
 
     const taskbarPollTimer = window.setInterval(() => {
@@ -737,7 +830,18 @@
 
 <svelte:window on:keydown={handleGlobalKeydown} />
 
-<div class="surface bottom-bar">
+<div class="surface bottom-bar" style={`--bottom-bar-height-logical: ${bottomBarHeightLogical}px;`}>
+  {#if !bottomBarHeightLocked}
+    <MeltActionButton
+      class="bar-resize-handle bottom-bar-resize-handle"
+      ariaLabel="Resize bottom bar"
+      onPointerDown={startBottomBarHeightResize}
+      onPointerMove={moveBottomBarHeightResize}
+      onPointerUp={finishBottomBarHeightResize}
+      onPointerCancel={finishBottomBarHeightResize}
+      onLostPointerCapture={finishBottomBarHeightResize}
+    ></MeltActionButton>
+  {/if}
   <section class="taskbar-strip" aria-label="Taskbar">
     <div class="launcher-strip" aria-label="Pinned Explorer taskbar apps">
       {#if launchers.length}
