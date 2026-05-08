@@ -78,3 +78,35 @@ test('Explorer launcher context menu exposes Windows taskbar unpin only through 
   assert.match(launchersRs, /let shortcut_path = validate_shortcut_path\(&shortcut_path\)\?/);
   assert.match(launchersRs, /fs::remove_file\(&shortcut_path\)/);
 });
+
+test('active task window context menu exposes PID lookup and taskbar pin actions', () => {
+  const taskbarMenuRs = readFileSync(new URL('../src-tauri/src/taskbar_menu.rs', import.meta.url), 'utf8');
+  const taskbarMenuTs = readFileSync(new URL('../src/lib/taskbarMenus.ts', import.meta.url), 'utf8');
+  const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
+  const processManagerRust = readFileSync(new URL('../src-tauri/src/process_manager.rs', import.meta.url), 'utf8');
+  const processManagerSurface = readFileSync(new URL('../src/components/ProcessManagerSurface.svelte', import.meta.url), 'utf8');
+
+  assert.match(taskbarMenuTs, /processId: number/);
+  assert.match(bottomBarSource, /processId: taskWindow\.processId/);
+  assert.match(taskbarMenuRs, /"Pin to taskbar"/);
+  assert.match(taskbarMenuRs, /launchers::can_pin_task_window_to_taskbar\(&request\.hwnd\)/);
+  assert.match(taskbarMenuRs, /"pin"\s*=>\s*launchers::pin_task_window_to_taskbar/);
+  assert.match(taskbarMenuRs, /PID \{\} - open in Process Manager/);
+  assert.match(taskbarMenuRs, /process_manager::show_process_manager/);
+  assert.match(processManagerRust, /pub focus_pid: Option<u32>/);
+  assert.match(processManagerRust, /emit\(PROCESS_MANAGER_OPEN_EVENT, request\.focus_pid\)/);
+  assert.match(processManagerSurface, /processFilter = String\(focusPid\)/);
+  assert.match(processManagerSurface, /sortState = \{ column: 'pid', direction: 'asc' \}/);
+});
+
+test('active taskbar pin creates a taskbar shortcut instead of reviving app-managed quick icons', () => {
+  const mainRs = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(mainRs, /quick_icons::/);
+  assert.match(launchersRs, /pub fn pin_task_window_to_taskbar\(hwnd: String\) -> Result<\(\), String>/);
+  assert.match(launchersRs, /crate::task_windows::task_window_process_path\(&hwnd\)/);
+  assert.match(launchersRs, /fn taskbar_target_already_pinned\(target_path: &Path\) -> Result<bool, String>/);
+  assert.match(launchersRs, /fn create_taskbar_shortcut\(target_path: &Path\) -> Result<\(\), String>/);
+  assert.match(launchersRs, /\.SetPath\(PCWSTR\(target_wide\.as_ptr\(\)\)\)/);
+  assert.match(launchersRs, /\.Save\(PCWSTR\(shortcut_wide\.as_ptr\(\)\), true\)/);
+});

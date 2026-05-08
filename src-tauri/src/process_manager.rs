@@ -77,6 +77,7 @@ pub struct ProcessKillConfirmation {
 pub struct ShowProcessManagerRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
+    pub focus_pid: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -148,7 +149,7 @@ pub fn show_process_manager(
         .set_focus()
         .map_err(|error| format!("Failed to focus the process manager: {error}"))?;
     popup
-        .emit(PROCESS_MANAGER_OPEN_EVENT, ())
+        .emit(PROCESS_MANAGER_OPEN_EVENT, request.focus_pid)
         .map_err(|error| format!("Failed to publish process manager open event: {error}"))
 }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import './ProcessManagerSurface.css';
   import { onMount } from 'svelte';
-  import { listen } from '@tauri-apps/api/event';
+  import { listen, type Event } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MeltProgress from './melt/MeltProgress.svelte';
   import {
@@ -147,8 +147,14 @@
     }, REFRESH_INTERVAL_MS);
   }
 
-  function openSurface() {
+  function openSurface(event?: Event<number | null>) {
+    const focusPid = typeof event?.payload === 'number' ? event.payload : null;
     isOpen = true;
+    if (focusPid !== null) {
+      processFilter = String(focusPid);
+      sortState = { column: 'pid', direction: 'asc' };
+      statusMessage = `Focused PID ${focusPid}`;
+    }
     startRefreshTimer();
     void refreshProcesses({ preserveVolatileOrder: false });
   }

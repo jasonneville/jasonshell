@@ -229,6 +229,7 @@
     try {
       await showTaskWindowContextMenu({
         hwnd: taskWindow.hwnd,
+        processId: taskWindow.processId ?? 0,
         isMinimized: taskWindow.isMinimized,
         x: event.clientX,
         y: event.clientY

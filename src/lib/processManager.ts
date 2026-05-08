@@ -40,6 +40,7 @@ export type ProcessWorkspaceHint = {
 export type ShowProcessManagerRequest = {
   anchorLeft: number;
   anchorWidth: number;
+  focusPid?: number | null;
 };
 
 export type ProcessKillConfirmation = {

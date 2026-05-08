@@ -1,4 +1,5 @@
 use crate::launchers;
+use crate::process_manager;
 use crate::shell_windows::{BOTTOM_BAR_LABEL, TOP_BAR_LABEL};
 use crate::task_windows::{self, TaskWindowAction};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
@@ -18,6 +19,7 @@ const TOP_BAR_PIN_MENU_PREFIX: &str = "top-bar-pin";
 #[serde(rename_all = "camelCase")]
 pub struct ShowTaskWindowContextMenuRequest {
     pub hwnd: String,
+    pub process_id: u32,
     pub is_minimized: bool,
     pub x: f64,
     pub y: f64,
@@ -83,8 +85,31 @@ pub fn show_task_window_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&focus_item, &minimize_item, &close_item])
-        .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
+    let process_item = MenuItem::with_id(
+        &app_handle,
+        format!(
+            "{TASK_WINDOW_MENU_PREFIX}:process:{}:{}",
+            request.process_id, request.hwnd
+        ),
+        format!("PID {} - open in Process Manager", request.process_id),
+        request.process_id != 0,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build task window process item: {error}"))?;
+    let pin_enabled = launchers::can_pin_task_window_to_taskbar(&request.hwnd).unwrap_or(false);
+    let pin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TASK_WINDOW_MENU_PREFIX}:pin:{}", request.hwnd),
+        "Pin to taskbar",
+        pin_enabled,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[&focus_item, &minimize_item, &process_item, &pin_item, &close_item],
+    )
+    .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
 
     bottom_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -233,6 +258,25 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
             ),
             "close" => {
                 task_windows::perform_task_window_action(hwnd.to_string(), TaskWindowAction::Close)
+            }
+            "pin" => launchers::pin_task_window_to_taskbar(hwnd.to_string()),
+            "process" => {
+                let Some((pid, _)) = hwnd.split_once(':') else {
+                    eprintln!("task window process menu payload missing pid");
+                    return;
+                };
+                let Ok(focus_pid) = pid.parse::<u32>() else {
+                    eprintln!("task window process menu payload invalid pid: {pid}");
+                    return;
+                };
+                process_manager::show_process_manager(
+                    app_handle.clone(),
+                    process_manager::ShowProcessManagerRequest {
+                        anchor_left: 0.0,
+                        anchor_width: 0.0,
+                        focus_pid: Some(focus_pid),
+                    },
+                )
             }
             _ => return,
         };
