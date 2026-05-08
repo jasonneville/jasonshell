@@ -171,12 +171,12 @@ test('top-bar action and pinned-folder controls use Melt-backed buttons without 
   assert.match(topBarSource, /<MeltActionButton\s+class="shell-home-button"[\s\S]*ariaHaspopup="dialog"[\s\S]*openSettingsPanel\(event\.currentTarget\)/);
   assert.match(topBarSource, /<MeltActionButton\s+class="rail-scroll left"[\s\S]*scrollRailLeft\(\)/);
   assert.match(topBarSource, /<MeltActionButton\s+class="rail-scroll right"[\s\S]*scrollRailRight\(\)/);
-  assert.match(topBarSource, /<MeltActionButton[\s\S]*dataPath=\{pin\.path\}[\s\S]*draggable="true"[\s\S]*ariaLabel=\{`Open pinned folder \$\{pin\.name\}`\}/);
+  assert.match(topBarSource, /<MeltActionButton[\s\S]*dataPath=\{pin\.path\}[\s\S]*ariaLabel=\{`Open pinned folder \$\{pin\.name\}`\}/);
+  assert.match(topBarSource, /onPointerDown=\{\(event\) => startPinPointerDrag\(pin, event\)\}/);
+  assert.match(topBarSource, /onPointerMove=\{movePinPointerDrag\}/);
+  assert.match(topBarSource, /onPointerUp=\{finishPinPointerDrag\}/);
   assert.match(topBarSource, /onClick=\{\(event\) => handlePinClick\(event, pin, index\)\}/);
   assert.match(topBarSource, /onContextMenu=\{\(event\) => handlePinContextMenu\(event, pin\)\}/);
-  assert.match(topBarSource, /onDragStart=\{\(event\) => handlePinDragStart\(event, pin\)\}/);
-  assert.match(topBarSource, /onDragOver=\{\(event\) => handlePinDragOver\(event, pin\)\}/);
-  assert.match(topBarSource, /onDrop=\{\(event\) => void handlePinDrop\(event, pin\)\}/);
   assert.match(topBarSource, /querySelectorAll<HTMLElement>\('button\[data-path\]'\)/);
   assert.match(topBarSource, /showTopBarPinContextMenu\(\{/);
   assert.match(topBarSource, /showStackPopup\(\{/);
@@ -193,8 +193,10 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
 
   assert.doesNotMatch(bottomBarSource, /quick-icon-button|launchQuickIconFromBottomBar|openQuickIconMenu/);
 
-  assert.match(bottomBarSource, /<MeltActionButton\s+class="launcher-button"[\s\S]*type="button"[\s\S]*title=\{launcher\.name\}[\s\S]*ariaLabel=\{`Launch \$\{launcher\.name\}`\}[\s\S]*disabled=\{launchingShortcutPath === launcher\.shortcutPath\}/);
-  assert.match(bottomBarSource, /onClick=\{\(\) => void launchApp\(launcher\)\}/);
+  assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`launcher-button/);
+  assert.match(bottomBarSource, /title=\{launcher\.name\}[\s\S]*dataPath=\{launcher\.shortcutPath\}[\s\S]*ariaLabel=\{`Launch \$\{launcher\.name\}`\}[\s\S]*disabled=\{launchingShortcutPath === launcher\.shortcutPath\}/);
+  assert.match(bottomBarSource, /onPointerDown=\{\(event\) => startLauncherPointerDrag\(launcher, event\)\}/);
+  assert.match(bottomBarSource, /onClick=\{\(event\) => handleLauncherClick\(launcher, event\)\}/);
   assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openLauncherMenu\(launcher, event\)\}/);
 
   assert.match(bottomBarSource, /class:task-group-active=\{group\.isActive\}/);

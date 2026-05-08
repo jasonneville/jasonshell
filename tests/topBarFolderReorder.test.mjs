@@ -28,9 +28,9 @@ test('keeps same array for same slot and missing source', () => {
 test('TopBar pinned folders wire drag reorder through existing persistence path', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
   assert.match(source, /reorderPinnedFolders/);
-  assert.match(source, /onDragStart=\{\(event\) => handlePinDragStart\(event, pin\)\}/);
-  assert.match(source, /onDragOver=\{\(event\) => handlePinDragOver\(event, pin\)\}/);
-  assert.match(source, /onDrop=\{\(event\) => void handlePinDrop\(event, pin\)\}/);
+  assert.match(source, /startPinPointerDrag\(pin, event\)/);
+  assert.match(source, /movePinPointerDrag/);
+  assert.match(source, /finishPinPointerDrag/);
   assert.match(source, /await applyStackPins\(await reorderStackPins\(nextPins\.map\(\(pin\) => pin\.path\)\)\)/);
 });
 

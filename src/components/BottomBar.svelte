@@ -10,7 +10,16 @@
     listPinnedTaskbarLaunchers,
     type PinnedTaskbarLauncher
   } from '../lib/taskbarLaunchers';
-  import { preserveExplorerTaskbarPins } from '../lib/taskbarPins';
+  import {
+    hasTaskbarLauncherDragStarted,
+    orderTaskbarLaunchers,
+    preserveExplorerTaskbarPins,
+    reconcileTaskbarLauncherOrder,
+    resolveTaskbarLauncherPointerRelease,
+    taskbarLauncherDragDelta,
+    taskbarLauncherKey,
+    taskbarLauncherOrderFromDisplacement
+  } from '../lib/taskbarPins';
   import {
     showLauncherContextMenu,
     showTaskWindowContextMenu
@@ -52,8 +61,19 @@
     taskbarOverflowState,
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
+  const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
   let launcherMessage = 'Loading Explorer taskbar pins…';
   let launchers: PinnedTaskbarLauncher[] = [];
+  let launcherOrder: string[] = readPersistedLauncherOrder();
+  let draggingLauncherPath: string | null = null;
+  let launcherDragPointerId: number | null = null;
+  let launcherDragStartX = 0;
+  let launcherDragCurrentX = 0;
+  let launcherDragStarted = false;
+  let launcherDragOriginalOrder: string[] = [];
+  let launcherDragElement: HTMLElement | null = null;
+  let launcherDragRects: ReturnType<typeof launcherRects> = [];
+  let suppressClickLauncherKey: string | null = null;
   let taskbarMessage = 'Loading open windows…';
   let openWindows: TaskbarWindow[] = [];
   let launchingShortcutPath: string | null = null;
@@ -78,9 +98,38 @@
   let taskbarOverflow = taskbarOverflowState(0, 0, 0);
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
 
+  function readPersistedLauncherOrder() {
+    try {
+      const raw = window.localStorage.getItem(TASKBAR_LAUNCHER_ORDER_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writePersistedLauncherOrder(order: string[]) {
+    try {
+      window.localStorage.setItem(TASKBAR_LAUNCHER_ORDER_STORAGE_KEY, JSON.stringify(order));
+    } catch {
+      // Launcher order is a convenience preference; runtime ordering still works if storage is blocked.
+    }
+  }
+
   $: taskGroupDragDeltaX = taskGroupDragStarted
     ? taskbarGroupDragDelta(taskGroupDragStartX, taskGroupDragCurrentX)
     : 0;
+  $: launcherDragDeltaX = launcherDragStarted
+    ? taskbarLauncherDragDelta(launcherDragStartX, launcherDragCurrentX)
+    : 0;
+  $: launcherPreviewOrder = launcherDragStarted && draggingLauncherPath
+    ? taskbarLauncherOrderFromDisplacement(
+        draggingLauncherPath,
+        launcherDragOriginalOrder,
+        launcherDragRects,
+        launcherDragDeltaX
+      )
+    : launcherOrder;
   $: taskWindowGroups = buildTaskWindowGroups(openWindows, taskGroupOrder);
   $: taskGroupPreviewOrder = taskGroupDragStarted && draggingGroupKey
     ? taskbarGroupOrderFromDisplacement(
@@ -171,13 +220,17 @@
     launcherMessage = 'Loading Explorer taskbar pins…';
     try {
       const explorerLaunchers = await listPinnedTaskbarLaunchers();
-      launchers = preserveExplorerTaskbarPins(explorerLaunchers);
+      const nextLaunchers = preserveExplorerTaskbarPins(explorerLaunchers);
+      launcherOrder = reconcileTaskbarLauncherOrder(launcherOrder, nextLaunchers);
+      writePersistedLauncherOrder(launcherOrder);
+      launchers = orderTaskbarLaunchers(nextLaunchers, launcherOrder);
       launcherMessage = launchers.length
         ? 'Pinned Explorer shortcuts'
         : 'No supported Explorer taskbar pins';
     } catch (error) {
       console.error('Failed to load pinned taskbar launchers', error);
       launchers = [];
+      launcherOrder = [];
       launcherMessage = 'Pinned taskbar shortcuts unavailable';
     }
   }
@@ -200,6 +253,125 @@
     } finally {
       launchingShortcutPath = null;
     }
+  }
+  function launcherRects() {
+    return Array.from(document.querySelectorAll<HTMLElement>('.launcher-button[data-path]'))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          key: element.dataset.path ?? '',
+          left: rect.left,
+          width: rect.width
+        };
+      })
+      .filter((rect) => rect.key);
+  }
+  function launcherStyle(launcher: PinnedTaskbarLauncher) {
+    const key = taskbarLauncherKey(launcher);
+    const previewOrderIndex = launcherPreviewOrder.indexOf(key);
+    if (draggingLauncherPath !== key || !launcherDragStarted) {
+      return previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '';
+    }
+    const liveReorderOffset = taskbarGroupReorderOffset(
+      key,
+      launcherPreviewOrder,
+      launcherDragRects
+    );
+    const visualDelta = launcherDragDeltaX + liveReorderOffset;
+    return `order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`;
+  }
+  function releaseLauncherPointerCapture() {
+    if (!launcherDragElement || launcherDragPointerId === null) {
+      return;
+    }
+    try {
+      if (launcherDragElement.hasPointerCapture(launcherDragPointerId)) {
+        launcherDragElement.releasePointerCapture(launcherDragPointerId);
+      }
+    } catch {
+      // Capture can already be gone after OS/browser pointer cancellation.
+    }
+  }
+  function resetLauncherPointerDrag() {
+    draggingLauncherPath = null;
+    launcherDragPointerId = null;
+    launcherDragStartX = 0;
+    launcherDragCurrentX = 0;
+    launcherDragStarted = false;
+    launcherDragOriginalOrder = [];
+    launcherDragElement = null;
+    launcherDragRects = [];
+  }
+  function cancelLauncherPointerDrag() {
+    releaseLauncherPointerCapture();
+    resetLauncherPointerDrag();
+  }
+  function startLauncherPointerDrag(launcher: PinnedTaskbarLauncher, event: PointerEvent) {
+    if (event.button !== 0 || launchingShortcutPath) {
+      return;
+    }
+    draggingLauncherPath = taskbarLauncherKey(launcher);
+    launcherDragPointerId = event.pointerId;
+    launcherDragStartX = event.clientX;
+    launcherDragCurrentX = event.clientX;
+    launcherDragStarted = false;
+    launcherDragOriginalOrder = launchers.map(taskbarLauncherKey);
+    launcherDragElement = event.currentTarget as HTMLElement;
+    launcherDragRects = launcherRects();
+    try {
+      launcherDragElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Reorder still works while pointer remains over the launcher strip.
+    }
+  }
+  function moveLauncherPointerDrag(event: PointerEvent) {
+    if (launcherDragPointerId !== event.pointerId || !draggingLauncherPath) {
+      return;
+    }
+    launcherDragCurrentX = event.clientX;
+    const started = hasTaskbarLauncherDragStarted(launcherDragStartX, event.clientX);
+    if (!launcherDragStarted && started) {
+      launcherDragStarted = true;
+      clearPreviewShowTimer();
+      void hidePreview();
+    }
+    if (launcherDragStarted) {
+      event.preventDefault();
+    }
+  }
+  function finishLauncherPointerDrag(event: PointerEvent) {
+    if (launcherDragPointerId !== event.pointerId) {
+      return;
+    }
+    const sourcePath = draggingLauncherPath;
+    const didDrag = launcherDragStarted;
+    const releaseResult = resolveTaskbarLauncherPointerRelease(sourcePath, didDrag);
+    if (didDrag && sourcePath) {
+      const nextOrder = taskbarLauncherOrderFromDisplacement(
+        sourcePath,
+        launcherDragOriginalOrder,
+        launcherDragRects,
+        taskbarLauncherDragDelta(launcherDragStartX, event.clientX)
+      );
+      if (nextOrder !== launcherDragOriginalOrder) {
+        launcherOrder = nextOrder;
+        writePersistedLauncherOrder(launcherOrder);
+        launchers = orderTaskbarLaunchers(launchers, launcherOrder);
+        launcherMessage = 'Reordered pinned taskbar shortcuts';
+      }
+    }
+    releaseLauncherPointerCapture();
+    resetLauncherPointerDrag();
+    suppressClickLauncherKey = releaseResult.suppressClickKey;
+  }
+  function handleLauncherClick(launcher: PinnedTaskbarLauncher, event: MouseEvent) {
+    if (suppressClickLauncherKey === taskbarLauncherKey(launcher)) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClickLauncherKey = null;
+      return;
+    }
+    void launchApp(launcher);
   }
   async function toggleWindow(taskWindow: TaskbarWindow) {
     if (activatingHwnd) {
@@ -421,7 +593,15 @@
     void toggleWindow(taskWindow);
   }
   function handleGlobalKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && taskGroupDragPointerId !== null) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    if (launcherDragPointerId !== null) {
+      event.preventDefault();
+      cancelLauncherPointerDrag();
+      return;
+    }
+    if (taskGroupDragPointerId !== null) {
       event.preventDefault();
       cancelTaskGroupPointerDrag();
     }
@@ -563,12 +743,23 @@
       {#if launchers.length}
         {#each launchers as launcher (launcher.id)}
           <MeltActionButton
-            class="launcher-button"
+            class={`launcher-button${draggingLauncherPath === launcher.shortcutPath ? ' launcher-button-dragging' : ''}`}
             type="button"
             title={launcher.name}
+            dataPath={launcher.shortcutPath}
             ariaLabel={`Launch ${launcher.name}`}
             disabled={launchingShortcutPath === launcher.shortcutPath}
-            onClick={() => void launchApp(launcher)}
+            style={launcherStyle(launcher)}
+            onPointerDown={(event) => startLauncherPointerDrag(launcher, event)}
+            onPointerMove={moveLauncherPointerDrag}
+            onPointerUp={finishLauncherPointerDrag}
+            onPointerCancel={cancelLauncherPointerDrag}
+            onLostPointerCapture={(event) => {
+              if (launcherDragPointerId === event.pointerId) {
+                cancelLauncherPointerDrag();
+              }
+            }}
+            onClick={(event) => handleLauncherClick(launcher, event)}
             onContextMenu={(event) => void openLauncherMenu(launcher, event)}
           >
             <img class="launcher-icon" src={launcher.iconDataUrl} alt="" draggable="false" />

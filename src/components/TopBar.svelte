@@ -95,6 +95,12 @@
     TOP_BAR_PIN_MENU_ACTION_EVENT,
     type TopBarPinMenuActionPayload
   } from '../lib/taskbarMenus';
+  import {
+    hasTaskbarGroupDragStarted,
+    taskbarGroupDragDelta,
+    taskbarGroupOrderFromDisplacement,
+    taskbarGroupReorderOffset
+  } from '../lib/taskbarGroups';
   import { reorderPinnedFolders, stackPinRevealPath, topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
     searchPanelAnchorState,
@@ -171,7 +177,13 @@
   let searchBlurCloseTimer: number | null = null;
   let searchPanelInteractionUntil = 0;
   let draggingPinPath: string | null = null;
-  let draggingPinStartIndex: number | null = null;
+  let pinDragPointerId: number | null = null;
+  let pinDragStartX = 0;
+  let pinDragCurrentX = 0;
+  let pinDragStarted = false;
+  let pinDragOriginalOrder: string[] = [];
+  let pinDragElement: HTMLElement | null = null;
+  let pinDragRects: ReturnType<typeof pinReorderRects> = [];
   let suppressNextPinClickPath: string | null = null;
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
@@ -180,7 +192,6 @@
   let commandOpen = false;
   let calendarOpen = false;
 
-  const PIN_DRAG_TYPE = 'application/x-jasonshell-stack-pin';
   const PIN_REORDER_DRAG_THRESHOLD_PX = 4;
   const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
   const SEARCH_PANEL_INTERACTION_GRACE_MS = 350;
@@ -205,6 +216,15 @@
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
   $: shellTime = formatShellTime(now, shellPreferences);
   $: shellDate = formatShellDate(now, shellPreferences.dateFormat);
+  $: pinDragDeltaX = pinDragStarted ? taskbarGroupDragDelta(pinDragStartX, pinDragCurrentX) : 0;
+  $: pinPreviewOrder = pinDragStarted && draggingPinPath
+    ? taskbarGroupOrderFromDisplacement(
+        draggingPinPath,
+        pinDragOriginalOrder,
+        pinDragRects,
+        pinDragDeltaX
+      )
+    : stackPins.map((pin) => pin.path);
 
   async function loadSearchCatalog() {
     try {
@@ -478,6 +498,13 @@
     void closePanel();
   }
 
+  function handleTopBarKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && pinDragPointerId !== null) {
+      event.preventDefault();
+      cancelPinPointerDrag();
+    }
+  }
+
   async function openSettingsPanel(target: EventTarget | null) {
     const button = target instanceof HTMLElement ? target : null;
     const rect = button?.getBoundingClientRect();
@@ -688,43 +715,97 @@
     pinRailHover = false;
   }
 
-  function handlePinDragStart(event: DragEvent, pin: StackPin) {
-    draggingPinPath = pin.path;
-    draggingPinStartIndex = stackPins.findIndex((item) => item.path === pin.path);
-    event.dataTransfer?.setData(PIN_DRAG_TYPE, pin.path);
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
+  function pinReorderRects() {
+    return Array.from(pinRailEl?.querySelectorAll<HTMLElement>('button[data-path]') ?? [])
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          key: element.dataset.path ?? '',
+          left: rect.left,
+          width: rect.width
+        };
+      })
+      .filter((rect) => rect.key);
+  }
+
+  function pinStyle(pin: StackPin) {
+    const previewOrderIndex = pinPreviewOrder.indexOf(pin.path);
+    if (draggingPinPath !== pin.path || !pinDragStarted) {
+      return previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '';
+    }
+    const liveReorderOffset = taskbarGroupReorderOffset(
+      pin.path,
+      pinPreviewOrder,
+      pinDragRects
+    );
+    const visualDelta = pinDragDeltaX + liveReorderOffset;
+    return `order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`;
+  }
+
+  function releasePinPointerCapture() {
+    if (!pinDragElement || pinDragPointerId === null) {
+      return;
+    }
+    try {
+      if (pinDragElement.hasPointerCapture(pinDragPointerId)) {
+        pinDragElement.releasePointerCapture(pinDragPointerId);
+      }
+    } catch {
+      // Pointer capture can already be gone if the OS/browser canceled the pointer stream.
     }
   }
 
-  function handlePinDragEnd() {
+  function resetPinPointerDrag() {
     draggingPinPath = null;
-    draggingPinStartIndex = null;
+    pinDragPointerId = null;
+    pinDragStartX = 0;
+    pinDragCurrentX = 0;
+    pinDragStarted = false;
+    pinDragOriginalOrder = [];
+    pinDragElement = null;
+    pinDragRects = [];
     pinRailHover = false;
   }
 
-  function handlePinDragOver(event: DragEvent, targetPin: StackPin) {
-    const targetIndex = stackPins.findIndex((pin) => pin.path === targetPin.path);
-    if (!draggingPinPath || draggingPinStartIndex === targetIndex) {
+  function cancelPinPointerDrag() {
+    releasePinPointerCapture();
+    resetPinPointerDrag();
+  }
+
+  function startPinPointerDrag(pin: StackPin, event: PointerEvent) {
+    if (event.button !== 0) {
       return;
     }
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
+    draggingPinPath = pin.path;
+    pinDragPointerId = event.pointerId;
+    pinDragStartX = event.clientX;
+    pinDragCurrentX = event.clientX;
+    pinDragStarted = false;
+    pinDragOriginalOrder = stackPins.map((item) => item.path);
+    pinDragElement = event.currentTarget as HTMLElement;
+    pinDragRects = pinReorderRects();
+    try {
+      pinDragElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Reorder still works while pointer remains over the pin rail.
     }
   }
 
-  async function handlePinDrop(event: DragEvent, targetPin: StackPin) {
-    const targetIndex = stackPins.findIndex((pin) => pin.path === targetPin.path);
-    if (!draggingPinPath || draggingPinStartIndex === targetIndex) {
+  function movePinPointerDrag(event: PointerEvent) {
+    if (pinDragPointerId !== event.pointerId || !draggingPinPath) {
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
-    const sourcePath = event.dataTransfer?.getData(PIN_DRAG_TYPE) || draggingPinPath;
-    suppressNextPinClickPath = sourcePath;
-    draggingPinPath = null;
-    draggingPinStartIndex = null;
+    pinDragCurrentX = event.clientX;
+    const started = hasTaskbarGroupDragStarted(pinDragStartX, event.clientX, PIN_REORDER_DRAG_THRESHOLD_PX);
+    if (!pinDragStarted && started) {
+      pinDragStarted = true;
+    }
+    if (pinDragStarted) {
+      event.preventDefault();
+    }
+  }
+
+  async function persistPinReorder(sourcePath: string, targetIndex: number) {
     const nextPins = reorderPinnedFolders(stackPins, sourcePath, targetIndex);
     if (nextPins === stackPins) {
       return;
@@ -737,6 +818,32 @@
       console.error('Failed to reorder stack pins', error);
       showPinDropStatus('Could not save pin order', 'error');
       await loadStackPins();
+    }
+  }
+
+  function finishPinPointerDrag(event: PointerEvent) {
+    if (pinDragPointerId !== event.pointerId) {
+      return;
+    }
+    const sourcePath = draggingPinPath;
+    const didDrag = pinDragStarted;
+    let targetIndex = -1;
+    if (didDrag && sourcePath) {
+      const nextOrder = taskbarGroupOrderFromDisplacement(
+        sourcePath,
+        pinDragOriginalOrder,
+        pinDragRects,
+        taskbarGroupDragDelta(pinDragStartX, event.clientX)
+      );
+      targetIndex = nextOrder.indexOf(sourcePath);
+    }
+    releasePinPointerCapture();
+    resetPinPointerDrag();
+    if (didDrag && sourcePath) {
+      suppressNextPinClickPath = sourcePath;
+      if (targetIndex >= 0) {
+        void persistPinReorder(sourcePath, targetIndex);
+      }
     }
   }
 
@@ -1454,7 +1561,7 @@
   });
 </script>
 
-<svelte:window on:pointerdown={handleTopBarPointerDown} />
+<svelte:window on:pointerdown={handleTopBarPointerDown} on:keydown={handleTopBarKeydown} />
 
 <div class="surface top-bar">
   <MeltActionButton
@@ -1490,16 +1597,21 @@
           title={pin.path}
           tooltip={pin.path}
           dataPath={pin.path}
-          draggable="true"
           ariaLabel={`Open pinned folder ${pin.name}`}
           ariaHaspopup="dialog"
           class={draggingPinPath === pin.path ? 'dragging' : ''}
+          style={pinStyle(pin)}
+          onPointerDown={(event) => startPinPointerDrag(pin, event)}
+          onPointerMove={movePinPointerDrag}
+          onPointerUp={finishPinPointerDrag}
+          onPointerCancel={cancelPinPointerDrag}
+          onLostPointerCapture={(event) => {
+            if (pinDragPointerId === event.pointerId) {
+              cancelPinPointerDrag();
+            }
+          }}
           onClick={(event) => handlePinClick(event, pin, index)}
           onContextMenu={(event) => handlePinContextMenu(event, pin)}
-          onDragStart={(event) => handlePinDragStart(event, pin)}
-          onDragEnd={handlePinDragEnd}
-          onDragOver={(event) => handlePinDragOver(event, pin)}
-          onDrop={(event) => void handlePinDrop(event, pin)}
         >
           {pin.name}
         </MeltActionButton>

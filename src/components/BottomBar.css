@@ -96,6 +96,14 @@
   background: var(--js-color-control-active);
 }
 
+.bottom-bar .launcher-button-dragging {
+  cursor: grabbing;
+  opacity: 0.58;
+  transition: none;
+  user-select: none;
+  will-change: transform;
+}
+
 .bottom-bar .launcher-button:focus-visible {
   outline: 2px solid var(--js-color-accent-border);
   outline-offset: 2px;
