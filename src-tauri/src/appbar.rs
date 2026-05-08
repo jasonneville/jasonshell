@@ -62,6 +62,27 @@ pub struct ShellSurfaceRuntimeMetrics {
     pub webview_height_ok: bool,
 }
 
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellBarResizeEdge {
+    Top,
+    Bottom,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResizeShellBarRequest {
+    pub edge: ShellBarResizeEdge,
+    pub height_logical: f64,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResizeShellBarResponse {
+    pub edge: ShellBarResizeEdge,
+    pub height_logical: f64,
+}
+
 #[derive(Default)]
 pub struct ShellRuntimeState {
     pub cleaned_up: bool,
@@ -278,6 +299,82 @@ pub fn cleanup_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
     }
 
     cleanup_runtime_state(&mut state)
+}
+
+#[tauri::command]
+pub fn resize_shell_bar(
+    app_handle: AppHandle,
+    request: ResizeShellBarRequest,
+) -> Result<ResizeShellBarResponse, String> {
+    resize_shell_bar_for_app(&app_handle, request).map_err(|error| error.to_string())
+}
+
+pub(crate) fn resize_shell_bar_for_app(
+    app_handle: &AppHandle,
+    request: ResizeShellBarRequest,
+) -> AppResult<ResizeShellBarResponse> {
+    let top_min = super::shell_windows::MIN_TOP_BAR_HEIGHT_LOGICAL;
+    let bottom_min = super::shell_windows::MIN_BOTTOM_BAR_HEIGHT_LOGICAL;
+    let min_height = match request.edge {
+        ShellBarResizeEdge::Top => top_min,
+        ShellBarResizeEdge::Bottom => bottom_min,
+    };
+    let height_logical =
+        crate::settings::clamp_shell_bar_height_logical(request.height_logical, min_height);
+    let scale_factor = app_handle
+        .primary_monitor()?
+        .ok_or_else(|| "Primary monitor is unavailable".to_string())?
+        .scale_factor();
+    let height = super::shell_windows::to_physical_height(height_logical, scale_factor);
+
+    resize_shell_bar_runtime(app_handle, request.edge, height)?;
+
+    Ok(ResizeShellBarResponse {
+        edge: request.edge,
+        height_logical,
+    })
+}
+
+fn resize_shell_bar_runtime(
+    app_handle: &AppHandle,
+    edge: ShellBarResizeEdge,
+    height: i32,
+) -> AppResult<()> {
+    let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    let layout = state
+        .shell_layout
+        .ok_or_else(|| "Shell AppBar layout is not active".to_string())?;
+    let top_hwnd = HWND(layout.top_hwnd as *mut _);
+    let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
+    let mut top_rect = layout.top_rect;
+    let mut bottom_rect = layout.bottom_rect;
+
+    match edge {
+        ShellBarResizeEdge::Top => {
+            top_rect = desired_rect_for_edge(layout.monitor_rect, AppBarEdge::Top, height);
+        }
+        ShellBarResizeEdge::Bottom => {
+            bottom_rect = desired_rect_for_edge(layout.monitor_rect, AppBarEdge::Bottom, height);
+        }
+    }
+
+    let top_rect = reserve_appbar(top_hwnd, AppBarEdge::Top, top_rect)?;
+    let bottom_rect = reserve_appbar(bottom_hwnd, AppBarEdge::Bottom, bottom_rect)?;
+    set_work_area_with_retry_or_warn(
+        reserved_work_area(layout.monitor_rect, top_rect, bottom_rect),
+        "reserved shell work area after shell bar resize",
+    )?;
+    move_window_to_rect(top_hwnd, top_rect)?;
+    move_window_to_rect(bottom_hwnd, bottom_rect)?;
+
+    state.shell_layout = Some(ShellSurfaceLayout {
+        top_rect,
+        bottom_rect,
+        ..layout
+    });
+
+    Ok(())
 }
 
 fn hwnd_from_tauri_window(window: &tauri::WebviewWindow) -> AppResult<HWND> {

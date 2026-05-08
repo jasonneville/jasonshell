@@ -6,8 +6,29 @@
   color: var(--js-color-text);
   display: flex;
   height: 100%;
+  min-height: var(--bottom-bar-height-logical, 32.4px);
   padding: 0;
+  position: relative;
   width: 100%;
+}
+
+.bottom-bar .bar-resize-handle {
+  background: transparent;
+  border: 0;
+  cursor: ns-resize;
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  touch-action: none;
+  z-index: 20;
+}
+
+.bottom-bar .bar-resize-handle:hover,
+.bottom-bar .bar-resize-handle:focus-visible {
+  background: var(--js-color-accent);
+  outline: none;
 }
 
 .bottom-bar .taskbar-strip {

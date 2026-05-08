@@ -19,6 +19,12 @@
     type SystemPowerAction
   } from '../lib/settingsPanel';
   import {
+    defaultShellSettings,
+    loadShellSettings,
+    saveShellSettings,
+    type ShellSettings
+  } from '../lib/settings';
+  import {
     getInitialShellThemeId,
     normalizeShellThemeId,
     setShellTheme,
@@ -39,6 +45,7 @@
   const dateFormatOptions = dateFormatExamples.map((format) => ({ value: format, label: format }));
 
   let preferences: ShellPreferences = getInitialShellPreferences();
+  let shellSettings: ShellSettings = defaultShellSettings();
   let selectedThemeId: ShellThemeId = getInitialShellThemeId();
   let now = new Date();
   let pendingPowerAction: SystemPowerAction | null = null;
@@ -54,8 +61,29 @@
   $: datePreview = formatShellDate(now, preferences.dateFormat);
   $: timePreview = formatShellTime(now, preferences);
 
+  loadShellSettings()
+    .then((settings) => {
+      shellSettings = settings;
+    })
+    .catch((error) => {
+      console.error('Failed to load shell settings', error);
+    });
+
   function updatePreferences(patch: Partial<ShellPreferences>) {
     preferences = patchShellPreferences(patch);
+  }
+
+  function updateShellUiSettings(patch: Partial<ShellSettings['ui']>) {
+    shellSettings = {
+      ...shellSettings,
+      ui: {
+        ...shellSettings.ui,
+        ...patch
+      }
+    };
+    void saveShellSettings(shellSettings).catch((error) => {
+      console.error('Failed to save shell settings', error);
+    });
   }
 
   function handleThemeChange(value: string) {
@@ -219,6 +247,22 @@
     <div class="settings-preview" aria-label="Clock preview">
       <strong>{timePreview}</strong>
       <span>{datePreview}</span>
+    </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="shell-bars-heading">
+    <h2 id="shell-bars-heading">Shell bars</h2>
+    <div class="settings-toggle-grid two">
+      <MeltToggle
+        checked={shellSettings.ui.lockTopBarHeight}
+        label="Lock top bar"
+        onChange={(lockTopBarHeight) => updateShellUiSettings({ lockTopBarHeight })}
+      />
+      <MeltToggle
+        checked={shellSettings.ui.lockBottomBarHeight}
+        label="Lock bottom bar"
+        onChange={(lockBottomBarHeight) => updateShellUiSettings({ lockBottomBarHeight })}
+      />
     </div>
   </section>
 

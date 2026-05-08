@@ -87,7 +87,18 @@
     showCommandPanel
   } from '../lib/commandPanel';
   import { showSettingsPanel } from '../lib/settingsPanel';
-  import { loadShellSettings } from '../lib/settings';
+  import {
+    addShellSettingsChangeListener,
+    loadShellSettings,
+    saveShellSettings,
+    type ShellSettings
+  } from '../lib/settings';
+  import {
+    clampShellBarHeight,
+    createShellBarResizeScheduler,
+    resizeShellBar,
+    shellBarHeightFromDrag
+  } from '../lib/shellBarResize';
   import type { SearchMode } from '../lib/searchSettings';
   import { showControlPlane } from '../lib/controlPlane';
   import {
@@ -132,6 +143,15 @@
 
   let now = new Date();
   let shellPreferences: ShellPreferences = getInitialShellPreferences();
+  let shellSettings: ShellSettings | null = null;
+  let topBarHeightLogical = 23.4;
+  let topBarHeightLocked = true;
+  let topBarResizePointerId: number | null = null;
+  let topBarResizeStartY = 0;
+  let topBarResizeStartHeight = 23.4;
+  const topBarResizeScheduler = createShellBarResizeScheduler('top', (error) => {
+    console.error('Failed to resize top bar', error);
+  });
   let launchers: PinnedTaskbarLauncher[] = [];
   let openWindows: TaskbarWindow[] = [];
   let stackPins: StackPin[] = [];
@@ -244,11 +264,70 @@
   async function loadSearchMode() {
     try {
       const settings = await loadShellSettings();
+      await applyTopBarSettings(settings);
       searchMode = searchModeFromSettings(settings.ui.searchMode);
     } catch (error) {
       console.error('Failed to load search mode', error);
       searchMode = 'centeredHotkey';
     }
+  }
+
+  async function applyTopBarSettings(settings: ShellSettings) {
+    shellSettings = settings;
+    searchMode = searchModeFromSettings(settings.ui.searchMode);
+    topBarHeightLocked = settings.ui.lockTopBarHeight;
+    topBarHeightLogical = clampShellBarHeight('top', settings.ui.topBarHeightLogical);
+    await resizeShellBar({ edge: 'top', heightLogical: topBarHeightLogical });
+  }
+
+  function startTopBarHeightResize(event: PointerEvent) {
+    if (topBarHeightLocked || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    topBarResizePointerId = event.pointerId;
+    topBarResizeStartY = event.clientY;
+    topBarResizeStartHeight = topBarHeightLogical;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function moveTopBarHeightResize(event: PointerEvent) {
+    if (topBarResizePointerId !== event.pointerId || topBarHeightLocked) {
+      return;
+    }
+    const nextHeight = shellBarHeightFromDrag(
+      'top',
+      topBarResizeStartHeight,
+      topBarResizeStartY,
+      event.clientY
+    );
+    if (nextHeight === topBarHeightLogical) {
+      return;
+    }
+    topBarHeightLogical = nextHeight;
+    topBarResizeScheduler.schedule(nextHeight);
+  }
+
+  function finishTopBarHeightResize(event: PointerEvent) {
+    if (topBarResizePointerId !== event.pointerId) {
+      return;
+    }
+    topBarResizePointerId = null;
+    const nextHeight = clampShellBarHeight('top', topBarHeightLogical);
+    void topBarResizeScheduler.flush(nextHeight);
+    if (!shellSettings) {
+      return;
+    }
+    shellSettings = {
+      ...shellSettings,
+      ui: {
+        ...shellSettings.ui,
+        topBarHeightLogical: nextHeight
+      }
+    };
+    void saveShellSettings(shellSettings).catch((error) => {
+      console.error('Failed to save top bar height', error);
+    });
   }
 
   async function loadStackPins() {
@@ -1533,6 +1612,11 @@
     unlisteners.push(addShellPreferencesChangeListener((preferences) => {
       shellPreferences = preferences;
     }));
+    unlisteners.push(addShellSettingsChangeListener((settings) => {
+      void applyTopBarSettings(settings).catch((error) => {
+        console.error('Failed to apply top bar settings update', error);
+      });
+    }));
 
     return () => {
       disposed = true;
@@ -1563,7 +1647,7 @@
 
 <svelte:window on:pointerdown={handleTopBarPointerDown} on:keydown={handleTopBarKeydown} />
 
-<div class="surface top-bar">
+<div class="surface top-bar" style={`--top-bar-height-logical: ${topBarHeightLogical}px;`}>
   <MeltActionButton
     class="shell-home-button"
     ariaHaspopup="dialog"
@@ -1705,4 +1789,15 @@
       </MeltActionButton>
     {/if}
   </div>
+  {#if !topBarHeightLocked}
+    <MeltActionButton
+      class="bar-resize-handle top-bar-resize-handle"
+      ariaLabel="Resize top bar"
+      onPointerDown={startTopBarHeightResize}
+      onPointerMove={moveTopBarHeightResize}
+      onPointerUp={finishTopBarHeightResize}
+      onPointerCancel={finishTopBarHeightResize}
+      onLostPointerCapture={finishTopBarHeightResize}
+    ></MeltActionButton>
+  {/if}
 </div>

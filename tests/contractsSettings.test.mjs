@@ -40,6 +40,7 @@ const wrapperSources = [
   'trayPanel.ts',
   'controlPlane.ts',
   'settingsPanel.ts',
+  'shellBarResize.ts',
   'devTools.ts',
   'searchPanel.ts',
   'processManager.ts',
@@ -141,7 +142,8 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'export_diagnostics',
     'run_quick_command',
     'show_control_plane',
-    'hide_control_plane'
+    'hide_control_plane',
+    'resize_shell_bar'
   ]) {
     assert.match(commandsSource, new RegExp(command));
   }
@@ -319,7 +321,11 @@ test('settings wrapper declares versioned schema and stable command names', () =
     ui: {
       activeWorkspaceId: null,
       enableDiagnosticsExport: false,
-      searchMode: searchSettings.ui.searchMode
+      searchMode: searchSettings.ui.searchMode,
+      lockTopBarHeight: true,
+      lockBottomBarHeight: true,
+      topBarHeightLogical: 23.4,
+      bottomBarHeightLogical: 32.4
     },
     search: searchSettings.search,
     workspaces: [],

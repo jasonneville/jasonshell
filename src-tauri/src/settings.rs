@@ -29,13 +29,21 @@ pub struct ShellSettings {
     pub quick_commands: QuickCommandsSettings,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellUiSettings {
     pub active_workspace_id: Option<String>,
     pub enable_diagnostics_export: bool,
     #[serde(default)]
     pub search_mode: SearchMode,
+    #[serde(default = "default_true")]
+    pub lock_top_bar_height: bool,
+    #[serde(default = "default_true")]
+    pub lock_bottom_bar_height: bool,
+    #[serde(default = "default_top_bar_height_logical")]
+    pub top_bar_height_logical: f64,
+    #[serde(default = "default_bottom_bar_height_logical")]
+    pub bottom_bar_height_logical: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -152,6 +160,10 @@ impl Default for ShellUiSettings {
             active_workspace_id: None,
             enable_diagnostics_export: false,
             search_mode: SearchMode::CenteredHotkey,
+            lock_top_bar_height: true,
+            lock_bottom_bar_height: true,
+            top_bar_height_logical: default_top_bar_height_logical(),
+            bottom_bar_height_logical: default_bottom_bar_height_logical(),
         }
     }
 }
@@ -197,6 +209,14 @@ fn default_everything_max_results() -> usize {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_top_bar_height_logical() -> f64 {
+    crate::shell_windows::TOP_BAR_HEIGHT_LOGICAL
+}
+
+fn default_bottom_bar_height_logical() -> f64 {
+    crate::shell_windows::BOTTOM_BAR_HEIGHT_LOGICAL
 }
 
 #[tauri::command]
@@ -285,6 +305,14 @@ fn save_settings_to_path(
 fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, String> {
     settings.search.result_limit = settings.search.result_limit.clamp(1, 100);
     settings.search.everything.max_results = settings.search.everything.max_results.clamp(1, 200);
+    settings.ui.top_bar_height_logical = clamp_shell_bar_height_logical(
+        settings.ui.top_bar_height_logical,
+        crate::shell_windows::MIN_TOP_BAR_HEIGHT_LOGICAL,
+    );
+    settings.ui.bottom_bar_height_logical = clamp_shell_bar_height_logical(
+        settings.ui.bottom_bar_height_logical,
+        crate::shell_windows::MIN_BOTTOM_BAR_HEIGHT_LOGICAL,
+    );
     if settings.search.everything.content_search_enabled {
         settings.search.everything.content_search_enabled = false;
     }
@@ -296,6 +324,13 @@ fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, Strin
     settings.workspaces = workspaces;
     settings.quick_commands = validate_quick_commands_settings(settings.quick_commands)?;
     Ok(settings)
+}
+
+pub(crate) fn clamp_shell_bar_height_logical(value: f64, minimum: f64) -> f64 {
+    if !value.is_finite() {
+        return minimum;
+    }
+    value.clamp(minimum, 120.0)
 }
 
 fn validate_quick_commands_settings(
@@ -730,6 +765,10 @@ mod tests {
 
         assert_eq!(value["version"], SETTINGS_VERSION);
         assert_eq!(value["ui"]["searchMode"], "centeredHotkey");
+        assert_eq!(value["ui"]["lockTopBarHeight"], true);
+        assert_eq!(value["ui"]["lockBottomBarHeight"], true);
+        assert_eq!(value["ui"]["topBarHeightLogical"], 23.4);
+        assert_eq!(value["ui"]["bottomBarHeightLogical"], 32.4);
         assert_eq!(value["search"]["resultLimit"], 50);
         assert_eq!(value["search"]["everything"]["enabled"], true);
         assert_eq!(value["search"]["everything"]["installMode"], "ask");
@@ -751,6 +790,22 @@ mod tests {
         assert_eq!(settings.search.result_limit, 100);
         assert_eq!(settings.search.everything.max_results, 200);
         assert!(!settings.search.everything.content_search_enabled);
+    }
+
+    #[test]
+    fn clamps_shell_bar_heights_while_locks_default_on() {
+        let mut settings = ShellSettings::default();
+        settings.ui.lock_top_bar_height = false;
+        settings.ui.lock_bottom_bar_height = false;
+        settings.ui.top_bar_height_logical = 500.0;
+        settings.ui.bottom_bar_height_logical = f64::NAN;
+
+        let settings = validate_settings(settings).unwrap();
+
+        assert_eq!(settings.ui.lock_top_bar_height, false);
+        assert_eq!(settings.ui.lock_bottom_bar_height, false);
+        assert_eq!(settings.ui.top_bar_height_logical, 120.0);
+        assert_eq!(settings.ui.bottom_bar_height_logical, 24.0);
     }
 
     #[test]

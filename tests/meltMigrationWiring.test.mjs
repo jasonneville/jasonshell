@@ -185,7 +185,7 @@ test('top-bar action and pinned-folder controls use Melt-backed buttons without 
 
 test('bottom-bar command buttons use Melt-backed action buttons without changing taskbar semantics', () => {
   assert.match(bottomBarSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
-  assert.equal((bottomBarSource.match(/<MeltActionButton/g) ?? []).length, 3);
+  assert.equal((bottomBarSource.match(/<MeltActionButton/g) ?? []).length, 4);
   assert.doesNotMatch(
     bottomBarSource,
     /import\s+\{[^}]*\b(?:Toggle|Tabs|Popover|SpatialMenu)\b[^}]*\}\s+from 'melt\/builders'/
