@@ -36,6 +36,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'shellPreferences.test.mjs',
     'stackBrowserMarginSelection.test.mjs',
     'stackBrowserGitStatus.test.mjs',
+    'stackBrowserTerminal.test.mjs',
     'stackBrowserPathAutocomplete.test.mjs',
     'stackBrowserTopBarPinFlow.test.mjs',
     'stackPopupContextMenu.test.mjs',

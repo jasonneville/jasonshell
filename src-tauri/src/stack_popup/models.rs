@@ -7,6 +7,7 @@ pub struct StackPopupRuntimeState {
     pub(crate) clipboard: Option<StackClipboard>,
     pub(crate) focus_loss_hold_count: usize,
     pub(crate) restore_focus_after_hold: bool,
+    pub(crate) terminal_sessions: super::terminal::StackTerminalRegistry,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

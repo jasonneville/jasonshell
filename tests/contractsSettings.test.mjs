@@ -274,6 +274,9 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'search-panel:select',
     'search-panel:update',
     'stack-popup:open',
+    'stack-terminal:closed',
+    'stack-terminal:cwd',
+    'stack-terminal:output',
     'stack-pins:updated',
     'task-preview:hide',
     'task-preview:hover-enter',
@@ -326,6 +329,9 @@ test('settings wrapper declares versioned schema and stable command names', () =
     taskHistory: [],
     quickCommands: {
       entries: []
+    },
+    stackBrowser: {
+      terminalProfile: 'windowsTerminal'
     }
   });
 });

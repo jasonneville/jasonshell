@@ -2,8 +2,8 @@
 
 mod audio;
 mod audio_panel;
-mod calendar_panel;
 mod automation;
+mod calendar_panel;
 mod command_panel;
 mod contracts;
 mod control_plane;
@@ -158,6 +158,12 @@ fn main() {
             stack_popup::new_stack_folder,
             stack_popup::new_stack_text_file,
             stack_popup::open_stack_terminal_here,
+            stack_popup::start_stack_terminal,
+            stack_popup::read_stack_terminal,
+            stack_popup::write_stack_terminal,
+            stack_popup::stop_stack_terminal,
+            stack_popup::poll_stack_terminal_session,
+            stack_popup::get_stack_terminal_cwd,
             stack_popup::reveal_stack_item,
             stack_popup::extract_stack_archive,
             stack_popup::show_stack_item_properties,

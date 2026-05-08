@@ -30,7 +30,9 @@
     resolveStackItemIcons,
     resizeStackPopup,
     revealStackItem,
+    readStackTerminal,
     showStackItemProperties,
+    startStackTerminal,
     stackGitAddPaths,
     stackGitCheckoutBranch,
     stackGitCommit,
@@ -41,7 +43,9 @@
     stackGitPull,
     stackGitPush,
     stackGitTree,
+    stopStackTerminal,
     suggestStackPaths,
+    writeStackTerminal,
     STACK_POPUP_OPEN_EVENT,
     type StackEntry,
     type StackArchiveDestinationMode,
@@ -54,8 +58,12 @@
     type StackItemIconResolution,
     type StackFolderListing,
     type StackOpenWithCandidate,
-    type StackPathSuggestion
+    type StackPathSuggestion,
+    type StackTerminalProfile,
+    type StackTerminalSession
   } from '../lib/stackPopup';
+  import { loadShellSettings } from '../lib/settings';
+  import { normalizeStackTerminalProfile } from '../lib/stackPopup';
   import { folderPathToUri, folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
   import {
     applyStackEntryIconUpdates,
@@ -125,6 +133,7 @@
   };
 
   type StackGitWorkbenchView = 'changes' | 'log' | 'tree' | 'branches';
+  type StackBrowserViewMode = 'files' | 'terminal';
 
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
@@ -227,6 +236,16 @@
     | { kind: 'checkout'; branchName: string }
     | { kind: 'createBranch'; branchName: string }
     | null = null;
+  let stackBrowserViewMode: StackBrowserViewMode = 'files';
+  let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
+  let stackTerminalSession: StackTerminalSession | null = null;
+  let stackTerminalOutput = '';
+  let stackTerminalOutputElement: HTMLDivElement | null = null;
+  let stackTerminalInputDraft = '';
+  let stackTerminalInput: HTMLInputElement | null = null;
+  let stackTerminalCwd = '';
+  let stackTerminalBusy = false;
+  let stackTerminalPollTimer: number | null = null;
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -256,6 +275,7 @@
     }, 250);
 
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
+    void loadStackTerminalProfile();
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
         void pasteDroppedPaths(event.payload.paths, currentPath, false);
@@ -278,6 +298,10 @@
         window.cancelAnimationFrame(resizeFrame);
       }
       stopMarqueeAutoscroll();
+      stopStackTerminalPolling();
+      if (stackTerminalSession) {
+        void stopStackTerminal(stackTerminalSession.sessionId).catch(() => undefined);
+      }
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
         unlisten();
@@ -327,6 +351,8 @@
 
     pendingOpenRequestKey = requestKey;
     try {
+      await stopCurrentStackTerminal();
+      stackBrowserViewMode = 'files';
       await openFolder(path);
       lastHandledOpenRequestKey = requestKey;
     } finally {
@@ -996,6 +1022,172 @@
       console.error('Failed to open terminal here', error);
       errorMessage = operationErrorMessage(error, 'Open Terminal Here unavailable');
     }
+  }
+
+  async function loadStackTerminalProfile() {
+    try {
+      const settings = await loadShellSettings();
+      stackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
+    } catch (error) {
+      console.debug('Stack terminal profile unavailable', error);
+      stackTerminalProfile = 'windowsTerminal';
+    }
+  }
+
+  async function switchStackBrowserView(mode: StackBrowserViewMode) {
+    closeMenus();
+    if (mode === 'files') {
+      await syncFolderToStackTerminalCwd();
+      stackBrowserViewMode = 'files';
+      return;
+    }
+    stackBrowserViewMode = 'terminal';
+    await ensureStackTerminal();
+  }
+
+  async function ensureStackTerminal() {
+    if (!currentPath || stackTerminalBusy) {
+      return;
+    }
+    if (stackTerminalSession && stackTerminalCwd === currentPath) {
+      startStackTerminalPolling();
+      await tick();
+      stackTerminalInput?.focus();
+      return;
+    }
+
+    await restartStackTerminal();
+  }
+
+  async function restartStackTerminal() {
+    stopStackTerminalPolling();
+    await stopCurrentStackTerminal();
+    await loadStackTerminalProfile();
+    stackTerminalCwd = currentPath;
+    stackTerminalOutput = '';
+    if (!currentPath) {
+      return;
+    }
+
+    stackTerminalBusy = true;
+    try {
+      const session = await startStackTerminal(currentPath, stackTerminalProfile);
+      stackTerminalSession = session;
+      stackTerminalCwd = session.cwd || currentPath;
+      stackTerminalOutput = session.output ?? '';
+      startStackTerminalPolling();
+      errorMessage = '';
+      await tick();
+      scrollStackTerminalToBottom();
+      stackTerminalInput?.focus();
+    } catch (error) {
+      console.error('Failed to start Stack terminal', error);
+      errorMessage = operationErrorMessage(error, 'Embedded terminal unavailable');
+      stackTerminalOutput = errorMessage;
+    } finally {
+      stackTerminalBusy = false;
+    }
+  }
+
+  function startStackTerminalPolling() {
+    stopStackTerminalPolling();
+    stackTerminalPollTimer = window.setInterval(() => {
+      void pollStackTerminal();
+    }, 700);
+  }
+
+  function stopStackTerminalPolling() {
+    if (stackTerminalPollTimer !== null) {
+      window.clearInterval(stackTerminalPollTimer);
+      stackTerminalPollTimer = null;
+    }
+  }
+
+  async function stopCurrentStackTerminal() {
+    stopStackTerminalPolling();
+    const sessionId = stackTerminalSession?.sessionId;
+    stackTerminalSession = null;
+    if (sessionId) {
+      await stopStackTerminal(sessionId).catch(() => undefined);
+    }
+  }
+
+  async function pollStackTerminal() {
+    if (!stackTerminalSession) {
+      stopStackTerminalPolling();
+      return;
+    }
+    try {
+      const result = await readStackTerminal(stackTerminalSession.sessionId);
+      if (result.output) {
+        stackTerminalOutput += result.output;
+        scrollStackTerminalToBottom();
+      }
+      await applyStackTerminalCwd(result.cwd || stackTerminalCwd);
+      if (result.exited) {
+        stopStackTerminalPolling();
+      }
+    } catch (error) {
+      stopStackTerminalPolling();
+      console.error('Failed to read Stack terminal', error);
+      errorMessage = operationErrorMessage(error, 'Embedded terminal unavailable');
+    }
+  }
+
+  async function handleStackTerminalKeydown(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      await closeStackPopupFromSurface();
+      return;
+    }
+    if (!stackTerminalSession) {
+      return;
+    }
+    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
+      event.preventDefault();
+      await writeStackTerminal(stackTerminalSession.sessionId, '\u0003');
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const command = stackTerminalInputDraft;
+      stackTerminalInputDraft = '';
+      await writeStackTerminal(stackTerminalSession.sessionId, command + '\n');
+      await pollStackTerminal();
+    }
+  }
+
+  function scrollStackTerminalToBottom() {
+    void tick().then(() => {
+      if (stackTerminalOutputElement) {
+        stackTerminalOutputElement.scrollTop = stackTerminalOutputElement.scrollHeight;
+      }
+    });
+  }
+
+  async function applyStackTerminalCwd(cwd: string) {
+    const nextCwd = cwd || stackTerminalCwd;
+    if (!nextCwd) {
+      return;
+    }
+    stackTerminalCwd = nextCwd;
+    if (stackBrowserViewMode === 'terminal' && nextCwd !== currentPath) {
+      await openFolder(nextCwd);
+    }
+  }
+
+  async function syncFolderToStackTerminalCwd() {
+    await pollStackTerminal();
+    if (stackTerminalCwd && stackTerminalCwd !== currentPath) {
+      await openFolder(stackTerminalCwd);
+    }
+  }
+
+  async function closeStackPopupFromSurface() {
+    await stopCurrentStackTerminal();
+    stackBrowserViewMode = 'files';
+    await hideStackPopup();
   }
 
   async function openSelectedFolderInVscode() {
@@ -2101,7 +2293,7 @@
       } else if (rowMenu || backgroundMenu) {
         closeMenus();
       } else {
-        void hideStackPopup();
+        void closeStackPopupFromSurface();
       }
     } else if (event.key === 'Enter' && selectedEntry) {
       event.preventDefault();
@@ -2262,6 +2454,7 @@
 
 <section
   class:resizing={!!resizeDrag}
+  class:terminal-mode={stackBrowserViewMode === 'terminal'}
   class="stack-popup"
   aria-label="Stack browser"
   aria-busy={loadingPath ? 'true' : 'false'}
@@ -2335,6 +2528,10 @@
       </form>
     </div>
     <div class="stack-actions">
+      <div class="stack-view-toggle" role="group" aria-label="Stack Browser view">
+        <MeltActionButton ariaPressed={stackBrowserViewMode === 'files'} onClick={() => void switchStackBrowserView('files')}>Files</MeltActionButton>
+        <MeltActionButton ariaPressed={stackBrowserViewMode === 'terminal'} onClick={() => void switchStackBrowserView('terminal')}>CLI</MeltActionButton>
+      </div>
       <MeltActionButton disabled={!canGoBack} onClick={() => void navigateHistory(-1)}>Back</MeltActionButton>
       <MeltActionButton disabled={!canGoForward} onClick={() => void navigateHistory(1)}>Forward</MeltActionButton>
       <MeltActionButton onClick={() => void loadFolder(currentPath)}>Refresh</MeltActionButton>
@@ -2395,6 +2592,26 @@
     </form>
   {/if}
 
+  {#if stackBrowserViewMode === 'terminal'}
+    <section class="stack-terminal" aria-label="Stack Browser CLI">
+      <div bind:this={stackTerminalOutputElement} class="stack-terminal-output" role="log" aria-live="polite" aria-label="Terminal output">
+        <pre>{stackTerminalOutput}</pre>
+      </div>
+      <label class="stack-terminal-command">
+        <span>{stackTerminalCwd || currentPath}</span>
+        <input
+          bind:this={stackTerminalInput}
+          value={stackTerminalInputDraft}
+          spellcheck="false"
+          autocomplete="off"
+          disabled={!stackTerminalSession || stackTerminalBusy}
+          aria-label="Terminal command"
+          on:input={(event) => stackTerminalInputDraft = event.currentTarget.value}
+          on:keydown={(event) => void handleStackTerminalKeydown(event)}
+        />
+      </label>
+    </section>
+  {:else}
   {#if gitStatusPopupOpen && gitStatus}
     <dialog
       open
@@ -2673,6 +2890,7 @@
       <div class="empty-stack surface-state" class:loading={!!loadingPath} class:info={!loadingPath} role="status">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
     {/if}
   </div>
+  {/if}
 
   {#if rowMenu}
     <div

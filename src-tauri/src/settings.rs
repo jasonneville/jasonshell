@@ -22,6 +22,8 @@ pub struct ShellSettings {
     #[serde(default)]
     pub search: SearchSettings,
     #[serde(default)]
+    pub stack_browser: StackBrowserSettings,
+    #[serde(default)]
     pub workspaces: Vec<WorkspaceProfile>,
     #[serde(default)]
     pub task_history: Vec<Value>,
@@ -45,6 +47,23 @@ pub struct SearchSettings {
     pub result_limit: usize,
     #[serde(default)]
     pub everything: EverythingSearchSettings,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StackBrowserSettings {
+    #[serde(default)]
+    pub terminal_profile: TerminalProfile,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalProfile {
+    #[default]
+    WindowsTerminal,
+    GitBash,
+    #[serde(rename = "powershell")]
+    PowerShell,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -139,6 +158,7 @@ impl Default for ShellSettings {
             version: SETTINGS_VERSION,
             ui: ShellUiSettings::default(),
             search: SearchSettings::default(),
+            stack_browser: StackBrowserSettings::default(),
             workspaces: Vec::new(),
             task_history: Vec::new(),
             quick_commands: QuickCommandsSettings::default(),
@@ -722,6 +742,7 @@ mod tests {
         assert!(settings.quick_commands.entries.is_empty());
         assert_eq!(settings.ui.search_mode, SearchMode::CenteredHotkey);
         assert_eq!(settings.search, SearchSettings::default());
+        assert_eq!(settings.stack_browser, StackBrowserSettings::default());
     }
 
     #[test]
@@ -735,6 +756,7 @@ mod tests {
         assert_eq!(value["search"]["everything"]["installMode"], "ask");
         assert_eq!(value["search"]["everything"]["sdkSource"], "system");
         assert_eq!(value["search"]["everything"]["contentSearchEnabled"], false);
+        assert_eq!(value["stackBrowser"]["terminalProfile"], "windowsTerminal");
         assert_eq!(value["quickCommands"]["entries"], json!([]));
         assert!(value.get("quickIcons").is_none());
     }
@@ -867,7 +889,10 @@ mod tests {
             mode: QuickCommandMode::CommandBlock,
             target_path: String::new(),
             args: Vec::new(),
-            commands: vec!["cd C:\\dev\\jasonshell".to_string(), "python app.py".to_string()],
+            commands: vec![
+                "cd C:\\dev\\jasonshell".to_string(),
+                "python app.py".to_string(),
+            ],
             cwd: None,
         }];
         let validated = validate_settings(block).unwrap();

@@ -96,6 +96,35 @@ export type StackGitBranches = {
   branches: StackGitBranch[];
 };
 
+export type StackTerminalProfile = 'windowsTerminal' | 'gitBash' | 'powershell';
+
+export const STACK_TERMINAL_PROFILE_OPTIONS: Array<{ value: StackTerminalProfile; label: string }> = [
+  { value: 'windowsTerminal', label: 'Windows Terminal' },
+  { value: 'gitBash', label: 'Git Bash' },
+  { value: 'powershell', label: 'PowerShell' }
+];
+
+export type StackTerminalSession = {
+  sessionId: string;
+  cwd: string;
+  profile: StackTerminalProfile;
+  output?: string | null;
+};
+
+export type StackTerminalReadResult = {
+  sessionId: string;
+  cwd: string;
+  output: string;
+  exited: boolean;
+  exitCode?: number | null;
+};
+
+export function normalizeStackTerminalProfile(value: unknown): StackTerminalProfile {
+  return STACK_TERMINAL_PROFILE_OPTIONS.some((option) => option.value === value)
+    ? value as StackTerminalProfile
+    : 'windowsTerminal';
+}
+
 export type StackFolderWarning = {
   path?: string | null;
   message: string;
@@ -542,6 +571,24 @@ export function stackGitCreateBranch(folderPath: string, branchName: string, che
   return invoke<StackGitBranchOperationResult>(IPC_COMMANDS.stackGitCreateBranch, {
     request: { folderPath, branchName, checkout }
   });
+}
+
+export function startStackTerminal(folderPath: string, profile: StackTerminalProfile): Promise<StackTerminalSession> {
+  return invoke<StackTerminalSession>(IPC_COMMANDS.startStackTerminal, {
+    request: { folderPath, profile }
+  });
+}
+
+export function readStackTerminal(sessionId: string): Promise<StackTerminalReadResult> {
+  return invoke<StackTerminalReadResult>(IPC_COMMANDS.readStackTerminal, { sessionId });
+}
+
+export function writeStackTerminal(sessionId: string, input: string): Promise<void> {
+  return invoke(IPC_COMMANDS.writeStackTerminal, { sessionId, input });
+}
+
+export function stopStackTerminal(sessionId: string): Promise<void> {
+  return invoke(IPC_COMMANDS.stopStackTerminal, { sessionId });
 }
 
 export function suggestStackPaths(request: StackPathSuggestionRequest): Promise<StackPathSuggestion[]> {

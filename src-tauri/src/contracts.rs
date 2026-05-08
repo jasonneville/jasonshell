@@ -121,6 +121,12 @@ pub mod commands {
     pub const NEW_STACK_FOLDER: &str = "new_stack_folder";
     pub const NEW_STACK_TEXT_FILE: &str = "new_stack_text_file";
     pub const OPEN_STACK_TERMINAL_HERE: &str = "open_stack_terminal_here";
+    pub const START_STACK_TERMINAL: &str = "start_stack_terminal";
+    pub const READ_STACK_TERMINAL: &str = "read_stack_terminal";
+    pub const WRITE_STACK_TERMINAL: &str = "write_stack_terminal";
+    pub const STOP_STACK_TERMINAL: &str = "stop_stack_terminal";
+    pub const POLL_STACK_TERMINAL_SESSION: &str = "poll_stack_terminal_session";
+    pub const GET_STACK_TERMINAL_CWD: &str = "get_stack_terminal_cwd";
     pub const REVEAL_STACK_ITEM: &str = "reveal_stack_item";
     pub const EXTRACT_STACK_ARCHIVE: &str = "extract_stack_archive";
     pub const SHOW_STACK_ITEM_PROPERTIES: &str = "show_stack_item_properties";
@@ -238,6 +244,12 @@ pub mod commands {
         NEW_STACK_FOLDER,
         NEW_STACK_TEXT_FILE,
         OPEN_STACK_TERMINAL_HERE,
+        START_STACK_TERMINAL,
+        READ_STACK_TERMINAL,
+        WRITE_STACK_TERMINAL,
+        STOP_STACK_TERMINAL,
+        POLL_STACK_TERMINAL_SESSION,
+        GET_STACK_TERMINAL_CWD,
         REVEAL_STACK_ITEM,
         EXTRACT_STACK_ARCHIVE,
         SHOW_STACK_ITEM_PROPERTIES,
@@ -286,6 +298,9 @@ pub mod events {
     pub const SEARCH_PANEL_SELECT: &str = "search-panel:select";
     pub const SEARCH_PANEL_UPDATE: &str = "search-panel:update";
     pub const STACK_POPUP_OPEN: &str = "stack-popup:open";
+    pub const STACK_TERMINAL_CLOSED: &str = "stack-terminal:closed";
+    pub const STACK_TERMINAL_CWD: &str = "stack-terminal:cwd";
+    pub const STACK_TERMINAL_OUTPUT: &str = "stack-terminal:output";
     pub const STACK_PINS_UPDATED: &str = "stack-pins:updated";
     pub const TASK_PREVIEW_HIDE: &str = "task-preview:hide";
     pub const TASK_PREVIEW_HOVER_ENTER: &str = "task-preview:hover-enter";
@@ -320,6 +335,9 @@ pub mod events {
         SEARCH_PANEL_SELECT,
         SEARCH_PANEL_UPDATE,
         STACK_POPUP_OPEN,
+        STACK_TERMINAL_CLOSED,
+        STACK_TERMINAL_CWD,
+        STACK_TERMINAL_OUTPUT,
         STACK_PINS_UPDATED,
         TASK_PREVIEW_HIDE,
         TASK_PREVIEW_HOVER_ENTER,
@@ -407,6 +425,12 @@ mod tests {
         assert!(unique.contains("prepare_stack_file_drag"));
         assert!(unique.contains("new_stack_text_file"));
         assert!(unique.contains("open_stack_terminal_here"));
+        assert!(unique.contains("start_stack_terminal"));
+        assert!(unique.contains("read_stack_terminal"));
+        assert!(unique.contains("write_stack_terminal"));
+        assert!(unique.contains("stop_stack_terminal"));
+        assert!(unique.contains("poll_stack_terminal_session"));
+        assert!(unique.contains("get_stack_terminal_cwd"));
         assert!(unique.contains("record_diagnostic"));
         assert!(unique.contains("export_diagnostics"));
         assert!(unique.contains("build_terminal_launch_plan"));
@@ -471,6 +495,9 @@ mod tests {
                 "search-panel:select",
                 "search-panel:update",
                 "stack-popup:open",
+                "stack-terminal:closed",
+                "stack-terminal:cwd",
+                "stack-terminal:output",
                 "stack-pins:updated",
                 "task-preview:hide",
                 "task-preview:hover-enter",

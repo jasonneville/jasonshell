@@ -9,6 +9,7 @@
   export let ariaColindex: number | undefined = undefined;
   export let ariaCurrent: 'page' | 'step' | 'location' | 'date' | 'time' | true | false | undefined = undefined;
   export let ariaSelected: boolean | 'true' | 'false' | undefined = undefined;
+  export let ariaPressed: boolean | 'true' | 'false' | 'mixed' | undefined = undefined;
   export let ariaDisabled: boolean | 'true' | 'false' | undefined = undefined;
   export let ariaControls: string | undefined = undefined;
   export let ariaExpanded: boolean | 'true' | 'false' | undefined = undefined;
@@ -68,6 +69,7 @@
   aria-colindex={ariaColindex}
   aria-current={ariaCurrent}
   aria-selected={ariaSelected}
+  aria-pressed={ariaPressed}
   aria-disabled={ariaDisabled}
   aria-controls={ariaControls}
   aria-expanded={ariaExpanded}

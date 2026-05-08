@@ -10,6 +10,7 @@ mod paging;
 mod paths;
 mod pins;
 mod popup_window;
+mod terminal;
 
 use crate::shell_paths;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,10 @@ pub use models::{
     StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackGitTree,
     StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
     StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
+};
+pub use terminal::{
+    StackTerminalPollResult, StackTerminalSessionSnapshot, StackTerminalStartRequest,
+    StackTerminalStopRequest, StackTerminalWriteRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -518,6 +523,65 @@ pub fn new_stack_text_file(parent: String) -> Result<StackItem, String> {
 #[tauri::command]
 pub fn open_stack_terminal_here(path: String) -> Result<(), String> {
     file_ops::open_terminal_here_path(path)
+}
+
+#[tauri::command]
+pub async fn start_stack_terminal(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    request: StackTerminalStartRequest,
+) -> Result<StackTerminalSessionSnapshot, String> {
+    terminal::start_stack_terminal_session(&app_handle, &state, request).await
+}
+
+#[tauri::command]
+pub fn read_stack_terminal(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+) -> Result<terminal::StackTerminalReadResult, String> {
+    terminal::read_stack_terminal(&app_handle, &state, session_id)
+}
+
+#[tauri::command]
+pub async fn write_stack_terminal(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+    input: String,
+) -> Result<(), String> {
+    terminal::write_stack_terminal(
+        &app_handle,
+        &state,
+        StackTerminalWriteRequest { session_id, input },
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn stop_stack_terminal(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+) -> Result<(), String> {
+    terminal::stop_stack_terminal(&app_handle, &state, StackTerminalStopRequest { session_id })
+}
+
+#[tauri::command]
+pub fn poll_stack_terminal_session(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+) -> Result<StackTerminalPollResult, String> {
+    terminal::poll_stack_terminal_session(&app_handle, &state, session_id)
+}
+
+#[tauri::command]
+pub fn get_stack_terminal_cwd(
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+) -> Result<StackTerminalSessionSnapshot, String> {
+    terminal::get_stack_terminal_cwd(&state, session_id)
 }
 
 #[tauri::command]

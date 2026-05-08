@@ -1,5 +1,6 @@
 <script lang="ts">
   import './SettingsPanelSurface.css';
+  import { onMount } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MeltRadioGroup from './melt/MeltRadioGroup.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
@@ -18,6 +19,12 @@
     triggerSystemPowerAction,
     type SystemPowerAction
   } from '../lib/settingsPanel';
+  import { loadShellSettings, saveShellSettings, type ShellSettings } from '../lib/settings';
+  import {
+    normalizeStackTerminalProfile,
+    STACK_TERMINAL_PROFILE_OPTIONS,
+    type StackTerminalProfile
+  } from '../lib/stackPopup';
   import {
     getInitialShellThemeId,
     normalizeShellThemeId,
@@ -30,6 +37,10 @@
   const fontOptions = shellFontOptions();
   const themeSelectOptions = themeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
   const fontSelectOptions = fontOptions.map((font) => ({ value: font.id, label: font.label }));
+  const stackTerminalProfileOptions = STACK_TERMINAL_PROFILE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: option.label
+  }));
   const dateFormatExamples = [
     'EEE, MMM d',
     'EEEE, MMMM d',
@@ -44,6 +55,9 @@
   let pendingPowerAction: SystemPowerAction | null = null;
   let powerError = '';
   let powerBusy = false;
+  let selectedStackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
+  let shellSettings: ShellSettings | null = null;
+  let settingsError = '';
 
   const powerActionLabels: Record<SystemPowerAction, string> = {
     sleep: 'Sleep',
@@ -53,6 +67,10 @@
 
   $: datePreview = formatShellDate(now, preferences.dateFormat);
   $: timePreview = formatShellTime(now, preferences);
+
+  onMount(() => {
+    void loadJsonShellSettings();
+  });
 
   function updatePreferences(patch: Partial<ShellPreferences>) {
     preferences = patchShellPreferences(patch);
@@ -65,6 +83,37 @@
 
   function handleFontChange(value: string) {
     updatePreferences({ fontId: value as ShellPreferences['fontId'] });
+  }
+
+  async function loadJsonShellSettings() {
+    try {
+      const settings = await loadShellSettings();
+      shellSettings = settings;
+      selectedStackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
+      settingsError = '';
+    } catch (error) {
+      console.error('Failed to load shell settings', error);
+      selectedStackTerminalProfile = 'windowsTerminal';
+      settingsError = error instanceof Error ? error.message : 'Shell settings unavailable.';
+    }
+  }
+
+  async function handleStackTerminalProfileChange(value: string) {
+    selectedStackTerminalProfile = normalizeStackTerminalProfile(value);
+    try {
+      const settings = shellSettings ?? await loadShellSettings();
+      shellSettings = await saveShellSettings({
+        ...settings,
+        stackBrowser: {
+          ...(settings.stackBrowser ?? { terminalProfile: 'windowsTerminal' }),
+          terminalProfile: selectedStackTerminalProfile
+        }
+      });
+      settingsError = '';
+    } catch (error) {
+      console.error('Failed to save Stack Browser terminal profile', error);
+      settingsError = error instanceof Error ? error.message : 'Terminal profile unavailable.';
+    }
   }
 
   function handleDateFormatInput(event: Event) {
@@ -220,6 +269,19 @@
       <strong>{timePreview}</strong>
       <span>{datePreview}</span>
     </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="json-shell-heading">
+    <h2 id="json-shell-heading">JSON shell settings</h2>
+    <MeltSelect
+      label="Stack Browser terminal"
+      value={selectedStackTerminalProfile}
+      options={stackTerminalProfileOptions}
+      onChange={handleStackTerminalProfileChange}
+    />
+    {#if settingsError}
+      <p class="settings-error" role="alert">{settingsError}</p>
+    {/if}
   </section>
 
   <section class="settings-section" aria-labelledby="power-heading">
