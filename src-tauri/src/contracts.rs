@@ -10,6 +10,7 @@ pub mod surfaces {
     pub const CONTROL_PLANE: &str = "control-plane";
     pub const SETTINGS_PANEL: &str = "settings-panel";
     pub const TRAY_PANEL: &str = "tray-panel";
+    pub const TERMINAL_PANEL: &str = "terminal-panel";
     pub const COMMAND_PANEL: &str = "command-panel";
     pub const AUDIO_PANEL: &str = "audio-panel";
     pub const CALENDAR_PANEL: &str = "calendar-panel";
@@ -24,6 +25,7 @@ pub mod surfaces {
         CONTROL_PLANE,
         SETTINGS_PANEL,
         TRAY_PANEL,
+        TERMINAL_PANEL,
         COMMAND_PANEL,
         AUDIO_PANEL,
         CALENDAR_PANEL,
@@ -56,6 +58,8 @@ pub mod commands {
     pub const HIDE_SETTINGS_PANEL: &str = "hide_settings_panel";
     pub const SHOW_TRAY_PANEL: &str = "show_tray_panel";
     pub const HIDE_TRAY_PANEL: &str = "hide_tray_panel";
+    pub const SHOW_TERMINAL_PANEL: &str = "show_terminal_panel";
+    pub const HIDE_TERMINAL_PANEL: &str = "hide_terminal_panel";
     pub const SHOW_COMMAND_PANEL: &str = "show_command_panel";
     pub const HIDE_COMMAND_PANEL: &str = "hide_command_panel";
     pub const SHOW_AUDIO_PANEL: &str = "show_audio_panel";
@@ -121,9 +125,11 @@ pub mod commands {
     pub const NEW_STACK_FOLDER: &str = "new_stack_folder";
     pub const NEW_STACK_TEXT_FILE: &str = "new_stack_text_file";
     pub const OPEN_STACK_TERMINAL_HERE: &str = "open_stack_terminal_here";
+    pub const START_PERSISTENT_TERMINAL: &str = "start_persistent_terminal";
     pub const START_STACK_TERMINAL: &str = "start_stack_terminal";
     pub const READ_STACK_TERMINAL: &str = "read_stack_terminal";
     pub const WRITE_STACK_TERMINAL: &str = "write_stack_terminal";
+    pub const RESIZE_STACK_TERMINAL: &str = "resize_stack_terminal";
     pub const STOP_STACK_TERMINAL: &str = "stop_stack_terminal";
     pub const POLL_STACK_TERMINAL_SESSION: &str = "poll_stack_terminal_session";
     pub const GET_STACK_TERMINAL_CWD: &str = "get_stack_terminal_cwd";
@@ -179,6 +185,8 @@ pub mod commands {
         HIDE_SETTINGS_PANEL,
         SHOW_TRAY_PANEL,
         HIDE_TRAY_PANEL,
+        SHOW_TERMINAL_PANEL,
+        HIDE_TERMINAL_PANEL,
         SHOW_COMMAND_PANEL,
         HIDE_COMMAND_PANEL,
         SHOW_AUDIO_PANEL,
@@ -244,9 +252,11 @@ pub mod commands {
         NEW_STACK_FOLDER,
         NEW_STACK_TEXT_FILE,
         OPEN_STACK_TERMINAL_HERE,
+        START_PERSISTENT_TERMINAL,
         START_STACK_TERMINAL,
         READ_STACK_TERMINAL,
         WRITE_STACK_TERMINAL,
+        RESIZE_STACK_TERMINAL,
         STOP_STACK_TERMINAL,
         POLL_STACK_TERMINAL_SESSION,
         GET_STACK_TERMINAL_CWD,
@@ -283,6 +293,7 @@ pub mod events {
     pub const CALENDAR_PANEL_OPEN: &str = "calendar-panel:open";
     pub const CALENDAR_PANEL_CLOSED: &str = "calendar-panel:closed";
     pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
+    pub const TERMINAL_PANEL_CLOSED: &str = "terminal-panel:closed";
     pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
     pub const SEARCH_TOGGLE_CENTERED: &str = "search:toggle-centered";
@@ -320,6 +331,7 @@ pub mod events {
         CALENDAR_PANEL_OPEN,
         CALENDAR_PANEL_CLOSED,
         COMMAND_PANEL_CLOSED,
+        TERMINAL_PANEL_CLOSED,
         PROCESS_MANAGER_OPEN,
         PROCESS_MANAGER_CLOSED,
         SEARCH_TOGGLE_CENTERED,
@@ -373,6 +385,7 @@ mod tests {
                 "control-plane",
                 "settings-panel",
                 "tray-panel",
+                "terminal-panel",
                 "command-panel",
                 "audio-panel",
                 "calendar-panel",
@@ -428,6 +441,7 @@ mod tests {
         assert!(unique.contains("start_stack_terminal"));
         assert!(unique.contains("read_stack_terminal"));
         assert!(unique.contains("write_stack_terminal"));
+        assert!(unique.contains("resize_stack_terminal"));
         assert!(unique.contains("stop_stack_terminal"));
         assert!(unique.contains("poll_stack_terminal_session"));
         assert!(unique.contains("get_stack_terminal_cwd"));
@@ -480,6 +494,7 @@ mod tests {
                 "calendar-panel:open",
                 "calendar-panel:closed",
                 "command-panel:closed",
+                "terminal-panel:closed",
                 "process-manager:open",
                 "process-manager:closed",
                 "search:toggle-centered",

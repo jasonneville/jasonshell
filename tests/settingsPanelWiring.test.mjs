@@ -57,6 +57,44 @@ test('settings panel exposes live theme, font, date, clock, and useful UI prefer
   assert.match(settingsPanelCss, /settings-panel/);
 });
 
+test('settings panel keeps Stack Browser terminal profile inside JSON shell settings section', () => {
+  assert.match(settingsPanelSource, /STACK_TERMINAL_PROFILE_OPTIONS/);
+  assert.match(settingsPanelSource, /label="Stack Browser terminal"/);
+  assert.match(settingsPanelSource, /terminalProfile: selectedStackTerminalProfile/);
+
+  const terminalProfileIndex = settingsPanelSource.indexOf('label="Stack Browser terminal"');
+  assert.notEqual(terminalProfileIndex, -1, 'terminal profile selector must remain in Settings Panel');
+
+  const jsonSectionStart = settingsPanelSource.lastIndexOf('<section', terminalProfileIndex);
+  assert.notEqual(jsonSectionStart, -1, 'terminal profile selector must be inside a section');
+  const jsonSectionOpenEnd = settingsPanelSource.indexOf('>', jsonSectionStart);
+  const jsonSectionHeaderEnd = settingsPanelSource.indexOf('</h2>', jsonSectionOpenEnd);
+  const jsonSectionHeader = settingsPanelSource.slice(jsonSectionOpenEnd, jsonSectionHeaderEnd);
+  assert.match(
+    jsonSectionHeader,
+    /JSON shell settings|Stack Browser/i,
+    'terminal profile selector must live in JSON shell settings area, not shell-bar controls'
+  );
+
+  const nextSectionStart = settingsPanelSource.indexOf('<section', terminalProfileIndex + 1);
+  const jsonSectionClose = settingsPanelSource.indexOf('</section>', terminalProfileIndex);
+  assert.ok(jsonSectionClose > terminalProfileIndex, 'JSON shell settings section must close after terminal selector');
+  if (nextSectionStart !== -1) {
+    assert.ok(
+      jsonSectionClose < nextSectionStart,
+      'JSON shell settings section must close before next settings section starts'
+    );
+  }
+
+  const shellBarHeading = settingsPanelSource.indexOf('Shell bars');
+  if (shellBarHeading !== -1) {
+    assert.ok(
+      terminalProfileIndex < shellBarHeading,
+      'terminal profile selector must not be nested under shell-bar settings'
+    );
+  }
+});
+
 test('settings panel scrolls vertically so lower controls remain reachable', () => {
   const rootBlock = settingsPanelCss.match(/\.settings-panel \{[\s\S]*?\n\}/)?.[0] ?? '';
   assert.match(rootBlock, /overflow-y: auto;/);

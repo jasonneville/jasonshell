@@ -1,7 +1,10 @@
 <script lang="ts">
   import './StackPopupSurface.css';
-  import { emit } from '@tauri-apps/api/event';
+  import '@xterm/xterm/css/xterm.css';
+  import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { FitAddon } from '@xterm/addon-fit';
+  import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
@@ -28,6 +31,7 @@
     prepareStackFileDrag,
     renameStackItem,
     resolveStackItemIcons,
+    resizeStackTerminal,
     resizeStackPopup,
     revealStackItem,
     readStackTerminal,
@@ -47,6 +51,7 @@
     suggestStackPaths,
     writeStackTerminal,
     STACK_POPUP_OPEN_EVENT,
+    STACK_TERMINAL_PROFILE_OPTIONS,
     type StackEntry,
     type StackArchiveDestinationMode,
     type StackArchiveExtractor,
@@ -60,7 +65,8 @@
     type StackOpenWithCandidate,
     type StackPathSuggestion,
     type StackTerminalProfile,
-    type StackTerminalSession
+    type StackTerminalSession,
+    type StackTerminalOutputChunk
   } from '../lib/stackPopup';
   import { loadShellSettings } from '../lib/settings';
   import { normalizeStackTerminalProfile } from '../lib/stackPopup';
@@ -134,6 +140,22 @@
 
   type StackGitWorkbenchView = 'changes' | 'log' | 'tree' | 'branches';
   type StackBrowserViewMode = 'files' | 'terminal';
+  type StackTerminalLifecycleState =
+    | 'idle'
+    | 'starting'
+    | 'runningWaitingForFirstByte'
+    | 'running'
+    | 'exited'
+    | 'failed';
+  type StackTerminalClosedPayload = {
+    sessionId: string;
+    running?: boolean;
+  };
+  type StackTerminalOutputPayload = {
+    sessionId: string;
+    text: string;
+    sequence?: number;
+  };
 
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
@@ -241,11 +263,29 @@
   let stackTerminalSession: StackTerminalSession | null = null;
   let stackTerminalOutput = '';
   let stackTerminalOutputElement: HTMLDivElement | null = null;
-  let stackTerminalInputDraft = '';
-  let stackTerminalInput: HTMLInputElement | null = null;
+  let stackTerminal: Terminal | null = null;
+  let stackTerminalFitAddon: FitAddon | null = null;
+  let stackTerminalResizeObserver: ResizeObserver | null = null;
   let stackTerminalCwd = '';
   let stackTerminalBusy = false;
   let stackTerminalPollTimer: number | null = null;
+  let stackTerminalPollInFlight = false;
+  let stackTerminalPollQueued = false;
+  let stackTerminalOperationQueue: Promise<void> = Promise.resolve();
+  let stackTerminalLifecycleState: StackTerminalLifecycleState = 'idle';
+  let stackTerminalFirstOutputReceived = false;
+  let stackTerminalStartupStatus = '';
+  let stackTerminalStartupTimeout: number | null = null;
+  let stackTerminalLastOutputAt = 0;
+  let stackTerminalLastFitError = '';
+  let stackTerminalLastFitRetry = 0;
+  let stackTerminalResizeFrame: number | null = null;
+  let stackTerminalLastResizeKey = '';
+  let stackTerminalRenderedSequences = new Set<string>();
+  let stackTerminalUnlisteners: Array<() => void> = [];
+  let stackTerminalListenersDisposed = false;
+  $: stackTerminalProfileLabel =
+    STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
@@ -270,11 +310,13 @@
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     let disposed = false;
+    stackTerminalListenersDisposed = false;
     const latestRequestTimer = window.setInterval(() => {
       void reconcileLatestStackPopupRequest();
     }, 250);
 
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
+    void initializeStackTerminalEventListeners(unlisteners, () => disposed);
     void loadStackTerminalProfile();
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
@@ -290,6 +332,8 @@
 
     return () => {
       disposed = true;
+      stackTerminalListenersDisposed = true;
+      stackTerminalUnlisteners = [];
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
       }
@@ -299,6 +343,8 @@
       }
       stopMarqueeAutoscroll();
       stopStackTerminalPolling();
+      clearStackTerminalStartupTimeout();
+      disposeStackTerminalView();
       if (stackTerminalSession) {
         void stopStackTerminal(stackTerminalSession.sessionId).catch(() => undefined);
       }
@@ -324,6 +370,49 @@
       console.error('Failed to initialize stack popup open listener', error);
       await openLatestStackPopupRequest();
     }
+  }
+
+  async function initializeStackTerminalEventListeners(unlisteners: Array<() => void>, isDisposed: () => boolean) {
+    const register = (promise: Promise<UnlistenFn>) => {
+      void promise
+        .then((unlisten) => {
+          if (stackTerminalListenersDisposed) {
+            unlisten();
+          } else if (isDisposed()) {
+            unlisten();
+          } else {
+            stackTerminalUnlisteners.push(unlisten);
+            unlisteners.push(unlisten);
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to initialize Stack terminal listener', error);
+        });
+    };
+
+    register(
+      listen<StackTerminalOutputPayload>('stack-terminal:output', (event) => {
+        if (event.payload.sessionId !== stackTerminalSession?.sessionId) {
+          return;
+        }
+        writeStackTerminalChunk(event.payload);
+        scrollStackTerminalToBottom();
+      })
+    );
+
+    register(
+      listen<StackTerminalClosedPayload>('stack-terminal:closed', (event) => {
+        if (event.payload.sessionId !== stackTerminalSession?.sessionId) {
+          return;
+        }
+        stopStackTerminalPolling();
+        clearStackTerminalStartupTimeout();
+        stackTerminalLifecycleState = stackTerminalFirstOutputReceived ? 'exited' : 'failed';
+        stackTerminalStartupStatus = stackTerminalFirstOutputReceived
+          ? 'Terminal exited'
+          : 'Terminal exited before output';
+      })
+    );
   }
 
   async function openLatestStackPopupRequest() {
@@ -362,7 +451,7 @@
     }
   }
 
-  async function openFolder(folderPath: string) {
+  async function openFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
     closeMenus();
     stackState = openStackFolder(stackState, folderPath);
     await loadFolder(stackState.currentPath);
@@ -1039,6 +1128,7 @@
     if (mode === 'files') {
       await syncFolderToStackTerminalCwd();
       stackBrowserViewMode = 'files';
+      disposeStackTerminalView();
       return;
     }
     stackBrowserViewMode = 'terminal';
@@ -1051,49 +1141,275 @@
     }
     if (stackTerminalSession && stackTerminalCwd === currentPath) {
       startStackTerminalPolling();
-      await tick();
-      stackTerminalInput?.focus();
+      focusStackTerminalInput();
       return;
     }
 
-    await restartStackTerminal();
+    await restartStackTerminal(true);
   }
 
-  async function restartStackTerminal() {
+  async function warmStackTerminalForCurrentFolder() {
+    if (!currentPath || stackTerminalBusy) {
+      return;
+    }
+    if (stackTerminalSession && stackTerminalCwd === currentPath) {
+      startStackTerminalPolling();
+      return;
+    }
+
+    await restartStackTerminal(false);
+  }
+
+  async function restartStackTerminal(focusAfterStart = false) {
     stopStackTerminalPolling();
     await stopCurrentStackTerminal();
     await loadStackTerminalProfile();
     stackTerminalCwd = currentPath;
     stackTerminalOutput = '';
+    stackTerminalFirstOutputReceived = false;
+    stackTerminalLifecycleState = 'starting';
+    stackTerminalStartupStatus = `Starting ${stackTerminalProfileLabel}...`;
+    stackTerminalLastOutputAt = 0;
     if (!currentPath) {
+      stackTerminalLifecycleState = 'idle';
       return;
     }
 
     stackTerminalBusy = true;
+    resetStackTerminalView();
+    startStackTerminalStartupTimeout();
     try {
       const session = await startStackTerminal(currentPath, stackTerminalProfile);
       stackTerminalSession = session;
       stackTerminalCwd = session.cwd || currentPath;
-      stackTerminalOutput = session.output ?? '';
+      stackTerminalLifecycleState = 'runningWaitingForFirstByte';
+      stackTerminalStartupStatus = `Starting ${stackTerminalProfileLabel}...`;
+      resetStackTerminalView();
       startStackTerminalPolling();
+      void pollStackTerminalOutput();
       errorMessage = '';
-      await tick();
       scrollStackTerminalToBottom();
-      stackTerminalInput?.focus();
     } catch (error) {
       console.error('Failed to start Stack terminal', error);
       errorMessage = operationErrorMessage(error, 'Embedded terminal unavailable');
-      stackTerminalOutput = errorMessage;
+      stackTerminalLifecycleState = 'failed';
+      stackTerminalStartupStatus = errorMessage;
+      clearStackTerminalStartupTimeout();
+      resetStackTerminalView();
     } finally {
       stackTerminalBusy = false;
+      if (focusAfterStart || stackBrowserViewMode === 'terminal') {
+        focusStackTerminalInput();
+      }
     }
+  }
+
+  function focusStackTerminalInput() {
+    void tick().then(() => {
+      ensureStackTerminalView();
+      stackTerminal?.focus();
+    });
+  }
+
+  function startStackTerminalStartupTimeout() {
+    clearStackTerminalStartupTimeout();
+    stackTerminalStartupTimeout = window.setTimeout(() => {
+      if (!stackTerminalFirstOutputReceived && stackTerminalLifecycleState === 'runningWaitingForFirstByte') {
+        stackTerminalStartupStatus = `Still starting ${stackTerminalProfileLabel}...`;
+      }
+    }, 1200);
+  }
+
+  function clearStackTerminalStartupTimeout() {
+    if (stackTerminalStartupTimeout !== null) {
+      window.clearTimeout(stackTerminalStartupTimeout);
+      stackTerminalStartupTimeout = null;
+    }
+  }
+
+  function ensureStackTerminalView() {
+    if (!stackTerminalOutputElement) {
+      return;
+    }
+    if (stackTerminal) {
+      if (stackTerminal.element && !stackTerminalOutputElement.contains(stackTerminal.element)) {
+        disposeStackTerminalView();
+      } else {
+        stackTerminal.options.disableStdin = !stackTerminalSession || stackTerminalBusy;
+      }
+    }
+    if (stackTerminal) {
+      fitStackTerminal();
+      return;
+    }
+    const terminal = new Terminal({
+      allowProposedApi: false,
+      convertEol: true,
+      cursorBlink: true,
+      cursorStyle: 'block',
+      disableStdin: !stackTerminalSession || stackTerminalBusy,
+      fontFamily: 'var(--js-font-sans)',
+      fontSize: 11.2,
+      lineHeight: 1.35,
+      scrollback: 5000,
+      theme: {
+        background: '#06080b',
+        foreground: '#d7e2f5',
+        cursor: '#d7e2f5',
+        cursorAccent: '#06080b',
+        selectionBackground: '#315f8c'
+      }
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.onData((data) => {
+      void writeStackTerminalData(data);
+    });
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && event.key === 'Escape') {
+        void closeStackPopupFromSurface();
+        return false;
+      }
+      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
+        void copyStackTerminalSelection();
+        return false;
+      }
+      return true;
+    });
+    terminal.open(stackTerminalOutputElement);
+    stackTerminal = terminal;
+    stackTerminalFitAddon = fitAddon;
+    stackTerminalResizeObserver = new ResizeObserver(() => scheduleStackTerminalFit());
+    stackTerminalResizeObserver.observe(stackTerminalOutputElement);
+    if (stackTerminalOutput) {
+      terminal.write(stackTerminalOutput);
+    }
+    void tick().then(() => {
+      fitStackTerminal();
+      scheduleStackTerminalFit();
+    });
+  }
+
+  function scheduleStackTerminalFit() {
+    if (stackTerminalResizeFrame !== null) {
+      window.cancelAnimationFrame(stackTerminalResizeFrame);
+    }
+    stackTerminalResizeFrame = window.requestAnimationFrame(() => {
+      stackTerminalResizeFrame = null;
+      fitStackTerminal();
+    });
+  }
+
+  function fitStackTerminal() {
+    try {
+      const fitAddon = stackTerminalFitAddon;
+      if (!fitAddon) {
+        return;
+      }
+      fitAddon.fit();
+      stackTerminalLastFitError = '';
+      if (stackTerminalSession && stackTerminal && stackTerminal.cols > 0 && stackTerminal.rows > 0) {
+        const sessionId = stackTerminalSession.sessionId;
+        const cols = stackTerminal.cols;
+        const rows = stackTerminal.rows;
+        const pixelWidth = stackTerminalOutputElement?.clientWidth ?? 0;
+        const pixelHeight = stackTerminalOutputElement?.clientHeight ?? 0;
+        const resizeKey = `${sessionId}:${cols}:${rows}:${pixelWidth}:${pixelHeight}`;
+        if (resizeKey === stackTerminalLastResizeKey) {
+          return;
+        }
+        stackTerminalLastResizeKey = resizeKey;
+        void enqueueStackTerminalOperation(() => resizeStackTerminal(
+          sessionId,
+          cols,
+          rows,
+          pixelWidth,
+          pixelHeight
+        )).catch((error) => {
+          stackTerminalLastFitError = operationErrorMessage(error, 'Terminal resize unavailable');
+          stackTerminalLastResizeKey = '';
+        });
+      } else if (stackTerminal && stackTerminalLastFitRetry < 2) {
+        stackTerminalLastFitRetry += 1;
+        window.requestAnimationFrame(() => fitStackTerminal());
+      }
+    } catch (error) {
+      stackTerminalLastFitError = operationErrorMessage(error, 'Terminal fit unavailable');
+      // xterm cannot fit until its container is visible and measured.
+    }
+  }
+
+  function resetStackTerminalView(output = '') {
+    stackTerminalRenderedSequences = new Set<string>();
+    void tick().then(() => {
+      ensureStackTerminalView();
+      stackTerminal?.reset();
+      if (output) {
+        stackTerminal?.write(output);
+      }
+      scrollStackTerminalToBottom();
+    });
+  }
+
+  function writeStackTerminalChunk(chunk: StackTerminalOutputPayload | StackTerminalOutputChunk) {
+    if (typeof chunk.sequence === 'number') {
+      const sequenceKey = `${chunk.sessionId}:${chunk.sequence}`;
+      if (stackTerminalRenderedSequences.has(sequenceKey)) {
+        return;
+      }
+      stackTerminalRenderedSequences.add(sequenceKey);
+    }
+    writeStackTerminalOutput(chunk.text);
+  }
+
+  function disposeStackTerminalView() {
+    if (stackTerminalResizeFrame !== null) {
+      window.cancelAnimationFrame(stackTerminalResizeFrame);
+      stackTerminalResizeFrame = null;
+    }
+    stackTerminalLastResizeKey = '';
+    stackTerminalResizeObserver?.disconnect();
+    stackTerminalResizeObserver = null;
+    stackTerminalFitAddon?.dispose();
+    stackTerminalFitAddon = null;
+    stackTerminal?.dispose();
+    stackTerminal = null;
+  }
+
+  async function writeStackTerminalData(data: string) {
+    if (!stackTerminalSession || !data) {
+      return;
+    }
+    const sessionId = stackTerminalSession.sessionId;
+    await enqueueStackTerminalOperation(() => writeStackTerminal(sessionId, data));
+    await pollStackTerminalOutput();
+  }
+
+  function enqueueStackTerminalOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = stackTerminalOperationQueue.then(operation, operation);
+    stackTerminalOperationQueue = queued.then(
+      () => undefined,
+      () => undefined
+    );
+    return queued;
+  }
+
+  async function copyStackTerminalSelection() {
+    const selection = stackTerminal?.getSelection() ?? '';
+    if (!selection) {
+      return;
+    }
+    await navigator.clipboard?.writeText(selection).catch((error) => {
+      console.debug('Stack terminal selection copy unavailable', error);
+    });
   }
 
   function startStackTerminalPolling() {
     stopStackTerminalPolling();
+    // Watchdog only; push events/prompt output should arrive before this fallback.
     stackTerminalPollTimer = window.setInterval(() => {
-      void pollStackTerminal();
-    }, 700);
+      void pollStackTerminalOutput();
+    }, 1500);
   }
 
   function stopStackTerminalPolling() {
@@ -1105,65 +1421,117 @@
 
   async function stopCurrentStackTerminal() {
     stopStackTerminalPolling();
+    clearStackTerminalStartupTimeout();
     const sessionId = stackTerminalSession?.sessionId;
     stackTerminalSession = null;
+    stackTerminalOperationQueue = Promise.resolve();
+    stackTerminalLifecycleState = 'idle';
+    stackTerminalFirstOutputReceived = false;
+    stackTerminalStartupStatus = '';
+    stackTerminalPollQueued = false;
     if (sessionId) {
       await stopStackTerminal(sessionId).catch(() => undefined);
     }
   }
 
-  async function pollStackTerminal() {
+  async function pollStackTerminalOutput() {
     if (!stackTerminalSession) {
       stopStackTerminalPolling();
       return;
     }
+    if (stackTerminalPollInFlight) {
+      stackTerminalPollQueued = true;
+      return;
+    }
+    stackTerminalPollInFlight = true;
     try {
-      const result = await readStackTerminal(stackTerminalSession.sessionId);
-      if (result.output) {
-        stackTerminalOutput += result.output;
+      const sessionId = stackTerminalSession.sessionId;
+      const result = await enqueueStackTerminalOperation(() => readStackTerminal(sessionId));
+      if (result.sessionId !== stackTerminalSession?.sessionId) {
+        return;
+      }
+      if (result.chunks?.length) {
+        for (const chunk of result.chunks) {
+          writeStackTerminalChunk(chunk);
+        }
+        scrollStackTerminalToBottom();
+      } else if (result.output) {
+        writeStackTerminalOutput(result.output);
         scrollStackTerminalToBottom();
       }
       await applyStackTerminalCwd(result.cwd || stackTerminalCwd);
       if (result.exited) {
         stopStackTerminalPolling();
+        clearStackTerminalStartupTimeout();
+        stackTerminalLifecycleState = stackTerminalFirstOutputReceived ? 'exited' : 'failed';
+        stackTerminalStartupStatus = result.exitCode === null || result.exitCode === undefined
+          ? 'Terminal exited before output'
+          : `Terminal exited before output (${result.exitCode})`;
       }
     } catch (error) {
       stopStackTerminalPolling();
       console.error('Failed to read Stack terminal', error);
       errorMessage = operationErrorMessage(error, 'Embedded terminal unavailable');
-    }
-  }
-
-  async function handleStackTerminalKeydown(event: KeyboardEvent) {
-    event.stopPropagation();
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      await closeStackPopupFromSurface();
-      return;
-    }
-    if (!stackTerminalSession) {
-      return;
-    }
-    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
-      event.preventDefault();
-      await writeStackTerminal(stackTerminalSession.sessionId, '\u0003');
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      const command = stackTerminalInputDraft;
-      stackTerminalInputDraft = '';
-      await writeStackTerminal(stackTerminalSession.sessionId, command + '\n');
-      await pollStackTerminal();
+      stackTerminalLifecycleState = stackTerminalFirstOutputReceived ? 'exited' : 'failed';
+      stackTerminalStartupStatus = errorMessage;
+    } finally {
+      stackTerminalPollInFlight = false;
+      if (stackTerminalPollQueued) {
+        stackTerminalPollQueued = false;
+        void pollStackTerminalOutput();
+      }
     }
   }
 
   function scrollStackTerminalToBottom() {
     void tick().then(() => {
-      if (stackTerminalOutputElement) {
-        stackTerminalOutputElement.scrollTop = stackTerminalOutputElement.scrollHeight;
-      }
+      stackTerminal?.scrollToBottom();
     });
+  }
+
+  function writeStackTerminalOutput(output: string) {
+    if (output && stackTerminalOutputHasVisibleText(output)) {
+      stackTerminalFirstOutputReceived = true;
+      stackTerminalLifecycleState = 'running';
+      stackTerminalStartupStatus = '';
+      stackTerminalLastOutputAt = Date.now();
+      clearStackTerminalStartupTimeout();
+    }
+    const nextOutput = stackTerminalOutput + output;
+    if (stackTerminalOutputHasClear(output)) {
+      stackTerminalOutput = compactStackTerminalOutput(nextOutput);
+      stackTerminal?.reset();
+      if (stackTerminalOutput) {
+        stackTerminal?.write(stackTerminalOutput);
+      }
+      return;
+    }
+    stackTerminalOutput = nextOutput;
+    stackTerminal?.write(output);
+  }
+
+  function stackTerminalOutputHasClear(output: string) {
+    return /\x1b(?:c|\[[0-?]*[ -/]*[HJ])/.test(output);
+  }
+
+  function stackTerminalOutputHasVisibleText(output: string) {
+    return stripStackTerminalAnsiControls(output).trim().length > 0;
+  }
+
+  function stripStackTerminalAnsiControls(output: string) {
+    return output
+      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+      .replace(/\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+  }
+
+  function compactStackTerminalOutput(output: string) {
+    const clearPattern = /\x1b(?:c|\[[0-?]*[ -/]*[HJ])/g;
+    let lastClearEnd = 0;
+    for (const match of output.matchAll(clearPattern)) {
+      lastClearEnd = (match.index ?? 0) + match[0].length;
+    }
+    return lastClearEnd > 0 ? output.slice(lastClearEnd) : output;
   }
 
   async function applyStackTerminalCwd(cwd: string) {
@@ -1173,14 +1541,14 @@
     }
     stackTerminalCwd = nextCwd;
     if (stackBrowserViewMode === 'terminal' && nextCwd !== currentPath) {
-      await openFolder(nextCwd);
+      await openFolder(nextCwd, { warmTerminal: false });
     }
   }
 
   async function syncFolderToStackTerminalCwd() {
-    await pollStackTerminal();
+    await pollStackTerminalOutput();
     if (stackTerminalCwd && stackTerminalCwd !== currentPath) {
-      await openFolder(stackTerminalCwd);
+      await openFolder(stackTerminalCwd, { warmTerminal: false });
     }
   }
 
@@ -2454,7 +2822,6 @@
 
 <section
   class:resizing={!!resizeDrag}
-  class:terminal-mode={stackBrowserViewMode === 'terminal'}
   class="stack-popup"
   aria-label="Stack browser"
   aria-busy={loadingPath ? 'true' : 'false'}
@@ -2528,10 +2895,6 @@
       </form>
     </div>
     <div class="stack-actions">
-      <div class="stack-view-toggle" role="group" aria-label="Stack Browser view">
-        <MeltActionButton ariaPressed={stackBrowserViewMode === 'files'} onClick={() => void switchStackBrowserView('files')}>Files</MeltActionButton>
-        <MeltActionButton ariaPressed={stackBrowserViewMode === 'terminal'} onClick={() => void switchStackBrowserView('terminal')}>CLI</MeltActionButton>
-      </div>
       <MeltActionButton disabled={!canGoBack} onClick={() => void navigateHistory(-1)}>Back</MeltActionButton>
       <MeltActionButton disabled={!canGoForward} onClick={() => void navigateHistory(1)}>Forward</MeltActionButton>
       <MeltActionButton onClick={() => void loadFolder(currentPath)}>Refresh</MeltActionButton>
@@ -2592,26 +2955,6 @@
     </form>
   {/if}
 
-  {#if stackBrowserViewMode === 'terminal'}
-    <section class="stack-terminal" aria-label="Stack Browser CLI">
-      <div bind:this={stackTerminalOutputElement} class="stack-terminal-output" role="log" aria-live="polite" aria-label="Terminal output">
-        <pre>{stackTerminalOutput}</pre>
-      </div>
-      <label class="stack-terminal-command">
-        <span>{stackTerminalCwd || currentPath}</span>
-        <input
-          bind:this={stackTerminalInput}
-          value={stackTerminalInputDraft}
-          spellcheck="false"
-          autocomplete="off"
-          disabled={!stackTerminalSession || stackTerminalBusy}
-          aria-label="Terminal command"
-          on:input={(event) => stackTerminalInputDraft = event.currentTarget.value}
-          on:keydown={(event) => void handleStackTerminalKeydown(event)}
-        />
-      </label>
-    </section>
-  {:else}
   {#if gitStatusPopupOpen && gitStatus}
     <dialog
       open
@@ -2890,7 +3233,6 @@
       <div class="empty-stack surface-state" class:loading={!!loadingPath} class:info={!loadingPath} role="status">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
     {/if}
   </div>
-  {/if}
 
   {#if rowMenu}
     <div

@@ -82,6 +82,11 @@
     showTrayPanel
   } from '../lib/trayPanel';
   import {
+    TERMINAL_PANEL_CLOSED_EVENT,
+    hideTerminalPanel,
+    showTerminalPanel
+  } from '../lib/terminalPanel';
+  import {
     COMMAND_PANEL_CLOSED_EVENT,
     hideCommandPanel,
     showCommandPanel
@@ -167,6 +172,7 @@
   // Pin rail UI
   let pinRailHover = false;
   let pinRailEl: HTMLDivElement | null = null;
+  let terminalControl: HTMLDivElement | null = null;
   let commandControl: HTMLDivElement | null = null;
   let trayControl: HTMLDivElement | null = null;
   let soundControl: HTMLDivElement | null = null;
@@ -209,6 +215,7 @@
   let stackPinsLoaded = false;
   let audioOpen = false;
   let trayOpen = false;
+  let terminalOpen = false;
   let commandOpen = false;
   let calendarOpen = false;
 
@@ -218,6 +225,7 @@
   const SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS = 220;
   const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TERMINAL_PANEL_ID = 'terminal-panel';
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
@@ -405,6 +413,9 @@
     if (commandOpen) {
       await closeCommandPanel();
     }
+    if (terminalOpen) {
+      await closeTerminalPanel();
+    }
     if (options.publishCurrentPayload ?? true) {
       queueSearchPanelPublish();
     }
@@ -430,6 +441,9 @@
     }
     if (commandOpen) {
       await closeCommandPanel();
+    }
+    if (terminalOpen) {
+      await closeTerminalPanel();
     }
     if (options.publishCurrentPayload ?? true) {
       queueSearchPanelPublish();
@@ -562,6 +576,9 @@
     if (commandOpen && (!target || !commandControl?.contains(target))) {
       void closeCommandPanel();
     }
+    if (terminalOpen && (!target || !terminalControl?.contains(target))) {
+      void closeTerminalPanel();
+    }
     if (audioOpen && (!target || !soundControl?.contains(target))) {
       void closeAudioPanel();
     }
@@ -610,6 +627,13 @@
     commandOpen = false;
     await hideCommandPanel().catch((error) => {
       console.error('Failed to hide command panel', error);
+    });
+  }
+
+  async function closeTerminalPanel() {
+    terminalOpen = false;
+    await hideTerminalPanel().catch((error) => {
+      console.error('Failed to hide terminal panel', error);
     });
   }
 
@@ -670,6 +694,7 @@
     await closePanel();
     await closeAudioPanel();
     await closeCommandPanel();
+    await closeTerminalPanel();
     await closeCalendarPanel();
     trayOpen = true;
     await showTrayPanel({
@@ -694,6 +719,7 @@
     await closePanel();
     await closeAudioPanel();
     await closeTrayPanel();
+    await closeTerminalPanel();
     await closeCalendarPanel();
     commandOpen = true;
     await showCommandPanel({
@@ -702,6 +728,31 @@
     }).catch((error) => {
       commandOpen = false;
       console.error('Failed to show command panel', error);
+    });
+  }
+
+  async function toggleTerminalPanel(target: EventTarget | null) {
+    if (terminalOpen) {
+      await closeTerminalPanel();
+      return;
+    }
+    const button = target instanceof HTMLElement ? target : null;
+    const rect = button?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    await closePanel();
+    await closeAudioPanel();
+    await closeTrayPanel();
+    await closeCommandPanel();
+    await closeCalendarPanel();
+    terminalOpen = true;
+    await showTerminalPanel({
+      anchorLeft: rect.left,
+      anchorWidth: rect.width
+    }).catch((error) => {
+      terminalOpen = false;
+      console.error('Failed to show terminal panel', error);
     });
   }
 
@@ -719,6 +770,7 @@
     await closeAudioPanel();
     await closeTrayPanel();
     await closeCommandPanel();
+    await closeTerminalPanel();
     calendarOpen = true;
     await showCalendarPanel({
       anchorLeft: rect.left,
@@ -1601,6 +1653,9 @@
     registerAsyncUnlistener(listen(TRAY_PANEL_CLOSED_EVENT, () => {
       trayOpen = false;
     }));
+    registerAsyncUnlistener(listen(TERMINAL_PANEL_CLOSED_EVENT, () => {
+      terminalOpen = false;
+    }));
     registerAsyncUnlistener(listen(COMMAND_PANEL_CLOSED_EVENT, () => {
       commandOpen = false;
     }));
@@ -1637,6 +1692,7 @@
       void hideSearchPanel().catch(() => undefined);
       void hideAudioPanel().catch(() => undefined);
       void hideTrayPanel().catch(() => undefined);
+      void hideTerminalPanel().catch(() => undefined);
       void hideCommandPanel().catch(() => undefined);
       for (const unlisten of unlisteners) {
         unlisten();
@@ -1710,6 +1766,19 @@
     {#if showRailScrollRight}
       <MeltActionButton class="rail-scroll right" ariaLabel="Scroll pinned folders right" tooltip="Scroll pinned folders right" onClick={() => scrollRailRight()}>&rsaquo;</MeltActionButton>
     {/if}
+  </div>
+  <div class="terminal-control" bind:this={terminalControl}>
+    <MeltActionButton
+      class="terminal-button"
+      ariaLabel="Open persistent terminal"
+      ariaHaspopup="dialog"
+      ariaExpanded={terminalOpen}
+      ariaControls={TERMINAL_PANEL_ID}
+      tooltip="Terminal"
+      onClick={(event) => void toggleTerminalPanel(event.currentTarget)}
+    >
+      <span class="terminal-glyph" aria-hidden="true">▣</span>
+    </MeltActionButton>
   </div>
   <div class="command-control" bind:this={commandControl}>
     <MeltActionButton

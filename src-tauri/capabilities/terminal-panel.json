@@ -1,0 +1,11 @@
+{
+  "identifier": "terminal-panel",
+  "description": "Persistent terminal auxiliary surface capability: shell session display, input, resize, and window-label access.",
+  "windows": [
+    "terminal-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

@@ -1,0 +1,111 @@
+.terminal-panel {
+  background: #05070a;
+  color: #d7e2f5;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  width: 100vw;
+}
+
+.terminal-panel-header {
+  align-items: center;
+  background: #111722;
+  border-bottom: 1px solid #263246;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  min-height: 2.35rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.terminal-panel-header div {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.terminal-panel-header strong {
+  font-size: 0.8rem;
+  letter-spacing: 0;
+}
+
+.terminal-panel-header span {
+  color: #9fadbf;
+  font-size: 0.62rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-restart {
+  background: #172235;
+  border: 1px solid #33435a;
+  border-radius: 4px;
+  color: #d7e2f5;
+  cursor: pointer;
+  font-size: 0.68rem;
+  height: 1.45rem;
+  padding: 0 0.55rem;
+}
+
+.terminal-restart:hover {
+  background: #1d2b42;
+}
+
+.terminal-panel-body {
+  min-height: 0;
+  position: relative;
+}
+
+.terminal-panel-output {
+  background: #05070a;
+  height: 100%;
+  min-height: 0;
+  user-select: text;
+  width: 100%;
+}
+
+.terminal-panel-output :global(.xterm) {
+  height: 100%;
+  padding: 0.6rem;
+}
+
+.terminal-panel-output :global(.xterm-viewport),
+.terminal-panel-output :global(.xterm-screen) {
+  background: #05070a !important;
+}
+
+.terminal-panel-output :global(.xterm-helper-textarea) {
+  border: none !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+}
+
+.terminal-panel-status {
+  background: color-mix(in srgb, #05070a 86%, #172235);
+  border: 1px solid #36506d;
+  border-radius: 4px;
+  color: #d7e2f5;
+  display: grid;
+  gap: 0.25rem;
+  left: 0.65rem;
+  max-width: min(34rem, calc(100% - 1.3rem));
+  padding: 0.65rem 0.75rem;
+  position: absolute;
+  top: 0.65rem;
+  z-index: 2;
+}
+
+.terminal-panel-status.error {
+  border-color: #a45151;
+}
+
+.terminal-panel-status strong {
+  font-size: 0.78rem;
+}
+
+.terminal-panel-status span {
+  color: #aebbd0;
+  font-size: 0.65rem;
+}

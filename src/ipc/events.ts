@@ -8,6 +8,7 @@ export const IPC_EVENTS = {
   processManagerClosed: 'process-manager:closed',
   trayPanelOpen: 'tray-panel:open',
   trayPanelClosed: 'tray-panel:closed',
+  terminalPanelClosed: 'terminal-panel:closed',
   commandPanelClosed: 'command-panel:closed',
   calendarPanelOpen: 'calendar-panel:open',
   calendarPanelClosed: 'calendar-panel:closed',

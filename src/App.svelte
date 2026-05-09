@@ -11,6 +11,7 @@
   import SettingsPanelSurface from './components/SettingsPanelSurface.svelte';
   import StackPopupSurface from './components/StackPopupSurface.svelte';
   import TaskPreviewSurface from './components/TaskPreviewSurface.svelte';
+  import TerminalPanelSurface from './components/TerminalPanelSurface.svelte';
   import TrayPanelSurface from './components/TrayPanelSurface.svelte';
   import TopBar from './components/TopBar.svelte';
   import { installShellPreferencesSync } from './lib/shellPreferences';
@@ -70,6 +71,8 @@
   <SettingsPanelSurface />
 {:else if surface === 'tray-panel'}
   <TrayPanelSurface />
+{:else if surface === 'terminal-panel'}
+  <TerminalPanelSurface />
 {:else if surface === 'command-panel'}
   <CommandPanelSurface />
 {:else if surface === 'audio-panel'}
