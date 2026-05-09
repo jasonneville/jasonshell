@@ -96,9 +96,11 @@
 }
 
 .result-list {
+  align-content: start;
   display: grid;
   flex: 1 1 auto;
   gap: var(--js-space-3);
+  grid-auto-rows: minmax(2.55rem, max-content);
   min-height: 0;
   overflow-y: auto;
   scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);

@@ -552,6 +552,9 @@ test('search panel minimum layout keeps header outside internal result scroller'
   assert.match(rootRule, /overflow:\s*hidden;/);
   assert.match(headerRule, /flex:\s*0 0 auto;/);
   assert.match(resultsRule, /flex:\s*1 1 auto;/);
+  assert.match(resultsRule, /align-content:\s*start;/);
+  assert.match(resultsRule, /grid-auto-rows:\s*minmax\(2\.55rem,\s*max-content\);/);
+  assert.doesNotMatch(resultsRule, /grid-auto-rows:\s*minmax\(2\.55rem,\s*2\.55rem\);/);
   assert.match(resultsRule, /min-height:\s*0;/);
   assert.match(resultsRule, /overflow-y:\s*auto;/);
   assert.doesNotMatch(resultsRule, /max-height:\s*calc\(/);

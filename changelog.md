@@ -2,6 +2,10 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-09 `[USER]` REQUESTED: Investigate and fix centered search results briefly rendering as oversized tiles for the first one or two seconds after a query before settling to compact rows.
+- 2026-05-09 `[CODE]` FIXED: `SearchPanelSurface.css` now top-packs `.result-list` grid content with `align-content: start` and automatic rows sized as `minmax(2.55rem, max-content)`, preventing early progressive snapshots with few rows from stretching across the full remaining panel height before later provider rows arrive while preserving a growth path for narrow/zoomed content. `master_spec.md` records the row-stability contract.
+- 2026-05-09 `[TOOL]` VALIDATED: `node --test tests\searchPanelState.test.mjs` passed with 25/25 tests. `npm run check` passed with 0 errors and one pre-existing `SettingsPanelSurface.svelte` implicit-section-close warning. An adversarial QA pass rejected fixed-height rows for mobile/zoom risk; the final CSS uses `max-content` rows plus top alignment to avoid clipping.
+
 - 2026-05-09 `[USER]` REQUESTED: Close the active Stack Browser when the user clicks ordinary top-bar area, while preserving pinned-folder click/hold switching so clicking a different top-bar directory does not close the Stack Browser before opening the new folder.
 - 2026-05-09 `[CODE]` IMPLEMENTED: `TopBar.svelte` now hides `stack-popup` from the top-bar pointerdown path unless the pointer target is a pinned-folder `button[data-path]` within the pin rail. The pinned-folder pointerdown focus-loss hold and release/open path are unchanged, so existing folder switching remains intact.
 - 2026-05-09 `[TOOL]` VALIDATED: Added RED-first source coverage in `tests\topBarFolderReorder.test.mjs`; final validation passed: `node --test tests\overlayDismissalWiring.test.mjs`, `npm run check` with 0 errors and 1 pre-existing SettingsPanelSurface warning, `npm run build`, and `npm run test:node` with 553 pass, 0 fail, and 3 existing TODOs.
