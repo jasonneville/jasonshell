@@ -42,3 +42,16 @@ test('TopBar keeps click and context menu behavior below drag threshold', () => 
   assert.match(source, /openStackPath\(pin\.path, event\.currentTarget\)/);
   assert.match(source, /function handlePinContextMenu\(event: MouseEvent, pin: StackPin\)/);
 });
+
+test('TopBar holds stack popup focus while a pinned folder is pressed', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  assert.match(source, /beginStackPopupFocusLossHold/);
+  assert.match(source, /endStackPopupFocusLossHold/);
+  assert.match(source, /let stackPinFocusHoldActive = false/);
+  assert.match(source, /let stackPinFocusHoldPromise: Promise<void> \| null = null/);
+  assert.match(source, /function startPinPointerDrag[\s\S]*event\.preventDefault\(\);[\s\S]*beginStackPinFocusHold\(\);[\s\S]*function movePinPointerDrag/);
+  assert.match(source, /function finishPinPointerDrag[\s\S]*openStackPath\(sourcePath, event\.currentTarget\)\.finally\(\(\) => \{[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*function beginStackPinFocusHold/);
+  assert.match(source, /const pendingHold = stackPinFocusHoldPromise;[\s\S]*\(pendingHold \?\? Promise\.resolve\(\)\)[\s\S]*\.then\(\(\) => endStackPopupFocusLossHold\(\)\)/);
+  assert.match(source, /function cancelPinPointerDrag[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*releasePinPointerCapture\(\);/);
+  assert.match(source, /return \(\) => \{[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*cancelSearchBlurClose\(\);/);
+});

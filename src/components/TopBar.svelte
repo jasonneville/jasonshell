@@ -37,6 +37,8 @@
     type SearchPanelResult
   } from '../lib/searchPanel';
   import {
+    beginStackPopupFocusLossHold,
+    endStackPopupFocusLossHold,
     listStackPins,
     openStackFolderInVscode,
     pinStackFolder,
@@ -206,6 +208,8 @@
   let pinDragOriginalOrder: string[] = [];
   let pinDragElement: HTMLElement | null = null;
   let pinDragRects: ReturnType<typeof pinReorderRects> = [];
+  let stackPinFocusHoldActive = false;
+  let stackPinFocusHoldPromise: Promise<void> | null = null;
   let suppressNextPinClickPath: string | null = null;
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
@@ -868,6 +872,7 @@
   }
 
   function cancelPinPointerDrag() {
+    releaseStackPinFocusHold();
     releasePinPointerCapture();
     resetPinPointerDrag();
   }
@@ -876,6 +881,8 @@
     if (event.button !== 0) {
       return;
     }
+    event.preventDefault();
+    beginStackPinFocusHold();
     draggingPinPath = pin.path;
     pinDragPointerId = event.pointerId;
     pinDragStartX = event.clientX;
@@ -941,10 +948,48 @@
     resetPinPointerDrag();
     if (didDrag && sourcePath) {
       suppressNextPinClickPath = sourcePath;
+      releaseStackPinFocusHold();
       if (targetIndex >= 0) {
         void persistPinReorder(sourcePath, targetIndex);
       }
+      return;
     }
+    if (sourcePath) {
+      suppressNextPinClickPath = sourcePath;
+      const sourceIndex = stackPins.findIndex((pin) => pin.path === sourcePath);
+      focusedPinIndex = sourceIndex >= 0 ? sourceIndex : null;
+      void openStackPath(sourcePath, event.currentTarget).finally(() => {
+        releaseStackPinFocusHold();
+      });
+      return;
+    }
+    releaseStackPinFocusHold();
+  }
+
+  function beginStackPinFocusHold() {
+    if (stackPinFocusHoldActive) {
+      return;
+    }
+    stackPinFocusHoldActive = true;
+    stackPinFocusHoldPromise = beginStackPopupFocusLossHold().catch((error) => {
+      stackPinFocusHoldActive = false;
+      stackPinFocusHoldPromise = null;
+      console.error('Failed to hold stack popup focus while pressing pinned folder', error);
+    });
+  }
+
+  function releaseStackPinFocusHold() {
+    if (!stackPinFocusHoldActive) {
+      return;
+    }
+    stackPinFocusHoldActive = false;
+    const pendingHold = stackPinFocusHoldPromise;
+    stackPinFocusHoldPromise = null;
+    void (pendingHold ?? Promise.resolve())
+      .then(() => endStackPopupFocusLossHold())
+      .catch((error) => {
+        console.error('Failed to release stack popup focus hold after pinned folder press', error);
+      });
   }
 
   function updateRailScrollButtons() {
@@ -1654,6 +1699,7 @@
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);
       }
+      releaseStackPinFocusHold();
       cancelSearchBlurClose();
       void hideSearchPanel().catch(() => undefined);
       void hideAudioPanel().catch(() => undefined);

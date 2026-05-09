@@ -61,6 +61,20 @@ test('audio panel surface listens for own close event and stops polling', () => 
   assert.doesNotMatch(initialMountBody, /void refreshAudioState\(\)/);
 });
 
+test('stack popup remains visible when focus moves to top-bar pinned folders', () => {
+  const main = readSource('../src-tauri/src/main.rs');
+  const stackStart = main.indexOf('window.label() == shell_windows::STACK_POPUP_LABEL');
+  const searchStart = main.indexOf('window.label() == shell_windows::SEARCH_PANEL_LABEL', stackStart);
+  assert.notEqual(stackStart, -1, 'stack popup focus-loss handler should exist');
+  assert.notEqual(searchStart, -1, 'search panel handler should follow stack popup handler');
+  const stackFocusLoss = main.slice(stackStart, searchStart);
+
+  assert.match(stackFocusLoss, /stack_popup::suppress_stack_popup_focus_loss\(window\.app_handle\(\)\)/);
+  assert.match(stackFocusLoss, /get_webview_window\(shell_windows::TOP_BAR_LABEL\)/);
+  assert.match(stackFocusLoss, /top_bar\.is_focused\(\)\.ok\(\)/);
+  assert.match(stackFocusLoss, /let _ = window\.hide\(\)/);
+});
+
 test('tray open event targets tray-panel and reloads icons on every show', () => {
   const trayPanel = readSource('../src-tauri/src/tray_panel.rs');
   const traySurface = readSource('../src/components/TrayPanelSurface.svelte');

@@ -203,6 +203,14 @@ fn main() {
                 if stack_popup::suppress_stack_popup_focus_loss(window.app_handle()) {
                     return;
                 }
+                if window
+                    .app_handle()
+                    .get_webview_window(shell_windows::TOP_BAR_LABEL)
+                    .and_then(|top_bar| top_bar.is_focused().ok())
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 let _ = window.hide();
                 return;
             }
