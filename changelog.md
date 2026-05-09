@@ -2,6 +2,9 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-09 `[USER]` REQUESTED: Close the active Stack Browser when the user clicks ordinary top-bar area, while preserving pinned-folder click/hold switching so clicking a different top-bar directory does not close the Stack Browser before opening the new folder.
+- 2026-05-09 `[CODE]` IMPLEMENTED: `TopBar.svelte` now hides `stack-popup` from the top-bar pointerdown path unless the pointer target is a pinned-folder `button[data-path]` within the pin rail. The pinned-folder pointerdown focus-loss hold and release/open path are unchanged, so existing folder switching remains intact.
+- 2026-05-09 `[TOOL]` VALIDATED: Added RED-first source coverage in `tests\topBarFolderReorder.test.mjs`; final validation passed: `node --test tests\overlayDismissalWiring.test.mjs`, `npm run check` with 0 errors and 1 pre-existing SettingsPanelSurface warning, `npm run build`, and `npm run test:node` with 553 pass, 0 fail, and 3 existing TODOs.
 - 2026-05-08 `[USER]` REQUESTED: Keep the Stack Browser visible while pressing another top-bar pinned folder so traversing between pinned folders does not briefly hide the popup before mouse release.
 - 2026-05-08 `[CODE]` IMPLEMENTED: Added a top-bar pinned-folder focus-loss hold using the existing Stack Browser `begin_stack_popup_focus_loss_hold` / `end_stack_popup_focus_loss_hold` commands during pin pointer press/release/cancel, preserving the existing click-to-open and drag-reorder behavior while suppressing the transient `stack-popup` focus-loss hide.
 - 2026-05-08 `[TOOL]` VALIDATED: Added source regression coverage in `tests\topBarFolderReorder.test.mjs`; after installing missing local dependencies with `npm ci`, `npm run test:node`, `npm run check`, and `npm run build` passed. `npm run check` and build still report the existing SettingsPanel implicit-section-close warning.

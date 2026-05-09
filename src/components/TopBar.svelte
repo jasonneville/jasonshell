@@ -39,6 +39,7 @@
   import {
     beginStackPopupFocusLossHold,
     endStackPopupFocusLossHold,
+    hideStackPopup,
     listStackPins,
     openStackFolderInVscode,
     pinStackFolder,
@@ -584,6 +585,11 @@
 
   function handleTopBarPointerDown(event: MouseEvent) {
     const target = event.target instanceof Node ? event.target : null;
+    if (!isPinnedFolderPointerTarget(target)) {
+      void hideStackPopup().catch((error) => {
+        console.error('Failed to hide stack popup after top bar pointer press', error);
+      });
+    }
     if (commandOpen && (!target || !commandControl?.contains(target))) {
       void closeCommandPanel();
     }
@@ -600,6 +606,12 @@
       return;
     }
     void closePanel();
+  }
+
+  function isPinnedFolderPointerTarget(target: Node | null) {
+    const element = target instanceof Element ? target : target?.parentElement ?? null;
+    const pinnedFolderButton = element?.closest('button[data-path]');
+    return !!pinnedFolderButton && !!pinRailEl?.contains(pinnedFolderButton);
   }
 
   function handleTopBarKeydown(event: KeyboardEvent) {
