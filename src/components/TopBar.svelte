@@ -920,10 +920,8 @@
     stackPins = nextPins;
     try {
       await applyStackPins(await reorderStackPins(nextPins.map((pin) => pin.path)));
-      showPinDropStatus('Reordered pinned folders');
     } catch (error) {
       console.error('Failed to reorder stack pins', error);
-      showPinDropStatus('Could not save pin order', 'error');
       await loadStackPins();
     }
   }
