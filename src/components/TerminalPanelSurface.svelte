@@ -15,12 +15,24 @@
     type StackTerminalSession
   } from '../lib/persistentTerminal';
   import { hideTerminalPanel } from '../lib/terminalPanel';
+  import {
+    beginTerminalCommandRecord,
+    createTerminalCommandState,
+    parseTerminalShellSequence,
+    reduceTerminalShellMarker,
+    type TerminalCommandRecord,
+    type TerminalCommandState
+  } from '../features/stack-browser/terminalShellIntegration';
 
   type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalOutputPayload = StackTerminalOutputChunk;
   type TerminalClosedPayload = {
     sessionId: string;
     running?: boolean;
+  };
+  type TerminalCwdPayload = {
+    sessionId: string;
+    cwd: string;
   };
 
   const TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open';
@@ -51,6 +63,10 @@
   let currentInputSelectionActive = false;
   let visibleResizeSettled = false;
   let visibleResizePromise: Promise<void> | null = null;
+  let commandState: TerminalCommandState | null = null;
+  let selectedCommandIndex = -1;
+  let shellCwdMarkerSeen = false;
+  let shellParserDisposers: Array<() => void> = [];
 
   onMount(() => {
     listenersDisposed = false;
@@ -112,6 +128,17 @@
         status = outputReceived ? 'Terminal exited' : 'Terminal exited before output';
       })
     );
+
+    register(
+      listen<TerminalCwdPayload>('stack-terminal:cwd', (event) => {
+        if (event.payload.sessionId !== session?.sessionId || !event.payload.cwd) {
+          return;
+        }
+        if (!shellCwdMarkerSeen) {
+          applyAuthoritativeTerminalCwd(event.payload.cwd);
+        }
+      })
+    );
   }
 
   async function startTerminal() {
@@ -123,6 +150,9 @@
     startStartupTimer();
     try {
       session = await startPersistentTerminal();
+      commandState = createTerminalCommandState(session.sessionId, session.cwd);
+      selectedCommandIndex = -1;
+      shellCwdMarkerSeen = false;
       lifecycle = 'waiting';
       status = 'Waiting for terminal output...';
       handlePanelOpen();
@@ -183,6 +213,7 @@
       trackTerminalInput(data);
       void writeTerminalData(data);
     });
+    registerShellIntegrationParser(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === 'keydown' && isAltBackquoteHotkey(event)) {
         closeFromTerminalHotkey(event);
@@ -203,6 +234,18 @@
         void copySelection();
         return false;
       }
+      if (event.type === 'keydown' && event.altKey && event.key === 'ArrowUp') {
+        jumpToCommand(-1);
+        return false;
+      }
+      if (event.type === 'keydown' && event.altKey && event.key === 'ArrowDown') {
+        jumpToCommand(1);
+        return false;
+      }
+      if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
+        void copySelectedCommandOutput();
+        return false;
+      }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') {
         void pasteClipboard();
         return false;
@@ -218,10 +261,57 @@
     });
   }
 
+  function registerShellIntegrationParser(xterm: Terminal) {
+    const parser = (xterm as unknown as { parser?: { registerOscHandler?: (id: number, handler: (data: string) => boolean) => { dispose: () => void } } }).parser;
+    shellParserDisposers.forEach((dispose) => dispose());
+    shellParserDisposers = [];
+    const handlers = [
+      parser?.registerOscHandler?.(133, (data) => handleShellIntegrationSequence(data)),
+      parser?.registerOscHandler?.(1337, (data) => handleShellIntegrationSequence(data)),
+      parser?.registerOscHandler?.(633, (data) => handleShellIntegrationSequence(data))
+    ];
+    shellParserDisposers = handlers
+      .filter((handler): handler is { dispose: () => void } => Boolean(handler))
+      .map((handler) => () => handler.dispose());
+  }
+
+  function handleShellIntegrationSequence(data: string) {
+    if (!commandState) {
+      return false;
+    }
+    const marker = parseTerminalShellSequence(data);
+    if (!marker) {
+      return false;
+    }
+    const line = terminal ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY : undefined;
+    commandState = reduceTerminalShellMarker(commandState, marker, line);
+    selectedCommandIndex = commandState.records.length - 1;
+    if (marker.kind === 'cwd' && marker.cwd) {
+      shellCwdMarkerSeen = true;
+      applyAuthoritativeTerminalCwd(marker.cwd);
+    }
+    return true;
+  }
+
+  function applyAuthoritativeTerminalCwd(cwd: string) {
+    if (!session || !cwd) {
+      return;
+    }
+    session = { ...session, cwd };
+    if (commandState) {
+      commandState = { ...commandState, cwd };
+    }
+  }
+
   function trackTerminalInput(data: string) {
     currentInputSelectionActive = false;
     for (const ch of data) {
       if (ch === '\r' || ch === '\n' || ch === '\u0003') {
+        if ((ch === '\r' || ch === '\n') && commandState && currentInputText.trim()) {
+          const line = terminal ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY : undefined;
+          commandState = beginTerminalCommandRecord(commandState, currentInputText.trim(), line);
+          selectedCommandIndex = commandState.records.length - 1;
+        }
         currentInputText = '';
       } else if (ch === '\b' || ch === '\u007f') {
         currentInputText = currentInputText.slice(0, -1);
@@ -271,6 +361,8 @@
     }
     resizeObserver?.disconnect();
     resizeObserver = null;
+    shellParserDisposers.forEach((dispose) => dispose());
+    shellParserDisposers = [];
     fitAddon?.dispose();
     fitAddon = null;
     terminal?.dispose();
@@ -396,6 +488,62 @@
     });
     if (text) {
       await writeTerminalData(text);
+    }
+  }
+
+  function commandRecords() {
+    return commandState?.records ?? [];
+  }
+
+  function selectedCommand(): TerminalCommandRecord | null {
+    const records = commandRecords();
+    if (!records.length) {
+      return null;
+    }
+    const index = selectedCommandIndex >= 0 ? selectedCommandIndex : records.length - 1;
+    return records[Math.max(0, Math.min(records.length - 1, index))] ?? null;
+  }
+
+  function jumpToCommand(direction: -1 | 1) {
+    const records = commandRecords();
+    if (!terminal || !records.length) {
+      return;
+    }
+    const current = selectedCommandIndex >= 0 ? selectedCommandIndex : records.length - 1;
+    selectedCommandIndex = Math.max(0, Math.min(records.length - 1, current + direction));
+    const line = records[selectedCommandIndex]?.startMarker ?? records[selectedCommandIndex]?.outputStartMarker;
+    if (typeof line === 'number') {
+      terminal.scrollToLine(line);
+    }
+  }
+
+  function commandOutputText(record: TerminalCommandRecord) {
+    if (!terminal) {
+      return '';
+    }
+    const buffer = terminal.buffer.active;
+    const start = Math.max(0, record.outputStartMarker ?? record.startMarker ?? 0);
+    const end = Math.max(start, record.endMarker ?? buffer.baseY + buffer.length - 1);
+    const lines: string[] = [];
+    for (let index = start; index <= end; index += 1) {
+      const line = buffer.getLine(index);
+      if (line) {
+        lines.push(line.translateToString(true));
+      }
+    }
+    return lines.join('\n').trim();
+  }
+
+  async function copySelectedCommandOutput() {
+    const record = selectedCommand();
+    if (!record) {
+      return;
+    }
+    const output = commandOutputText(record);
+    if (output) {
+      await navigator.clipboard?.writeText(output).catch((error) => {
+        console.debug('Persistent terminal command output copy unavailable', error);
+      });
     }
   }
 
@@ -532,6 +680,9 @@
   async function restartTerminal() {
     const oldSession = session?.sessionId;
     session = null;
+    commandState = null;
+    selectedCommandIndex = -1;
+    shellCwdMarkerSeen = false;
     currentInputText = '';
     currentInputSelectionActive = false;
     renderedSequences = new Set<string>();
@@ -579,6 +730,7 @@
         style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`}
       >
         <button type="button" role="menuitem" on:click={() => void copySelectionFromContextMenu()}>Copy</button>
+        <button type="button" role="menuitem" on:click={() => void copySelectedCommandOutput()}>Copy command output</button>
         <button type="button" role="menuitem" on:click={() => void pasteClipboardFromContextMenu()}>Paste</button>
       </div>
     {/if}

@@ -564,6 +564,9 @@ fn spawn_terminal_session(
             command.env("PATH", path);
         }
     }
+    if shell_integration_enabled() && matches!(profile, TerminalProfile::GitBash) {
+        apply_git_bash_shell_integration(&mut command);
+    }
     command.cwd(&cwd);
     let child = pty_pair.slave.spawn_command(command).map_err(|error| {
         format!(
@@ -616,6 +619,19 @@ fn apply_terminal_capability_environment(command: &mut CommandBuilder) {
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "JasonShell");
+}
+
+fn shell_integration_enabled() -> bool {
+    std::env::var("JASONSHELL_TERMINAL_SHELL_INTEGRATION")
+        .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+        .unwrap_or(true)
+}
+
+fn apply_git_bash_shell_integration(command: &mut CommandBuilder) {
+    command.env(
+        "PROMPT_COMMAND",
+        r#"__js_ec=$?; printf '\033]133;D;%s\a\033]133;CurrentDir;%s\a\033]133;A\a' "$__js_ec" "$PWD"; printf '\033]133;B\a'"#,
+    );
 }
 
 fn spawn_terminal_reader<R>(
@@ -920,7 +936,7 @@ fn powershell_startup_script() -> String {
         "Set-Alias -Name cat -Value Get-Content -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name grep -Value Select-String -Force -ErrorAction SilentlyContinue",
         "function which { Get-Command @args }",
-        r#"function prompt { $gitLine = $null; if (Get-Command git -ErrorAction SilentlyContinue) { $inside = git rev-parse --is-inside-work-tree 2>$null; if ($LASTEXITCODE -eq 0 -and $inside -eq 'true') { $branch = git symbolic-ref --quiet --short HEAD 2>$null; if (-not $branch) { $branch = git rev-parse --short HEAD 2>$null }; $raw = git status --porcelain=v1 -z 2>$null; $modified = 0; $deleted = 0; $untracked = 0; if ($raw) { foreach ($entry in ($raw -split "`0")) { if (-not $entry) { continue }; if ($entry.StartsWith('??')) { $untracked += 1; continue }; $xy = $entry.Substring(0, [Math]::Min(2, $entry.Length)); if ($xy.Contains('D')) { $deleted += 1 } else { $modified += 1 } } }; $parts = @($branch); if ($modified -gt 0) { $parts += "+$modified" }; if ($deleted -gt 0) { $parts += "-$deleted" }; if ($untracked -gt 0) { $parts += "?$untracked" }; $gitLine = $parts -join ' ' } }; Write-Host -NoNewline "$($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1))"; if ($gitLine) { Write-Host -NoNewline " ($gitLine)" -ForegroundColor Cyan }; " " }"#,
+        r#"function prompt { $last = if ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } elseif ($?) { 0 } else { 1 }; $cwd = $executionContext.SessionState.Path.CurrentLocation.Path; if ($env:JASONSHELL_TERMINAL_SHELL_INTEGRATION -ne '0' -and $env:JASONSHELL_TERMINAL_SHELL_INTEGRATION -ne 'false') { Write-Host -NoNewline "`e]133;D;$last`a`e]133;CurrentDir;$cwd`a`e]133;A`a" }; $gitLine = $null; if (Get-Command git -ErrorAction SilentlyContinue) { $inside = git rev-parse --is-inside-work-tree 2>$null; if ($LASTEXITCODE -eq 0 -and $inside -eq 'true') { $branch = git symbolic-ref --quiet --short HEAD 2>$null; if (-not $branch) { $branch = git rev-parse --short HEAD 2>$null }; $raw = git status --porcelain=v1 -z 2>$null; $modified = 0; $deleted = 0; $untracked = 0; if ($raw) { foreach ($entry in ($raw -split "`0")) { if (-not $entry) { continue }; if ($entry.StartsWith('??')) { $untracked += 1; continue }; $xy = $entry.Substring(0, [Math]::Min(2, $entry.Length)); if ($xy.Contains('D')) { $deleted += 1 } else { $modified += 1 } } }; $parts = @($branch); if ($modified -gt 0) { $parts += "+$modified" }; if ($deleted -gt 0) { $parts += "-$deleted" }; if ($untracked -gt 0) { $parts += "?$untracked" }; $gitLine = $parts -join ' ' } }; Write-Host -NoNewline "$($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1))"; if ($gitLine) { Write-Host -NoNewline " ($gitLine)" -ForegroundColor Cyan }; " " }"#,
     ]
     .join("; ")
 }
