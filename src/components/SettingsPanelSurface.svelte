@@ -313,6 +313,8 @@
     {#if settingsError}
       <p class="settings-error" role="alert">{settingsError}</p>
     {/if}
+  </section>
+
   <section class="settings-section" aria-labelledby="shell-bars-heading">
     <h2 id="shell-bars-heading">Shell bars</h2>
     <div class="settings-toggle-grid two">
