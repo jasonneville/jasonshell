@@ -13,6 +13,8 @@ const stackPopupSurface = readRepoFile('src/components/StackPopupSurface.svelte'
 const stackPopupCss = readRepoFile('src/components/StackPopupSurface.css');
 const stackTerminalPane = readRepoFile('src/components/StackTerminalPane.svelte');
 const stackTerminalPaneCss = readRepoFile('src/components/StackTerminalPane.css');
+const terminalPanelSurface = readRepoFile('src/components/TerminalPanelSurface.svelte');
+const terminalPanelCss = readRepoFile('src/components/TerminalPanelSurface.css');
 const stackTerminalViewModel = readRepoFile('src/features/stack-browser/terminalViewModel.ts');
 const settingsPanelSurface = readRepoFile('src/components/SettingsPanelSurface.svelte');
 const settingsSource = readRepoFile('src/lib/settings.ts');
@@ -25,6 +27,12 @@ const contractsSettingsTest = readRepoFile('tests/contractsSettings.test.mjs');
 const masterSpec = readRepoFile('master_spec.md');
 const changelog = readRepoFile('changelog.md');
 const packageJson = readRepoFile('package.json');
+
+test('stack terminal output chunks require sequenced dedupe identity', () => {
+  assert.match(stackPopupApi, /export type StackTerminalOutputChunk = \{[\s\S]*sequence: number;[\s\S]*\};/);
+  assert.doesNotMatch(stackPopupApi, /sequence\?: number/);
+  assert.match(stackTerminalPane, /type StackTerminalOutputPayload = \{[\s\S]*sequence: number;[\s\S]*stream\?: 'stdout' \| 'stderr' \| 'system'[\s\S]*\}/);
+});
 
 test('stack terminal IPC command names are stable and backend-registered', () => {
   assert.match(commandsSource, /startStackTerminal:\s*'start_stack_terminal'/);
@@ -83,7 +91,8 @@ test('terminal poll fallback keeps writing chunks after first output with sequen
   assert.match(stackTerminalPane, /if \(result\.chunks\?\.length\) \{/);
   assert.doesNotMatch(stackTerminalPane, /if \(result\.chunks\?\.length && !firstOutputReceived\)/);
   assert.match(stackTerminalPane, /for \(const chunk of result\.chunks\) \{\s*enqueueOutputChunk\(chunk\);/);
-  assert.match(stackTerminalPane, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.sequence\}`/);
+  assert.match(stackTerminalPane, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.stream \?\? 'stdout'\}:\$\{chunk\.sequence\}`/);
+  assert.doesNotMatch(stackTerminalPane, /writeOutput\(result\.output\)/);
   assert.match(stackTerminalPane, /renderedSequences\.has\(sequenceKey\)/);
   assert.match(stackTerminalPane, /if \(result\.sessionId !== session\?\.sessionId\) \{\s*return;/);
 });
@@ -124,7 +133,25 @@ test('phase 1 terminal resize command contract is exposed across IPC, capabiliti
   assert.match(stackTerminalPane, /resizeStackTerminal\(sessionId, cols, rows/);
 });
 
-test('phase 1 terminal poll and write paths serialize frontend reads for one active session', () => {
+test('terminal TUI input stays low-latency and transparent', () => {
+  assert.match(stackTerminalPane, /let writeQueue: Promise<void> = Promise\.resolve\(\)/);
+  assert.match(stackTerminalPane, /function enqueueTerminalWrite/);
+  assert.match(stackTerminalPane, /enqueueTerminalWrite\(\(\) => writeStackTerminal\(sessionId, data\)\)/);
+  assert.doesNotMatch(
+    stackTerminalPane,
+    /async function writeTerminalData[\s\S]{0,360}pollOutput\(\)/,
+    'normal keystrokes must not wait for a read/poll roundtrip'
+  );
+  assert.match(stackTerminalPane, /convertEol:\s*false/);
+  assert.match(stackTerminalPane, /windowsPty:\s*\{\s*backend:\s*'conpty'\s*\}/);
+  assert.doesNotMatch(
+    stackTerminalPane,
+    /event\.key === 'Escape'[\s\S]{0,180}onCloseRequest\(\)/,
+    'Escape must pass through to full-screen TUIs unless Stack terminal search is open'
+  );
+});
+
+test('phase 1 terminal poll and resize paths serialize frontend reads for one active session', () => {
   assert.match(stackTerminalPane, /let pollInFlight\s*=/);
   assert.match(stackTerminalPane, /let pollQueued\s*=/);
   assert.match(stackTerminalPane, /async function pollOutput/);
@@ -136,7 +163,6 @@ test('phase 1 terminal poll and write paths serialize frontend reads for one act
   assert.match(stackTerminalPane, /void pollOutput\(\)/);
   assert.match(stackTerminalPane, /let operationQueue: Promise<void> = Promise\.resolve\(\)/);
   assert.match(stackTerminalPane, /function enqueueOperation/);
-  assert.match(stackTerminalPane, /enqueueOperation\(\(\) => writeStackTerminal\(sessionId, data\)\)[\s\S]{0,260}pollOutput\(\)/);
   assert.match(stackTerminalPane, /enqueueOperation\(\(\) => readStackTerminal\(sessionId\)\)/);
   assert.match(stackTerminalPane, /enqueueOperation\(\(\) => resizeStackTerminal/);
 });
@@ -191,12 +217,17 @@ test('stack terminal text metrics stay monospace and PTY redraw sequences stay x
     /if \(terminalOutputHasClear\(nextOutputChunk\)\)[\s\S]{0,260}return;/,
     'clear/readline/autocomplete redraw bytes must pass through xterm instead of being intercepted'
   );
-  assert.match(stackTerminalPane, /terminal\?\.write\(nextOutputChunk\);[\s\S]{0,80}terminal\?\.scrollToBottom\(\)/);
+  assert.match(stackTerminalPane, /terminal\?\.write\(nextOutputChunk\);/);
+  assert.doesNotMatch(
+    stackTerminalPane,
+    /function writeOutput[\s\S]{0,520}terminal\?\.scrollToBottom\(\)/,
+    'full-screen TUI redraws must not be followed by forced scroll pinning'
+  );
   assert.match(stackTerminalPaneCss, /font-feature-settings: "liga" 0, "calt" 0, "tnum" 1;/);
   assert.match(stackTerminalPaneCss, /font-variant-ligatures: none;/);
   assert.match(stackTerminalPaneCss, /letter-spacing: 0;/);
   assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-rows\)/);
-  assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-screen\)[\s\S]{0,80}height: 100% !important;/);
+  assert.doesNotMatch(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-screen\)[\s\S]{0,80}height: 100% !important;/);
 });
 
 test('phase 4 terminal link detector recognizes safe URL, path, localhost, and git hash targets', () => {
@@ -218,6 +249,7 @@ test('phase 3 backend keeps live sessions registered and records PTY size metada
   assert.match(rustTerminal, /size: StackTerminalSize/);
   assert.match(rustTerminal, /session\.size = StackTerminalSize \{/);
   assert.match(rustTerminal, /mpsc::sync_channel\(1024\)/);
+  assert.match(rustTerminal, /decode_terminal_output_chunk\(&mut pending_utf8, &buffer\[..count\]\)/);
   assert.doesNotMatch(
     rustTerminal,
     /let mut session = take_terminal_session\(state, &request\.session_id\)\?/,
@@ -315,8 +347,7 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /pollTimer = window\.setInterval/);
   assert.match(terminalPanelSurface, /stopStackTerminal\(oldSession\)/);
   assert.match(terminalPanelSurface, /bind:this=\{host\}/);
-  assert.match(terminalPanelSurface, /function scrollToBottom\(\)/);
-  assert.match(terminalPanelSurface, /terminal\?\.scrollToBottom\(\)/);
+  assert.doesNotMatch(terminalPanelSurface, /writeTerminalOutput\(result\.output\)/);
   assert.doesNotMatch(terminalPanelSurface, /function anchorCommandLineToLastRow\(\)/);
   assert.doesNotMatch(terminalPanelSurface, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
   assert.doesNotMatch(terminalPanelSurface, /terminalOutputHasClear/);
@@ -356,6 +387,23 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(terminalPanelCss, /\.terminal-panel-context-menu/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm\)/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-helper-textarea\)/);
+  assert.match(terminalPanelCss, /opacity: 0 !important;/);
+  assert.match(terminalPanelCss, /caret-color: transparent !important;/);
+  assert.match(terminalPanelCss, /left: -10000px !important;/);
+});
+
+test('terminal removes xterm assistive mirrors from visible layout', () => {
+  assert.match(terminalPanelSurface, /screenReaderMode:\s*false/);
+  assert.match(terminalPanelSurface, /windowsPty:\s*\{\s*backend:\s*'conpty'\s*\}/);
+  assert.match(stackTerminalPane, /screenReaderMode:\s*false/);
+  assert.match(stackTerminalPane, /windowsPty:\s*\{\s*backend:\s*'conpty'\s*\}/);
+  assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-accessibility\)/);
+  assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-accessibility-tree\)/);
+  assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.live-region\)/);
+  assert.match(terminalPanelCss, /display: none !important;/);
+  assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-accessibility\)/);
+  assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-accessibility-tree\)/);
+  assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.live-region\)/);
 });
 
 test('terminal cwd changes update Stack Browser path and breadcrumbs immediately', () => {
@@ -391,6 +439,10 @@ test('stack terminal PowerShell profile loads normal shell affordances and norma
   assert.match(rustTerminal, /use portable_pty::\{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize\}/);
   assert.match(rustTerminal, /native_pty_system\(\)/);
   assert.match(rustTerminal, /\.openpty\(PtySize/);
+  assert.match(rustTerminal, /apply_terminal_capability_environment\(&mut command\)/);
+  assert.match(rustTerminal, /command\.env\("TERM", "xterm-256color"\)/);
+  assert.match(rustTerminal, /command\.env\("COLORTERM", "truecolor"\)/);
+  assert.match(rustTerminal, /command\.env\("TERM_PROGRAM", "JasonShell"\)/);
   assert.match(rustTerminal, /\.slave\.spawn_command\(command\)/);
   assert.match(rustTerminal, /master: Option<Arc<Mutex<Box<dyn MasterPty \+ Send>>>>/);
   assert.match(rustTerminal, /master: Some\(Arc::new\(Mutex::new\(pty_pair\.master\)\)\)/);
@@ -428,7 +480,7 @@ test('stack terminal layout is flat, dense, and isolated from file grid interact
   assert.match(stackPopupCss, /\.stack-terminal \{[\s\S]*grid-row: 3 \/ -1;[\s\S]*grid-template-rows: minmax\(0, 1fr\);/);
   assert.match(stackPopupCss, /\.stack-terminal \{[\s\S]*border: none;[\s\S]*border-radius: 0;/);
   assert.match(stackPopupCss, /\.stack-terminal-output \{[\s\S]*background: #06080b;[\s\S]*padding: 0;/);
-  assert.match(stackPopupCss, /\.stack-terminal-output :global\(\.xterm-helper-textarea\) \{[\s\S]*border: none !important;[\s\S]*box-shadow: none !important;[\s\S]*outline: 0 !important;/);
+  assert.match(stackPopupCss, /\.stack-terminal-output :global\(\.xterm-helper-textarea\) \{[\s\S]*caret-color: transparent !important;[\s\S]*left: -10000px !important;[\s\S]*opacity: 0 !important;/);
   assert.doesNotMatch(stackPopupCss, /\.stack-terminal-command span/);
   assert.doesNotMatch(stackPopupCss, /\.stack-terminal[\s\S]{0,220}box-shadow: var\(--js-shadow-panel\)/);
 });

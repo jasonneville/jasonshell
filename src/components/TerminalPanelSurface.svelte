@@ -23,6 +23,8 @@
     running?: boolean;
   };
 
+  const TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open';
+
   const TERMINAL_PANEL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SFMono-Regular", monospace';
 
   let host: HTMLDivElement | null = null;
@@ -39,6 +41,7 @@
   let pollInFlight = false;
   let pollQueued = false;
   let operationQueue: Promise<void> = Promise.resolve();
+  let writeQueue: Promise<void> = Promise.resolve();
   let renderedSequences = new Set<string>();
   let lastResizeKey = '';
   let unlisteners: Array<() => void> = [];
@@ -46,15 +49,19 @@
   let contextMenu: { x: number; y: number } | null = null;
   let currentInputText = '';
   let currentInputSelectionActive = false;
+  let visibleResizeSettled = false;
+  let visibleResizePromise: Promise<void> | null = null;
 
   onMount(() => {
     listenersDisposed = false;
     document.addEventListener('click', closeTerminalContextMenu);
+    window.addEventListener('focus', handlePanelOpen);
     void initializeTerminalListeners();
     void startTerminal();
     return () => {
       listenersDisposed = true;
       document.removeEventListener('click', closeTerminalContextMenu);
+      window.removeEventListener('focus', handlePanelOpen);
       stopPolling();
       clearStartupTimer();
       disposeTerminalView();
@@ -80,12 +87,17 @@
     };
 
     register(
+      listen(TERMINAL_PANEL_OPEN_EVENT, () => {
+        handlePanelOpen();
+      })
+    );
+
+    register(
       listen<TerminalOutputPayload>('stack-terminal:output', (event) => {
         if (event.payload.sessionId !== session?.sessionId) {
           return;
         }
         writeTerminalChunk(event.payload);
-        scrollToBottom();
       })
     );
 
@@ -113,6 +125,7 @@
       session = await startPersistentTerminal();
       lifecycle = 'waiting';
       status = 'Waiting for terminal output...';
+      handlePanelOpen();
       startPolling();
       void pollTerminalOutput();
       focusTerminal();
@@ -146,14 +159,16 @@
     disposeTerminalView();
     terminal = new Terminal({
       allowProposedApi: false,
-      convertEol: true,
+      convertEol: false,
       cursorBlink: true,
       cursorStyle: 'block',
       fontFamily: TERMINAL_PANEL_FONT_FAMILY,
       fontSize: 13,
       letterSpacing: 0,
       lineHeight: 1.25,
+      screenReaderMode: false,
       scrollback: 8000,
+      windowsPty: { backend: 'conpty' },
       theme: {
         background: '#05070a',
         foreground: '#d7e2f5',
@@ -263,17 +278,41 @@
     lastResizeKey = '';
   }
 
+  function handlePanelOpen() {
+    visibleResizeSettled = false;
+    void scheduleFitAfterPanelOpen();
+  }
+
+  async function scheduleFitAfterPanelOpen() {
+    await tick();
+    focusTerminal();
+    visibleResizePromise = resizeTerminalToFit()
+      .catch((error) => {
+        console.debug('Persistent terminal visible resize unavailable', error);
+      })
+      .finally(() => {
+        visibleResizePromise = null;
+      });
+    await visibleResizePromise;
+    scheduleFit();
+    window.setTimeout(() => scheduleFit(), 60);
+  }
+
   function scheduleFit() {
     if (resizeFrame !== null) {
       window.cancelAnimationFrame(resizeFrame);
     }
     resizeFrame = window.requestAnimationFrame(() => {
       resizeFrame = null;
-      fitTerminal();
+      void resizeTerminalToFit();
     });
   }
 
   function fitTerminal() {
+    void resizeTerminalToFit();
+  }
+
+  async function resizeTerminalToFit() {
     if (!terminal || !fitAddon || !session) {
       return;
     }
@@ -281,20 +320,36 @@
       fitAddon.fit();
       const width = host?.clientWidth ?? 0;
       const height = host?.clientHeight ?? 0;
-      const resizeKey = `${session.sessionId}:${terminal.cols}:${terminal.rows}:${width}:${height}`;
-      if (resizeKey === lastResizeKey || terminal.cols <= 0 || terminal.rows <= 0) {
+      const cols = terminal.cols;
+      const rows = terminal.rows;
+      const sessionId = session.sessionId;
+      const resizeKey = `${sessionId}:${cols}:${rows}:${width}:${height}`;
+      if (resizeKey === lastResizeKey || cols <= 0 || rows <= 0) {
+        visibleResizeSettled = resizeKey === lastResizeKey && cols > 0 && rows > 0;
         return;
       }
       lastResizeKey = resizeKey;
-      void enqueueTerminalOperation(() =>
-        resizeStackTerminal(session!.sessionId, terminal!.cols, terminal!.rows, width, height)
-      ).catch((error) => {
-        lastResizeKey = '';
-        console.error('Failed to resize persistent terminal', error);
-      });
+      await enqueueTerminalOperation(() => resizeStackTerminal(sessionId, cols, rows, width, height));
+      visibleResizeSettled = true;
     } catch (error) {
+      visibleResizeSettled = false;
+      lastResizeKey = '';
       console.debug('Persistent terminal fit unavailable', error);
+      throw error;
     }
+  }
+
+  async function ensureVisibleResizeBeforeInput() {
+    if (visibleResizeSettled) {
+      return;
+    }
+    if (visibleResizePromise) {
+      await visibleResizePromise;
+      return;
+    }
+    await resizeTerminalToFit().catch((error) => {
+      console.debug('Persistent terminal input proceeding without visible resize', error);
+    });
   }
 
   async function writeTerminalData(data: string) {
@@ -302,8 +357,17 @@
       return;
     }
     const sessionId = session.sessionId;
-    await enqueueTerminalOperation(() => writeStackTerminal(sessionId, data));
-    await pollTerminalOutput();
+    await ensureVisibleResizeBeforeInput();
+    await enqueueTerminalWrite(() => writeStackTerminal(sessionId, data));
+  }
+
+  function enqueueTerminalWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = writeQueue.then(operation, operation);
+    writeQueue = queued.then(
+      () => undefined,
+      () => undefined
+    );
+    return queued;
   }
 
   function enqueueTerminalOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -389,10 +453,6 @@
         for (const chunk of result.chunks) {
           writeTerminalChunk(chunk);
         }
-        scrollToBottom();
-      } else if (result.output) {
-        writeTerminalOutput(result.output);
-        scrollToBottom();
       }
       if (result.exited) {
         stopPolling();
@@ -416,7 +476,7 @@
 
   function writeTerminalChunk(chunk: StackTerminalOutputChunk) {
     if (typeof chunk.sequence === 'number') {
-      const sequenceKey = `${chunk.sessionId}:${chunk.sequence}`;
+      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
       if (renderedSequences.has(sequenceKey)) {
         return;
       }
@@ -433,7 +493,6 @@
       clearStartupTimer();
     }
     terminal?.write(output);
-    terminal?.scrollToBottom();
   }
 
   function terminalOutputHasVisibleText(output: string) {
@@ -445,10 +504,6 @@
       .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
       .replace(/\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
       .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
-  }
-
-  function scrollToBottom() {
-    void tick().then(() => terminal?.scrollToBottom());
   }
 
   function focusTerminal() {

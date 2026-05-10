@@ -84,8 +84,10 @@
   letter-spacing: 0 !important;
 }
 
-.terminal-panel-output :global(.xterm-screen) {
-  height: 100% !important;
+.terminal-panel-output :global(.xterm-accessibility),
+.terminal-panel-output :global(.xterm-accessibility-tree),
+.terminal-panel-output :global(.live-region) {
+  display: none !important;
 }
 
 .terminal-panel-output :global(.xterm-viewport),
@@ -94,9 +96,20 @@
 }
 
 .terminal-panel-output :global(.xterm-helper-textarea) {
+  background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+  caret-color: transparent !important;
+  color: transparent !important;
+  height: 0 !important;
+  left: -10000px !important;
+  opacity: 0 !important;
   outline: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  resize: none !important;
+  top: 0 !important;
+  width: 0 !important;
 }
 
 .terminal-panel-status {

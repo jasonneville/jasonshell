@@ -128,7 +128,7 @@ export type StackTerminalOutputChunk = {
   sessionId: string;
   stream?: 'stdout' | 'stderr' | 'system';
   text: string;
-  sequence?: number;
+  sequence: number;
 };
 
 export function normalizeStackTerminalProfile(value: unknown): StackTerminalProfile {

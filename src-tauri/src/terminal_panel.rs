@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
 use crate::shell_windows::{TERMINAL_PANEL_LABEL, TERMINAL_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
+pub const TERMINAL_PANEL_OPEN_EVENT: &str = "terminal-panel:open";
 pub const TERMINAL_PANEL_CLOSED_EVENT: &str = "terminal-panel:closed";
 const TERMINAL_PANEL_MARGIN_PHYSICAL: i32 = 6;
 const TERMINAL_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
@@ -54,7 +55,10 @@ pub fn show_terminal_panel(
         .map_err(|error| format!("Failed to show the terminal panel: {error}"))?;
     panel
         .set_focus()
-        .map_err(|error| format!("Failed to focus the terminal panel: {error}"))
+        .map_err(|error| format!("Failed to focus the terminal panel: {error}"))?;
+    app_handle
+        .emit_to(TERMINAL_PANEL_LABEL, TERMINAL_PANEL_OPEN_EVENT, ())
+        .map_err(|error| format!("Failed to publish terminal panel open event: {error}"))
 }
 
 #[tauri::command]

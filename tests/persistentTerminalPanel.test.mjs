@@ -15,6 +15,7 @@ const ipcSurfaces = read('src/ipc/surfaces.ts');
 const ipcCommands = read('src/ipc/commands.ts');
 const terminalApi = read('src/lib/persistentTerminal.ts');
 const terminalPanelApi = read('src/lib/terminalPanel.ts');
+const terminalPanelBackend = read('src-tauri/src/terminal_panel.rs');
 const shellWindows = read('src-tauri/src/shell_windows.rs');
 const main = read('src-tauri/src/main.rs');
 const contracts = read('src-tauri/src/contracts.rs');
@@ -44,6 +45,8 @@ test('top bar terminal button sits before quick commands and toggles terminal pa
   assert.match(topBar, /toggleTerminalPanel\(event\.currentTarget\)/);
   assert.match(topBar, /class="terminal-control"[\s\S]*class="command-control"/);
   assert.match(topBarCss, /\.top-bar \.terminal-button/);
+  assert.match(terminalPanelBackend, /TERMINAL_PANEL_OPEN_EVENT: &str = "terminal-panel:open"/);
+  assert.match(terminalPanelBackend, /emit_to\(TERMINAL_PANEL_LABEL, TERMINAL_PANEL_OPEN_EVENT/);
 });
 
 test('Stack Browser embedded CLI is isolated in extracted terminal pane', () => {
@@ -61,10 +64,36 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /onMount\(\(\) => \{/);
   assert.match(terminalPanel, /void startTerminal\(\)/);
   assert.match(terminalPanel, /startPersistentTerminal\(\)/);
+  assert.match(terminalPanel, /TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open'/);
+  assert.match(terminalPanel, /listen\(TERMINAL_PANEL_OPEN_EVENT/);
+  assert.match(terminalPanel, /window\.addEventListener\('focus', handlePanelOpen\)/);
+  assert.match(terminalPanel, /function handlePanelOpen/);
+  assert.match(terminalPanel, /function scheduleFitAfterPanelOpen/);
+  assert.match(terminalPanel, /visibleResizePromise = resizeTerminalToFit\(\)/);
+  assert.match(terminalPanel, /window\.setTimeout\(\(\) => scheduleFit\(\), 60\)/);
+  assert.match(terminalPanel, /function ensureVisibleResizeBeforeInput/);
+  assert.match(terminalPanel, /await ensureVisibleResizeBeforeInput\(\);[\s\S]{0,120}writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanel, /terminal-panel-status/);
   assert.match(terminalPanel, /role=\{lifecycle === 'failed' \? 'alert' : 'status'\}/);
   assert.match(terminalPanel, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanel, /writeStackTerminal\(sessionId, data\)/);
+  assert.doesNotMatch(terminalPanel, /writeTerminalOutput\(result\.output\)/);
+  assert.match(terminalPanel, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.stream \?\? 'stdout'\}:\$\{chunk\.sequence\}`/);
+  assert.match(terminalPanel, /let writeQueue: Promise<void> = Promise\.resolve\(\)/);
+  assert.match(terminalPanel, /function enqueueTerminalWrite/);
+  assert.match(terminalPanel, /enqueueTerminalWrite\(\(\) => writeStackTerminal\(sessionId, data\)\)/);
+  assert.doesNotMatch(
+    terminalPanel,
+    /async function writeTerminalData[\s\S]{0,360}pollTerminalOutput\(\)/,
+    'normal terminal input must not wait for a read/poll roundtrip'
+  );
+  assert.match(terminalPanel, /convertEol:\s*false/);
+  assert.match(terminalPanel, /windowsPty:\s*\{\s*backend:\s*'conpty'\s*\}/);
+  assert.doesNotMatch(
+    terminalPanel,
+    /function writeTerminalOutput[\s\S]{0,460}terminal\?\.scrollToBottom\(\)/,
+    'full-screen TUI redraws must not be followed by forced scroll pinning'
+  );
   assert.match(terminalPanel, /trackTerminalInput\(data\)/);
   assert.match(terminalPanel, /resizeStackTerminal\(/);
   assert.match(terminalPanel, /terminal\.attachCustomKeyEventHandler/);
@@ -95,6 +124,9 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanelCss, /\.terminal-panel-output/);
   assert.match(terminalPanelCss, /\.terminal-panel-context-menu/);
   assert.match(terminalPanelCss, /font-feature-settings: "liga" 0, "calt" 0, "tnum" 1;/);
+  assert.match(terminalPanelCss, /opacity: 0 !important;/);
+  assert.match(terminalPanelCss, /caret-color: transparent !important;/);
+  assert.match(terminalPanelCss, /left: -10000px !important;/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-rows\)/);
 });
 
@@ -110,6 +142,7 @@ test('persistent terminal output is routed to the terminal panel window', () => 
 
 test('contracts list terminal panel surface and commands', () => {
   assert.match(contracts, /TERMINAL_PANEL: &str = "terminal-panel"/);
+  assert.match(contracts, /TERMINAL_PANEL_OPEN: &str = "terminal-panel:open"/);
   assert.match(contracts, /SHOW_TERMINAL_PANEL/);
   assert.match(contracts, /HIDE_TERMINAL_PANEL/);
   assert.match(contracts, /START_PERSISTENT_TERMINAL/);

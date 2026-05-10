@@ -555,6 +555,7 @@ fn spawn_terminal_session(
         .map_err(|error| format!("Failed to create Stack Browser terminal PTY: {error}"))?;
     let mut command = CommandBuilder::new(plan.executable.to_string_lossy().to_string());
     command.args(&plan.args);
+    apply_terminal_capability_environment(&mut command);
     if matches!(
         profile,
         TerminalProfile::WindowsTerminal | TerminalProfile::PowerShell
@@ -611,6 +612,12 @@ fn spawn_terminal_session(
     })
 }
 
+fn apply_terminal_capability_environment(command: &mut CommandBuilder) {
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("TERM_PROGRAM", "JasonShell");
+}
+
 fn spawn_terminal_reader<R>(
     mut reader: R,
     tx: SyncSender<TerminalReaderMessage>,
@@ -623,12 +630,16 @@ fn spawn_terminal_reader<R>(
 {
     thread::spawn(move || {
         let mut buffer = [0_u8; 4096];
+        let mut pending_utf8 = Vec::new();
         let mut sequence = 1_u64;
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
-                    let text = String::from_utf8_lossy(&buffer[..count]).to_string();
+                    let text = decode_terminal_output_chunk(&mut pending_utf8, &buffer[..count]);
+                    if text.is_empty() {
+                        continue;
+                    }
                     let chunk = StackTerminalOutputChunk {
                         session_id: session_id.clone(),
                         stream,
@@ -657,7 +668,68 @@ fn spawn_terminal_reader<R>(
                 Err(_) => break,
             }
         }
+        let text = flush_terminal_output_decoder(&mut pending_utf8);
+        if !text.is_empty() {
+            let chunk = StackTerminalOutputChunk {
+                session_id: session_id.clone(),
+                stream,
+                text: text.clone(),
+                sequence,
+            };
+            if let Some(app_handle) = &app_handle {
+                let _ = app_handle.emit_to(
+                    target_label.as_str(),
+                    crate::contracts::events::STACK_TERMINAL_OUTPUT,
+                    &chunk,
+                );
+            }
+            let _ = tx.send(TerminalReaderMessage {
+                stream,
+                text,
+                sequence: chunk.sequence,
+            });
+        }
     });
+}
+
+fn decode_terminal_output_chunk(pending: &mut Vec<u8>, bytes: &[u8]) -> String {
+    pending.extend_from_slice(bytes);
+    match std::str::from_utf8(pending) {
+        Ok(valid) => {
+            let text = valid.to_string();
+            pending.clear();
+            text
+        }
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            if valid_up_to == 0 {
+                if error.error_len().is_none() {
+                    return String::new();
+                }
+                let text = String::from_utf8_lossy(pending).to_string();
+                pending.clear();
+                return text;
+            }
+            let text = String::from_utf8_lossy(&pending[..valid_up_to]).to_string();
+            let remainder = pending[valid_up_to..].to_vec();
+            *pending = remainder;
+            if error.error_len().is_some() && !pending.is_empty() {
+                let replacement = String::from_utf8_lossy(pending).to_string();
+                pending.clear();
+                return format!("{text}{replacement}");
+            }
+            text
+        }
+    }
+}
+
+fn flush_terminal_output_decoder(pending: &mut Vec<u8>) -> String {
+    if pending.is_empty() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(pending).to_string();
+    pending.clear();
+    text
 }
 
 fn drain_terminal_output(session: &mut StackTerminalSession) -> Vec<StackTerminalOutputChunk> {
@@ -1307,6 +1379,19 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn terminal_output_decoder_preserves_split_utf8_sequences() {
+        let mut pending = Vec::new();
+        assert_eq!(decode_terminal_output_chunk(&mut pending, &[0xE2, 0x94]), "");
+        assert_eq!(decode_terminal_output_chunk(&mut pending, &[0x80, b' ', b'O', b'K']), "─ OK");
+        assert!(pending.is_empty());
+
+        assert_eq!(decode_terminal_output_chunk(&mut pending, b"bad"), "bad");
+        assert_eq!(decode_terminal_output_chunk(&mut pending, &[0xF0, 0x9F]), "");
+        assert_eq!(flush_terminal_output_decoder(&mut pending), "�");
+        assert!(pending.is_empty());
     }
 
     #[test]

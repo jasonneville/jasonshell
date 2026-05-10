@@ -36,8 +36,10 @@
   letter-spacing: 0 !important;
 }
 
-.stack-terminal-output :global(.xterm-screen) {
-  height: 100% !important;
+.stack-terminal-output :global(.xterm-accessibility),
+.stack-terminal-output :global(.xterm-accessibility-tree),
+.stack-terminal-output :global(.live-region) {
+  display: none !important;
 }
 
 .stack-terminal-output :global(.xterm-viewport),
@@ -46,9 +48,20 @@
 }
 
 .stack-terminal-output :global(.xterm-helper-textarea) {
+  background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+  caret-color: transparent !important;
+  color: transparent !important;
+  height: 0 !important;
+  left: -10000px !important;
+  opacity: 0 !important;
   outline: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  resize: none !important;
+  top: 0 !important;
+  width: 0 !important;
 }
 
 .stack-terminal-search {

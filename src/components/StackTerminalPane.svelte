@@ -24,7 +24,7 @@
 
   type TerminalLifecycleState = 'idle' | 'starting' | 'runningWaitingForFirstByte' | 'running' | 'exited' | 'failed';
   type StackTerminalClosedPayload = { sessionId: string; running?: boolean };
-  type StackTerminalOutputPayload = { sessionId: string; text: string; sequence?: number };
+  type StackTerminalOutputPayload = { sessionId: string; text: string; sequence: number; stream?: 'stdout' | 'stderr' | 'system' };
   type StackTerminalRenderer = 'webgl' | 'default' | 'fallback';
 
   export let currentPath = '';
@@ -50,6 +50,7 @@
   let startupTimeout: number | null = null;
   let pollTimer: number | null = null;
   let operationQueue: Promise<void> = Promise.resolve();
+  let writeQueue: Promise<void> = Promise.resolve();
   let pollInFlight = false;
   let pollQueued = false;
   let listenersDisposed = false;
@@ -223,7 +224,7 @@
 
     const nextTerminal = new Terminal({
       allowProposedApi: false,
-      convertEol: true,
+      convertEol: false,
       cursorBlink: true,
       cursorStyle: 'block',
       disableStdin: !session || busy,
@@ -231,7 +232,9 @@
       fontSize: 13,
       letterSpacing: 0,
       lineHeight: 1.25,
+      screenReaderMode: false,
       scrollback: 5000,
+      windowsPty: { backend: 'conpty' },
       theme: {
         background: '#06080b',
         foreground: '#d7e2f5',
@@ -276,11 +279,11 @@
         void pasteClipboard();
         return false;
       }
-      if (event.type === 'keydown' && event.key === 'Escape') {
-        if (searchOpen) {
-          closeSearch();
-          return false;
-        }
+      if (event.type === 'keydown' && event.key === 'Escape' && searchOpen) {
+        closeSearch();
+        return false;
+      }
+      if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'w') {
         void onCloseRequest();
         return false;
       }
@@ -414,12 +417,11 @@
     for (const chunk of chunks) {
       writeChunk(chunk);
     }
-    terminal?.scrollToBottom();
   }
 
   function writeChunk(chunk: StackTerminalOutputPayload | StackTerminalOutputChunk) {
     if (typeof chunk.sequence === 'number') {
-      const sequenceKey = `${chunk.sessionId}:${chunk.sequence}`;
+      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
       if (renderedSequences.has(sequenceKey)) {
         return;
       }
@@ -459,8 +461,13 @@
       return;
     }
     const sessionId = session.sessionId;
-    await enqueueOperation(() => writeStackTerminal(sessionId, data));
-    await pollOutput();
+    await enqueueTerminalWrite(() => writeStackTerminal(sessionId, data));
+  }
+
+  function enqueueTerminalWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = writeQueue.then(operation, operation);
+    writeQueue = queued.then(() => undefined, () => undefined);
+    return queued;
   }
 
   function enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -544,9 +551,6 @@
         for (const chunk of result.chunks) {
           enqueueOutputChunk(chunk);
         }
-      } else if (result.output) {
-        writeOutput(result.output);
-        terminal?.scrollToBottom();
       }
       await applyCwd(result.cwd || cwd);
       if (result.exited) {
@@ -583,7 +587,6 @@
     const nextOutput = output + nextOutputChunk;
     output = compactTerminalOutput(nextOutput);
     terminal?.write(nextOutputChunk);
-    terminal?.scrollToBottom();
   }
 
   async function applyCwd(nextCwd: string) {

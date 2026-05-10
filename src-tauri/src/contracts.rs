@@ -293,6 +293,7 @@ pub mod events {
     pub const CALENDAR_PANEL_OPEN: &str = "calendar-panel:open";
     pub const CALENDAR_PANEL_CLOSED: &str = "calendar-panel:closed";
     pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
+    pub const TERMINAL_PANEL_OPEN: &str = "terminal-panel:open";
     pub const TERMINAL_PANEL_CLOSED: &str = "terminal-panel:closed";
     pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
@@ -331,6 +332,7 @@ pub mod events {
         CALENDAR_PANEL_OPEN,
         CALENDAR_PANEL_CLOSED,
         COMMAND_PANEL_CLOSED,
+        TERMINAL_PANEL_OPEN,
         TERMINAL_PANEL_CLOSED,
         PROCESS_MANAGER_OPEN,
         PROCESS_MANAGER_CLOSED,
@@ -494,6 +496,7 @@ mod tests {
                 "calendar-panel:open",
                 "calendar-panel:closed",
                 "command-panel:closed",
+                "terminal-panel:open",
                 "terminal-panel:closed",
                 "process-manager:open",
                 "process-manager:closed",
