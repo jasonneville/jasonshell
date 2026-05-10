@@ -108,15 +108,27 @@ export type StackTerminalSession = {
   sessionId: string;
   cwd: string;
   profile: StackTerminalProfile;
-  output?: string | null;
+  running: boolean;
+  cols?: number;
+  rows?: number;
+  pixelWidth?: number | null;
+  pixelHeight?: number | null;
 };
 
 export type StackTerminalReadResult = {
   sessionId: string;
   cwd: string;
   output: string;
+  chunks?: StackTerminalOutputChunk[];
   exited: boolean;
   exitCode?: number | null;
+};
+
+export type StackTerminalOutputChunk = {
+  sessionId: string;
+  stream?: 'stdout' | 'stderr' | 'system';
+  text: string;
+  sequence: number;
 };
 
 export function normalizeStackTerminalProfile(value: unknown): StackTerminalProfile {
@@ -585,6 +597,16 @@ export function readStackTerminal(sessionId: string): Promise<StackTerminalReadR
 
 export function writeStackTerminal(sessionId: string, input: string): Promise<void> {
   return invoke(IPC_COMMANDS.writeStackTerminal, { sessionId, input });
+}
+
+export function resizeStackTerminal(
+  sessionId: string,
+  cols: number,
+  rows: number,
+  pixelWidth?: number,
+  pixelHeight?: number
+): Promise<void> {
+  return invoke(IPC_COMMANDS.resizeStackTerminal, { sessionId, cols, rows, pixelWidth, pixelHeight });
 }
 
 export function stopStackTerminal(sessionId: string): Promise<void> {

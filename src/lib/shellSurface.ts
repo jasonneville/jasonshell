@@ -8,6 +8,7 @@ export type ShellSurface =
   | 'control-plane'
   | 'settings-panel'
   | 'tray-panel'
+  | 'terminal-panel'
   | 'command-panel'
   | 'audio-panel'
   | 'calendar-panel'
@@ -55,6 +56,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Notification area icon relay',
     title: 'JasonShell Tray'
   },
+  'terminal-panel': {
+    subtitle: 'Persistent JasonShell terminal',
+    title: 'JasonShell Terminal'
+  },
   'command-panel': {
     subtitle: 'Quick command launcher and editor',
     title: 'JasonShell Commands'
@@ -84,6 +89,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'control-plane'
     || label === 'settings-panel'
     || label === 'tray-panel'
+    || label === 'terminal-panel'
     || label === 'command-panel'
     || label === 'audio-panel'
     || label === 'calendar-panel'

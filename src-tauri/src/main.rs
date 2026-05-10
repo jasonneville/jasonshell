@@ -23,6 +23,7 @@ mod shell_paths;
 mod shell_windows;
 mod stack_popup;
 mod system_power;
+mod terminal_panel;
 mod task_preview;
 mod task_windows;
 mod taskbar_menu;
@@ -95,6 +96,8 @@ fn main() {
             system_power::trigger_system_power_action,
             tray_panel::show_tray_panel,
             tray_panel::hide_tray_panel,
+            terminal_panel::show_terminal_panel,
+            terminal_panel::hide_terminal_panel,
             command_panel::show_command_panel,
             command_panel::hide_command_panel,
             audio_panel::show_audio_panel,
@@ -161,9 +164,11 @@ fn main() {
             stack_popup::new_stack_folder,
             stack_popup::new_stack_text_file,
             stack_popup::open_stack_terminal_here,
+            stack_popup::start_persistent_terminal,
             stack_popup::start_stack_terminal,
             stack_popup::read_stack_terminal,
             stack_popup::write_stack_terminal,
+            stack_popup::resize_stack_terminal,
             stack_popup::stop_stack_terminal,
             stack_popup::poll_stack_terminal_session,
             stack_popup::get_stack_terminal_cwd,
@@ -280,6 +285,14 @@ fn main() {
                 );
                 let _ = window.hide();
                 return;
+            }
+
+            if window.label() == shell_windows::TERMINAL_PANEL_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = terminal_panel::hide_terminal_panel(window.app_handle().clone());
+                    return;
+                }
             }
 
             if window.label() == shell_windows::COMMAND_PANEL_LABEL

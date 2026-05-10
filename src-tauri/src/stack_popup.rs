@@ -34,8 +34,8 @@ pub use models::{
     StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 pub use terminal::{
-    StackTerminalPollResult, StackTerminalSessionSnapshot, StackTerminalStartRequest,
-    StackTerminalStopRequest, StackTerminalWriteRequest,
+    StackTerminalPollResult, StackTerminalResizeRequest, StackTerminalSessionSnapshot,
+    StackTerminalStartRequest, StackTerminalStopRequest, StackTerminalWriteRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -526,6 +526,32 @@ pub fn open_stack_terminal_here(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn start_persistent_terminal(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+) -> Result<StackTerminalSessionSnapshot, String> {
+    let folder_path = std::env::var("USERPROFILE")
+        .ok()
+        .filter(|path| Path::new(path).is_dir())
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .ok_or_else(|| "No startup directory is available for the terminal".to_string())?;
+    terminal::start_stack_terminal_session(
+        &app_handle,
+        &state,
+        StackTerminalStartRequest {
+            folder_path,
+            profile: None,
+            target_label: Some(crate::shell_windows::TERMINAL_PANEL_LABEL.to_string()),
+        },
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn start_stack_terminal(
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
@@ -556,6 +582,27 @@ pub async fn write_stack_terminal(
         StackTerminalWriteRequest { session_id, input },
     )
     .await
+}
+
+#[tauri::command]
+pub fn resize_stack_terminal(
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
+) -> Result<(), String> {
+    terminal::resize_stack_terminal_session(
+        &state,
+        StackTerminalResizeRequest {
+            session_id,
+            cols,
+            rows,
+            pixel_width,
+            pixel_height,
+        },
+    )
 }
 
 #[tauri::command]

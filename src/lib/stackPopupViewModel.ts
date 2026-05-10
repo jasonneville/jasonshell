@@ -91,6 +91,10 @@ export type StackPathInlineCompletion = {
   commitPath: string;
 };
 
+function normalizeStackPathForAutocomplete(path: string): string {
+  return path.replace(/\//g, '\\').toLowerCase();
+}
+
 const STACK_BROWSER_MARQUEE_BLOCK_SELECTORS = [
   '[role="row"]',
   'button',
@@ -191,6 +195,22 @@ export function getStackPathInlineCompletion(
     displayText: suggestion.name.slice(typedSegment.length),
     commitPath: suggestion.path
   };
+}
+
+export function getNextStackPathCompletionCycleIndex(
+  input: string,
+  suggestions: readonly StackPathInlineCompletionInput[],
+  currentIndex: number
+): number {
+  if (!suggestions.length) {
+    return -1;
+  }
+
+  const exactCurrentIndex = suggestions.findIndex(
+    (suggestion) => normalizeStackPathForAutocomplete(suggestion.path) === normalizeStackPathForAutocomplete(input)
+  );
+  const baseIndex = currentIndex >= 0 ? currentIndex : exactCurrentIndex;
+  return (baseIndex + 1) % suggestions.length;
 }
 
 export function stackBrowserVirtualWindow<T>(

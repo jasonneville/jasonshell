@@ -257,6 +257,10 @@
   flex: 0 0 auto;
 }
 
+.top-bar .terminal-control {
+  flex: 0 0 auto;
+}
+
 .top-bar .command-control {
   flex: 0 0 auto;
 }
@@ -265,6 +269,7 @@
   flex: 0 0 auto;
 }
 
+.top-bar .terminal-button,
 .top-bar .command-button {
   align-items: center;
   background: transparent;
@@ -278,10 +283,12 @@
   width: 1.9rem;
 }
 
+.top-bar .terminal-button:hover,
 .top-bar .command-button:hover {
   background: var(--js-color-surface-sunken);
 }
 
+.top-bar .terminal-glyph,
 .top-bar .command-glyph {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   letter-spacing: -0.01em;

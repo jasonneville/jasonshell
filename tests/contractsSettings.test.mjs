@@ -141,6 +141,7 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'record_diagnostic',
     'export_diagnostics',
     'run_quick_command',
+    'resize_stack_terminal',
     'show_control_plane',
     'hide_control_plane',
     'resize_shell_bar',
@@ -290,6 +291,8 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'task:started',
     'taskbar:refresh-launchers',
     'taskbar:refresh-windows',
+    'terminal-panel:closed',
+    'terminal-panel:open',
     'top-bar:pin-menu-action',
     'tray-panel:closed',
     'tray-panel:open'
@@ -426,7 +429,8 @@ test('backend settings and diagnostics commands are registered with hardened app
     'settings-panel',
     'tray-panel',
     'audio-panel',
-    'calendar-panel'
+    'calendar-panel',
+    'terminal-panel'
   ]) {
     assert.match(capabilitySource, new RegExp(surface));
   }
@@ -443,6 +447,7 @@ test('backend settings and diagnostics commands are registered with hardened app
       ['settings-panel'],
       ['stack-popup'],
       ['task-preview'],
+      ['terminal-panel'],
       ['top-bar'],
       ['tray-panel']
     ]

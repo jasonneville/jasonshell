@@ -21,6 +21,7 @@ pub const PROCESS_MANAGER_LABEL: &str = "process-manager";
 pub const CONTROL_PLANE_LABEL: &str = "control-plane";
 pub const SETTINGS_PANEL_LABEL: &str = "settings-panel";
 pub const TRAY_PANEL_LABEL: &str = "tray-panel";
+pub const TERMINAL_PANEL_LABEL: &str = "terminal-panel";
 pub const COMMAND_PANEL_LABEL: &str = "command-panel";
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
 pub const CALENDAR_PANEL_LABEL: &str = "calendar-panel";
@@ -35,6 +36,7 @@ pub const ALL_LABELS: &[&str] = &[
     CONTROL_PLANE_LABEL,
     SETTINGS_PANEL_LABEL,
     TRAY_PANEL_LABEL,
+    TERMINAL_PANEL_LABEL,
     COMMAND_PANEL_LABEL,
     AUDIO_PANEL_LABEL,
     CALENDAR_PANEL_LABEL,
@@ -57,6 +59,8 @@ pub const SETTINGS_PANEL_WIDTH_LOGICAL: f64 = 440.0;
 pub const SETTINGS_PANEL_HEIGHT_LOGICAL: f64 = 520.0;
 pub const TRAY_PANEL_WIDTH_LOGICAL: f64 = 252.0;
 pub const TRAY_PANEL_HEIGHT_LOGICAL: f64 = 220.0;
+pub const TERMINAL_PANEL_WIDTH_LOGICAL: f64 = 860.0;
+pub const TERMINAL_PANEL_HEIGHT_LOGICAL: f64 = 520.0;
 pub const COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460.0;
 pub const COMMAND_PANEL_HEIGHT_LOGICAL: f64 = 420.0;
 pub const AUDIO_PANEL_WIDTH_LOGICAL: f64 = 320.0;
@@ -112,6 +116,7 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _control_plane = build_control_plane_window(app)?;
     let _settings_panel = build_settings_panel_window(app)?;
     let _tray_panel = build_tray_panel_window(app)?;
+    let _terminal_panel = build_terminal_panel_window(app)?;
     let _command_panel = build_command_panel_window(app)?;
     let _audio_panel = build_audio_panel_window(app)?;
     let _calendar_panel = build_calendar_panel_window(app)?;
@@ -214,6 +219,29 @@ fn build_stack_popup_window(app: &App) -> AppResult<WebviewWindow> {
             .visible(false)
             .build()?,
     )
+}
+
+fn build_terminal_panel_window(app: &App) -> AppResult<WebviewWindow> {
+    Ok(WebviewWindowBuilder::new(
+        app,
+        TERMINAL_PANEL_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .always_on_top(true)
+    .devtools(false)
+    .decorations(false)
+    .focused(false)
+    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+    .inner_size(TERMINAL_PANEL_WIDTH_LOGICAL, TERMINAL_PANEL_HEIGHT_LOGICAL)
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(true)
+    .shadow(true)
+    .skip_taskbar(true)
+    .theme(Some(Theme::Dark))
+    .title("JasonShell Terminal")
+    .visible(false)
+    .build()?)
 }
 
 fn build_process_manager_window(app: &App) -> AppResult<WebviewWindow> {
