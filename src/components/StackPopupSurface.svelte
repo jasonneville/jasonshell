@@ -2448,10 +2448,6 @@
       <MeltActionButton disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
       <MeltActionButton disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
       <MeltActionButton disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
-      <div class="stack-view-toggle" aria-label="Stack Browser view">
-        <MeltActionButton ariaPressed={stackBrowserViewMode === 'files'} onClick={() => void switchStackBrowserView('files')}>Files</MeltActionButton>
-        <MeltActionButton ariaPressed={stackBrowserViewMode === 'terminal'} disabled={!currentPath} onClick={() => void switchStackBrowserView('terminal')}>CLI</MeltActionButton>
-      </div>
       <label class="stack-search" aria-label="Search current folder">
         <span>Search</span>
         <input

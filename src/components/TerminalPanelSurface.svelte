@@ -3,6 +3,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { FitAddon } from '@xterm/addon-fit';
+  import { SearchAddon } from '@xterm/addon-search';
   import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
   import {
@@ -15,6 +16,8 @@
     type StackTerminalSession
   } from '../lib/persistentTerminal';
   import { hideTerminalPanel } from '../lib/terminalPanel';
+  import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
+  import { openStackFolderInVscode, openStackItem, openStackTerminalHere, revealStackItem } from '../lib/stackPopup';
   import {
     beginTerminalCommandRecord,
     createTerminalCommandState,
@@ -23,6 +26,10 @@
     type TerminalCommandRecord,
     type TerminalCommandState
   } from '../features/stack-browser/terminalShellIntegration';
+  import { getTerminalAction, terminalActions, type TerminalActionId, type TerminalActionState } from '../features/terminal/terminalActions';
+  import { detectTerminalQuickSelectTargets, type TerminalQuickSelectTarget } from '../features/terminal/terminalQuickSelect';
+
+  import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
 
   type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalOutputPayload = StackTerminalOutputChunk;
@@ -42,6 +49,7 @@
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
+  let searchAddon: SearchAddon | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let resizeFrame: number | null = null;
   let session: StackTerminalSession | null = null;
@@ -59,6 +67,14 @@
   let unlisteners: Array<() => void> = [];
   let listenersDisposed = false;
   let contextMenu: { x: number; y: number } | null = null;
+  let actionMenuOpen = false;
+  let recentMenuOpen = false;
+  let searchOpen = false;
+  let searchQuery = '';
+  let quickSelectOpen = false;
+  let quickSelectTargets: TerminalQuickSelectTarget[] = [];
+  let recentOutputText = '';
+
   let currentInputText = '';
   let currentInputSelectionActive = false;
   let visibleResizeSettled = false;
@@ -68,15 +84,20 @@
   let shellCwdMarkerSeen = false;
   let shellParserDisposers: Array<() => void> = [];
 
+  $: terminalActionState = buildTerminalActionState();
+  $: visibleRecentCommands = recentTerminalCommands(commandState);
+  $: visibleRecentDirectories = recentTerminalDirectories(commandState);
+  $: toolbarActions = terminalActions.filter((action) => ['search', 'openCwdInFiles', 'openExternalTerminalHere', 'restartTerminal', 'stopTerminal'].includes(action.id));
+
   onMount(() => {
     listenersDisposed = false;
-    document.addEventListener('click', closeTerminalContextMenu);
+    document.addEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
     window.addEventListener('focus', handlePanelOpen);
     void initializeTerminalListeners();
     void startTerminal();
     return () => {
       listenersDisposed = true;
-      document.removeEventListener('click', closeTerminalContextMenu);
+      document.removeEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
       window.removeEventListener('focus', handlePanelOpen);
       stopPolling();
       clearStartupTimer();
@@ -208,7 +229,9 @@
       }
     });
     fitAddon = new FitAddon();
+    searchAddon = new SearchAddon();
     terminal.loadAddon(fitAddon);
+    terminal.loadAddon(searchAddon);
     terminal.onData((data) => {
       trackTerminalInput(data);
       void writeTerminalData(data);
@@ -224,6 +247,26 @@
         event.stopPropagation();
         return false;
       }
+      if (event.type === 'keydown' && quickSelectOpen) {
+        if (event.key === 'Escape') {
+          quickSelectOpen = false;
+          return false;
+        }
+        const target = quickSelectTargets.find((candidate) => candidate.label === event.key.toLowerCase());
+        if (target) {
+          void openQuickSelectTarget(target);
+          return false;
+        }
+        return false;
+      }
+      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'f') {
+        openSearch();
+        return false;
+      }
+      if (event.type === 'keydown' && searchOpen && event.key === 'Escape') {
+        closeSearch();
+        return false;
+      }
       if (event.type === 'keydown' && currentInputSelectionActive && (event.key === 'Backspace' || event.key === 'Delete')) {
         event.preventDefault();
         event.stopPropagation();
@@ -231,6 +274,8 @@
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'c' && terminal?.hasSelection()) {
+        event.preventDefault();
+        event.stopPropagation();
         void copySelection();
         return false;
       }
@@ -365,6 +410,8 @@
     shellParserDisposers = [];
     fitAddon?.dispose();
     fitAddon = null;
+    searchAddon?.dispose();
+    searchAddon = null;
     terminal?.dispose();
     terminal = null;
     lastResizeKey = '';
@@ -547,14 +594,197 @@
     }
   }
 
+  async function copySelectedCommand() {
+    const command = selectedCommand()?.commandText?.trim();
+    if (command) {
+      await navigator.clipboard?.writeText(command).catch((error) => console.debug('Persistent terminal command copy unavailable', error));
+    }
+  }
+
+  async function rerunSelectedCommand(commandText = selectedCommand()?.commandText) {
+    const command = commandText?.trim();
+    if (command) {
+      await writeTerminalData(`${command}\r`);
+    }
+  }
+
+  function cdCommandForDirectory(dir: string) {
+    return `cd ${quoteShellPath(dir)}`;
+  }
+
+  function quoteShellPath(path: string) {
+    return `'${path.replace(/'/g, "''")}'`;
+  }
+
   function openTerminalContextMenu(event: MouseEvent) {
     event.preventDefault();
-    contextMenu = { x: event.clientX, y: event.clientY };
+    const position = positionScrollableContextMenuInViewport(
+      { x: event.clientX, y: event.clientY },
+      { width: 210, height: 320 },
+      { width: window.innerWidth, height: window.innerHeight },
+      8
+    );
+    contextMenu = { x: position.x, y: position.y };
+    actionMenuOpen = false;
+    recentMenuOpen = false;
     terminal?.focus();
   }
 
   function closeTerminalContextMenu() {
     contextMenu = null;
+  }
+
+  function closeTerminalMenus() {
+    contextMenu = null;
+    actionMenuOpen = false;
+    recentMenuOpen = false;
+    quickSelectOpen = false;
+    searchOpen = false;
+  }
+
+  function closeTerminalMenusOnOutsidePointer(event: PointerEvent) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    if (target.closest('.terminal-toolbar, .terminal-toolbar-menu, .terminal-panel-context-menu, .terminal-search, .terminal-quick-select')) {
+      return;
+    }
+    closeTerminalMenus();
+  }
+
+  function effectiveTerminalCwd() {
+    return session?.cwd || commandState?.cwd || selectedCommand()?.cwd || '';
+  }
+
+  function buildTerminalActionState(): TerminalActionState {
+    const record = selectedCommand();
+    const cwd = effectiveTerminalCwd();
+    return {
+      hasTerminal: Boolean(terminal),
+      hasSession: Boolean(session),
+      hasSelection: Boolean(terminal?.hasSelection()),
+      hasCommand: Boolean(record?.commandText),
+      hasCommandOutput: Boolean(record && commandRecordHasOutput(record)),
+      hasCwd: Boolean(cwd),
+      hasDetectedTarget: quickSelectTargets.length > 0,
+      hasRepo: Boolean(cwd)
+    };
+  }
+
+  function commandRecordHasOutput(record: TerminalCommandRecord) {
+    return typeof record.outputStartMarker === 'number' || typeof record.endMarker === 'number';
+  }
+
+  function actionEnabled(id: TerminalActionId) {
+    return Boolean(getTerminalAction(id)?.isEnabled(terminalActionState));
+  }
+
+  async function runTerminalAction(id: TerminalActionId) {
+    closeTerminalMenus();
+    switch (id) {
+      case 'copySelection': return copySelection();
+      case 'copyCommand': return copySelectedCommand();
+      case 'copyCommandOutput': return copySelectedCommandOutput();
+      case 'rerunCommand': return rerunSelectedCommand();
+      case 'search': return openSearch();
+      case 'clear': terminal?.clear(); return;
+      case 'paste': return pasteClipboard();
+      case 'openCwdInFiles': return openCwdInFiles();
+      case 'openExternalTerminalHere': return openExternalTerminalHere();
+      case 'openInVscode': return openCwdInVscode();
+      case 'restartTerminal': return restartTerminal();
+      case 'stopTerminal': return stopTerminal();
+      case 'openDetectedTarget': return quickSelectTargets[0] ? openQuickSelectTarget(quickSelectTargets[0]) : undefined;
+      case 'copyDetectedTarget': return quickSelectTargets[0] ? copyQuickSelectTarget(quickSelectTargets[0]) : undefined;
+      case 'openGitWorkbench': return rerunSelectedCommand('git status --short');
+    }
+  }
+
+  function openSearch() {
+    searchOpen = true;
+    void tick().then(() => document.querySelector<HTMLInputElement>('.terminal-search-input')?.focus());
+  }
+
+  function closeSearch() {
+    searchOpen = false;
+    searchQuery = '';
+    focusTerminal();
+  }
+
+  function searchNext() {
+    if (searchQuery) searchAddon?.findNext(searchQuery);
+  }
+
+  function searchPrevious() {
+    if (searchQuery) searchAddon?.findPrevious(searchQuery);
+  }
+
+  function updateQuickSelectTargets() {
+    const text = visibleTerminalText();
+    quickSelectTargets = detectTerminalQuickSelectTargets(text, effectiveTerminalCwd());
+  }
+
+  function toggleQuickSelect() {
+    updateQuickSelectTargets();
+    quickSelectOpen = !quickSelectOpen;
+    focusTerminal();
+  }
+
+  async function openQuickSelectTarget(target: TerminalQuickSelectTarget) {
+    quickSelectOpen = false;
+    if (target.kind === 'url' || target.kind === 'localhost') {
+      window.open(target.target, '_blank', 'noopener,noreferrer');
+    } else if (target.kind === 'windowsPath' || target.kind === 'relativePath' || target.kind === 'fileLine') {
+      await openStackItem(target.target).catch((error) => console.debug('Persistent terminal target open unavailable', error));
+    } else if (target.kind === 'gitHash' || target.kind === 'branch') {
+      await navigator.clipboard?.writeText(target.target).catch(() => undefined);
+    }
+    focusTerminal();
+  }
+
+  async function copyQuickSelectTarget(target: TerminalQuickSelectTarget) {
+    await navigator.clipboard?.writeText(target.target).catch(() => undefined);
+    quickSelectOpen = false;
+    focusTerminal();
+  }
+
+  function visibleTerminalText() {
+    if (!terminal) return recentOutputText;
+    const buffer = terminal.buffer.active;
+    const start = Math.max(0, buffer.baseY);
+    const end = Math.min(buffer.baseY + buffer.length - 1, buffer.baseY + terminal.rows + 80);
+    const lines: string[] = [];
+    for (let index = start; index <= end; index += 1) {
+      const line = buffer.getLine(index);
+      if (line) lines.push(line.translateToString(true));
+    }
+    return lines.join('\n').slice(-16000);
+  }
+
+  async function openCwdInFiles() {
+    const cwd = effectiveTerminalCwd();
+    if (cwd) await revealStackItem(cwd).catch((error) => console.debug('Persistent terminal cwd reveal unavailable', error));
+  }
+
+  async function openExternalTerminalHere() {
+    const cwd = effectiveTerminalCwd();
+    if (cwd) await openStackTerminalHere(cwd).catch((error) => console.debug('Persistent terminal external open unavailable', error));
+  }
+
+  async function openCwdInVscode() {
+    const cwd = effectiveTerminalCwd();
+    if (cwd) await openStackFolderInVscode(cwd).catch((error) => console.debug('Persistent terminal VS Code open unavailable', error));
+  }
+
+  async function stopTerminal() {
+    if (!session) return;
+    const sessionId = session.sessionId;
+    stopPolling();
+    await stopStackTerminal(sessionId).catch((error) => console.debug('Persistent terminal stop unavailable', error));
+    lifecycle = 'exited';
+    status = 'Terminal stopped';
+    session = null;
   }
 
   async function copySelectionFromContextMenu() {
@@ -640,6 +870,10 @@
       status = '';
       clearStartupTimer();
     }
+    if (output) {
+      recentOutputText = `${recentOutputText}${stripTerminalAnsiControls(output)}`.slice(-20000);
+
+    }
     terminal?.write(output);
   }
 
@@ -685,6 +919,8 @@
     shellCwdMarkerSeen = false;
     currentInputText = '';
     currentInputSelectionActive = false;
+    recentOutputText = '';
+
     renderedSequences = new Set<string>();
     if (oldSession) {
       await stopStackTerminal(oldSession).catch(() => undefined);
@@ -717,21 +953,75 @@
       <strong>Terminal</strong>
       <span>{session?.cwd || 'Starting shell'}</span>
     </div>
-    <button type="button" class="terminal-restart" on:click={() => void restartTerminal()}>Restart</button>
+    <nav class="terminal-toolbar" aria-label="Terminal actions">
+      <button type="button" title="Search" disabled={!actionEnabled('search')} on:click={() => void runTerminalAction('search')}>⌕</button>
+      <button type="button" title="Quick Select" on:click={toggleQuickSelect}>QS</button>
+      <button type="button" title="Recent commands" on:click={() => { recentMenuOpen = !recentMenuOpen; actionMenuOpen = false; }}>⌘</button>
+      <button type="button" title="Reveal cwd in Files" disabled={!actionEnabled('openCwdInFiles')} on:click={() => void runTerminalAction('openCwdInFiles')}>Files</button>
+      <button type="button" title="Open external terminal here" disabled={!actionEnabled('openExternalTerminalHere')} on:click={() => void runTerminalAction('openExternalTerminalHere')}>Ext</button>
+      <button type="button" title="Terminal menu" on:click={() => { actionMenuOpen = !actionMenuOpen; recentMenuOpen = false; }}>⋯</button>
+      {#if actionMenuOpen}
+        <div class="terminal-toolbar-menu" role="menu" tabindex="-1" on:pointerdown|stopPropagation>
+          {#each toolbarActions as action}
+            <button type="button" role="menuitem" class:danger={action.destructive} disabled={!actionEnabled(action.id)} on:click={() => void runTerminalAction(action.id)}>{action.label}</button>
+          {/each}
+          <button type="button" role="menuitem" disabled={!actionEnabled('openInVscode')} on:click={() => void runTerminalAction('openInVscode')}>Open cwd in VS Code</button>
+          <button type="button" role="menuitem" disabled={!actionEnabled('openGitWorkbench')} on:click={() => void runTerminalAction('openGitWorkbench')}>Run Git status</button>
+        </div>
+      {/if}
+      {#if recentMenuOpen}
+        <div class="terminal-toolbar-menu terminal-recent-menu" role="menu" tabindex="-1" on:pointerdown|stopPropagation>
+          <strong>Recent commands</strong>
+          {#each visibleRecentCommands as recent}
+            <button type="button" role="menuitem" on:click={() => void rerunSelectedCommand(recent.commandText)}>{recent.commandText}</button>
+          {:else}
+            <span>No commands yet</span>
+          {/each}
+          <strong>Recent dirs</strong>
+          {#each visibleRecentDirectories as dir}
+            <button type="button" role="menuitem" on:click={() => void rerunSelectedCommand(cdCommandForDirectory(dir))}>{dir}</button>
+          {/each}
+        </div>
+      {/if}
+    </nav>
   </header>
   <section class="terminal-panel-body">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
     <div bind:this={host} class="terminal-panel-output" role="log" aria-label="Terminal output" on:mousedown|capture={handleTerminalMouseDown} on:contextmenu={openTerminalContextMenu}></div>
+    {#if searchOpen}
+      <form class="terminal-search" on:pointerdown|stopPropagation on:submit|preventDefault={searchNext}>
+        <input class="terminal-search-input" bind:value={searchQuery} placeholder="Search" aria-label="Search terminal" />
+        <button type="submit">Next</button>
+        <button type="button" on:click={searchPrevious}>Prev</button>
+        <button type="button" on:click={closeSearch}>Esc</button>
+      </form>
+    {/if}
+    {#if quickSelectOpen}
+      <div class="terminal-quick-select" role="listbox" tabindex="-1" aria-label="Quick Select targets" on:pointerdown|stopPropagation>
+        {#each quickSelectTargets as target}
+          <button type="button" on:click={() => void openQuickSelectTarget(target)}><kbd>{target.label}</kbd>{target.text}</button>
+        {:else}
+          <span>No targets</span>
+        {/each}
+      </div>
+    {/if}
     {#if contextMenu}
       <div
         class="terminal-panel-context-menu"
         role="menu"
         tabindex="-1"
         style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`}
+        on:pointerdown|stopPropagation
       >
-        <button type="button" role="menuitem" on:click={() => void copySelectionFromContextMenu()}>Copy</button>
-        <button type="button" role="menuitem" on:click={() => void copySelectedCommandOutput()}>Copy command output</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('copySelection')} on:click={() => void copySelectionFromContextMenu()}>Copy</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('copyCommand')} on:click={() => void runTerminalAction('copyCommand')}>Copy command</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('copyCommandOutput')} on:click={() => void copySelectedCommandOutput()}>Copy command output</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('rerunCommand')} on:click={() => void runTerminalAction('rerunCommand')}>Rerun command</button>
+        <button type="button" role="menuitem" on:click={() => { updateQuickSelectTargets(); quickSelectOpen = true; closeTerminalContextMenu(); }}>Quick Select target</button>
         <button type="button" role="menuitem" on:click={() => void pasteClipboardFromContextMenu()}>Paste</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('openCwdInFiles')} on:click={() => void runTerminalAction('openCwdInFiles')}>Reveal cwd in Files</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('openExternalTerminalHere')} on:click={() => void runTerminalAction('openExternalTerminalHere')}>Open external terminal</button>
+        <button type="button" role="menuitem" disabled={!actionEnabled('openInVscode')} on:click={() => void runTerminalAction('openInVscode')}>Open cwd in VS Code</button>
       </div>
     {/if}
     {#if !outputReceived && lifecycle !== 'running'}

@@ -928,7 +928,7 @@ fn powershell_augmented_path() -> Option<String> {
 
 fn powershell_startup_script() -> String {
     [
-        "$ErrorActionPreference = 'SilentlyContinue'",
+        "$ErrorActionPreference = 'Continue'",
         "if (Get-Module -ListAvailable -Name PSReadLine) { Import-Module PSReadLine; Set-PSReadLineOption -Colors @{ InlinePrediction = \"`e[38;5;240m\"; ListPrediction = \"`e[38;5;244m\"; ListPredictionSelected = \"`e[48;5;238m\" }; Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion; Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext; Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious; Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete }",
         "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name ll -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",

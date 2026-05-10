@@ -430,6 +430,8 @@ test('stack terminal PowerShell profile loads normal shell affordances and norma
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion/);
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext/);
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Shift\+Tab -Function TabCompletePrevious/);
+  assert.match(rustTerminal, /\$ErrorActionPreference = 'Continue'/);
+  assert.doesNotMatch(rustTerminal, /\$ErrorActionPreference = 'SilentlyContinue'/);
   assert.match(rustTerminal, /Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue/);
   assert.match(rustTerminal, /Set-Alias -Name clear -Value Clear-Host -Force -ErrorAction SilentlyContinue/);
   assert.match(rustTerminal, /function which \{ Get-Command @args \}/);

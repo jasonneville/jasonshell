@@ -101,6 +101,8 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /hideTerminalPanel\(\)/);
   assert.match(terminalPanel, /<svelte:window on:keydown\|capture/);
   assert.match(terminalPanel, /return false;\s*}\s*if \(event\.type === 'keyup'/);
+  assert.match(terminalPanel, /event\.preventDefault\(\);\s*\r?\n\s*event\.stopPropagation\(\);\s*\r?\n\s*void copySelection\(\)/);
+  assert.doesNotMatch(terminalPanel, /slice\(0, midpoint\)|normalizeTerminalClipboardSelection/);
   assert.match(terminalPanel, /navigator\.clipboard\?\.writeText\(selection\)/);
   assert.match(terminalPanel, /navigator\.clipboard\?\.readText\(\)/);
   assert.match(terminalPanel, /function handleTerminalMouseDown\(event: MouseEvent\)/);
