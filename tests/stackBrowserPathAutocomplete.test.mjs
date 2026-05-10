@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { getStackPathAutocompleteQuery, getStackPathInlineCompletion } from '../dist-tests/lib/stackPopupViewModel.js';
+import {
+  getNextStackPathCompletionCycleIndex,
+  getStackPathAutocompleteQuery,
+  getStackPathInlineCompletion
+} from '../dist-tests/lib/stackPopupViewModel.js';
 
 const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
@@ -54,22 +58,24 @@ test('path autocomplete has IPC wrapper and stale-aware UI wiring', () => {
   assert.match(styles, /\.path-inline-ghost[\s\S]*pointer-events:\s*none/);
   assert.match(pathKeydownSource, /!event\.shiftKey/);
   assert.match(surface, /clearPathSuggestions/);
-  assert.match(surface, /Tab/);
+  assert.match(pathKeydownSource, /ArrowRight/);
+  assert.match(pathKeydownSource, /Tab/);
   assert.match(surface, /focusPathInput/);
 });
 
-test('Tab accepting inline path completion keeps focus and caret for chained completion', () => {
+test('RightArrow accepting inline path completion keeps focus and caret for chained completion', () => {
   const acceptSource = surface.slice(
     surface.indexOf('function acceptInlinePathCompletion'),
     surface.indexOf('async function focusPathInput')
   );
+  assert.match(pathKeydownSource, /event\.key === 'ArrowRight'/);
   assert.match(acceptSource, /pathDraft = pathInlineCompletion\.commitPath/);
   assert.match(acceptSource, /const committedPath = pathInlineCompletion\.commitPath/);
   assert.match(acceptSource, /void focusPathInput\(committedPath\.length\)/);
   assert.doesNotMatch(acceptSource, /openFolder\(committedPath\)/);
 });
 
-test('Tab accept immediately refreshes suggestions for committed path', () => {
+test('RightArrow accept immediately refreshes suggestions for committed path', () => {
   const acceptSource = surface.slice(
     surface.indexOf('function acceptInlinePathCompletion'),
     surface.indexOf('async function focusPathInput')
@@ -78,7 +84,40 @@ test('Tab accept immediately refreshes suggestions for committed path', () => {
   assert.match(surface, /async function refreshPathSuggestionsForValue\(value: string,\s*caret: number\)/);
 });
 
-test('path blur timeout cannot reset draft during chained Tab accept flow', () => {
+test('Tab cycles through matching directory completions without opening the folder', () => {
+  const tabBranchMatch = pathKeydownSource.match(/if \(event\.key === 'Tab' && !event\.shiftKey[\s\S]*?return;\s*\}/);
+  assert.ok(tabBranchMatch, 'Tab keydown branch is present');
+  assert.match(tabBranchMatch[0], /cyclePathCompletion\(\)/);
+  assert.doesNotMatch(tabBranchMatch[0], /acceptInlinePathCompletion\(\)/);
+  const cycleSource = surface.slice(
+    surface.indexOf('function cyclePathCompletion'),
+    surface.indexOf('function acceptInlinePathCompletion')
+  );
+  assert.match(surface, /let pathCompletionCycleIndex = -1/);
+  assert.match(cycleSource, /pathSuggestions\.length/);
+  assert.match(cycleSource, /getNextStackPathCompletionCycleIndex\(pathDraft, pathSuggestions, pathCompletionCycleIndex\)/);
+  assert.match(cycleSource, /const committedPath = suggestion\.path/);
+  assert.match(cycleSource, /pathDraft = committedPath/);
+  assert.match(cycleSource, /void focusPathInput\(committedPath\.length\)/);
+  assert.doesNotMatch(cycleSource, /openFolder\(committedPath\)/);
+});
+
+test('Tab cycle skips an exact prefix directory before walking sibling completions', () => {
+  const suggestions = [
+    { name: 'jasonshell', path: 'C:\\dev\\jasonshell' },
+    { name: 'jasonshell-cli-improvements', path: 'C:\\dev\\jasonshell-cli-improvements' },
+    { name: 'jasonshell-embedded-shell', path: 'C:\\dev\\jasonshell-embedded-shell' }
+  ];
+  const firstTab = getNextStackPathCompletionCycleIndex('C:/DEV/jasonshell', suggestions, -1);
+  assert.equal(firstTab, 1);
+  const secondTab = getNextStackPathCompletionCycleIndex(suggestions[firstTab].path, suggestions, firstTab);
+  assert.equal(secondTab, 2);
+  assert.equal(getNextStackPathCompletionCycleIndex(suggestions[2].path, suggestions, 2), 0);
+  assert.equal(getNextStackPathCompletionCycleIndex('C:\\dev\\jasonshell-c', suggestions, -1), 0);
+  assert.equal(getNextStackPathCompletionCycleIndex('C:\\dev\\jasonshell', [], -1), -1);
+});
+
+test('path blur timeout cannot reset draft during chained RightArrow accept flow', () => {
   assert.match(surface, /let pathBlurResetTimer: number \| null = null/);
   const acceptSource = surface.slice(
     surface.indexOf('function acceptInlinePathCompletion'),

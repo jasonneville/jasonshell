@@ -318,7 +318,7 @@ Residual risk:
 
 ## Phase 3: P1 PTY Geometry, Event Streaming, And Backpressure
 
-Status: Implementation not started
+Status: Completed 2026-05-09
 
 ### Objective
 
@@ -408,9 +408,27 @@ Make terminal output and sizing behave like a real terminal under resize and hig
 - Press Ctrl+C during output and confirm shell remains usable.
 - Close popup during output and confirm child process exits.
 
+### Phase 3 Result
+
+- `resize_stack_terminal` continues to validate session ids and rows/cols bounds and now stores the latest PTY rows/cols plus optional pixel dimensions in session metadata/snapshots.
+- Frontend output handling is push-first: `stack-terminal:output` events and watchdog poll chunks enqueue per active session, drop stale session ids, sequence-sort chunks, and flush to xterm in `requestAnimationFrame`.
+- `stackTerminalOutput` is now only bounded replay state for xterm reattachment/clear handling, capped at 256 KiB; xterm remains the visual scrollback owner.
+- Backend poll/write paths no longer remove live sessions from the registry during normal operations, so overlapping operations cannot make a live session look missing. The fallback output queue uses bounded `sync_channel(1024)`.
+- Tauri `Channel` streaming remains a later performance option if event volume proves too high under live stress.
+- Process-tree stop hardening remains a follow-up: this phase kept owned-session `PtyChild::kill()`/wait guardrails and did not add arbitrary PID-tree termination.
+
+Validation performed:
+
+- `node --test tests/stackBrowserTerminal.test.mjs`
+- `cargo test --manifest-path src-tauri/Cargo.toml terminal`
+
+Residual risk:
+
+- Live WebView2/ConPTY smoke for resize wrapping, high-output responsiveness, Ctrl+C during streaming output, and close-during-output process cleanup is still pending.
+
 ## Phase 4: Terminal Component Extraction And xterm Addon Modernization
 
-Status: Implementation not started
+Status: Completed 2026-05-09
 
 ### Objective
 
@@ -508,6 +526,23 @@ Move terminal complexity out of the huge Stack Browser component and add modern 
 - Suspend/resume or force WebGL context loss if feasible; terminal should survive.
 - Print Unicode sample:
   - `Write-Output "emoji 😀 box ┌─┐ powerline  CJK 日本語"`
+
+### Phase 4 Result
+
+- Extracted Stack Browser terminal rendering/lifecycle ownership into `src/components/StackTerminalPane.svelte` and `src/components/StackTerminalPane.css`; `StackPopupSurface.svelte` keeps only Files/CLI view selection, profile loading, cwd-to-folder synchronization, and close/error integration.
+- Added `src/features/stack-browser/terminalViewModel.ts` for source-tested link detection and safety classification across HTTP(S), localhost, Windows paths, relative paths rooted in cwd, and git hashes.
+- Added xterm addon dependencies and wiring for WebGL, WebLinks, Search, Serialize, and Unicode 11. WebGL loads after terminal open and falls back by disposing the addon on context loss; Ctrl+F opens in-terminal search, Escape closes search before closing the popup, and Serialize is used only for explicit visible-terminal copy.
+- Updated terminal CSS to use a readable Cascadia/Consolas monospace stack, 12.8px default type, and a full-height black work surface without nested cards.
+
+Validation performed:
+
+- `node --test tests\stackBrowserTerminal.test.mjs`
+- `npm run check`
+- `npm run build`
+
+Residual risk:
+
+- Live WebView2/ConPTY smoke is still pending for actual WebGL availability/context-loss behavior, clickable link activation behavior, and Unicode glyph rendering in the real Stack Browser webview.
 
 ## Phase 5: Shell Integration, Cwd Truth, And Command Marks
 

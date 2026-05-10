@@ -11,6 +11,9 @@ const commandsSource = readRepoFile('src/ipc/commands.ts');
 const stackPopupApi = readRepoFile('src/lib/stackPopup.ts');
 const stackPopupSurface = readRepoFile('src/components/StackPopupSurface.svelte');
 const stackPopupCss = readRepoFile('src/components/StackPopupSurface.css');
+const stackTerminalPane = readRepoFile('src/components/StackTerminalPane.svelte');
+const stackTerminalPaneCss = readRepoFile('src/components/StackTerminalPane.css');
+const stackTerminalViewModel = readRepoFile('src/features/stack-browser/terminalViewModel.ts');
 const settingsPanelSurface = readRepoFile('src/components/SettingsPanelSurface.svelte');
 const settingsSource = readRepoFile('src/lib/settings.ts');
 const rustStackPopup = readRepoFile('src-tauri/src/stack_popup.rs');
@@ -66,39 +69,39 @@ test('phase 1 terminal startup has visible nonblank lifecycle state before first
 });
 
 test('terminal control-only output does not hide startup overlay as first visible output', () => {
-  assert.match(stackPopupSurface, /function stackTerminalOutputHasVisibleText\(output: string\)/);
-  assert.match(stackPopupSurface, /stripStackTerminalAnsiControls/);
-  assert.match(stackPopupSurface, /if \(output && stackTerminalOutputHasVisibleText\(output\)\)/);
+  assert.match(stackTerminalPane, /function terminalOutputHasVisibleText\(value: string\)/);
+  assert.match(stackTerminalPane, /stripTerminalAnsiControls/);
+  assert.match(stackTerminalPane, /if \(nextOutputChunk && terminalOutputHasVisibleText\(nextOutputChunk\)\)/);
   assert.doesNotMatch(
-    stackPopupSurface,
-    /if \(output\) \{\s*stackTerminalFirstOutputReceived = true/,
+    stackTerminalPane,
+    /if \(nextOutputChunk\) \{\s*firstOutputReceived = true/,
     'ANSI clear/cursor-only chunks must not hide startup overlay'
   );
 });
 
 test('terminal poll fallback keeps writing chunks after first output with sequence dedupe', () => {
-  assert.match(stackPopupSurface, /if \(result\.chunks\?\.length\) \{/);
-  assert.doesNotMatch(stackPopupSurface, /if \(result\.chunks\?\.length && !stackTerminalFirstOutputReceived\)/);
-  assert.match(stackPopupSurface, /for \(const chunk of result\.chunks\) \{\s*writeStackTerminalChunk\(chunk\);/);
-  assert.match(stackPopupSurface, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.sequence\}`/);
-  assert.match(stackPopupSurface, /stackTerminalRenderedSequences\.has\(sequenceKey\)/);
-  assert.match(stackPopupSurface, /if \(result\.sessionId !== stackTerminalSession\?\.sessionId\) \{\s*return;/);
+  assert.match(stackTerminalPane, /if \(result\.chunks\?\.length\) \{/);
+  assert.doesNotMatch(stackTerminalPane, /if \(result\.chunks\?\.length && !firstOutputReceived\)/);
+  assert.match(stackTerminalPane, /for \(const chunk of result\.chunks\) \{\s*enqueueOutputChunk\(chunk\);/);
+  assert.match(stackTerminalPane, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.sequence\}`/);
+  assert.match(stackTerminalPane, /renderedSequences\.has\(sequenceKey\)/);
+  assert.match(stackTerminalPane, /if \(result\.sessionId !== session\?\.sessionId\) \{\s*return;/);
 });
 
 test('phase 1 terminal output uses stack-terminal:output listener with persistent-surface cleanup', () => {
-  assert.match(stackPopupSurface, /listen\(/);
-  assert.match(stackPopupSurface, /stack-terminal:output|STACK_TERMINAL_OUTPUT/);
-  assert.match(stackPopupSurface, /let stackTerminalUnlisteners:\s*Array<\(\) => void>/);
-  assert.match(stackPopupSurface, /let stackTerminalListenersDisposed\s*=/);
-  assert.match(stackPopupSurface, /stackTerminalListenersDisposed = true/);
-  assert.match(stackPopupSurface, /unlisten\(\)/);
-  assert.match(stackPopupSurface, /if \(stackTerminalListenersDisposed\)/);
-  assert.match(stackPopupSurface, /event\.payload\.sessionId !== stackTerminalSession\?\.sessionId/);
-  assert.match(stackPopupSurface, /return;/);
-  assert.match(stackPopupSurface, /stackTerminalWatchdog|watchdog/i);
+  assert.match(stackTerminalPane, /listen\(/);
+  assert.match(stackTerminalPane, /stack-terminal:output|STACK_TERMINAL_OUTPUT/);
+  assert.match(stackTerminalPane, /let unlisteners:\s*Array<\(\) => void>/);
+  assert.match(stackTerminalPane, /let listenersDisposed\s*=/);
+  assert.match(stackTerminalPane, /listenersDisposed = true/);
+  assert.match(stackTerminalPane, /unlisten\(\)/);
+  assert.match(stackTerminalPane, /if \(listenersDisposed\)/);
+  assert.match(stackTerminalPane, /event\.payload\.sessionId !== session\?\.sessionId/);
+  assert.match(stackTerminalPane, /return;/);
+  assert.match(stackTerminalPane, /watchdog/i);
   assert.doesNotMatch(
-    stackPopupSurface,
-    /stackTerminalPollTimer = window\.setInterval\([\s\S]{0,160}700/,
+    stackTerminalPane,
+    /pollTimer = window\.setInterval\([\s\S]{0,160}700/,
     'polling should be watchdog/fallback cadence, not normal high-frequency output path'
   );
 });
@@ -112,30 +115,119 @@ test('phase 1 terminal resize command contract is exposed across IPC, capabiliti
   assert.match(rustMain, /stack_popup::resize_stack_terminal/);
   assert.match(stackPopupCapability, /"core:default"/);
   assert.match(stackPopupCapability, /"core:window:default"/);
-  assert.match(stackPopupSurface, /fitAddon\.fit\(\)/);
-  assert.match(stackPopupSurface, /stackTerminal\.cols/);
-  assert.match(stackPopupSurface, /stackTerminal\.rows/);
-  assert.match(stackPopupSurface, /const sessionId = stackTerminalSession\.sessionId/);
-  assert.match(stackPopupSurface, /const cols = stackTerminal\.cols/);
-  assert.match(stackPopupSurface, /const rows = stackTerminal\.rows/);
-  assert.match(stackPopupSurface, /resizeStackTerminal\(\s*sessionId,\s*cols,\s*rows/);
+  assert.match(stackTerminalPane, /fitAddon\.fit\(\)/);
+  assert.match(stackTerminalPane, /terminal\.cols/);
+  assert.match(stackTerminalPane, /terminal\.rows/);
+  assert.match(stackTerminalPane, /const sessionId = session\.sessionId/);
+  assert.match(stackTerminalPane, /const cols = terminal\.cols/);
+  assert.match(stackTerminalPane, /const rows = terminal\.rows/);
+  assert.match(stackTerminalPane, /resizeStackTerminal\(sessionId, cols, rows/);
 });
 
 test('phase 1 terminal poll and write paths serialize frontend reads for one active session', () => {
-  assert.match(stackPopupSurface, /let stackTerminalPollInFlight\s*=/);
-  assert.match(stackPopupSurface, /let stackTerminalPollQueued\s*=/);
-  assert.match(stackPopupSurface, /async function pollStackTerminalOutput/);
-  assert.match(stackPopupSurface, /if \(stackTerminalPollInFlight\)/);
-  assert.match(stackPopupSurface, /stackTerminalPollQueued = true/);
-  assert.match(stackPopupSurface, /stackTerminalPollInFlight = true/);
-  assert.match(stackPopupSurface, /stackTerminalPollInFlight = false/);
-  assert.match(stackPopupSurface, /if \(stackTerminalPollQueued\)/);
-  assert.match(stackPopupSurface, /void pollStackTerminalOutput\(\)/);
-  assert.match(stackPopupSurface, /let stackTerminalOperationQueue: Promise<void> = Promise\.resolve\(\)/);
-  assert.match(stackPopupSurface, /function enqueueStackTerminalOperation/);
-  assert.match(stackPopupSurface, /enqueueStackTerminalOperation\(\(\) => writeStackTerminal\(sessionId, data\)\)[\s\S]{0,260}pollStackTerminalOutput\(\)/);
-  assert.match(stackPopupSurface, /enqueueStackTerminalOperation\(\(\) => readStackTerminal\(sessionId\)\)/);
-  assert.match(stackPopupSurface, /enqueueStackTerminalOperation\(\(\) => resizeStackTerminal\(/);
+  assert.match(stackTerminalPane, /let pollInFlight\s*=/);
+  assert.match(stackTerminalPane, /let pollQueued\s*=/);
+  assert.match(stackTerminalPane, /async function pollOutput/);
+  assert.match(stackTerminalPane, /if \(pollInFlight\)/);
+  assert.match(stackTerminalPane, /pollQueued = true/);
+  assert.match(stackTerminalPane, /pollInFlight = true/);
+  assert.match(stackTerminalPane, /pollInFlight = false/);
+  assert.match(stackTerminalPane, /if \(pollQueued\)/);
+  assert.match(stackTerminalPane, /void pollOutput\(\)/);
+  assert.match(stackTerminalPane, /let operationQueue: Promise<void> = Promise\.resolve\(\)/);
+  assert.match(stackTerminalPane, /function enqueueOperation/);
+  assert.match(stackTerminalPane, /enqueueOperation\(\(\) => writeStackTerminal\(sessionId, data\)\)[\s\S]{0,260}pollOutput\(\)/);
+  assert.match(stackTerminalPane, /enqueueOperation\(\(\) => readStackTerminal\(sessionId\)\)/);
+  assert.match(stackTerminalPane, /enqueueOperation\(\(\) => resizeStackTerminal/);
+});
+
+test('phase 3 terminal output is push-first and batched before xterm writes', () => {
+  assert.match(stackTerminalPane, /let pendingChunks:\s*Array<StackTerminalOutputPayload \| StackTerminalOutputChunk>/);
+  assert.match(stackTerminalPane, /let flushFrame:\s*number \| null = null/);
+  assert.match(stackTerminalPane, /function enqueueOutputChunk/);
+  assert.match(stackTerminalPane, /window\.requestAnimationFrame\(\(\) => \{\s*flushFrame = null;\s*flushOutputChunks\(\);/);
+  assert.match(stackTerminalPane, /\.filter\(\(chunk\) => chunk\.sessionId === activeSessionId\)/);
+  assert.match(stackTerminalPane, /\.sort\(\(left, right\) => \(left\.sequence \?\? 0\) - \(right\.sequence \?\? 0\)\)/);
+  assert.match(stackTerminalPane, /enqueueOutputChunk\(event\.payload\)/);
+  assert.match(stackTerminalPane, /enqueueOutputChunk\(chunk\)/);
+  assert.match(stackTerminalPane, /const STACK_TERMINAL_REPLAY_LIMIT = 256 \* 1024/);
+  assert.match(stackTerminalPane, /compacted\.slice\(compacted\.length - STACK_TERMINAL_REPLAY_LIMIT\)/);
+  assert.doesNotMatch(
+    stackTerminalPane,
+    /listen<StackTerminalOutputPayload>\('stack-terminal:output'[\s\S]{0,220}writeChunk\(event\.payload\)/,
+    'output listener should enqueue chunks instead of writing directly'
+  );
+});
+
+test('phase 4 extracts Stack terminal pane and modern xterm addons from parent surface', () => {
+  assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
+  assert.match(stackPopupSurface, /<StackTerminalPane/);
+  assert.doesNotMatch(stackPopupSurface, /from '@xterm\/xterm'/);
+  assert.doesNotMatch(stackPopupSurface, /from '@xterm\/addon-fit'/);
+  assert.match(stackTerminalPane, /import \{ WebglAddon \} from '@xterm\/addon-webgl'/);
+  assert.match(stackTerminalPane, /import \{ WebLinksAddon \} from '@xterm\/addon-web-links'/);
+  assert.match(stackTerminalPane, /import \{ SearchAddon \} from '@xterm\/addon-search'/);
+  assert.match(stackTerminalPane, /import \{ SerializeAddon \} from '@xterm\/addon-serialize'/);
+  assert.match(stackTerminalPane, /import \{ Unicode11Addon \} from '@xterm\/addon-unicode11'/);
+  assert.match(stackTerminalPane, /addon\.onContextLoss\(\(\) => \{/);
+  assert.match(stackTerminalPane, /renderer = 'fallback'/);
+  assert.match(stackTerminalPane, /nextTerminal\.registerLinkProvider/);
+  assert.match(stackTerminalPane, /searchAddon\?\.findNext/);
+  assert.match(stackTerminalPane, /nextTerminal\.unicode\.activeVersion = '11'/);
+  assert.match(stackTerminalPane, /STACK_TERMINAL_FONT_FAMILY/);
+  assert.match(stackTerminalPane, /fontFamily: STACK_TERMINAL_FONT_FAMILY/);
+  assert.match(stackTerminalPane, /letterSpacing: 0/);
+  assert.match(stackTerminalPane, /lineHeight: 1\.25/);
+  assert.match(stackTerminalPaneCss, /Cascadia Mono/);
+});
+
+test('stack terminal text metrics stay monospace and PTY redraw sequences stay xterm-owned', () => {
+  assert.doesNotMatch(stackTerminalPane, /function anchorCommandLineToLastRow\(\)/);
+  assert.doesNotMatch(stackTerminalPane, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
+  assert.doesNotMatch(stackTerminalPane, /terminalOutputHasClear/);
+  assert.doesNotMatch(stackTerminalPane, /terminal\?\.reset\(\);[\s\S]{0,180}terminal\?\.write\(output\)/);
+  assert.doesNotMatch(
+    stackTerminalPane,
+    /if \(terminalOutputHasClear\(nextOutputChunk\)\)[\s\S]{0,260}return;/,
+    'clear/readline/autocomplete redraw bytes must pass through xterm instead of being intercepted'
+  );
+  assert.match(stackTerminalPane, /terminal\?\.write\(nextOutputChunk\);[\s\S]{0,80}terminal\?\.scrollToBottom\(\)/);
+  assert.match(stackTerminalPaneCss, /font-feature-settings: "liga" 0, "calt" 0, "tnum" 1;/);
+  assert.match(stackTerminalPaneCss, /font-variant-ligatures: none;/);
+  assert.match(stackTerminalPaneCss, /letter-spacing: 0;/);
+  assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-rows\)/);
+  assert.match(stackTerminalPaneCss, /\.stack-terminal-output :global\(\.xterm-screen\)[\s\S]{0,80}height: 100% !important;/);
+});
+
+test('phase 4 terminal link detector recognizes safe URL, path, localhost, and git hash targets', () => {
+  assert.match(stackTerminalViewModel, /export function detectStackTerminalLinks/);
+  assert.match(stackTerminalViewModel, /export function isSafeStackTerminalOpenTarget/);
+  const sample = 'open http://localhost:5173 and C:\\\\dev\\\\jasonshell\\\\src\\\\main.ts:12 plus abc1234';
+  assert.match(sample, /localhost/);
+  assert.match(stackTerminalViewModel, /LOCALHOST_PATTERN/);
+  assert.match(stackTerminalViewModel, /WINDOWS_PATH_PATTERN/);
+  assert.match(stackTerminalViewModel, /GIT_HASH_PATTERN/);
+  assert.match(stackTerminalViewModel, /!\s*\/\[<>\|"\?\*\]\//);
+});
+
+test('phase 3 backend keeps live sessions registered and records PTY size metadata', () => {
+  assert.match(stackPopupApi, /cols\?: number/);
+  assert.match(stackPopupApi, /rows\?: number/);
+  assert.match(rustTerminal, /pub cols: u16/);
+  assert.match(rustTerminal, /pub rows: u16/);
+  assert.match(rustTerminal, /size: StackTerminalSize/);
+  assert.match(rustTerminal, /session\.size = StackTerminalSize \{/);
+  assert.match(rustTerminal, /mpsc::sync_channel\(1024\)/);
+  assert.doesNotMatch(
+    rustTerminal,
+    /let mut session = take_terminal_session\(state, &request\.session_id\)\?/,
+    'write path must not remove live session from registry'
+  );
+  assert.doesNotMatch(
+    rustTerminal,
+    /let mut session = take_terminal_session\(state, &session_id\)\?/,
+    'poll path must not remove live session from registry'
+  );
 });
 
 test('phase 1 terminal PowerShell launch plan uses trusted path explicitly and has fallback coverage', () => {
@@ -143,6 +235,9 @@ test('phase 1 terminal PowerShell launch plan uses trusted path explicitly and h
   assert.match(rustTerminal, /powershell\.to_string_lossy\(\)/);
   assert.doesNotMatch(rustTerminal, /fn powershell_cmd_launch_line\(_powershell: PathBuf\)/);
   assert.doesNotMatch(rustTerminal, /"pwsh\.exe \{\}"/);
+  assert.match(rustTerminal, /powershell_encoded_command\(&powershell_startup_script\(\)\)/);
+  assert.match(rustTerminal, /"-EncodedCommand"\.to_string\(\)/);
+  assert.match(rustTerminal, /"-NoProfile"\.to_string\(\)/);
   assert.match(rustTerminal, /trusted_powershell_candidates/);
   assert.match(rustTerminal, /WindowsPowerShell/);
   assert.match(rustTerminal, /falls_back_to_windows_powershell|fallback/i);
@@ -177,14 +272,14 @@ test('shell settings include stack browser terminal profile defaults', () => {
   assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal'\s*\}/);
 });
 
-test('stack browser no longer exposes embedded CLI view controls', () => {
-  assert.doesNotMatch(stackPopupSurface, /class:terminal-mode/);
-  assert.doesNotMatch(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'files'\}/);
-  assert.doesNotMatch(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'terminal'\}/);
-  assert.doesNotMatch(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('files'\)\}/);
-  assert.doesNotMatch(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('terminal'\)\}/);
-  assert.doesNotMatch(stackPopupSurface, /class="stack-view-toggle"/);
-  assert.doesNotMatch(stackPopupSurface, /CLI<\/MeltActionButton>/);
+test('stack browser exposes CLI view controls while child owns terminal internals', () => {
+  assert.match(stackPopupSurface, /class:terminal-mode/);
+  assert.match(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'files'\}/);
+  assert.match(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'terminal'\}/);
+  assert.match(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('files'\)\}/);
+  assert.match(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('terminal'\)\}/);
+  assert.match(stackPopupSurface, /class="stack-view-toggle"/);
+  assert.match(stackPopupSurface, /CLI<\/MeltActionButton>/);
   assert.doesNotMatch(stackPopupSurface, /Stack Browser embedded terminal lets you|Use this terminal to/);
 });
 
@@ -201,11 +296,19 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
   assert.match(terminalPanelSurface, /cursorBlink: true/);
-  assert.match(terminalPanelSurface, /fontFamily: 'var\(--js-font-sans\)'/);
-  assert.match(terminalPanelSurface, /fontSize: 12/);
+  assert.match(terminalPanelSurface, /TERMINAL_PANEL_FONT_FAMILY/);
+  assert.match(terminalPanelSurface, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
+  assert.match(terminalPanelSurface, /fontSize: 13/);
+  assert.match(terminalPanelSurface, /letterSpacing: 0/);
+  assert.match(terminalPanelSurface, /lineHeight: 1\.25/);
   assert.match(terminalPanelSurface, /fitAddon = new FitAddon\(\);/);
   assert.match(terminalPanelSurface, /terminal\.loadAddon\(fitAddon\)/);
   assert.match(terminalPanelSurface, /terminal\.onData\(\(data\) => \{/);
+  assert.match(terminalPanelSurface, /terminal\.attachCustomKeyEventHandler/);
+  assert.match(terminalPanelSurface, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && terminal\?\.hasSelection\(\)/);
+  assert.match(terminalPanelSurface, /navigator\.clipboard\?\.writeText\(selection\)/);
+  assert.match(terminalPanelSurface, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'/);
+  assert.match(terminalPanelSurface, /navigator\.clipboard\?\.readText\(\)/);
   assert.match(terminalPanelSurface, /void writeTerminalData\(data\);/);
   assert.match(terminalPanelSurface, /async function writeTerminalData\(data: string\)/);
   assert.match(terminalPanelSurface, /writeStackTerminal\(sessionId, data\)/);
@@ -214,6 +317,9 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /bind:this=\{host\}/);
   assert.match(terminalPanelSurface, /function scrollToBottom\(\)/);
   assert.match(terminalPanelSurface, /terminal\?\.scrollToBottom\(\)/);
+  assert.doesNotMatch(terminalPanelSurface, /function anchorCommandLineToLastRow\(\)/);
+  assert.doesNotMatch(terminalPanelSurface, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
+  assert.doesNotMatch(terminalPanelSurface, /terminalOutputHasClear/);
   assert.match(terminalPanelSurface, /function writeTerminalOutput\(output: string\)/);
   assert.match(terminalPanelSurface, /terminalOutputHasVisibleText\(output\)/);
   assert.match(terminalPanelSurface, /terminal\?\.write\(output\)/);
@@ -233,40 +339,61 @@ test('stack terminal supports xterm selection and copy', () => {
   const terminalPanelSurface = readRepoFile('src/components/TerminalPanelSurface.svelte');
   const terminalPanelCss = readRepoFile('src/components/TerminalPanelSurface.css');
   assert.match(terminalPanelSurface, /terminal\.onData/);
+  assert.match(stackTerminalPane, /nextTerminal\.attachCustomKeyEventHandler/);
+  assert.match(stackTerminalPane, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && nextTerminal\.hasSelection\(\)/);
+  assert.match(stackTerminalPane, /navigator\.clipboard\?\.writeText\(selection\)/);
+  assert.match(stackTerminalPane, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'/);
+  assert.match(stackTerminalPane, /navigator\.clipboard\?\.readText\(\)/);
+  assert.match(stackTerminalPane, /on:contextmenu=\{openTerminalContextMenu\}/);
+  assert.match(stackTerminalPane, /class="stack-terminal-context-menu"/);
+  assert.match(stackTerminalPane, /copySelectionFromContextMenu/);
+  assert.match(stackTerminalPane, /pasteClipboardFromContextMenu/);
   assert.match(terminalPanelCss, /user-select: text;/);
+  assert.match(terminalPanelSurface, /on:contextmenu=\{openTerminalContextMenu\}/);
+  assert.match(terminalPanelSurface, /class="terminal-panel-context-menu"/);
+  assert.match(terminalPanelSurface, /copySelectionFromContextMenu/);
+  assert.match(terminalPanelSurface, /pasteClipboardFromContextMenu/);
+  assert.match(terminalPanelCss, /\.terminal-panel-context-menu/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm\)/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-helper-textarea\)/);
 });
 
 test('terminal cwd changes update Stack Browser path and breadcrumbs immediately', () => {
-  assert.match(stackPopupSurface, /async function syncFolderToStackTerminalCwd\(\)/);
-  assert.match(stackPopupSurface, /async function applyStackTerminalCwd\(cwd: string\)/);
-  assert.match(stackPopupSurface, /await applyStackTerminalCwd\(result\.cwd \|\| stackTerminalCwd\)/);
-  assert.match(stackPopupSurface, /stackBrowserViewMode === 'terminal'[\s\S]{0,220}await openFolder\(nextCwd, \{ warmTerminal: false \}\);/);
-  assert.match(stackPopupSurface, /await openFolder\(nextCwd, \{ warmTerminal: false \}\);/);
-  assert.match(stackPopupSurface, /await openFolder\(stackTerminalCwd, \{ warmTerminal: false \}\);/);
-  assert.match(stackPopupSurface, /await syncFolderToStackTerminalCwd\(\);[\s\S]*stackBrowserViewMode = 'files';/);
+  assert.match(stackTerminalPane, /export async function syncFolderToTerminalCwd\(\)/);
+  assert.match(stackTerminalPane, /async function applyCwd\(nextCwd: string\)/);
+  assert.match(stackTerminalPane, /await applyCwd\(result\.cwd \|\| cwd\)/);
+  assert.match(stackTerminalPane, /await onCwdChange\(normalized\)/);
+  assert.match(stackPopupSurface, /async function handleStackTerminalCwdChange\(cwd: string\)/);
+  assert.match(stackPopupSurface, /stackBrowserViewMode === 'terminal'[\s\S]{0,220}await openFolder\(cwd, \{ warmTerminal: false \}\);/);
+  assert.match(stackPopupSurface, /await stackTerminalPane\?\.syncFolderToTerminalCwd\(\);[\s\S]*stackBrowserViewMode = 'files';/);
 });
 
 test('stack terminal PowerShell profile loads normal shell affordances and normalizes extended cwd paths', () => {
   assert.match(rustTerminal, /"-ExecutionPolicy"\.to_string\(\),\s*"Bypass"\.to_string\(\)/);
   assert.match(rustTerminal, /"-NoExit"\.to_string\(\)/);
-  assert.doesNotMatch(rustTerminal, /"-Command"\.to_string\(\)/);
+  assert.match(rustTerminal, /"-EncodedCommand"\.to_string\(\)/);
+  assert.match(rustTerminal, /fn powershell_encoded_command\(script: &str\) -> String/);
   assert.match(rustTerminal, /powershell_startup_script\(\)/);
   assert.match(rustTerminal, /powershell_augmented_path\(\)/);
   assert.match(rustTerminal, /command\.env\("PATH", path\)/);
   assert.match(rustTerminal, /powershell\.to_string_lossy\(\)/);
-  assert.match(rustTerminal, /Set-Alias -Name ls -Value Get-ChildItem -Force/);
-  assert.match(rustTerminal, /Set-Alias -Name clear -Value Clear-Host -Force/);
+  assert.ok(rustTerminal.includes('InlinePrediction = \\"`e[38;5;240m\\"'));
+  assert.ok(rustTerminal.includes('ListPrediction = \\"`e[38;5;244m\\"'));
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion/);
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext/);
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Shift\+Tab -Function TabCompletePrevious/);
+  assert.match(rustTerminal, /Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue/);
+  assert.match(rustTerminal, /Set-Alias -Name clear -Value Clear-Host -Force -ErrorAction SilentlyContinue/);
   assert.match(rustTerminal, /function which \{ Get-Command @args \}/);
+  assert.doesNotMatch(rustTerminal, /write_all\(startup_script\.as_bytes\(\)\)/);
   assert.doesNotMatch(rustTerminal, /"Clear-Host",/);
-  assert.doesNotMatch(rustTerminal, /"-NoProfile"\.to_string\(\)/);
+  assert.match(rustTerminal, /"-NoProfile"\.to_string\(\)/);
   assert.match(rustTerminal, /use portable_pty::\{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize\}/);
   assert.match(rustTerminal, /native_pty_system\(\)/);
   assert.match(rustTerminal, /\.openpty\(PtySize/);
   assert.match(rustTerminal, /\.slave\.spawn_command\(command\)/);
-  assert.match(rustTerminal, /master: Option<Box<dyn MasterPty \+ Send>>/);
-  assert.match(rustTerminal, /master: Some\(pty_pair\.master\)/);
+  assert.match(rustTerminal, /master: Option<Arc<Mutex<Box<dyn MasterPty \+ Send>>>>/);
+  assert.match(rustTerminal, /master: Some\(Arc::new\(Mutex::new\(pty_pair\.master\)\)\)/);
   assert.doesNotMatch(rustTerminal, /stdin\(Stdio::piped\(\)\)/);
   assert.match(rustTerminal, /fn display_stack_terminal_path\(path: &Path\) -> String/);
   assert.ok(rustTerminal.includes('strip_prefix("\\\\\\\\?\\\\")'));

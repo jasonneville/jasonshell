@@ -14,6 +14,7 @@
     type StackTerminalOutputChunk,
     type StackTerminalSession
   } from '../lib/persistentTerminal';
+  import { hideTerminalPanel } from '../lib/terminalPanel';
 
   type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalOutputPayload = StackTerminalOutputChunk;
@@ -21,6 +22,8 @@
     sessionId: string;
     running?: boolean;
   };
+
+  const TERMINAL_PANEL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SFMono-Regular", monospace';
 
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
@@ -40,13 +43,18 @@
   let lastResizeKey = '';
   let unlisteners: Array<() => void> = [];
   let listenersDisposed = false;
+  let contextMenu: { x: number; y: number } | null = null;
+  let currentInputText = '';
+  let currentInputSelectionActive = false;
 
   onMount(() => {
     listenersDisposed = false;
+    document.addEventListener('click', closeTerminalContextMenu);
     void initializeTerminalListeners();
     void startTerminal();
     return () => {
       listenersDisposed = true;
+      document.removeEventListener('click', closeTerminalContextMenu);
       stopPolling();
       clearStartupTimer();
       disposeTerminalView();
@@ -116,6 +124,18 @@
     }
   }
 
+  function isAltBackquoteHotkey(event: KeyboardEvent) {
+    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
+  }
+
+  function closeFromTerminalHotkey(event: KeyboardEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    void hideTerminalPanel().catch((error) => {
+      console.error('Failed to hide terminal panel from hotkey', error);
+    });
+  }
+
   function ensureTerminalView() {
     if (!host) {
       return;
@@ -128,9 +148,11 @@
       allowProposedApi: false,
       convertEol: true,
       cursorBlink: true,
-      fontFamily: 'var(--js-font-sans)',
-      fontSize: 12,
-      lineHeight: 1.35,
+      cursorStyle: 'block',
+      fontFamily: TERMINAL_PANEL_FONT_FAMILY,
+      fontSize: 13,
+      letterSpacing: 0,
+      lineHeight: 1.25,
       scrollback: 8000,
       theme: {
         background: '#05070a',
@@ -143,7 +165,34 @@
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.onData((data) => {
+      trackTerminalInput(data);
       void writeTerminalData(data);
+    });
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && isAltBackquoteHotkey(event)) {
+        closeFromTerminalHotkey(event);
+        return false;
+      }
+      if (event.type === 'keyup' && (event.key === '`' || event.code === 'Backquote')) {
+        event.preventDefault();
+        event.stopPropagation();
+        return false;
+      }
+      if (event.type === 'keydown' && currentInputSelectionActive && (event.key === 'Backspace' || event.key === 'Delete')) {
+        event.preventDefault();
+        event.stopPropagation();
+        void deleteSelectedCurrentInput();
+        return false;
+      }
+      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'c' && terminal?.hasSelection()) {
+        void copySelection();
+        return false;
+      }
+      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') {
+        void pasteClipboard();
+        return false;
+      }
+      return true;
     });
     terminal.open(host);
     resizeObserver = new ResizeObserver(() => scheduleFit());
@@ -152,6 +201,52 @@
       fitTerminal();
       scheduleFit();
     });
+  }
+
+  function trackTerminalInput(data: string) {
+    currentInputSelectionActive = false;
+    for (const ch of data) {
+      if (ch === '\r' || ch === '\n' || ch === '\u0003') {
+        currentInputText = '';
+      } else if (ch === '\b' || ch === '\u007f') {
+        currentInputText = currentInputText.slice(0, -1);
+      } else if (!/^[\u0000-\u001f\u007f]$/.test(ch)) {
+        currentInputText += ch;
+      }
+    }
+  }
+
+  function selectCurrentInputText() {
+    if (!terminal || currentInputText.length === 0) {
+      return;
+    }
+    const buffer = terminal.buffer.active;
+    const row = buffer.baseY + buffer.cursorY;
+    const startColumn = Math.max(0, buffer.cursorX - currentInputText.length);
+    terminal.select(startColumn, row, currentInputText.length);
+    currentInputSelectionActive = true;
+  }
+
+  async function deleteSelectedCurrentInput() {
+    const length = currentInputText.length;
+    if (length <= 0) {
+      currentInputSelectionActive = false;
+      return;
+    }
+    const eraseInput = '\u007f'.repeat(length);
+    currentInputText = '';
+    currentInputSelectionActive = false;
+    terminal?.clearSelection();
+    await writeTerminalData(eraseInput);
+  }
+
+  function handleTerminalMouseDown(event: MouseEvent) {
+    if (event.detail < 3) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void tick().then(selectCurrentInputText);
   }
 
   function disposeTerminalView() {
@@ -218,6 +313,46 @@
       () => undefined
     );
     return queued;
+  }
+
+  async function copySelection() {
+    const selection = terminal?.getSelection() ?? '';
+    if (!selection) {
+      return;
+    }
+    await navigator.clipboard?.writeText(selection).catch((error) => {
+      console.debug('Persistent terminal selection copy unavailable', error);
+    });
+  }
+
+  async function pasteClipboard() {
+    const text = await navigator.clipboard?.readText().catch((error) => {
+      console.debug('Persistent terminal clipboard paste unavailable', error);
+      return '';
+    });
+    if (text) {
+      await writeTerminalData(text);
+    }
+  }
+
+  function openTerminalContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    contextMenu = { x: event.clientX, y: event.clientY };
+    terminal?.focus();
+  }
+
+  function closeTerminalContextMenu() {
+    contextMenu = null;
+  }
+
+  async function copySelectionFromContextMenu() {
+    closeTerminalContextMenu();
+    await copySelection();
+  }
+
+  async function pasteClipboardFromContextMenu() {
+    closeTerminalContextMenu();
+    await pasteClipboard();
   }
 
   function startPolling() {
@@ -298,6 +433,7 @@
       clearStartupTimer();
     }
     terminal?.write(output);
+    terminal?.scrollToBottom();
   }
 
   function terminalOutputHasVisibleText(output: string) {
@@ -341,6 +477,8 @@
   async function restartTerminal() {
     const oldSession = session?.sessionId;
     session = null;
+    currentInputText = '';
+    currentInputSelectionActive = false;
     renderedSequences = new Set<string>();
     if (oldSession) {
       await stopStackTerminal(oldSession).catch(() => undefined);
@@ -360,6 +498,13 @@
   }
 </script>
 
+<svelte:window on:keydown|capture={(event) => isAltBackquoteHotkey(event) && closeFromTerminalHotkey(event)} on:keyup|capture={(event) => {
+  if (event.key === '`' || event.code === 'Backquote') {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}} />
+
 <div class="terminal-panel" role="dialog" aria-label="Persistent terminal">
   <header class="terminal-panel-header">
     <div>
@@ -369,7 +514,19 @@
     <button type="button" class="terminal-restart" on:click={() => void restartTerminal()}>Restart</button>
   </header>
   <section class="terminal-panel-body">
-    <div bind:this={host} class="terminal-panel-output" aria-label="Terminal output"></div>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
+    <div bind:this={host} class="terminal-panel-output" role="log" aria-label="Terminal output" on:mousedown|capture={handleTerminalMouseDown} on:contextmenu={openTerminalContextMenu}></div>
+    {#if contextMenu}
+      <div
+        class="terminal-panel-context-menu"
+        role="menu"
+        tabindex="-1"
+        style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`}
+      >
+        <button type="button" role="menuitem" on:click={() => void copySelectionFromContextMenu()}>Copy</button>
+        <button type="button" role="menuitem" on:click={() => void pasteClipboardFromContextMenu()}>Paste</button>
+      </div>
+    {/if}
     {#if !outputReceived && lifecycle !== 'running'}
       <div class="terminal-panel-status" class:error={lifecycle === 'failed'} role={lifecycle === 'failed' ? 'alert' : 'status'} aria-live="polite">
         <strong>{status}</strong>

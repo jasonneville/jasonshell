@@ -109,6 +109,10 @@ export type StackTerminalSession = {
   cwd: string;
   profile: StackTerminalProfile;
   running: boolean;
+  cols?: number;
+  rows?: number;
+  pixelWidth?: number | null;
+  pixelHeight?: number | null;
 };
 
 export type StackTerminalReadResult = {

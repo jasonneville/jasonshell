@@ -118,6 +118,7 @@
   let taskStripEl: HTMLDivElement | null = null;
   let taskbarOverflow = taskbarOverflowState(0, 0, 0);
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
 
   function readPersistedLauncherOrder() {
     try {
@@ -728,6 +729,9 @@
   function isCtrlSpaceHotkey(event: KeyboardEvent) {
     return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
   }
+  function isAltBackquoteHotkey(event: KeyboardEvent) {
+    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
+  }
   function isSpaceKey(event: KeyboardEvent) {
     return event.code === 'Space';
   }
@@ -781,7 +785,17 @@
     }, 1_000);
     const resizeHandler = () => updateTaskbarOverflow();
     let shellSurfaceHotkeyHandled = false;
+    let terminalSurfaceHotkeyHandled = false;
     const keydownHandler = (event: KeyboardEvent) => {
+      if (isAltBackquoteHotkey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!terminalSurfaceHotkeyHandled && !event.repeat) {
+          terminalSurfaceHotkeyHandled = true;
+          void emit(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT);
+        }
+        return;
+      }
       if (!isCtrlSpaceHotkey(event)) {
         return;
       }
@@ -793,6 +807,12 @@
       }
     };
     const keyupHandler = (event: KeyboardEvent) => {
+      if ((event.key === '`' || event.code === 'Backquote') && terminalSurfaceHotkeyHandled) {
+        event.preventDefault();
+        event.stopPropagation();
+        terminalSurfaceHotkeyHandled = false;
+        return;
+      }
       if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
         return;
       }

@@ -225,6 +225,7 @@
   const SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS = 220;
   const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
   const TERMINAL_PANEL_ID = 'terminal-panel';
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
@@ -592,6 +593,10 @@
       return;
     }
     void closePanel();
+  }
+
+  function isAltBackquoteHotkey(event: KeyboardEvent) {
+    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
   }
 
   function handleTopBarKeydown(event: KeyboardEvent) {
@@ -1551,19 +1556,37 @@
     registerAsyncUnlistener(listen(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, () => {
       toggleCenteredSearchFromHotkey();
     }));
+    registerAsyncUnlistener(listen(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, () => {
+      void toggleTerminalPanel(terminalControl);
+    }));
     let shellSurfaceHotkeyHandled = false;
+    let terminalSurfaceHotkeyHandled = false;
     const keydownHandler = (event: KeyboardEvent) => {
-      if (!isCtrlSpaceHotkey(event)) {
+      if (isAltBackquoteHotkey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!terminalSurfaceHotkeyHandled && !event.repeat) {
+          terminalSurfaceHotkeyHandled = true;
+          void toggleTerminalPanel(terminalControl);
+        }
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
-      if (!shellSurfaceHotkeyHandled && !event.repeat) {
-        shellSurfaceHotkeyHandled = true;
-        toggleCenteredSearchFromHotkey();
+      if (isCtrlSpaceHotkey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!shellSurfaceHotkeyHandled && !event.repeat) {
+          shellSurfaceHotkeyHandled = true;
+          toggleCenteredSearchFromHotkey();
+        }
       }
     };
     const keyupHandler = (event: KeyboardEvent) => {
+      if ((event.key === '`' || event.code === 'Backquote') && terminalSurfaceHotkeyHandled) {
+        event.preventDefault();
+        event.stopPropagation();
+        terminalSurfaceHotkeyHandled = false;
+        return;
+      }
       if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
         return;
       }

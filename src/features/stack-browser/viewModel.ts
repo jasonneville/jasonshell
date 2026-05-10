@@ -16,6 +16,7 @@ export {
   isStackBrowsableArchiveEntry,
   getStackPathAutocompleteQuery,
   getStackPathInlineCompletion,
+  getNextStackPathCompletionCycleIndex,
   stackBrowserScrollTopForIndex,
   stackBrowserVirtualWindow,
   type StackBrowserBreadcrumbOverflow,

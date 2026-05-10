@@ -46,6 +46,24 @@ test('top and bottom shell surfaces catch Ctrl+Space when their webviews have fo
   assert.doesNotMatch(searchPanel, /emitTo\(topBarTarget, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
 });
 
+test('Alt+Backquote terminal hotkey emits and shell surfaces toggle terminal panel', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const topBar = readSource('../src/components/TopBar.svelte');
+  const bottomBar = readSource('../src/components/BottomBar.svelte');
+
+  assert.match(rust, /TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = "terminal:toggle-panel"/);
+  assert.match(rust, /SearchHotkeyDecision::ToggleTerminal/);
+  assert.match(rust, /VK_OEM_3/);
+  assert.match(rust, /VK_LMENU/);
+  assert.match(rust, /VK_RMENU/);
+  assert.match(rust, /emit_to\(\s*crate::shell_windows::TOP_BAR_LABEL,\s*TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT/);
+  assert.match(rust, /alt_backquote_toggles_terminal_and_suppresses_backquote/);
+  assert.match(topBar, /const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';/);
+  assert.match(topBar, /listen\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, \(\) => \{\s*void toggleTerminalPanel\(terminalControl\);/);
+  assert.match(topBar, /function isAltBackquoteHotkey\(event: KeyboardEvent\)/);
+  assert.match(bottomBar, /void emit\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT\)/);
+});
+
 test('native hook installs during setup and cleans up on exit', () => {
   const main = readSource('../src-tauri/src/main.rs');
 

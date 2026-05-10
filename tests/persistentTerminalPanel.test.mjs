@@ -46,11 +46,13 @@ test('top bar terminal button sits before quick commands and toggles terminal pa
   assert.match(topBarCss, /\.top-bar \.terminal-button/);
 });
 
-test('Stack Browser no longer exposes or warms embedded CLI view', () => {
-  assert.doesNotMatch(stackPopup, /class="stack-view-toggle"/);
-  assert.doesNotMatch(stackPopup, /CLI/);
-  assert.doesNotMatch(stackPopup, /void warmStackTerminalForCurrentFolder\(\)/);
-  assert.doesNotMatch(stackPopup, /class:terminal-mode/);
+test('Stack Browser embedded CLI is isolated in extracted terminal pane', () => {
+  assert.match(stackPopup, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
+  assert.match(stackPopup, /class="stack-view-toggle"/);
+  assert.match(stackPopup, /CLI/);
+  assert.match(stackPopup, /class:terminal-mode/);
+  assert.doesNotMatch(stackPopup, /from '@xterm\/xterm'/);
+  assert.doesNotMatch(stackPopup, /from '@xterm\/addon-fit'/);
 });
 
 test('terminal panel owns xterm, startup status, errors, and poll fallback', () => {
@@ -63,10 +65,37 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /role=\{lifecycle === 'failed' \? 'alert' : 'status'\}/);
   assert.match(terminalPanel, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanel, /writeStackTerminal\(sessionId, data\)/);
+  assert.match(terminalPanel, /trackTerminalInput\(data\)/);
   assert.match(terminalPanel, /resizeStackTerminal\(/);
+  assert.match(terminalPanel, /terminal\.attachCustomKeyEventHandler/);
+  assert.match(terminalPanel, /isAltBackquoteHotkey\(event\)/);
+  assert.match(terminalPanel, /hideTerminalPanel\(\)/);
+  assert.match(terminalPanel, /<svelte:window on:keydown\|capture/);
+  assert.match(terminalPanel, /return false;\s*}\s*if \(event\.type === 'keyup'/);
+  assert.match(terminalPanel, /navigator\.clipboard\?\.writeText\(selection\)/);
+  assert.match(terminalPanel, /navigator\.clipboard\?\.readText\(\)/);
+  assert.match(terminalPanel, /function handleTerminalMouseDown\(event: MouseEvent\)/);
+  assert.match(terminalPanel, /event\.detail < 3/);
+  assert.match(terminalPanel, /terminal\.select\(startColumn, row, currentInputText\.length\)/);
+  assert.match(terminalPanel, /currentInputSelectionActive = true/);
+  assert.match(terminalPanel, /function deleteSelectedCurrentInput\(\)/);
+  assert.match(terminalPanel, /'\\u007f'\.repeat\(length\)/);
+  assert.match(terminalPanel, /event\.key === 'Backspace' \|\| event\.key === 'Delete'/);
+  assert.match(terminalPanel, /on:mousedown\|capture=\{handleTerminalMouseDown\}/);
+  assert.match(terminalPanel, /on:contextmenu=\{openTerminalContextMenu\}/);
+  assert.match(terminalPanel, /class="terminal-panel-context-menu"/);
+  assert.match(terminalPanel, /TERMINAL_PANEL_FONT_FAMILY/);
+  assert.match(terminalPanel, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
+  assert.match(terminalPanel, /letterSpacing: 0/);
+  assert.doesNotMatch(terminalPanel, /function anchorCommandLineToLastRow\(\)/);
+  assert.doesNotMatch(terminalPanel, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
+  assert.doesNotMatch(terminalPanel, /terminalOutputHasClear/);
   assert.match(terminalPanel, /Still waiting for terminal output/);
   assert.match(terminalPanelCss, /\.terminal-panel/);
   assert.match(terminalPanelCss, /\.terminal-panel-output/);
+  assert.match(terminalPanelCss, /\.terminal-panel-context-menu/);
+  assert.match(terminalPanelCss, /font-feature-settings: "liga" 0, "calt" 0, "tnum" 1;/);
+  assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-rows\)/);
 });
 
 test('persistent terminal output is routed to the terminal panel window', () => {

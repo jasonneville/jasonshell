@@ -1,14 +1,16 @@
 use crate::settings::{self, TerminalProfile};
 use crate::shell_windows;
 use crate::stack_popup::models::StackPopupRuntimeState;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver};
-use std::sync::Mutex;
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
@@ -64,6 +66,10 @@ pub struct StackTerminalSessionSnapshot {
     pub profile: TerminalProfile,
     pub cwd: String,
     pub running: bool,
+    pub cols: u16,
+    pub rows: u16,
+    pub pixel_width: Option<u16>,
+    pub pixel_height: Option<u16>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -118,7 +124,6 @@ pub(crate) struct TerminalProcessPlan {
     pub candidates: Vec<PathBuf>,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct StackTerminalSize {
     cols: u16,
@@ -157,6 +162,7 @@ impl StackTerminalRegistry {
         Ok(self.sessions.remove(session_id))
     }
 
+    #[cfg(test)]
     fn should_drop_for_stop(&mut self, session_id: &str) -> bool {
         self.stop_requested.remove(session_id)
     }
@@ -187,10 +193,16 @@ impl StackTerminalRegistry {
                 master: None,
                 writer: None,
                 input_buffer: String::new(),
-                output_rx: mpsc::channel().1,
+                output_rx: mpsc::sync_channel(1024).1,
                 target_label: shell_windows::STACK_POPUP_LABEL.to_string(),
                 next_sequence: 1,
                 running: true,
+                size: StackTerminalSize {
+                    cols: 120,
+                    rows: 30,
+                    pixel_width: None,
+                    pixel_height: None,
+                },
                 test_size: None,
             },
         );
@@ -224,7 +236,10 @@ impl StackTerminalRegistry {
     }
 
     #[cfg(test)]
-    fn begin_test_operation(&mut self, session_id: &str) -> Result<StackTerminalTestOperation, String> {
+    fn begin_test_operation(
+        &mut self,
+        session_id: &str,
+    ) -> Result<StackTerminalTestOperation, String> {
         validate_stack_terminal_session_id(session_id)?;
         if self.sessions.contains_key(session_id) {
             Ok(StackTerminalTestOperation {})
@@ -243,13 +258,14 @@ struct StackTerminalSession {
     cwd: PathBuf,
     child: Box<dyn PtyChild + Send>,
     #[allow(dead_code)]
-    master: Option<Box<dyn MasterPty + Send>>,
-    writer: Option<Box<dyn Write + Send>>,
+    master: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
+    writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     input_buffer: String,
     output_rx: Receiver<TerminalReaderMessage>,
     target_label: String,
     next_sequence: u64,
     running: bool,
+    size: StackTerminalSize,
     #[cfg(test)]
     test_size: Option<StackTerminalSize>,
 }
@@ -284,10 +300,11 @@ pub(crate) async fn start_stack_terminal_session(
     }
     let target_label = terminal_event_target_label(request.target_label.as_deref())?;
     let app_handle_for_spawn = app_handle.clone();
-    let session =
-        tauri::async_runtime::spawn_blocking(move || spawn_terminal_session(Some(app_handle_for_spawn), profile, cwd, target_label))
-            .await
-            .map_err(|error| format!("Failed to join terminal spawn task: {error}"))??;
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        spawn_terminal_session(Some(app_handle_for_spawn), profile, cwd, target_label)
+    })
+    .await
+    .map_err(|error| format!("Failed to join terminal spawn task: {error}"))??;
     let snapshot = session.snapshot();
     let target_label = session.target_label.clone();
     let mut runtime = state
@@ -319,44 +336,40 @@ pub(crate) async fn write_stack_terminal_session(
             "Terminal input is limited to {MAX_STACK_TERMINAL_WRITE_BYTES} bytes per write"
         ));
     }
-    let mut session = take_terminal_session(state, &request.session_id)?;
     let input = request.input;
-    let write_result = tauri::async_runtime::spawn_blocking(move || {
-        let writer = match session.writer.as_mut() {
-            Some(writer) => writer,
-            None => return Err((session, "Terminal session writer is closed".to_string())),
-        };
-        if let Err(error) = writer
-            .write_all(input.as_bytes())
+    let writer = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+        session
+            .writer
+            .clone()
+            .ok_or_else(|| "Terminal session writer is closed".to_string())?
+    };
+    let input_for_write = input.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut writer = writer
+            .lock()
+            .map_err(|_| "Failed to lock terminal writer".to_string())?;
+        writer
+            .write_all(input_for_write.as_bytes())
             .and_then(|_| writer.flush())
-        {
-            return Err((session, format!("Failed to write terminal input: {error}")));
-        }
-
+            .map_err(|error| format!("Failed to write terminal input: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Failed to join terminal write task: {error}"))??;
+    let (target_label, snapshot) = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
         if let Some(cwd) = session.observe_terminal_input_for_cwd(&input) {
             session.cwd = cwd;
         }
-        Ok::<StackTerminalSession, (StackTerminalSession, String)>(session)
-    })
-    .await
-    .map_err(|error| format!("Failed to join terminal write task: {error}"))?;
-
-    let session = match write_result {
-        Ok(session) => session,
-        Err((session, error)) => {
-            if put_terminal_session(state, session)? {
-                return Err(error);
-            }
-            return Err(error);
-        }
+        (session.target_label.clone(), session.snapshot())
     };
-    let target_label = session.target_label.clone();
-    let snapshot = session.snapshot();
-    if put_terminal_session(state, session)? {
-        emit_cwd_update(app_handle, &target_label, &snapshot);
-    } else {
-        emit_terminal_closed(app_handle, &target_label, &snapshot);
-    }
+    emit_cwd_update(app_handle, &target_label, &snapshot);
     Ok(snapshot)
 }
 
@@ -376,21 +389,37 @@ pub(crate) fn resize_stack_terminal_session(
 ) -> Result<(), String> {
     validate_stack_terminal_session_id(&request.session_id)?;
     validate_stack_terminal_size(request.cols, request.rows)?;
-    let mut runtime = state
-        .lock()
-        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
-    let Some(master) = session.master.as_mut() else {
-        return Err("Terminal PTY is unavailable".to_string());
+    let master = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+        session
+            .master
+            .clone()
+            .ok_or_else(|| "Terminal PTY is unavailable".to_string())?
     };
     master
+        .lock()
+        .map_err(|_| "Failed to lock terminal PTY".to_string())?
         .resize(PtySize {
             rows: request.rows,
             cols: request.cols,
             pixel_width: request.pixel_width.unwrap_or(0),
             pixel_height: request.pixel_height.unwrap_or(0),
         })
-        .map_err(|error| format!("Failed to resize Stack Browser terminal: {error}"))
+        .map_err(|error| format!("Failed to resize Stack Browser terminal: {error}"))?;
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+    let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+    session.size = StackTerminalSize {
+        cols: request.cols,
+        rows: request.rows,
+        pixel_width: request.pixel_width,
+        pixel_height: request.pixel_height,
+    };
+    Ok(())
 }
 
 pub(crate) fn read_stack_terminal(
@@ -419,30 +448,29 @@ pub(crate) fn poll_stack_terminal_session(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
 ) -> Result<StackTerminalPollResult, String> {
-    let mut session = take_terminal_session(state, &session_id)?;
-    let mut chunks = drain_terminal_output(&mut session);
-    let running = refresh_session_running(&mut session, &mut chunks);
-    let target_label = session.target_label.clone();
-    let snapshot = session.snapshot();
-    let cwd = stack_terminal_cwd_string(&session.cwd);
-    let returned_session_id = session.id.clone();
-    if running {
-        if !put_terminal_session(state, session)? {
-            emit_terminal_closed(app_handle, &target_label, &snapshot);
-            return Ok(StackTerminalPollResult {
-                session_id: returned_session_id,
-                cwd,
-                running: false,
-                chunks,
-            });
-        }
-    }
+    let (target_label, snapshot, returned_session_id, cwd, running, chunks) = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let session = runtime.terminal_sessions.session_mut(&session_id)?;
+        let mut chunks = drain_terminal_output(session);
+        let running = refresh_session_running(session, &mut chunks);
+        (
+            session.target_label.clone(),
+            session.snapshot(),
+            session.id.clone(),
+            stack_terminal_cwd_string(&session.cwd),
+            running,
+            chunks,
+        )
+    };
     if !running {
-        let _ = app_handle.emit_to(
-            target_label.as_str(),
-            crate::contracts::events::STACK_TERMINAL_CLOSED,
-            &snapshot,
-        );
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let _ = runtime.terminal_sessions.remove(&session_id);
+        drop(runtime);
+        emit_terminal_closed(app_handle, &target_label, &snapshot);
     }
     Ok(StackTerminalPollResult {
         session_id: returned_session_id,
@@ -463,6 +491,10 @@ pub(crate) fn stop_stack_terminal_session(
             profile: TerminalProfile::WindowsTerminal,
             cwd: String::new(),
             running: false,
+            cols: 0,
+            rows: 0,
+            pixel_width: None,
+            pixel_height: None,
         };
         emit_terminal_closed(app_handle, shell_windows::STACK_POPUP_LABEL, &snapshot);
         return Ok(snapshot);
@@ -476,16 +508,6 @@ pub(crate) fn stop_stack_terminal_session(
     Ok(snapshot)
 }
 
-fn take_terminal_session(
-    state: &State<'_, Mutex<StackPopupRuntimeState>>,
-    session_id: &str,
-) -> Result<StackTerminalSession, String> {
-    let mut runtime = state
-        .lock()
-        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    runtime.terminal_sessions.remove(session_id)
-}
-
 fn request_terminal_stop(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: &str,
@@ -494,23 +516,6 @@ fn request_terminal_stop(
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
     runtime.terminal_sessions.request_stop(session_id)
-}
-
-fn put_terminal_session(
-    state: &State<'_, Mutex<StackPopupRuntimeState>>,
-    mut session: StackTerminalSession,
-) -> Result<bool, String> {
-    let mut runtime = state
-        .lock()
-        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    if runtime.terminal_sessions.should_drop_for_stop(&session.id) {
-        drop(runtime);
-        let _ = session.child.kill();
-        let _ = session.child.wait();
-        return Ok(false);
-    }
-    runtime.terminal_sessions.insert(session);
-    Ok(true)
 }
 
 pub(crate) fn stop_stack_terminal(
@@ -565,7 +570,7 @@ fn spawn_terminal_session(
             profile
         )
     })?;
-    let mut writer = pty_pair
+    let writer = pty_pair
         .master
         .take_writer()
         .map_err(|error| format!("Failed to attach terminal input: {error}"))?;
@@ -573,17 +578,7 @@ fn spawn_terminal_session(
         .master
         .try_clone_reader()
         .map_err(|error| format!("Failed to attach terminal output: {error}"))?;
-    if matches!(
-        profile,
-        TerminalProfile::WindowsTerminal | TerminalProfile::PowerShell
-    ) {
-        let startup_script = powershell_startup_script();
-        let _ = writer
-            .write_all(startup_script.as_bytes())
-            .and_then(|_| writer.write_all(b"\r\n"))
-            .and_then(|_| writer.flush());
-    }
-    let (output_tx, output_rx) = mpsc::channel();
+    let (output_tx, output_rx) = mpsc::sync_channel(1024);
     let session_id = new_stack_terminal_session_id();
     spawn_terminal_reader(
         reader,
@@ -598,13 +593,19 @@ fn spawn_terminal_session(
         profile,
         cwd,
         child,
-        master: Some(pty_pair.master),
-        writer: Some(writer),
+        master: Some(Arc::new(Mutex::new(pty_pair.master))),
+        writer: Some(Arc::new(Mutex::new(writer))),
         input_buffer: String::new(),
         output_rx,
         target_label,
         next_sequence: 1,
         running: true,
+        size: StackTerminalSize {
+            cols: 120,
+            rows: 30,
+            pixel_width: None,
+            pixel_height: None,
+        },
         #[cfg(test)]
         test_size: None,
     })
@@ -612,7 +613,7 @@ fn spawn_terminal_session(
 
 fn spawn_terminal_reader<R>(
     mut reader: R,
-    tx: mpsc::Sender<TerminalReaderMessage>,
+    tx: SyncSender<TerminalReaderMessage>,
     stream: StackTerminalOutputStream,
     app_handle: Option<AppHandle>,
     session_id: String,
@@ -642,11 +643,14 @@ fn spawn_terminal_reader<R>(
                         );
                     }
                     sequence = sequence.saturating_add(1);
-                    if tx.send(TerminalReaderMessage {
-                        stream,
-                        text,
-                        sequence: chunk.sequence,
-                    }).is_err() {
+                    if tx
+                        .send(TerminalReaderMessage {
+                            stream,
+                            text,
+                            sequence: chunk.sequence,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -705,6 +709,10 @@ impl StackTerminalSession {
             profile: self.profile,
             cwd: stack_terminal_cwd_string(&self.cwd),
             running: self.running,
+            cols: self.size.cols,
+            rows: self.size.rows,
+            pixel_width: self.size.pixel_width,
+            pixel_height: self.size.pixel_height,
         }
     }
 
@@ -779,16 +787,20 @@ pub(crate) fn terminal_process_plan(
 }
 
 fn powershell_cmd_launch_line(powershell: PathBuf) -> String {
-    let trusted_path = short_windows_path(&powershell)
-        .unwrap_or_else(|| powershell.to_string_lossy().to_string());
+    let trusted_path =
+        short_windows_path(&powershell).unwrap_or_else(|| powershell.to_string_lossy().to_string());
+    let encoded_startup = powershell_encoded_command(&powershell_startup_script());
     format!(
         "{} {}",
         trusted_path,
         [
             "-NoLogo".to_string(),
+            "-NoProfile".to_string(),
             "-ExecutionPolicy".to_string(),
             "Bypass".to_string(),
             "-NoExit".to_string(),
+            "-EncodedCommand".to_string(),
+            encoded_startup,
         ]
         .join(" ")
     )
@@ -828,14 +840,25 @@ fn powershell_augmented_path() -> Option<String> {
 
 fn powershell_startup_script() -> String {
     [
-        "Set-Alias -Name ls -Value Get-ChildItem -Force",
-        "Set-Alias -Name ll -Value Get-ChildItem -Force",
-        "Set-Alias -Name clear -Value Clear-Host -Force",
-        "Set-Alias -Name cat -Value Get-Content -Force",
-        "Set-Alias -Name grep -Value Select-String -Force",
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "if (Get-Module -ListAvailable -Name PSReadLine) { Import-Module PSReadLine; Set-PSReadLineOption -Colors @{ InlinePrediction = \"`e[38;5;240m\"; ListPrediction = \"`e[38;5;244m\"; ListPredictionSelected = \"`e[48;5;238m\" }; Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion; Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext; Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious; Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete }",
+        "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
+        "Set-Alias -Name ll -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
+        "Set-Alias -Name clear -Value Clear-Host -Force -ErrorAction SilentlyContinue",
+        "Set-Alias -Name cat -Value Get-Content -Force -ErrorAction SilentlyContinue",
+        "Set-Alias -Name grep -Value Select-String -Force -ErrorAction SilentlyContinue",
         "function which { Get-Command @args }",
+        r#"function prompt { $gitLine = $null; if (Get-Command git -ErrorAction SilentlyContinue) { $inside = git rev-parse --is-inside-work-tree 2>$null; if ($LASTEXITCODE -eq 0 -and $inside -eq 'true') { $branch = git symbolic-ref --quiet --short HEAD 2>$null; if (-not $branch) { $branch = git rev-parse --short HEAD 2>$null }; $raw = git status --porcelain=v1 -z 2>$null; $modified = 0; $deleted = 0; $untracked = 0; if ($raw) { foreach ($entry in ($raw -split "`0")) { if (-not $entry) { continue }; if ($entry.StartsWith('??')) { $untracked += 1; continue }; $xy = $entry.Substring(0, [Math]::Min(2, $entry.Length)); if ($xy.Contains('D')) { $deleted += 1 } else { $modified += 1 } } }; $parts = @($branch); if ($modified -gt 0) { $parts += "+$modified" }; if ($deleted -gt 0) { $parts += "-$deleted" }; if ($untracked -gt 0) { $parts += "?$untracked" }; $gitLine = $parts -join ' ' } }; Write-Host -NoNewline "$($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1))"; if ($gitLine) { Write-Host -NoNewline " ($gitLine)" -ForegroundColor Cyan }; " " }"#,
     ]
     .join("; ")
+}
+
+fn powershell_encoded_command(script: &str) -> String {
+    let bytes = script
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect::<Vec<u8>>();
+    BASE64.encode(bytes)
 }
 
 fn trusted_cmd_path() -> Result<PathBuf, String> {
@@ -1055,7 +1078,11 @@ fn terminal_event_target_label(target_label: Option<&str>) -> Result<String, Str
     }
 }
 
-fn emit_cwd_update(app_handle: &AppHandle, target_label: &str, snapshot: &StackTerminalSessionSnapshot) {
+fn emit_cwd_update(
+    app_handle: &AppHandle,
+    target_label: &str,
+    snapshot: &StackTerminalSessionSnapshot,
+) {
     let payload = StackTerminalCwdUpdate {
         session_id: snapshot.session_id.clone(),
         cwd: snapshot.cwd.clone(),
@@ -1067,7 +1094,11 @@ fn emit_cwd_update(app_handle: &AppHandle, target_label: &str, snapshot: &StackT
     );
 }
 
-fn emit_terminal_closed(app_handle: &AppHandle, target_label: &str, snapshot: &StackTerminalSessionSnapshot) {
+fn emit_terminal_closed(
+    app_handle: &AppHandle,
+    target_label: &str,
+    snapshot: &StackTerminalSessionSnapshot,
+) {
     let _ = app_handle.emit_to(
         target_label,
         crate::contracts::events::STACK_TERMINAL_CLOSED,
@@ -1134,24 +1165,82 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("pwsh.exe ")));
+        assert!(windows_terminal
+            .args
+            .iter()
+            .any(|arg| arg.contains("-EncodedCommand")));
+        assert!(windows_terminal
+            .args
+            .iter()
+            .any(|arg| arg.contains("-NoProfile")));
         assert!(!windows_terminal
             .args
             .iter()
-            .any(|arg| arg.contains("-Command")));
-        assert!(!windows_terminal.args.iter().any(|arg| arg == "-NoProfile"));
+            .any(|arg| arg.contains("Set-Alias")));
+        assert!(!windows_terminal
+            .args
+            .iter()
+            .any(|arg| arg.contains("Set-PSReadLineKeyHandler")));
+    }
+
+    #[test]
+    fn powershell_startup_is_hidden_and_right_arrow_accepts_muted_suggestions() {
+        let startup_script = powershell_startup_script();
+        assert!(startup_script.contains("InlinePrediction = \"`e[38;5;240m\""));
+        assert!(startup_script.contains("ListPrediction = \"`e[38;5;244m\""));
+        assert!(startup_script
+            .contains("Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion"));
+        assert!(
+            startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext")
+        );
+        assert!(startup_script
+            .contains("Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious"));
+        assert!(startup_script.contains(
+            "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue"
+        ));
+        assert!(!startup_script.contains("\"Clear-Host\","));
+        assert!(startup_script.contains("function prompt"));
+        assert!(startup_script.contains("git rev-parse --is-inside-work-tree"));
+        assert!(startup_script.contains("git status --porcelain=v1 -z"));
+        assert!(startup_script.contains("$parts = @($branch)"));
+        assert!(startup_script.contains(
+            "Write-Host -NoNewline \"$($executionContext.SessionState.Path.CurrentLocation)"
+        ));
+        assert!(!startup_script.contains(
+            "Write-Host -NoNewline \"PS $($executionContext.SessionState.Path.CurrentLocation)"
+        ));
+        assert!(
+            startup_script.contains("Write-Host -NoNewline \" ($gitLine)\" -ForegroundColor Cyan")
+        );
+        assert!(!startup_script.contains("Write-Host ''"));
+        assert!(!startup_script.contains("$parts = @(\"git\", $branch)"));
+        assert!(startup_script.contains("$($executionContext.SessionState.Path.CurrentLocation)"));
+        assert!(
+            !startup_script.contains("PS $($executionContext.SessionState.Path.CurrentLocation)")
+        );
+
+        let encoded = powershell_encoded_command(&startup_script);
+        assert!(!encoded.contains("Set-Alias"));
+        assert!(!encoded.contains("Set-PSReadLineKeyHandler"));
+
+        let launch_line =
+            powershell_cmd_launch_line(PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(launch_line.contains("-NoProfile"));
+        assert!(launch_line.contains("-EncodedCommand"));
+        assert!(!launch_line.contains("Set-Alias"));
+        assert!(!launch_line.contains("Set-PSReadLineKeyHandler"));
     }
 
     #[test]
     fn powershell_conpty_session_stays_running_after_start() {
         let root = test_dir("conpty-start");
-        let mut session =
-            spawn_terminal_session(
-                None,
-                TerminalProfile::PowerShell,
-                root.clone(),
-                shell_windows::STACK_POPUP_LABEL.to_string(),
-            )
-            .unwrap();
+        let mut session = spawn_terminal_session(
+            None,
+            TerminalProfile::PowerShell,
+            root.clone(),
+            shell_windows::STACK_POPUP_LABEL.to_string(),
+        )
+        .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
         let mut chunks = drain_terminal_output(&mut session);
         assert!(
@@ -1159,7 +1248,10 @@ mod tests {
             "PowerShell ConPTY session exited early with output: {:?}",
             chunks
         );
-        let output = chunks.iter().map(|chunk| chunk.text.as_str()).collect::<String>();
+        let output = chunks
+            .iter()
+            .map(|chunk| chunk.text.as_str())
+            .collect::<String>();
         assert!(
             !output.contains("is not recognized as an internal or external command"),
             "PowerShell launch command was quoted incorrectly: {output:?}"
@@ -1289,14 +1381,9 @@ mod tests {
 
     #[test]
     fn terminal_resize_request_rejects_invalid_session_and_bounds() {
-        assert!(validate_stack_terminal_resize_request(
-            "../bad",
-            80,
-            24,
-            Some(800),
-            Some(400)
-        )
-        .is_err());
+        assert!(
+            validate_stack_terminal_resize_request("../bad", 80, 24, Some(800), Some(400)).is_err()
+        );
         assert!(validate_stack_terminal_resize_request(
             "stack-term-good",
             0,
@@ -1329,8 +1416,9 @@ mod tests {
             Some(400)
         )
         .is_err());
-        assert!(validate_stack_terminal_resize_request("stack-term-good", 80, 24, None, None)
-            .is_ok());
+        assert!(
+            validate_stack_terminal_resize_request("stack-term-good", 80, 24, None, None).is_ok()
+        );
     }
 
     #[test]
