@@ -19,7 +19,6 @@ use windows::core::PCWSTR;
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::GetShortPathNameW;
 
-pub(crate) const MAX_STACK_TERMINAL_SESSIONS: usize = 4;
 pub(crate) const MAX_STACK_TERMINAL_SESSION_ID_LEN: usize = 48;
 const MAX_STACK_TERMINAL_WRITE_BYTES: usize = 16 * 1024;
 const STACK_TERMINAL_SESSION_PREFIX: &str = "stack-term-";
@@ -158,10 +157,6 @@ impl Default for StackTerminalRegistry {
 }
 
 impl StackTerminalRegistry {
-    pub(crate) fn can_start_session(&self) -> bool {
-        self.sessions.len() < MAX_STACK_TERMINAL_SESSIONS
-    }
-
     fn insert(&mut self, session: StackTerminalSession) {
         self.stop_requested.remove(&session.id);
         self.sessions.insert(session.id.clone(), session);
@@ -345,16 +340,6 @@ pub(crate) async fn start_stack_terminal_session(
     let profile = request
         .profile
         .unwrap_or(shell_settings.stack_browser.terminal_profile);
-    {
-        let runtime = state
-            .lock()
-            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-        if !runtime.terminal_sessions.can_start_session() {
-            return Err(format!(
-                "Stack Browser terminal sessions are limited to {MAX_STACK_TERMINAL_SESSIONS}"
-            ));
-        }
-    }
     let target_label = terminal_event_target_label(request.target_label.as_deref())?;
     let app_handle_for_spawn = app_handle.clone();
     let session = tauri::async_runtime::spawn_blocking(move || {
@@ -367,16 +352,6 @@ pub(crate) async fn start_stack_terminal_session(
     let mut runtime = state
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    if !runtime.terminal_sessions.can_start_session() {
-        drop(runtime);
-        let mut session = session;
-        let _ = session.child.kill();
-        let _ = session.child.wait();
-        return Err(format!(
-            "Stack Browser terminal sessions are limited to {MAX_STACK_TERMINAL_SESSIONS}"
-        ));
-    }
-
     runtime.terminal_sessions.insert(session);
     drop(runtime);
     emit_cwd_update(app_handle, &target_label, &snapshot);
@@ -788,15 +763,14 @@ fn spawn_terminal_reader<R>(
                         );
                     }
                     sequence = sequence.saturating_add(1);
-                    if tx
-                        .send(TerminalReaderMessage {
-                            stream,
-                            text,
-                            sequence: chunk.sequence,
-                        })
-                        .is_err()
-                    {
-                        break;
+                    match tx.try_send(TerminalReaderMessage {
+                        stream,
+                        text,
+                        sequence: chunk.sequence,
+                    }) {
+                        Ok(()) => {}
+                        Err(mpsc::TrySendError::Full(_)) => {}
+                        Err(mpsc::TrySendError::Disconnected(_)) => break,
                     }
                 }
                 Err(_) => break,
@@ -817,7 +791,7 @@ fn spawn_terminal_reader<R>(
                     &chunk,
                 );
             }
-            let _ = tx.send(TerminalReaderMessage {
+            let _ = tx.try_send(TerminalReaderMessage {
                 stream,
                 text,
                 sequence: chunk.sequence,
@@ -1606,15 +1580,13 @@ mod tests {
     }
 
     #[test]
-    fn terminal_runtime_state_caps_active_sessions() {
+    fn terminal_runtime_state_keeps_more_than_four_active_sessions() {
         let mut registry = StackTerminalRegistry::default();
-        for index in 0..(MAX_STACK_TERMINAL_SESSIONS - 1) {
+        for index in 0..6 {
             registry.insert_test_session(format!("stack-term-{index}"), PathBuf::from(r"C:\dev"));
         }
 
-        assert!(registry.can_start_session());
-        registry.insert_test_session("stack-term-live".to_string(), PathBuf::from(r"C:\dev"));
-        assert!(!registry.can_start_session());
+        assert_eq!(registry.list_by_target(None).len(), 6);
     }
 
     #[test]

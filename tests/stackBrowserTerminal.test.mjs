@@ -52,9 +52,16 @@ test('stack terminal IPC command names are stable and backend-registered', () =>
   assert.match(rustMain, /stack_popup::read_stack_terminal/);
   assert.match(rustMain, /stack_popup::write_stack_terminal/);
   assert.match(rustMain, /stack_popup::stop_stack_terminal/);
-  assert.match(rustTerminal, /MAX_STACK_TERMINAL_SESSIONS/);
+  assert.doesNotMatch(rustTerminal, /MAX_STACK_TERMINAL_SESSIONS\b/);
   assert.match(rustTerminal, /validate_stack_terminal_session_id/);
   assert.match(rustTerminal, /cwd_after_terminal_input/);
+});
+
+test('terminal reader never blocks on an undrained fallback output queue', () => {
+  assert.match(rustTerminal, /mpsc::sync_channel\(1024\)/);
+  assert.match(rustTerminal, /tx\.try_send\(TerminalReaderMessage/);
+  assert.doesNotMatch(rustTerminal, /tx\s*\.send\(TerminalReaderMessage/);
+  assert.match(rustTerminal, /Err\(mpsc::TrySendError::Full\(_\)\) => \{\}/);
 });
 
 test('phase 1 terminal startup has visible nonblank lifecycle state before first output', () => {

@@ -13,21 +13,14 @@
   background: #111722;
   border-bottom: 1px solid #263246;
   box-sizing: border-box;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 0.35rem 0.5rem;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) max-content;
   min-height: 2.35rem;
   overflow: visible;
   padding: 0.35rem 0.55rem;
   position: relative;
   z-index: 20;
-}
-
-.terminal-panel-header div {
-  display: grid;
-  gap: 0.08rem;
-  min-width: 0;
 }
 
 .terminal-panel-header strong {
@@ -44,24 +37,31 @@
 }
 
 .terminal-session-tabs {
+  align-items: stretch;
+  align-self: stretch;
   display: flex;
-  flex: 1 1 auto;
-  gap: 0.2rem;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0;
+  justify-self: stretch;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
 }
 
 .terminal-session-tabs button {
   background: #0b1220;
   border: 1px solid #27364d;
-  border-radius: 999px;
+  border-radius: 0;
   color: #c6d4ea;
   cursor: pointer;
+  flex: 0 0 auto;
   font: inherit;
   font-size: 0.66rem;
   max-width: 11rem;
   overflow: hidden;
-  padding: 0.15rem 0.45rem;
+  padding: 0.2rem 0.55rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -72,6 +72,13 @@
   color: #ffffff;
 }
 
+.terminal-session-tabs .terminal-tab-new {
+  flex: 0 0 auto;
+  font-weight: 700;
+  max-width: none;
+  min-width: 1.7rem;
+}
+
 .terminal-session-tabs small {
   color: #69d68b;
   margin-left: 0.25rem;
@@ -80,11 +87,10 @@
 .terminal-toolbar {
   align-items: center;
   display: flex;
-  flex: 1 1 22rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.2rem;
   justify-content: flex-end;
-  min-width: 0;
+  min-width: max-content;
   position: relative;
 }
 

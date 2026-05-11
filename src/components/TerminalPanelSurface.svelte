@@ -65,6 +65,7 @@
     shellCwdMarkerSeen: boolean;
     shellParserDisposers: Array<() => void>;
     recentOutputText: string;
+    replayedSessionOutput: boolean;
   };
   type TerminalOutputPayload = StackTerminalOutputChunk;
   type TerminalClosedPayload = {
@@ -113,6 +114,8 @@
   let quickSelectOpen = false;
   let quickSelectTargets: TerminalQuickSelectTarget[] = [];
   let recentOutputText = '';
+  let sessionReplayBuffers = new Map<string, string>();
+  let renderedSequenceKeysBySession = new Map<string, Set<string>>();
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -212,7 +215,10 @@
     register(
       listen<TerminalOutputPayload>('stack-terminal:output', (event) => {
         const runtime = runtimeForSession(event.payload.sessionId);
-        if (!runtime) return;
+        if (!runtime) {
+          rememberTerminalChunkForSession(event.payload);
+          return;
+        }
         writeTerminalChunkForRuntime(runtime, event.payload);
       })
     );
@@ -220,7 +226,11 @@
     register(
       listen<TerminalClosedPayload>('stack-terminal:closed', (event) => {
         const runtime = runtimeForSession(event.payload.sessionId);
-        if (!runtime) return;
+        terminalSessions = terminalSessions.map((item) => item.sessionId === event.payload.sessionId ? { ...item, running: false } : item);
+        if (!runtime) {
+          void refreshTerminalSessionList();
+          return;
+        }
         stopPollingForRuntime(runtime);
         clearStartupTimerForRuntime(runtime);
         runtime.lifecycle = runtime.outputReceived ? 'exited' : 'failed';
@@ -247,7 +257,8 @@
     ensureTerminalView();
     startStartupTimer();
     try {
-      session = await startPersistentTerminal();
+      await refreshTerminalSessionList();
+      session = terminalSessions.find((candidate) => candidate.running) ?? terminalSessions[0] ?? await startPersistentTerminal();
       await refreshTerminalSessionList();
       const runtime = ensurePrimaryPaneForSession(session);
       startStartupTimerForRuntime(runtime);
@@ -269,7 +280,25 @@
   }
 
   async function refreshTerminalSessionList() {
-    terminalSessions = await listStackTerminals('terminal-panel').catch(() => session ? [session] : []);
+    const backendSessions = await listStackTerminals('terminal-panel').catch(() => session ? [session] : []);
+    const backendSessionIds = new Set(backendSessions.map((item) => item.sessionId));
+    terminalSessions = backendSessions;
+    for (const runtime of paneRuntimes.values()) {
+      const backendSession = backendSessions.find((item) => item.sessionId === runtime.session.sessionId);
+      if (backendSession) {
+        runtime.session = backendSession;
+        commitRuntime(runtime);
+      }
+    }
+    const orphanPanes = terminalPanes.filter((pane) => !backendSessionIds.has(pane.sessionId));
+    for (const pane of orphanPanes) {
+      removePaneRuntime(pane.paneId, false, true);
+    }
+    if (session && backendSessionIds.has(session.sessionId)) {
+      session = backendSessions.find((item) => item.sessionId === session?.sessionId) ?? session;
+    } else if (!session && backendSessions.length) {
+      session = backendSessions[0];
+    }
   }
 
   function ensurePrimaryPaneForSession(nextSession: StackTerminalSession): TerminalPaneRuntime {
@@ -285,7 +314,7 @@
     if (terminalPanes.length >= 2) {
       const [removedPane] = terminalPanes;
       if (removedPane) {
-        removePaneRuntime(removedPane.paneId, true);
+        removePaneRuntime(removedPane.paneId, false, true);
       }
     }
     const paneCount = Math.min(terminalPanes.length + 1, 2);
@@ -310,33 +339,50 @@
   }
 
   function activateTerminalSession(nextSession: StackTerminalSession) {
-    let pane = terminalPanes.find((item) => item.sessionId === nextSession.sessionId);
-    if (!pane) {
-      const runtime = ensurePrimaryPaneForSession(nextSession);
-      pane = terminalPanes.find((item) => item.paneId === runtime.paneId);
-    }
-    activePaneId = pane?.paneId ?? activePaneId;
-    terminalPanes = terminalPanes.map((item) => ({ ...item, focused: item.paneId === activePaneId }));
-    const runtime = activeRuntime();
-    if (runtime) {
-      setActiveRuntime(runtime);
-      ensureTerminalViewForPane(runtime);
-    } else {
-      session = nextSession;
-    }
+    openSessionAsTab(nextSession);
     focusTerminal();
+  }
+
+  function openSessionAsTab(nextSession: StackTerminalSession): TerminalPaneRuntime {
+    for (const pane of terminalPanes) {
+      removePaneRuntime(pane.paneId, false, true);
+    }
+    splitOrientation = 'single';
+    activePaneId = 'terminal-pane-primary';
+    const pane: TerminalPaneModel = {
+      paneId: activePaneId,
+      sessionId: nextSession.sessionId,
+      title: nextSession.title || 'Terminal',
+      focused: true
+    };
+    terminalPanes = [pane];
+    const runtime = createPaneRuntime(nextSession, pane.paneId);
+    commitRuntime(runtime);
+    setActiveRuntime(runtime);
+    ensureTerminalViewForPane(runtime);
+    replayTerminalSessionOutput(runtime);
+    startPollingForRuntime(runtime);
+    void pollTerminalOutputForRuntime(runtime);
+    return runtime;
   }
 
   async function createTerminalSession() {
     const nextSession = await startPersistentTerminal();
     terminalSessions = [...terminalSessions, nextSession];
+    const runtime = openSessionAsTab(nextSession);
+    startStartupTimerForRuntime(runtime);
+    focusTerminal();
+  }
+
+  async function createSplitPaneSession(orientation: Exclude<TerminalSplitOrientation, 'single'>) {
+    const nextSession = await startPersistentTerminal();
+    terminalSessions = [...terminalSessions, nextSession];
     const runtime = ensurePrimaryPaneForSession(nextSession);
-    activateTerminalSession(nextSession);
     ensureTerminalViewForPane(runtime);
     startStartupTimerForRuntime(runtime);
     startPollingForRuntime(runtime);
     void pollTerminalOutputForRuntime(runtime);
-    splitOrientation = terminalPanes.length > 1 && splitOrientation === 'single' ? 'vertical' : splitOrientation;
+    splitOrientation = orientation;
   }
 
   async function renameActiveSession() {
@@ -352,7 +398,7 @@
   async function splitTerminal(orientation: Exclude<TerminalSplitOrientation, 'single'>) {
     splitOrientation = orientation;
     if (terminalPanes.length < 2) {
-      await createTerminalSession();
+      await createSplitPaneSession(orientation);
     }
   }
 
@@ -396,7 +442,7 @@
       pollQueued: false,
       operationQueue: Promise.resolve(),
       writeQueue: Promise.resolve(),
-      renderedSequences: new Set<string>(),
+      renderedSequences: new Set<string>(renderedSequenceKeysBySession.get(nextSession.sessionId) ?? []),
       lastResizeKey: '',
       visibleResizeSettled: false,
       visibleResizePromise: null,
@@ -406,7 +452,8 @@
       selectedCommandIndex: -1,
       shellCwdMarkerSeen: false,
       shellParserDisposers: [],
-      recentOutputText: ''
+      recentOutputText: '',
+      replayedSessionOutput: false
     };
   }
 
@@ -755,7 +802,7 @@
     void tick().then(selectCurrentInputText);
   }
 
-  function removePaneRuntime(paneId: string, stopBackendSession: boolean) {
+  function removePaneRuntime(paneId: string, stopBackendSession: boolean, keepSessionTab = false) {
     const runtime = paneRuntimes.get(paneId);
     if (!runtime) return;
     stopPollingForRuntime(runtime);
@@ -764,7 +811,9 @@
     paneRuntimes.delete(paneId);
     paneRuntimes = new Map(paneRuntimes);
     terminalPanes = terminalPanes.filter((pane) => pane.paneId !== paneId);
-    terminalSessions = terminalSessions.filter((item) => item.sessionId !== runtime.session.sessionId);
+    if (!keepSessionTab) {
+      terminalSessions = terminalSessions.filter((item) => item.sessionId !== runtime.session.sessionId);
+    }
     if (stopBackendSession) {
       void stopStackTerminal(runtime.session.sessionId).catch((error) => console.debug('Persistent terminal orphan cleanup unavailable', error));
     }
@@ -1156,7 +1205,7 @@
       hasCwd: Boolean(cwd),
       hasDetectedTarget: quickSelectTargets.length > 0,
       hasRepo: Boolean(cwd),
-      canCreateSession: terminalSessions.length < 4,
+      canCreateSession: true,
       canSplit: terminalPanes.length < 2 || splitOrientation !== 'single',
       hasMultiplePanes: terminalPanes.length > 1
     };
@@ -1290,7 +1339,13 @@
     terminalSessions = terminalSessions.filter((item) => item.sessionId !== sessionId);
     if (!terminalPanes.length) {
       splitOrientation = 'single';
-      await createTerminalSession();
+      const nextSession = terminalSessions.find((item) => item.running) ?? terminalSessions[0] ?? null;
+      if (nextSession) {
+        openSessionAsTab(nextSession);
+      } else {
+        session = null;
+        setActiveRuntime(null);
+      }
       return;
     }
     activePaneId = terminalPanes[0].paneId;
@@ -1409,11 +1464,44 @@
     }
   }
 
+  function rememberTerminalChunkForSession(chunk: StackTerminalOutputChunk) {
+    if (typeof chunk.sequence === 'number') {
+      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
+      const sessionKeys = new Set(renderedSequenceKeysBySession.get(chunk.sessionId) ?? []);
+      if (sessionKeys.has(sequenceKey)) return;
+      sessionKeys.add(sequenceKey);
+      renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession).set(chunk.sessionId, sessionKeys);
+    }
+    appendSessionReplayBuffer(chunk.sessionId, chunk.text);
+  }
+
+  function appendSessionReplayBuffer(sessionId: string, output: string) {
+    if (!output) return;
+    const next = `${sessionReplayBuffers.get(sessionId) ?? ''}${output}`.slice(-262144);
+    sessionReplayBuffers = new Map(sessionReplayBuffers).set(sessionId, next);
+  }
+
+  function replayTerminalSessionOutput(runtime: TerminalPaneRuntime) {
+    if (runtime.replayedSessionOutput || !runtime.terminal) return;
+    const replay = sessionReplayBuffers.get(runtime.session.sessionId) ?? '';
+    if (!replay) return;
+    runtime.replayedSessionOutput = true;
+    if (terminalOutputHasVisibleText(replay)) {
+      runtime.outputReceived = true;
+      runtime.lifecycle = 'running';
+      runtime.status = '';
+      clearStartupTimerForRuntime(runtime);
+    }
+    runtime.terminal.write(replay);
+    commitRuntime(runtime);
+  }
+
   function writeTerminalChunkForRuntime(runtime: TerminalPaneRuntime, chunk: StackTerminalOutputChunk) {
     if (typeof chunk.sequence === 'number') {
       const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
       if (runtime.renderedSequences.has(sequenceKey)) return;
       runtime.renderedSequences.add(sequenceKey);
+      renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession).set(chunk.sessionId, new Set(runtime.renderedSequences));
     }
     writeTerminalOutputForRuntime(runtime, chunk.text);
   }
@@ -1437,7 +1525,10 @@
       runtime.session = { ...runtime.session, lastOutputAt: Date.now(), running: true };
       clearStartupTimerForRuntime(runtime);
     }
-    if (output) runtime.recentOutputText = `${runtime.recentOutputText}${stripTerminalAnsiControls(output)}`.slice(-20000);
+    if (output) {
+      appendSessionReplayBuffer(runtime.session.sessionId, output);
+      runtime.recentOutputText = `${runtime.recentOutputText}${stripTerminalAnsiControls(output)}`.slice(-20000);
+    }
     runtime.terminal?.write(output);
     commitRuntime(runtime);
   }
@@ -1467,17 +1558,34 @@
       .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
   }
 
-  function bindPaneHost(node: HTMLDivElement, pane: TerminalPaneModel) {
+  function attachPaneHost(node: HTMLDivElement, pane: TerminalPaneModel) {
     const runtime = paneRuntimes.get(pane.paneId);
-    if (runtime) {
-      runtime.host = node;
-      commitRuntime(runtime);
-      ensureTerminalViewForPane(runtime);
-      scheduleFitForRuntime(runtime);
-    }
+    if (!runtime) return;
+    runtime.host = node;
+    commitRuntime(runtime);
+    ensureTerminalViewForPane(runtime);
+    replayTerminalSessionOutput(runtime);
+    scheduleFitForRuntime(runtime);
+  }
+
+  function bindPaneHost(node: HTMLDivElement, pane: TerminalPaneModel) {
+    let boundPane = pane;
+    attachPaneHost(node, boundPane);
     return {
+      update(nextPane: TerminalPaneModel) {
+        const previousPane = boundPane;
+        boundPane = nextPane;
+        if (previousPane.paneId !== nextPane.paneId || previousPane.sessionId !== nextPane.sessionId) {
+          const previousRuntime = paneRuntimes.get(previousPane.paneId);
+          if (previousRuntime?.host === node) {
+            previousRuntime.host = null;
+            commitRuntime(previousRuntime);
+          }
+        }
+        attachPaneHost(node, boundPane);
+      },
       destroy() {
-        const latest = paneRuntimes.get(pane.paneId);
+        const latest = paneRuntimes.get(boundPane.paneId);
         if (latest?.host === node) {
           latest.host = null;
           commitRuntime(latest);
@@ -1575,10 +1683,6 @@
 
 <div class="terminal-panel" role="dialog" aria-label="Persistent terminal">
   <header class="terminal-panel-header">
-    <div>
-      <strong>Terminal</strong>
-      <span>{session?.cwd || 'Starting shell'}</span>
-    </div>
     <div class="terminal-session-tabs" role="tablist" aria-label="Terminal sessions">
       {#each terminalSessions as terminalSession, index}
         <button
@@ -1594,12 +1698,18 @@
           <small>{terminalSession.running ? '●' : '○'}</small>
         </button>
       {/each}
+      <button
+        type="button"
+        class="terminal-tab-new"
+        title="New terminal tab"
+        aria-label="New terminal tab"
+        disabled={!actionEnabled('newSession')}
+        on:click={() => void runTerminalAction('newSession')}
+      >＋</button>
     </div>
     <nav class="terminal-toolbar" aria-label="Terminal actions">
       <button type="button" title="Search" aria-label="Search terminal" disabled={!actionEnabled('search')} on:click={() => void runTerminalAction('search')}>⌕</button>
-      <button type="button" title="New terminal session" aria-label="New terminal session" disabled={!actionEnabled('newSession')} on:click={() => void runTerminalAction('newSession')}>＋</button>
-      <button type="button" title="Split terminal vertically" aria-label="Split terminal vertically" disabled={!actionEnabled('splitVertical')} on:click={() => void runTerminalAction('splitVertical')}>▯▯</button>
-      <button type="button" title="Split terminal horizontally" aria-label="Split terminal horizontally" disabled={!actionEnabled('splitHorizontal')} on:click={() => void runTerminalAction('splitHorizontal')}>▭</button>
+      <button type="button" title="Split terminal pane" aria-label="Split terminal pane" disabled={!actionEnabled('splitVertical')} on:click={() => void runTerminalAction('splitVertical')}>Split</button>
       <button type="button" title="Rename session" aria-label="Rename terminal session" disabled={!actionEnabled('renameSession')} on:click={() => void runTerminalAction('renameSession')}>Rename</button>
       <button type="button" title="Quick Select" aria-label="Open terminal Quick Select" on:click={toggleQuickSelect}>QS</button>
       <button type="button" title="Recent commands" aria-label="Open recent terminal commands" on:click={() => { recentMenuOpen = !recentMenuOpen; actionMenuOpen = false; }}>⌘</button>
@@ -1633,7 +1743,7 @@
   </header>
   <section class="terminal-panel-body" class:split-vertical={splitOrientation === 'vertical'} class:split-horizontal={splitOrientation === 'horizontal'}>
     <div class="terminal-pane-grid" data-split-orientation={splitOrientation}>
-      {#each terminalPanes as pane (pane.paneId)}
+      {#each terminalPanes as pane (pane.sessionId)}
         {@const paneRuntime = paneRuntimes.get(pane.paneId)}
         <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${pane.title}`}>
           <div class="terminal-pane-chrome">
