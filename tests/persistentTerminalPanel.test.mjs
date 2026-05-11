@@ -33,6 +33,9 @@ test('persistent terminal is its own shell surface and starts at app startup', (
   assert.match(main, /stack_popup::start_persistent_terminal/);
   assert.match(main, /stack_popup::read_stack_terminal/);
   assert.match(capability, /"terminal-panel"/);
+  assert.match(capability, /list_stack_terminals/);
+  assert.match(capability, /rename_stack_terminal/);
+  assert.match(capability, /stop_terminal_panel_sessions/);
 });
 
 test('top bar terminal button sits before quick commands and toggles terminal panel', () => {
@@ -49,11 +52,9 @@ test('top bar terminal button sits before quick commands and toggles terminal pa
   assert.match(terminalPanelBackend, /emit_to\(TERMINAL_PANEL_LABEL, TERMINAL_PANEL_OPEN_EVENT/);
 });
 
-test('Stack Browser embedded CLI is isolated in extracted terminal pane', () => {
-  assert.match(stackPopup, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
-  assert.match(stackPopup, /class="stack-view-toggle"/);
-  assert.match(stackPopup, /CLI/);
-  assert.match(stackPopup, /class:terminal-mode/);
+test('Stack Browser no longer owns the visible terminal panel xterm internals', () => {
+  assert.doesNotMatch(stackPopup, /class="stack-view-toggle"/);
+  assert.doesNotMatch(stackPopup, /CLI<\/MeltActionButton>/);
   assert.doesNotMatch(stackPopup, /from '@xterm\/xterm'/);
   assert.doesNotMatch(stackPopup, /from '@xterm\/addon-fit'/);
 });
@@ -69,12 +70,12 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /window\.addEventListener\('focus', handlePanelOpen\)/);
   assert.match(terminalPanel, /function handlePanelOpen/);
   assert.match(terminalPanel, /function scheduleFitAfterPanelOpen/);
-  assert.match(terminalPanel, /visibleResizePromise = resizeTerminalToFit\(\)/);
+  assert.match(terminalPanel, /visibleResizePromise = resizeAllVisiblePanes\(\)/);
   assert.match(terminalPanel, /window\.setTimeout\(\(\) => scheduleFit\(\), 60\)/);
   assert.match(terminalPanel, /function ensureVisibleResizeBeforeInput/);
   assert.match(terminalPanel, /await ensureVisibleResizeBeforeInput\(\);[\s\S]{0,120}writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanel, /terminal-panel-status/);
-  assert.match(terminalPanel, /role=\{lifecycle === 'failed' \? 'alert' : 'status'\}/);
+  assert.match(terminalPanel, /role=\{paneRuntime\.lifecycle === 'failed' \? 'alert' : 'status'\}/);
   assert.match(terminalPanel, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanel, /writeStackTerminal\(sessionId, data\)/);
   assert.doesNotMatch(terminalPanel, /writeTerminalOutput\(result\.output\)/);
@@ -112,11 +113,13 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /function deleteSelectedCurrentInput\(\)/);
   assert.match(terminalPanel, /'\\u007f'\.repeat\(length\)/);
   assert.match(terminalPanel, /event\.key === 'Backspace' \|\| event\.key === 'Delete'/);
-  assert.match(terminalPanel, /on:mousedown\|capture=\{handleTerminalMouseDown\}/);
-  assert.match(terminalPanel, /on:contextmenu=\{openTerminalContextMenu\}/);
+  assert.match(terminalPanel, /on:mousedown\|capture=\{\(event\) => \{ activatePane\(pane\.paneId\); handleTerminalMouseDown\(event\); \}\}/);
+  assert.match(terminalPanel, /on:contextmenu=\{\(event\) => \{ activatePane\(pane\.paneId\); openTerminalContextMenu\(event\); \}\}/);
   assert.match(terminalPanel, /class="terminal-panel-context-menu"/);
-  assert.match(terminalPanel, /TERMINAL_PANEL_FONT_FAMILY/);
   assert.match(terminalPanel, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
+  assert.match(terminalPanel, /fontSize: 13/);
+  assert.match(terminalPanel, /lineHeight: 1\.25/);
+  assert.match(terminalPanel, /scrollback: 8000/);
   assert.match(terminalPanel, /letterSpacing: 0/);
   assert.doesNotMatch(terminalPanel, /function anchorCommandLineToLastRow\(\)/);
   assert.doesNotMatch(terminalPanel, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
@@ -128,8 +131,41 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanelCss, /font-feature-settings: "liga" 0, "calt" 0, "tnum" 1;/);
   assert.match(terminalPanelCss, /opacity: 0 !important;/);
   assert.match(terminalPanelCss, /caret-color: transparent !important;/);
-  assert.match(terminalPanelCss, /left: -10000px !important;/);
+  assert.match(terminalPanelCss, /height: 1px !important;/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-rows\)/);
+});
+
+test('phase 7 terminal panel owns real per-pane xterm runtimes and split resize', () => {
+  assert.match(terminalPanel, /type TerminalPaneRuntime = \{/);
+  assert.match(terminalPanel, /terminal: Terminal \| null/);
+  assert.match(terminalPanel, /fitAddon: FitAddon \| null/);
+  assert.match(terminalPanel, /searchAddon: SearchAddon \| null/);
+  assert.match(terminalPanel, /session: StackTerminalSession/);
+  assert.match(terminalPanel, /pollInFlight: boolean/);
+  assert.match(terminalPanel, /renderedSequences: Set<string>/);
+  assert.match(terminalPanel, /let paneRuntimes = new Map<string, TerminalPaneRuntime>\(\)/);
+  assert.match(terminalPanel, /function runtimeForSession\(sessionId: string\)/);
+  assert.match(terminalPanel, /listen<TerminalOutputPayload>\('stack-terminal:output'[\s\S]*runtimeForSession\(event\.payload\.sessionId\)[\s\S]*writeTerminalChunkForRuntime/);
+  assert.match(terminalPanel, /listen<TerminalCwdPayload>\('stack-terminal:cwd'[\s\S]*applyAuthoritativeTerminalCwdForRuntime/);
+  assert.match(terminalPanel, /listen<TerminalClosedPayload>\('stack-terminal:closed'[\s\S]*stopPollingForRuntime/);
+  assert.match(terminalPanel, /function ensureTerminalViewForPane\(runtime: TerminalPaneRuntime\)/);
+  assert.match(terminalPanel, /paneTerminal\.loadAddon\(runtime\.fitAddon\)/);
+  assert.match(terminalPanel, /paneTerminal\.loadAddon\(runtime\.searchAddon\)/);
+  assert.match(terminalPanel, /runtime\.resizeObserver = new ResizeObserver\(\(\) => scheduleFitForRuntime\(runtime\)\)/);
+  assert.match(terminalPanel, /function resizeAllVisiblePanes\(\)[\s\S]*paneRuntimes\.values\(\)[\s\S]*resizeTerminalToFitForRuntime/);
+  assert.match(terminalPanel, /resizeStackTerminal\(sessionId, cols, rows, width, height\)/);
+  assert.match(terminalPanel, /function splitTerminal\(orientation: Exclude<TerminalSplitOrientation, 'single'>\)/);
+  assert.match(terminalPanel, /use:bindPaneHost=\{pane\}/);
+  assert.match(terminalPanel, /class="terminal-pane-grid"/);
+  assert.match(terminalPanel, /class="terminal-pane-close"/);
+  assert.doesNotMatch(terminalPanel, /class="terminal-split-grid"/);
+  assert.doesNotMatch(terminalPanel, /class="terminal-pane-title"/);
+  assert.match(terminalPanelCss, /\.terminal-pane-grid\[data-split-orientation="vertical"\]/);
+  assert.match(terminalPanelCss, /\.terminal-pane-grid\[data-split-orientation="horizontal"\]/);
+  assert.match(terminalPanelCss, /\.terminal-pane\.focused/);
+  assert.match(terminalPanelCss, /box-sizing:\s*border-box;/);
+  assert.match(terminalPanelCss, /overflow:\s*hidden;/);
+  assert.doesNotMatch(terminalPanelCss, /clip-path: inset/);
 });
 
 test('persistent terminal output is routed to the terminal panel window', () => {

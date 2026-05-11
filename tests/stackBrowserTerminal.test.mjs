@@ -304,14 +304,9 @@ test('shell settings include stack browser terminal profile defaults', () => {
   assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal'\s*\}/);
 });
 
-test('stack browser exposes CLI view controls while child owns terminal internals', () => {
-  assert.match(stackPopupSurface, /class:terminal-mode/);
-  assert.match(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'files'\}/);
-  assert.match(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'terminal'\}/);
-  assert.match(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('files'\)\}/);
-  assert.match(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('terminal'\)\}/);
-  assert.match(stackPopupSurface, /class="stack-view-toggle"/);
-  assert.match(stackPopupSurface, /CLI<\/MeltActionButton>/);
+test('stack browser no longer exposes embedded CLI toggle controls', () => {
+  assert.doesNotMatch(stackPopupSurface, /stack-view-toggle/);
+  assert.doesNotMatch(stackPopupSurface, /CLI<\/MeltActionButton>/);
   assert.doesNotMatch(stackPopupSurface, /Stack Browser embedded terminal lets you|Use this terminal to/);
 });
 
@@ -327,12 +322,11 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /await startTerminal\(\)/);
   assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
-  assert.match(terminalPanelSurface, /cursorBlink: true/);
-  assert.match(terminalPanelSurface, /TERMINAL_PANEL_FONT_FAMILY/);
   assert.match(terminalPanelSurface, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
   assert.match(terminalPanelSurface, /fontSize: 13/);
-  assert.match(terminalPanelSurface, /letterSpacing: 0/);
   assert.match(terminalPanelSurface, /lineHeight: 1\.25/);
+  assert.match(terminalPanelSurface, /scrollback: 8000/);
+  assert.match(terminalPanelSurface, /letterSpacing: 0/);
   assert.match(terminalPanelSurface, /fitAddon = new FitAddon\(\);/);
   assert.match(terminalPanelSurface, /terminal\.loadAddon\(fitAddon\)/);
   assert.match(terminalPanelSurface, /terminal\.onData\(\(data\) => \{/);
@@ -346,7 +340,7 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanelSurface, /pollTimer = window\.setInterval/);
   assert.match(terminalPanelSurface, /stopStackTerminal\(oldSession\)/);
-  assert.match(terminalPanelSurface, /bind:this=\{host\}/);
+  assert.match(terminalPanelSurface, /use:bindPaneHost=\{pane\}/);
   assert.doesNotMatch(terminalPanelSurface, /writeTerminalOutput\(result\.output\)/);
   assert.doesNotMatch(terminalPanelSurface, /function anchorCommandLineToLastRow\(\)/);
   assert.doesNotMatch(terminalPanelSurface, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
@@ -380,7 +374,7 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(stackTerminalPane, /copySelectionFromContextMenu/);
   assert.match(stackTerminalPane, /pasteClipboardFromContextMenu/);
   assert.match(terminalPanelCss, /user-select: text;/);
-  assert.match(terminalPanelSurface, /on:contextmenu=\{openTerminalContextMenu\}/);
+  assert.match(terminalPanelSurface, /on:contextmenu=\{\(event\) => \{ activatePane\(pane\.paneId\); openTerminalContextMenu\(event\); \}\}/);
   assert.match(terminalPanelSurface, /class="terminal-panel-context-menu"/);
   assert.match(terminalPanelSurface, /copySelectionFromContextMenu/);
   assert.match(terminalPanelSurface, /pasteClipboardFromContextMenu/);
@@ -389,7 +383,7 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-helper-textarea\)/);
   assert.match(terminalPanelCss, /opacity: 0 !important;/);
   assert.match(terminalPanelCss, /caret-color: transparent !important;/);
-  assert.match(terminalPanelCss, /left: -10000px !important;/);
+  assert.match(terminalPanelCss, /height: 1px !important;/);
 });
 
 test('terminal removes xterm assistive mirrors from visible layout', () => {

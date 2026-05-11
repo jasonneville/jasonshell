@@ -109,6 +109,10 @@ export type StackTerminalSession = {
   cwd: string;
   profile: StackTerminalProfile;
   running: boolean;
+  title?: string;
+  createdAt?: number;
+  lastOutputAt?: number | null;
+  commandCount?: number;
   cols?: number;
   rows?: number;
   pixelWidth?: number | null;
@@ -611,6 +615,18 @@ export function resizeStackTerminal(
 
 export function stopStackTerminal(sessionId: string): Promise<void> {
   return invoke(IPC_COMMANDS.stopStackTerminal, { sessionId });
+}
+
+export function listStackTerminals(targetLabel?: string): Promise<StackTerminalSession[]> {
+  return invoke<StackTerminalSession[]>(IPC_COMMANDS.listStackTerminals, { targetLabel });
+}
+
+export function renameStackTerminal(sessionId: string, title: string): Promise<StackTerminalSession> {
+  return invoke<StackTerminalSession>(IPC_COMMANDS.renameStackTerminal, { sessionId, title });
+}
+
+export function stopTerminalPanelSessions(): Promise<void> {
+  return invoke(IPC_COMMANDS.stopTerminalPanelSessions);
 }
 
 export function suggestStackPaths(request: StackPathSuggestionRequest): Promise<StackPathSuggestion[]> {

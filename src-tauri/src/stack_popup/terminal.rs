@@ -59,6 +59,13 @@ pub struct StackTerminalStopRequest {
     pub session_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackTerminalRenameRequest {
+    pub session_id: String,
+    pub title: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackTerminalSessionSnapshot {
@@ -66,6 +73,10 @@ pub struct StackTerminalSessionSnapshot {
     pub profile: TerminalProfile,
     pub cwd: String,
     pub running: bool,
+    pub title: String,
+    pub created_at: u64,
+    pub last_output_at: Option<u64>,
+    pub command_count: u32,
     pub cols: u16,
     pub rows: u16,
     pub pixel_width: Option<u16>,
@@ -181,8 +192,47 @@ impl StackTerminalRegistry {
             .ok_or_else(|| "Terminal session not found".to_string())
     }
 
+    fn list_by_target(&self, target_label: Option<&str>) -> Vec<StackTerminalSessionSnapshot> {
+        let mut sessions = self.sessions
+            .values()
+            .filter(|session| target_label.map(|label| session.target_label == label).unwrap_or(true))
+            .map(StackTerminalSession::snapshot)
+            .collect::<Vec<_>>();
+        sessions.sort_by_key(|session| session.created_at);
+        sessions
+    }
+
+    #[cfg(test)]
+    fn rename(&mut self, session_id: &str, title: String) -> Result<StackTerminalSessionSnapshot, String> {
+        let title = sanitize_stack_terminal_title(&title)?;
+        let session = self.session_mut(session_id)?;
+        session.title = title;
+        Ok(session.snapshot())
+    }
+
+    fn request_stop_by_target(&mut self, target_label: &str) -> Vec<StackTerminalSession> {
+        let ids = self.sessions
+            .values()
+            .filter(|session| session.target_label == target_label)
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        let mut stopped = Vec::new();
+        for id in ids {
+            self.stop_requested.insert(id.clone());
+            if let Some(session) = self.sessions.remove(&id) {
+                stopped.push(session);
+            }
+        }
+        stopped
+    }
+
     #[cfg(test)]
     pub(crate) fn insert_test_session(&mut self, id: String, cwd: PathBuf) {
+        self.insert_test_session_for_target(id, cwd, shell_windows::STACK_POPUP_LABEL.to_string());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_test_session_for_target(&mut self, id: String, cwd: PathBuf, target_label: String) {
         self.sessions.insert(
             id.clone(),
             StackTerminalSession {
@@ -194,9 +244,13 @@ impl StackTerminalRegistry {
                 writer: None,
                 input_buffer: String::new(),
                 output_rx: mpsc::sync_channel(1024).1,
-                target_label: shell_windows::STACK_POPUP_LABEL.to_string(),
+                target_label,
                 next_sequence: 1,
                 running: true,
+                title: "PowerShell".to_string(),
+                created_at: stack_terminal_epoch_ms(),
+                last_output_at: None,
+                command_count: 0,
                 size: StackTerminalSize {
                     cols: 120,
                     rows: 30,
@@ -265,6 +319,10 @@ struct StackTerminalSession {
     target_label: String,
     next_sequence: u64,
     running: bool,
+    title: String,
+    created_at: u64,
+    last_output_at: Option<u64>,
+    command_count: u32,
     size: StackTerminalSize,
     #[cfg(test)]
     test_size: Option<StackTerminalSize>,
@@ -283,11 +341,10 @@ pub(crate) async fn start_stack_terminal_session(
     request: StackTerminalStartRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
     let cwd = PathBuf::from(super::paths::normalize_existing_dir(&request.folder_path)?);
-    let profile = request.profile.unwrap_or(
-        settings::load_shell_settings_for_app(app_handle)?
-            .stack_browser
-            .terminal_profile,
-    );
+    let shell_settings = settings::load_shell_settings_for_app(app_handle)?;
+    let profile = request
+        .profile
+        .unwrap_or(shell_settings.stack_browser.terminal_profile);
     {
         let runtime = state
             .lock()
@@ -491,6 +548,10 @@ pub(crate) fn stop_stack_terminal_session(
             profile: TerminalProfile::WindowsTerminal,
             cwd: String::new(),
             running: false,
+            title: "Terminal".to_string(),
+            created_at: stack_terminal_epoch_ms(),
+            last_output_at: None,
+            command_count: 0,
             cols: 0,
             rows: 0,
             pixel_width: None,
@@ -526,6 +587,54 @@ pub(crate) fn stop_stack_terminal(
     stop_stack_terminal_session(app_handle, state, request).map(|_| ())
 }
 
+pub(crate) fn list_stack_terminals(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    target_label: Option<String>,
+) -> Result<Vec<StackTerminalSessionSnapshot>, String> {
+    if let Some(label) = target_label.as_deref() {
+        terminal_event_target_label(Some(label))?;
+    }
+    let runtime = state
+        .lock()
+        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+    Ok(runtime.terminal_sessions.list_by_target(target_label.as_deref()))
+}
+
+pub(crate) fn rename_stack_terminal(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    request: StackTerminalRenameRequest,
+) -> Result<StackTerminalSessionSnapshot, String> {
+    validate_stack_terminal_session_id(&request.session_id)?;
+    let title = sanitize_stack_terminal_title(&request.title)?;
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+    let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+    session.title = title;
+    Ok(session.snapshot())
+}
+
+pub(crate) fn stop_terminal_sessions_for_target(
+    app_handle: &AppHandle,
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    target_label: &str,
+) -> Result<(), String> {
+    let mut sessions = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        runtime.terminal_sessions.request_stop_by_target(target_label)
+    };
+    for session in sessions.iter_mut() {
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+        session.running = false;
+        let snapshot = session.snapshot();
+        emit_terminal_closed(app_handle, target_label, &snapshot);
+    }
+    Ok(())
+}
+
 pub(crate) fn get_stack_terminal_cwd(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
@@ -556,6 +665,11 @@ fn spawn_terminal_session(
     let mut command = CommandBuilder::new(plan.executable.to_string_lossy().to_string());
     command.args(&plan.args);
     apply_terminal_capability_environment(&mut command);
+    let shell_integration = shell_integration_enabled();
+    command.env(
+        "JASONSHELL_TERMINAL_SHELL_INTEGRATION",
+        if shell_integration { "1" } else { "0" },
+    );
     if matches!(
         profile,
         TerminalProfile::WindowsTerminal | TerminalProfile::PowerShell
@@ -564,7 +678,7 @@ fn spawn_terminal_session(
             command.env("PATH", path);
         }
     }
-    if shell_integration_enabled() && matches!(profile, TerminalProfile::GitBash) {
+    if shell_integration && matches!(profile, TerminalProfile::GitBash) {
         apply_git_bash_shell_integration(&mut command);
     }
     command.cwd(&cwd);
@@ -604,6 +718,10 @@ fn spawn_terminal_session(
         target_label,
         next_sequence: 1,
         running: true,
+        title: default_terminal_title(profile),
+        created_at: stack_terminal_epoch_ms(),
+        last_output_at: None,
+        command_count: 0,
         size: StackTerminalSize {
             cols: 120,
             rows: 30,
@@ -751,6 +869,7 @@ fn flush_terminal_output_decoder(pending: &mut Vec<u8>) -> String {
 fn drain_terminal_output(session: &mut StackTerminalSession) -> Vec<StackTerminalOutputChunk> {
     let mut chunks = Vec::new();
     while let Ok(message) = session.output_rx.try_recv() {
+        session.last_output_at = Some(stack_terminal_epoch_ms());
         chunks.push(StackTerminalOutputChunk {
             session_id: session.id.clone(),
             stream: message.stream,
@@ -797,6 +916,10 @@ impl StackTerminalSession {
             profile: self.profile,
             cwd: stack_terminal_cwd_string(&self.cwd),
             running: self.running,
+            title: self.title.clone(),
+            created_at: self.created_at,
+            last_output_at: self.last_output_at,
+            command_count: self.command_count,
             cols: self.size.cols,
             rows: self.size.rows,
             pixel_width: self.size.pixel_width,
@@ -1023,11 +1146,35 @@ fn git_bash_candidates() -> Vec<PathBuf> {
 
 pub(crate) fn new_stack_terminal_session_id() -> String {
     let counter = STACK_TERMINAL_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let epoch_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
+    let epoch_ms = stack_terminal_epoch_ms();
     format!("{STACK_TERMINAL_SESSION_PREFIX}{epoch_ms:x}-{counter:x}")
+}
+
+fn stack_terminal_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
+}
+
+fn default_terminal_title(profile: TerminalProfile) -> String {
+    match profile {
+        TerminalProfile::WindowsTerminal => "Windows Terminal",
+        TerminalProfile::GitBash => "Git Bash",
+        TerminalProfile::PowerShell => "PowerShell",
+    }
+    .to_string()
+}
+
+fn sanitize_stack_terminal_title(title: &str) -> Result<String, String> {
+    let value = title.trim();
+    if value.is_empty() {
+        return Err("Terminal title is required".to_string());
+    }
+    if value.chars().count() > 64 || value.chars().any(|ch| ch.is_control()) {
+        return Err("Terminal title is invalid".to_string());
+    }
+    Ok(value.to_string())
 }
 
 pub(crate) fn validate_stack_terminal_session_id(value: &str) -> Result<(), String> {
@@ -1478,6 +1625,59 @@ mod tests {
         assert!(registry.request_stop(session_id).unwrap().is_none());
         assert!(registry.should_drop_for_stop(session_id));
         assert!(!registry.should_drop_for_stop(session_id));
+    }
+
+    #[test]
+    fn terminal_registry_lists_and_renames_target_scoped_sessions() {
+        let mut registry = StackTerminalRegistry::default();
+        registry.insert_test_session_for_target(
+            "stack-term-panel".to_string(),
+            PathBuf::from(r"C:\dev\panel"),
+            shell_windows::TERMINAL_PANEL_LABEL.to_string(),
+        );
+        registry.insert_test_session_for_target(
+            "stack-term-popup".to_string(),
+            PathBuf::from(r"C:\dev\popup"),
+            shell_windows::STACK_POPUP_LABEL.to_string(),
+        );
+
+        let panel_sessions = registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL));
+        assert_eq!(panel_sessions.len(), 1);
+        assert_eq!(panel_sessions[0].session_id, "stack-term-panel");
+        assert_eq!(panel_sessions[0].title, "PowerShell");
+        assert!(panel_sessions[0].created_at > 0);
+
+        let renamed = registry.rename("stack-term-panel", "API server".to_string()).unwrap();
+        assert_eq!(renamed.title, "API server");
+        assert_eq!(registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL))[0].title, "API server");
+    }
+
+    #[test]
+    fn terminal_registry_stops_only_requested_target_sessions() {
+        let mut registry = StackTerminalRegistry::default();
+        registry.insert_test_session_for_target(
+            "stack-term-panel-a".to_string(),
+            PathBuf::from(r"C:\dev\panel-a"),
+            shell_windows::TERMINAL_PANEL_LABEL.to_string(),
+        );
+        registry.insert_test_session_for_target(
+            "stack-term-panel-b".to_string(),
+            PathBuf::from(r"C:\dev\panel-b"),
+            shell_windows::TERMINAL_PANEL_LABEL.to_string(),
+        );
+        registry.insert_test_session_for_target(
+            "stack-term-popup".to_string(),
+            PathBuf::from(r"C:\dev\popup"),
+            shell_windows::STACK_POPUP_LABEL.to_string(),
+        );
+
+        let stopped = registry.request_stop_by_target(shell_windows::TERMINAL_PANEL_LABEL);
+        assert_eq!(stopped.len(), 2);
+        assert!(registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL)).is_empty());
+        assert_eq!(registry.list_by_target(Some(shell_windows::STACK_POPUP_LABEL)).len(), 1);
+        assert!(registry.should_drop_for_stop("stack-term-panel-a"));
+        assert!(registry.should_drop_for_stop("stack-term-panel-b"));
+        assert!(!registry.should_drop_for_stop("stack-term-popup"));
     }
 
     #[test]

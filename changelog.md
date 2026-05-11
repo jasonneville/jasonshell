@@ -2,6 +2,20 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-10 `[CODE]` REVERTED: Phase 8 terminal appearance/accessibility/settings changes were surgically reverted at user request; Phase 7 terminal sessions/splits and Phase 6 actions remain preserved.
+
+- 2026-05-10 `[USER]` REQUESTED: Remove terminal pane overlay buttons/chrome that cover CLI input, keep split panes and menus within the terminal-panel viewport, and add a per-pane top-right close control.
+- 2026-05-10 `[CODE]` FIXED: Removed floating in-terminal pane/tab title overlays from `TerminalPanelSurface.svelte`, added a non-overlapping thin pane chrome row with a visible `×` close button per pane, tightened header/toolbar layout, and made terminal body/pane/output CSS border-box with visible split gutters and hidden overflow so right split panes stay on screen.
+- 2026-05-10 `[USER]` REPORTED: Follow-up live view still showed only one pane and missing top toolbar/close controls, so terminal workbench formatting needed a clearer layout.
+- 2026-05-10 `[CODE]` FIXED: Let the terminal header wrap instead of clipping, changed the toolbar to wrap within available width, added body padding/visible gutters between panes, and moved pane close controls into the dedicated pane chrome row above xterm so they remain visible and do not cover CLI text.
+- 2026-05-10 `[USER]` REPORTED: Follow-up live view still showed the terminal-panel right side off-screen, hiding the right split pane and close/options controls.
+- 2026-05-10 `[CODE]` FIXED: `show_terminal_panel` now bounds the native terminal-panel width to the top-bar host width minus edge padding and applies that size before clamped positioning, so the panel's right edge cannot extend beyond the screen even after prior resize/state drift.
+- 2026-05-10 `[TOOL]` VALIDATED: RED-first focused source test failed before implementation, then passed with `node --test tests/persistentTerminalPanel.test.mjs`; broader focused terminal source tests passed with `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs tests/stackBrowserTerminal.test.mjs`; follow-up validation passed with `node --test tests/persistentTerminalPanel.test.mjs`, `cargo test --manifest-path src-tauri/Cargo.toml terminal_panel::tests`, and `npm run check`; fresh reviewer found no blockers.
+
+- 2026-05-10 `[USER]` REQUESTED: Implement `terminal_plan.md` Phase 7 for sessions, splits, persistence policy, and workbench layout on the current persistent `terminal-panel` surface.
+- 2026-05-10 `[CODE]` IMPLEMENTED: Added terminal session metadata/list/rename/scoped cleanup IPC, terminal-panel session tabs and real two-pane split controls, state-gated session/split actions, terminal-panel cleanup on app exit, and documented the conservative runtime-only preservation policy. Each visible terminal-panel pane now owns its own xterm instance, Fit/Search addons, backend session id, output/cwd/closed routing, polling/resize state, shell command state, and focus indicator. External terminal handoff continues through the existing safe cwd-only launcher.
+- 2026-05-10 `[TOOL]` VALIDATED: Phase 7 blocker fix validation passed with `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs tests/stackBrowserTerminal.test.mjs tests/contractsSettings.test.mjs`, `cargo test --manifest-path src-tauri/Cargo.toml terminal`, and `npm run check`.
+
 - 2026-05-10 `[USER]` REQUESTED: Hide the terminal command-not-found quick-fix UI because it stays bottom-left over the command line and makes input hard to see.
 - 2026-05-10 `[CODE]` FIXED: Disabled the visible terminal quick-fix overlay and removed quick-fix parsing from the live terminal output path while leaving the pure parser module available for future redesign. Normal shell error output remains visible without an overlay covering the prompt.
 - 2026-05-10 `[TOOL]` VALIDATED: Focused validation passed with `npm run check` and `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/terminalActions.test.mjs tests/persistentTerminalPanel.test.mjs`.

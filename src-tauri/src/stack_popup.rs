@@ -10,7 +10,7 @@ mod paging;
 mod paths;
 mod pins;
 mod popup_window;
-mod terminal;
+pub(crate) mod terminal;
 
 use crate::shell_paths;
 use serde::{Deserialize, Serialize};
@@ -34,8 +34,9 @@ pub use models::{
     StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 pub use terminal::{
-    StackTerminalPollResult, StackTerminalResizeRequest, StackTerminalSessionSnapshot,
-    StackTerminalStartRequest, StackTerminalStopRequest, StackTerminalWriteRequest,
+    StackTerminalPollResult, StackTerminalRenameRequest, StackTerminalResizeRequest,
+    StackTerminalSessionSnapshot, StackTerminalStartRequest, StackTerminalStopRequest,
+    StackTerminalWriteRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -621,6 +622,35 @@ pub fn poll_stack_terminal_session(
     session_id: String,
 ) -> Result<StackTerminalPollResult, String> {
     terminal::poll_stack_terminal_session(&app_handle, &state, session_id)
+}
+
+#[tauri::command]
+pub fn list_stack_terminals(
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    target_label: Option<String>,
+) -> Result<Vec<StackTerminalSessionSnapshot>, String> {
+    terminal::list_stack_terminals(&state, target_label)
+}
+
+#[tauri::command]
+pub fn rename_stack_terminal(
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    session_id: String,
+    title: String,
+) -> Result<StackTerminalSessionSnapshot, String> {
+    terminal::rename_stack_terminal(&state, StackTerminalRenameRequest { session_id, title })
+}
+
+#[tauri::command]
+pub fn stop_terminal_panel_sessions(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+) -> Result<(), String> {
+    terminal::stop_terminal_sessions_for_target(
+        &app_handle,
+        &state,
+        crate::shell_windows::TERMINAL_PANEL_LABEL,
+    )
 }
 
 #[tauri::command]

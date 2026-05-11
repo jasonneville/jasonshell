@@ -775,7 +775,7 @@ Add the features that make the embedded CLI faster for daily developer work than
 
 ## Phase 7: Sessions, Splits, Persistence Policy, And Workbench Layout
 
-Status: Implementation not started
+Status: Completed 2026-05-10 (terminal-panel focused slice)
 
 ### Objective
 
@@ -855,7 +855,7 @@ Make CLI mode a real terminal workbench with multiple terminal sessions and opti
 
 ## Phase 8: Appearance, Accessibility, And Settings
 
-Status: Implementation not started
+Status: Reverted 2026-05-10 at user request
 
 ### Objective
 
@@ -942,6 +942,10 @@ Make terminal readable, configurable, accessible, and consistent with JasonShell
 - Change terminal font size, profile, and theme; reopen CLI.
 - Keyboard-only path through Settings and CLI.
 - Narrow/minimum Stack Browser size visual check.
+
+### Phase 8 Result
+
+- Reverted at user request on 2026-05-10. Phase 7 terminal sessions/splits and Phase 6 actions remain preserved.
 
 ## Phase 9: Performance Benchmarks And Stress Harness
 

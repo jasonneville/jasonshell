@@ -69,8 +69,8 @@ test('recent terminal history is bounded in memory and not persisted', () => {
   assert.match(history, /limit = 12/);
   assert.match(history, /limit = 8/);
   assert.doesNotMatch(history, /localStorage|settings|invoke|writeFile|persist/i);
-  assert.match(panel, /recentTerminalCommands\(commandState\)/);
-  assert.match(panel, /recentTerminalDirectories\(commandState\)/);
+  assert.match(panel, /recentTerminalCommands\(activeRuntime\(\)\?\.commandState \?\? commandState\)/);
+  assert.match(panel, /recentTerminalDirectories\(activeRuntime\(\)\?\.commandState \?\? commandState\)/);
   assert.match(panel, /cdCommandForDirectory/);
   assert.match(panel, /quoteShellPath/);
   assert.doesNotMatch(panel, /`cd \$\{dir\}`/);

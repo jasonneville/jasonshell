@@ -13,7 +13,14 @@ export type TerminalActionId =
   | 'openDetectedTarget'
   | 'copyDetectedTarget'
   | 'openInVscode'
-  | 'openGitWorkbench';
+  | 'openGitWorkbench'
+  | 'newSession'
+  | 'renameSession'
+  | 'splitHorizontal'
+  | 'splitVertical'
+  | 'closePane'
+  | 'focusNextPane'
+  | 'focusPreviousPane';
 
 export type TerminalActionState = {
   hasTerminal: boolean;
@@ -25,6 +32,9 @@ export type TerminalActionState = {
   hasCwd?: boolean;
   hasDetectedTarget?: boolean;
   hasRepo?: boolean;
+  canCreateSession?: boolean;
+  canSplit?: boolean;
+  hasMultiplePanes?: boolean;
 };
 
 export type TerminalAction = {
@@ -52,7 +62,14 @@ export const terminalActions: TerminalAction[] = [
   { id: 'openDetectedTarget', label: 'Open target', isEnabled: (state) => Boolean(state.hasDetectedTarget) },
   { id: 'copyDetectedTarget', label: 'Copy target', isEnabled: (state) => Boolean(state.hasDetectedTarget) },
   { id: 'openInVscode', label: 'Open cwd in VS Code', isEnabled: (state) => Boolean(state.hasCwd) },
-  { id: 'openGitWorkbench', label: 'Open Git workbench', isEnabled: (state) => Boolean(state.hasRepo || state.hasCwd) }
+  { id: 'openGitWorkbench', label: 'Open Git workbench', isEnabled: (state) => Boolean(state.hasRepo || state.hasCwd) },
+  { id: 'newSession', label: 'New session', isEnabled: (state) => state.canCreateSession !== false },
+  { id: 'renameSession', label: 'Rename session', isEnabled: (state) => Boolean(state.hasSession) },
+  { id: 'splitHorizontal', label: 'Split horizontal', isEnabled: (state) => state.canSplit !== false && Boolean(state.hasSession) },
+  { id: 'splitVertical', label: 'Split vertical', isEnabled: (state) => state.canSplit !== false && Boolean(state.hasSession) },
+  { id: 'closePane', label: 'Close pane', destructive: true, isEnabled: (state) => Boolean(state.hasSession) },
+  { id: 'focusNextPane', label: 'Focus next pane', isEnabled: (state) => Boolean(state.hasMultiplePanes) },
+  { id: 'focusPreviousPane', label: 'Focus previous pane', isEnabled: (state) => Boolean(state.hasMultiplePanes) }
 ];
 
 export function getTerminalAction(id: TerminalActionId) {

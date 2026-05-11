@@ -1,6 +1,6 @@
 {
   "identifier": "terminal-panel",
-  "description": "Persistent terminal auxiliary surface capability: shell session display, input, resize, and window-label access.",
+  "description": "Persistent terminal auxiliary surface capability: shell session display, input, resize, list_stack_terminals, rename_stack_terminal, stop_terminal_panel_sessions, and window-label access.",
   "windows": [
     "terminal-panel"
   ],

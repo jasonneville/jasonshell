@@ -885,6 +885,7 @@ mod tests {
         assert_eq!(value["search"]["everything"]["sdkSource"], "system");
         assert_eq!(value["search"]["everything"]["contentSearchEnabled"], false);
         assert_eq!(value["stackBrowser"]["terminalProfile"], "windowsTerminal");
+        assert!(value.get("terminal").is_none());
         assert_eq!(value["quickCommands"]["entries"], json!([]));
         assert!(value.get("quickIcons").is_none());
     }

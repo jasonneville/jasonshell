@@ -171,6 +171,9 @@ fn main() {
             stack_popup::resize_stack_terminal,
             stack_popup::stop_stack_terminal,
             stack_popup::poll_stack_terminal_session,
+            stack_popup::list_stack_terminals,
+            stack_popup::rename_stack_terminal,
+            stack_popup::stop_terminal_panel_sessions,
             stack_popup::get_stack_terminal_cwd,
             stack_popup::reveal_stack_item,
             stack_popup::extract_stack_archive,
@@ -351,6 +354,15 @@ fn main() {
         #[cfg(target_os = "windows")]
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
             windows_key_hook::uninstall_windows_key_hook();
+            if let Some(state) = app_handle.try_state::<Mutex<stack_popup::StackPopupRuntimeState>>() {
+                if let Err(error) = stack_popup::terminal::stop_terminal_sessions_for_target(
+                    app_handle,
+                    &state,
+                    shell_windows::TERMINAL_PANEL_LABEL,
+                ) {
+                    eprintln!("terminal cleanup failed: {error}");
+                }
+            }
             if let Err(error) = appbar::cleanup_shell_surfaces(app_handle) {
                 eprintln!("cleanup failed: {error}");
             }
