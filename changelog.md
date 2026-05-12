@@ -1,5 +1,8 @@
 ## Change Ledger
 
+- 2026-05-12 `[CODE]` UPDATED: Expanded `.gitignore` to exclude local dependency/build artifacts, test reports, logs, Fusion runtime state, local worktrees, temporary directories, local SDK/tool state, and editor/OS noise from future PRs.
+- 2026-05-12 `[TOOL]` VALIDATED: Inspected Git status and confirmed the ignore update targets untracked/local generated paths; already-tracked files such as existing `.fusion/*`, `context.md`, and tracked tool directories require separate untracking or revert if they should disappear from the current diff.
+
 - 2026-05-11 `[CODE]` IMPLEMENTED: Frontend surface boot now resolves the Tauri window label first and lazy-loads only the matching Svelte surface component through `src/lib/surfaceLoader.ts`; `src/App.svelte` no longer statically imports all top/bottom/search/stack/process/terminal/auxiliary surfaces, and unsupported labels or lazy import failures show the fallback panel with diagnostics.
 - 2026-05-11 `[CODE]` TESTED: Added source coverage preventing static surface imports from returning to `App.svelte` and requiring a dynamic import mapping for every non-`unknown` `ShellSurface`; existing App-routing source tests now assert the lazy bootstrap/loader contract.
 - 2026-05-11 `[TOOL]` MEASURED: Production JS changed from one `index-A03REyX5.js` chunk at 856.49 kB (gzip 244.28 kB) to a 72.76 kB bootstrap (`index-B5UD5iDL.js`, gzip 25.21 kB) plus lazy surface chunks; the largest remaining chunk is the shared lazy `contextMenuPosition-mZZYrnWJ.js` at 366.15 kB (gzip 94.42 kB), with `TerminalPanelSurface` split to 45.01 kB and `StackPopupSurface` split to 126.75 kB.
