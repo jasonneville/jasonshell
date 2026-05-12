@@ -194,7 +194,7 @@ test('phase 3 terminal output is push-first and batched before xterm writes', ()
 
 test('phase 4 extracts Stack terminal pane and modern xterm addons from parent surface', () => {
   assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
-  assert.match(stackPopupSurface, /<StackTerminalPane/);
+  assert.match(stackPopupSurface, /type StackTerminalPaneHandle/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/xterm'/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/addon-fit'/);
   assert.match(stackTerminalPane, /import \{ WebglAddon \} from '@xterm\/addon-webgl'/);
@@ -307,10 +307,11 @@ test('stack popup API exposes typed terminal profiles and command wrappers', () 
 test('shell settings include stack browser terminal profile defaults', () => {
   assert.match(settingsSource, /export interface StackBrowserSettings \{/);
   assert.match(settingsSource, /terminalProfile: StackTerminalProfile;/);
+  assert.match(settingsSource, /terminalTheme: TerminalThemeId;/);
   assert.match(settingsSource, /stackBrowser: StackBrowserSettings;/);
   assert.match(settingsSource, /export function defaultStackBrowserSettings\(\): StackBrowserSettings/);
   assert.match(settingsSource, /terminalProfile: 'windowsTerminal'/);
-  assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal'\s*\}/);
+  assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal',[\s\S]*terminalTheme: defaultTerminalThemeId/);
 });
 
 test('stack browser no longer exposes embedded CLI toggle controls', () => {
@@ -477,7 +478,7 @@ test('stack terminal profile uses JSON shell settings from settings panel, not S
   assert.match(settingsPanelSurface, /STACK_TERMINAL_PROFILE_OPTIONS/);
   assert.match(settingsPanelSurface, /loadShellSettings/);
   assert.match(settingsPanelSurface, /saveShellSettings/);
-  assert.match(settingsPanelSurface, /normalizeStackTerminalProfile\(settings\.stackBrowser\?\.terminalProfile\)/);
+  assert.match(settingsPanelSurface, /normalizeStackTerminalProfile\(stackBrowser\.terminalProfile\)/);
   assert.match(settingsPanelSurface, /label="Stack Browser terminal"/);
   assert.match(settingsPanelSurface, /terminalProfile: selectedStackTerminalProfile/);
 });

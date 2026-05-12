@@ -1893,19 +1893,6 @@
       <span class="command-glyph" aria-hidden="true">>_</span>
     </MeltActionButton>
   </div>
-  <div class="sound-control" bind:this={soundControl}>
-    <MeltActionButton
-      class="sound-button"
-      ariaLabel="Open sound controls"
-      ariaHaspopup="dialog"
-      ariaExpanded={audioOpen}
-      ariaControls={SOUND_PANEL_ID}
-      tooltip="Sound controls"
-      onClick={(event) => void toggleSoundPanel(event.currentTarget)}
-    >
-      <span class="sound-icon" aria-hidden="true"></span>
-    </MeltActionButton>
-  </div>
   <div class="tray-control" bind:this={trayControl}>
     <MeltActionButton
       class="tray-button"
@@ -1917,6 +1904,19 @@
       onClick={(event) => void toggleTrayPanel(event.currentTarget)}
     >
       <span class="tray-arrow" aria-hidden="true">▾</span>
+    </MeltActionButton>
+  </div>
+  <div class="sound-control" bind:this={soundControl}>
+    <MeltActionButton
+      class="sound-button"
+      ariaLabel="Open sound controls"
+      ariaHaspopup="dialog"
+      ariaExpanded={audioOpen}
+      ariaControls={SOUND_PANEL_ID}
+      tooltip="Sound controls"
+      onClick={(event) => void toggleSoundPanel(event.currentTarget)}
+    >
+      <span class="sound-icon" aria-hidden="true"></span>
     </MeltActionButton>
   </div>
   <div class="time-control" bind:this={timeControl}>
