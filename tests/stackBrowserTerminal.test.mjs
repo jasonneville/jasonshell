@@ -396,6 +396,19 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(terminalPanelCss, /height: 1px !important;/);
 });
 
+test('legacy stack terminal keyboard paste is consumed before clipboard write', () => {
+  assert.match(
+    stackTerminalPane,
+    /if \(event\.type === 'keydown' && event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void pasteClipboard\(\);\s*return false;\s*\}/,
+    'Stack terminal Ctrl+V path must consume the event before the explicit clipboard paste'
+  );
+  assert.match(
+    stackTerminalPane,
+    /async function pasteClipboardFromContextMenu\(\) \{\s*closeTerminalContextMenu\(\);\s*await pasteClipboard\(\);\s*\}/,
+    'context-menu Paste should remain a single explicit paste path without keyboard event handling'
+  );
+});
+
 test('terminal removes xterm assistive mirrors from visible layout', () => {
   assert.match(terminalPanelSurface, /screenReaderMode:\s*false/);
   assert.match(terminalPanelSurface, /windowsPty:\s*\{\s*backend:\s*'conpty'\s*\}/);

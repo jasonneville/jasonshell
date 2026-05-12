@@ -272,6 +272,24 @@ test('persistent terminal output is routed to the terminal panel window', () => 
   assert.match(stackPopupBackend, /target_label: Some\(crate::shell_windows::TERMINAL_PANEL_LABEL\.to_string\(\)\)/);
 });
 
+test('keyboard paste is consumed before persistent terminal clipboard write', () => {
+  assert.match(
+    terminalPanel,
+    /if \(event\.type === 'keydown' && event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void pasteClipboard\(\);\s*return false;\s*\}/,
+    'primary Ctrl+V path must consume the event before the explicit clipboard paste'
+  );
+  assert.match(
+    terminalPanel,
+    /if \(event\.type === 'keydown' && event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{ event\.preventDefault\(\); event\.stopPropagation\(\); void pasteClipboard\(\); return false; \}/,
+    'split-pane Ctrl+V path must consume the event before the explicit clipboard paste'
+  );
+  assert.match(
+    terminalPanel,
+    /async function pasteClipboardFromContextMenu\(\) \{\s*closeTerminalContextMenu\(\);\s*await pasteClipboard\(\);\s*\}/,
+    'context-menu Paste should remain a single explicit paste path without keyboard event handling'
+  );
+});
+
 test('contracts list terminal panel surface and commands', () => {
   assert.match(contracts, /TERMINAL_PANEL: &str = "terminal-panel"/);
   assert.match(contracts, /TERMINAL_PANEL_OPEN: &str = "terminal-panel:open"/);
