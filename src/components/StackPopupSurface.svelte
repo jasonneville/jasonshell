@@ -235,7 +235,7 @@
     | null = null;
   let stackBrowserViewMode: StackBrowserViewMode = 'files';
   let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
-  let stackTerminalPane: StackTerminalPane | null = null;
+  let stackTerminalPane: InstanceType<typeof StackTerminalPane> | null = null;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
 
@@ -293,7 +293,9 @@
         window.cancelAnimationFrame(resizeFrame);
       }
       stopMarqueeAutoscroll();
-      void stackTerminalPane?.stopTerminal();
+      if (stackTerminalPane) {
+        void (stackTerminalPane as InstanceType<typeof StackTerminalPane>).stopTerminal();
+      }
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
         unlisten();

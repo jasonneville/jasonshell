@@ -15,7 +15,7 @@ test('process manager surface and commands are routed through app and Rust comma
   const processManager = readFileSync('src-tauri/src/process_manager.rs', 'utf8');
   const taskWindowsMod = readFileSync('src-tauri/src/task_windows/mod.rs', 'utf8');
 
-  assert.match(app, /ProcessManagerSurface/);
+  assert.match(app, /loadSurfaceComponent\(surface\)/);
   assert.match(surfaces, /'process-manager'/);
   assert.match(shellWindows, /PROCESS_MANAGER_LABEL/);
   assert.match(main, /process_manager::show_process_manager/);

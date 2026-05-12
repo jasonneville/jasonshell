@@ -24,6 +24,7 @@ const rustContractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs'
 const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const capabilityDir = new URL('../src-tauri/capabilities/', import.meta.url);
 const capabilitySources = Object.fromEntries(
   readdirSync(capabilityDir)
@@ -76,7 +77,9 @@ function parseIpcSurfaceLabels(source) {
 }
 
 function parseAppSurfaceRoutes(source) {
-  return regexCaptureAll(source, /surface === '([^']+)'/g);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(appSource, /<SurfaceComponent \/>/);
+  return regexCaptureAll(source, /['"]([^'"]+)['"]:\s*\(\) => import\(['"]\.\.\/components\//g);
 }
 
 function parseRustSurfaceContractLabels(source) {
@@ -186,7 +189,7 @@ test('shipped shell window surfaces have matching frontend routes, IPC registry 
   const shippedLabels = parseShellWindowLabels(shellWindowsSource);
   const shellSurfaceLabels = parseShellSurfaceTypeLabels(shellSurfaceSource);
   const ipcSurfaceLabels = parseIpcSurfaceLabels(surfacesSource);
-  const appRouteLabels = parseAppSurfaceRoutes(appSource);
+  const appRouteLabels = parseAppSurfaceRoutes(surfaceLoaderSource);
   const rustContractLabels = parseRustSurfaceContractLabels(rustContractsSource);
   const capabilityWindows = parseCapabilityWindows(capabilitySources);
   const capabilityLabels = uniqueSorted([...capabilityWindows.keys()]);

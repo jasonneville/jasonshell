@@ -19,8 +19,8 @@ const contractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs', im
 const capabilitySource = readFileSync(new URL('../src-tauri/capabilities/tray-panel.json', import.meta.url), 'utf8');
 
 test('tray panel is routed as a dedicated auxiliary shell surface', () => {
-  assert.match(appSource, /import TrayPanelSurface/);
-  assert.match(appSource, /surface === 'tray-panel'[\s\S]*<TrayPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(appSource, /<SurfaceComponent \/>/);
   assert.match(shellSurfaceSource, /\| 'tray-panel'/);
   assert.match(shellWindowsSource, /TRAY_PANEL_LABEL: &str = "tray-panel"/);
   assert.match(shellWindowsSource, /TRAY_PANEL_WIDTH_LOGICAL: f64 = 252\.0/);

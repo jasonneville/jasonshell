@@ -73,8 +73,8 @@ test('top bar time pill owns an Explorer-like scrollable calendar flyout', () =>
 });
 
 test('calendar panel is a dedicated top-bar anchored webview so it is not clipped by the compact bar', () => {
-  assert.match(appSource, /import CalendarPanelSurface/);
-  assert.match(appSource, /surface === 'calendar-panel'[\s\S]*<CalendarPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(appSource, /<SurfaceComponent \/>/);
   assert.match(shellSurfaceSource, /\| 'calendar-panel'/);
   assert.match(calendarPanelWrapper, /showCalendarPanel/);
   assert.match(calendarPanelWrapper, /hideCalendarPanel/);

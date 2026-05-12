@@ -22,8 +22,8 @@ const contracts = read('src-tauri/src/contracts.rs');
 const capability = read('src-tauri/capabilities/terminal-panel.json');
 
 test('persistent terminal is its own shell surface and starts at app startup', () => {
-  assert.match(app, /import TerminalPanelSurface/);
-  assert.match(app, /surface === 'terminal-panel'[\s\S]*<TerminalPanelSurface \/>/);
+  assert.match(app, /loadSurfaceComponent\(surface\)/);
+  assert.match(app, /<SurfaceComponent \/>/);
   assert.match(shellSurface, /\| 'terminal-panel'/);
   assert.match(ipcSurfaces, /terminalPanel: 'terminal-panel'/);
   assert.match(shellWindows, /TERMINAL_PANEL_LABEL: &str = "terminal-panel"/);

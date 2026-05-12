@@ -19,8 +19,8 @@ const contractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs', im
 const capabilitySource = readFileSync(new URL('../src-tauri/capabilities/command-panel.json', import.meta.url), 'utf8');
 
 test('command panel is routed as a dedicated auxiliary shell surface', () => {
-  assert.match(appSource, /import CommandPanelSurface/);
-  assert.match(appSource, /surface === 'command-panel'[\s\S]*<CommandPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(appSource, /<SurfaceComponent \/>/);
   assert.match(shellSurfaceSource, /\| 'command-panel'/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_LABEL: &str = "command-panel"/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460\.0/);

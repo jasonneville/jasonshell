@@ -1,25 +1,13 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
-  import BottomBar from './components/BottomBar.svelte';
-  import AudioPanelSurface from './components/AudioPanelSurface.svelte';
-  import CalendarPanelSurface from './components/CalendarPanelSurface.svelte';
-  import CommandPanelSurface from './components/CommandPanelSurface.svelte';
-  import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
-  import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
-  import SearchPanelSurface from './components/SearchPanelSurface.svelte';
-  import SettingsPanelSurface from './components/SettingsPanelSurface.svelte';
-  import StackPopupSurface from './components/StackPopupSurface.svelte';
-  import TaskPreviewSurface from './components/TaskPreviewSurface.svelte';
-  import TerminalPanelSurface from './components/TerminalPanelSurface.svelte';
-  import TrayPanelSurface from './components/TrayPanelSurface.svelte';
-  import TopBar from './components/TopBar.svelte';
   import { installShellPreferencesSync } from './lib/shellPreferences';
   import {
     resolveSurfaceFromLabel,
     shellSurfaceMetadata,
     type ShellSurface
   } from './lib/shellSurface';
+  import { loadSurfaceComponent, type SurfaceComponent as LoadedSurfaceComponent } from './lib/surfaceLoader';
   import { installShellThemeSync } from './lib/themes';
 
   let label = 'bottom-bar';
@@ -32,15 +20,36 @@
 
   const surface: ShellSurface = resolveSurfaceFromLabel(label);
   const metadata = shellSurfaceMetadata[surface];
+  let SurfaceComponent: LoadedSurfaceComponent | null = null;
+  let surfaceLoadFailed = false;
 
   function suppressNativeContextMenu(event: MouseEvent) {
     event.preventDefault();
   }
 
   onMount(() => {
+    let mounted = true;
     const uninstallThemeSync = installShellThemeSync();
     const uninstallPreferencesSync = installShellPreferencesSync();
+    const loadableSurface = loadSurfaceComponent(surface);
+
+    if (loadableSurface) {
+      void loadableSurface
+        .then((module) => {
+          if (mounted) {
+            SurfaceComponent = module.default;
+          }
+        })
+        .catch((error) => {
+          console.error(`JasonShell failed to load surface component for ${surface}`, error);
+          if (mounted) {
+            surfaceLoadFailed = true;
+          }
+        });
+    }
+
     return () => {
+      mounted = false;
       uninstallThemeSync();
       uninstallPreferencesSync();
     };
@@ -53,37 +62,23 @@
 
 <svelte:window on:contextmenu={suppressNativeContextMenu} />
 
-{#if surface === 'top-bar'}
-  <TopBar />
-{:else if surface === 'bottom-bar'}
-  <BottomBar />
-{:else if surface === 'task-preview'}
-  <TaskPreviewSurface />
-{:else if surface === 'search-panel'}
-  <SearchPanelSurface />
-{:else if surface === 'stack-popup'}
-  <StackPopupSurface />
-{:else if surface === 'process-manager'}
-  <ProcessManagerSurface />
-{:else if surface === 'control-plane'}
-  <ControlPlaneSurface />
-{:else if surface === 'settings-panel'}
-  <SettingsPanelSurface />
-{:else if surface === 'tray-panel'}
-  <TrayPanelSurface />
-{:else if surface === 'terminal-panel'}
-  <TerminalPanelSurface />
-{:else if surface === 'command-panel'}
-  <CommandPanelSurface />
-{:else if surface === 'audio-panel'}
-  <AudioPanelSurface />
-{:else if surface === 'calendar-panel'}
-  <CalendarPanelSurface />
-{:else}
-  <main class="unsupported-surface">
+{#if SurfaceComponent}
+  <SurfaceComponent />
+{:else if surfaceLoadFailed || surface === 'unknown'}
+  <main class="unsupported-surface" data-surface={surface} data-label={label}>
     <div class="panel">
       <strong>{metadata.title}</strong>
       <p>{metadata.subtitle}</p>
+      {#if surfaceLoadFailed}
+        <p class="diagnostic">Failed to load the {surface} surface. Check developer console diagnostics.</p>
+      {/if}
+    </div>
+  </main>
+{:else}
+  <main class="unsupported-surface loading-surface" data-surface={surface} data-label={label} aria-busy="true">
+    <div class="panel">
+      <strong>{metadata.title}</strong>
+      <p>Loading {metadata.subtitle.toLowerCase()}…</p>
     </div>
   </main>
 {/if}
@@ -116,5 +111,10 @@
   .panel p {
     color: rgba(229, 234, 250, 0.72);
     margin: 0;
+  }
+
+  .panel .diagnostic {
+    color: rgba(255, 180, 180, 0.82);
+    margin-top: 0.65rem;
   }
 </style>

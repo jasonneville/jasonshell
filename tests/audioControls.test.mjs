@@ -49,8 +49,8 @@ test('top bar adds sound control left of time with immediate audio command calls
 });
 
 test('audio panel surface owns usable dialog controls and immediate audio commands', () => {
-  assert.match(appSource, /import AudioPanelSurface/);
-  assert.match(appSource, /surface === 'audio-panel'[\s\S]*<AudioPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(appSource, /<SurfaceComponent \/>/);
   assert.match(shellSurfaceSource, /\| 'audio-panel'/);
   assert.match(audioPanelSource, /id="audio-panel" role="dialog"/);
   assert.match(audioPanelSource, /AUDIO_PANEL_OPEN_EVENT/);
