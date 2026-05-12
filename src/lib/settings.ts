@@ -3,6 +3,7 @@ import type { WorkspaceProfile } from './workspaces';
 import { defaultSearchSettings } from './searchSettings.js';
 import type { SearchMode, SearchSettingsContract } from './searchSettings';
 import { defaultQuickCommandsSettings, type QuickCommandsSettings } from './quickCommands.js';
+import { defaultTerminalThemeId, normalizeTerminalThemeId, type TerminalThemeId } from './terminalThemes.js';
 import type { StackTerminalProfile } from './stackPopup';
 
 export const SETTINGS_SCHEMA = 'jasonshell.settings';
@@ -24,6 +25,7 @@ export type ShellTaskHistoryEntry = Record<string, unknown>;
 
 export interface StackBrowserSettings {
   terminalProfile: StackTerminalProfile;
+  terminalTheme: TerminalThemeId;
 }
 
 export interface ShellSettings {
@@ -68,7 +70,16 @@ export function defaultShellSettings(): ShellSettings {
 
 export function defaultStackBrowserSettings(): StackBrowserSettings {
   return {
-    terminalProfile: 'windowsTerminal'
+    terminalProfile: 'windowsTerminal',
+    terminalTheme: defaultTerminalThemeId
+  };
+}
+
+export function normalizeStackBrowserSettings(value: Partial<StackBrowserSettings> | null | undefined): StackBrowserSettings {
+  return {
+    ...defaultStackBrowserSettings(),
+    ...(value ?? {}),
+    terminalTheme: normalizeTerminalThemeId(value?.terminalTheme)
   };
 }
 

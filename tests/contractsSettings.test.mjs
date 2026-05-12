@@ -6,8 +6,10 @@ import {
   SETTINGS_COMMANDS,
   SETTINGS_SCHEMA,
   assertNoSecretSettingKeys,
-  defaultShellSettings
+  defaultShellSettings,
+  normalizeStackBrowserSettings
 } from '../dist-tests/lib/settings.js';
+import { defaultTerminalThemeId } from '../dist-tests/lib/terminalThemes.js';
 import { defaultSearchSettings } from '../dist-tests/lib/searchSettings.js';
 import {
   createDiagnosticsRingBuffer,
@@ -344,9 +346,25 @@ test('settings wrapper declares versioned schema and stable command names', () =
       entries: []
     },
     stackBrowser: {
-      terminalProfile: 'windowsTerminal'
+      terminalProfile: 'windowsTerminal',
+      terminalTheme: defaultTerminalThemeId
     }
   });
+});
+
+test('stack browser settings normalize terminal theme while preserving profile', () => {
+  assert.deepEqual(normalizeStackBrowserSettings(undefined), {
+    terminalProfile: 'windowsTerminal',
+    terminalTheme: defaultTerminalThemeId
+  });
+  assert.deepEqual(
+    normalizeStackBrowserSettings({ terminalProfile: 'gitBash', terminalTheme: 'dracula' }),
+    { terminalProfile: 'gitBash', terminalTheme: 'dracula' }
+  );
+  assert.deepEqual(
+    normalizeStackBrowserSettings({ terminalProfile: 'powershell', terminalTheme: 'unknown-theme' }),
+    { terminalProfile: 'powershell', terminalTheme: defaultTerminalThemeId }
+  );
 });
 
 test('settings wrapper refuses secret-like keys before persistence', () => {
