@@ -2,6 +2,9 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-12 `[CODE]` FIXED: Consumed Ctrl+V keyboard paste events in the persistent terminal primary and split-pane xterm handlers before JasonShell reads the clipboard and writes to the PTY, preventing native/browser paste handling from adding duplicate text; the reachable legacy Stack terminal path now uses the same consumed-event behavior while right-click Paste remains an explicit single paste path.
+- 2026-05-12 `[TOOL]` VALIDATED: Terminal paste fix passed `npm run check`, `npm run test:node`, `npm run cargo:test`, `npm run cargo:check`, and `npm run build`.
+
 - 2026-05-12 `[CODE]` IMPLEMENTED: Added configurable terminal color themes through `src/lib/terminalThemes.ts`, persisted `stackBrowser.terminalTheme` in `jasonshell-settings-v1.json`, exposed a Settings Panel `Terminal color theme` selector, and applied theme updates live to all visible terminal-panel xterm tabs/split panes without restarting backend sessions.
 - 2026-05-12 `[TOOL]` VALIDATED: Terminal theme delivery passed `npm run check`, `npm run test:node`, `cargo test --manifest-path src-tauri/Cargo.toml settings`, `cargo test --manifest-path src-tauri/Cargo.toml terminal`, `npm run cargo:test`, `npm run cargo:check`, and `npm run build`.
 
