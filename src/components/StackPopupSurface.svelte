@@ -2672,17 +2672,6 @@
     </div>
   {/if}
 
-  {#if stackBrowserViewMode === 'terminal'}
-    <StackTerminalPane
-      bind:this={stackTerminalPane}
-      currentPath={currentPath}
-      profile={stackTerminalProfile}
-      profileLabel={stackTerminalProfileLabel}
-      onCwdChange={handleStackTerminalCwdChange}
-      onCloseRequest={closeStackPopupFromSurface}
-      onError={(message) => errorMessage = message}
-    />
-  {:else}
   <div
     class="details-table"
     role="grid"
@@ -2791,7 +2780,6 @@
       <div class="empty-stack surface-state" class:loading={!!loadingPath} class:info={!loadingPath} role="status">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
     {/if}
   </div>
-  {/if}
 
   {#if rowMenu}
     <div
