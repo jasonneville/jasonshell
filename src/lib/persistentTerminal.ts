@@ -1,7 +1,10 @@
 import {
+  listStackTerminals,
   readStackTerminal,
+  renameStackTerminal,
   resizeStackTerminal,
   stopStackTerminal,
+  stopTerminalPanelSessions,
   writeStackTerminal,
   type StackTerminalOutputChunk,
   type StackTerminalReadResult,
@@ -21,8 +24,11 @@ export function startPersistentTerminal(): Promise<StackTerminalSession> {
 }
 
 export {
+  listStackTerminals,
   readStackTerminal,
+  renameStackTerminal,
   resizeStackTerminal,
   stopStackTerminal,
+  stopTerminalPanelSessions,
   writeStackTerminal
 };

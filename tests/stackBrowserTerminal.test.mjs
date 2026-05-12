@@ -52,9 +52,16 @@ test('stack terminal IPC command names are stable and backend-registered', () =>
   assert.match(rustMain, /stack_popup::read_stack_terminal/);
   assert.match(rustMain, /stack_popup::write_stack_terminal/);
   assert.match(rustMain, /stack_popup::stop_stack_terminal/);
-  assert.match(rustTerminal, /MAX_STACK_TERMINAL_SESSIONS/);
+  assert.doesNotMatch(rustTerminal, /MAX_STACK_TERMINAL_SESSIONS\b/);
   assert.match(rustTerminal, /validate_stack_terminal_session_id/);
   assert.match(rustTerminal, /cwd_after_terminal_input/);
+});
+
+test('terminal reader never blocks on an undrained fallback output queue', () => {
+  assert.match(rustTerminal, /mpsc::sync_channel\(1024\)/);
+  assert.match(rustTerminal, /tx\.try_send\(TerminalReaderMessage/);
+  assert.doesNotMatch(rustTerminal, /tx\s*\.send\(TerminalReaderMessage/);
+  assert.match(rustTerminal, /Err\(mpsc::TrySendError::Full\(_\)\) => \{\}/);
 });
 
 test('phase 1 terminal startup has visible nonblank lifecycle state before first output', () => {
@@ -267,8 +274,10 @@ test('phase 1 terminal PowerShell launch plan uses trusted path explicitly and h
   assert.match(rustTerminal, /powershell\.to_string_lossy\(\)/);
   assert.doesNotMatch(rustTerminal, /fn powershell_cmd_launch_line\(_powershell: PathBuf\)/);
   assert.doesNotMatch(rustTerminal, /"pwsh\.exe \{\}"/);
-  assert.match(rustTerminal, /powershell_encoded_command\(&powershell_startup_script\(\)\)/);
+  assert.match(rustTerminal, /command\.env\("JASONSHELL_POWERSHELL_STARTUP", powershell_startup_script\(\)\)/);
+  assert.match(rustTerminal, /powershell_encoded_command\("Invoke-Expression \$env:JASONSHELL_POWERSHELL_STARTUP"\)/);
   assert.match(rustTerminal, /"-EncodedCommand"\.to_string\(\)/);
+  assert.doesNotMatch(rustTerminal, /"-Command"\.to_string\(\)/);
   assert.match(rustTerminal, /"-NoProfile"\.to_string\(\)/);
   assert.match(rustTerminal, /trusted_powershell_candidates/);
   assert.match(rustTerminal, /WindowsPowerShell/);
@@ -304,14 +313,9 @@ test('shell settings include stack browser terminal profile defaults', () => {
   assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal'\s*\}/);
 });
 
-test('stack browser exposes CLI view controls while child owns terminal internals', () => {
-  assert.match(stackPopupSurface, /class:terminal-mode/);
-  assert.match(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'files'\}/);
-  assert.match(stackPopupSurface, /ariaPressed=\{stackBrowserViewMode === 'terminal'\}/);
-  assert.match(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('files'\)\}/);
-  assert.match(stackPopupSurface, /onClick=\{\(\) => void switchStackBrowserView\('terminal'\)\}/);
-  assert.match(stackPopupSurface, /class="stack-view-toggle"/);
-  assert.match(stackPopupSurface, /CLI<\/MeltActionButton>/);
+test('stack browser no longer exposes embedded CLI toggle controls', () => {
+  assert.doesNotMatch(stackPopupSurface, /stack-view-toggle/);
+  assert.doesNotMatch(stackPopupSurface, /CLI<\/MeltActionButton>/);
   assert.doesNotMatch(stackPopupSurface, /Stack Browser embedded terminal lets you|Use this terminal to/);
 });
 
@@ -327,12 +331,11 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /await startTerminal\(\)/);
   assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
-  assert.match(terminalPanelSurface, /cursorBlink: true/);
-  assert.match(terminalPanelSurface, /TERMINAL_PANEL_FONT_FAMILY/);
   assert.match(terminalPanelSurface, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
-  assert.match(terminalPanelSurface, /fontSize: 13/);
-  assert.match(terminalPanelSurface, /letterSpacing: 0/);
+  assert.match(terminalPanelSurface, /fontSize: terminalFontSize/);
   assert.match(terminalPanelSurface, /lineHeight: 1\.25/);
+  assert.match(terminalPanelSurface, /scrollback: 8000/);
+  assert.match(terminalPanelSurface, /letterSpacing: 0/);
   assert.match(terminalPanelSurface, /fitAddon = new FitAddon\(\);/);
   assert.match(terminalPanelSurface, /terminal\.loadAddon\(fitAddon\)/);
   assert.match(terminalPanelSurface, /terminal\.onData\(\(data\) => \{/);
@@ -346,7 +349,7 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanelSurface, /pollTimer = window\.setInterval/);
   assert.match(terminalPanelSurface, /stopStackTerminal\(oldSession\)/);
-  assert.match(terminalPanelSurface, /bind:this=\{host\}/);
+  assert.match(terminalPanelSurface, /use:bindPaneHost=\{pane\}/);
   assert.doesNotMatch(terminalPanelSurface, /writeTerminalOutput\(result\.output\)/);
   assert.doesNotMatch(terminalPanelSurface, /function anchorCommandLineToLastRow\(\)/);
   assert.doesNotMatch(terminalPanelSurface, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
@@ -380,7 +383,7 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(stackTerminalPane, /copySelectionFromContextMenu/);
   assert.match(stackTerminalPane, /pasteClipboardFromContextMenu/);
   assert.match(terminalPanelCss, /user-select: text;/);
-  assert.match(terminalPanelSurface, /on:contextmenu=\{openTerminalContextMenu\}/);
+  assert.match(terminalPanelSurface, /on:contextmenu=\{\(event\) => \{ activatePane\(pane\.paneId\); openTerminalContextMenu\(event\); \}\}/);
   assert.match(terminalPanelSurface, /class="terminal-panel-context-menu"/);
   assert.match(terminalPanelSurface, /copySelectionFromContextMenu/);
   assert.match(terminalPanelSurface, /pasteClipboardFromContextMenu/);
@@ -389,7 +392,7 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-helper-textarea\)/);
   assert.match(terminalPanelCss, /opacity: 0 !important;/);
   assert.match(terminalPanelCss, /caret-color: transparent !important;/);
-  assert.match(terminalPanelCss, /left: -10000px !important;/);
+  assert.match(terminalPanelCss, /height: 1px !important;/);
 });
 
 test('terminal removes xterm assistive mirrors from visible layout', () => {
@@ -416,11 +419,12 @@ test('terminal cwd changes update Stack Browser path and breadcrumbs immediately
   assert.match(stackPopupSurface, /await stackTerminalPane\?\.syncFolderToTerminalCwd\(\);[\s\S]*stackBrowserViewMode = 'files';/);
 });
 
-test('stack terminal PowerShell profile loads normal shell affordances and normalizes extended cwd paths', () => {
+test('stack terminal PowerShell profile loads normal shell affordances, preserves Tab completion cycling, and normalizes extended cwd paths', () => {
   assert.match(rustTerminal, /"-ExecutionPolicy"\.to_string\(\),\s*"Bypass"\.to_string\(\)/);
   assert.match(rustTerminal, /"-NoExit"\.to_string\(\)/);
   assert.match(rustTerminal, /"-EncodedCommand"\.to_string\(\)/);
-  assert.match(rustTerminal, /fn powershell_encoded_command\(script: &str\) -> String/);
+  assert.match(rustTerminal, /powershell_encoded_command\("Invoke-Expression \$env:JASONSHELL_POWERSHELL_STARTUP"\)/);
+  assert.match(rustTerminal, /command\.env\("JASONSHELL_POWERSHELL_STARTUP", powershell_startup_script\(\)\)/);
   assert.match(rustTerminal, /powershell_startup_script\(\)/);
   assert.match(rustTerminal, /powershell_augmented_path\(\)/);
   assert.match(rustTerminal, /command\.env\("PATH", path\)/);
@@ -428,8 +432,18 @@ test('stack terminal PowerShell profile loads normal shell affordances and norma
   assert.ok(rustTerminal.includes('InlinePrediction = \\"`e[38;5;240m\\"'));
   assert.ok(rustTerminal.includes('ListPrediction = \\"`e[38;5;244m\\"'));
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion/);
-  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext/);
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Tab -ScriptBlock/);
+  assert.match(rustTerminal, /\$linePrefix = \$beforeLine\.Substring\(0, \$beforeCursor\)/);
+  assert.ok(rustTerminal.includes("$currentToken = ($linePrefix -split '\\\\s+')[-1].Trim([char]34, [char]39)"));
+  assert.match(rustTerminal, /Test-Path -LiteralPath \$currentToken -PathType Container/);
+  assert.match(rustTerminal, /if \(\$currentToken -and \(Test-Path -LiteralPath \$currentToken -PathType Container\)\) \{ \[Microsoft\.PowerShell\.PSConsoleReadLine\]::TabCompleteNext\(\); return \}/);
+  assert.match(rustTerminal, /\[Microsoft\.PowerShell\.PSConsoleReadLine\]::AcceptSuggestion\(\)/);
+  assert.match(rustTerminal, /\[Microsoft\.PowerShell\.PSConsoleReadLine\]::TabCompleteNext\(\)/);
+  assert.match(rustTerminal, /if \(\$beforeLine -eq \$afterLine -and \$beforeCursor -eq \$afterCursor\)/);
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Shift\+Tab -Function TabCompletePrevious/);
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Ctrl\+Spacebar -Function MenuComplete/);
+  assert.match(rustTerminal, /\$ErrorActionPreference = 'Continue'/);
+  assert.doesNotMatch(rustTerminal, /\$ErrorActionPreference = 'SilentlyContinue'/);
   assert.match(rustTerminal, /Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue/);
   assert.match(rustTerminal, /Set-Alias -Name clear -Value Clear-Host -Force -ErrorAction SilentlyContinue/);
   assert.match(rustTerminal, /function which \{ Get-Command @args \}/);

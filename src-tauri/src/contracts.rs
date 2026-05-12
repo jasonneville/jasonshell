@@ -132,6 +132,9 @@ pub mod commands {
     pub const RESIZE_STACK_TERMINAL: &str = "resize_stack_terminal";
     pub const STOP_STACK_TERMINAL: &str = "stop_stack_terminal";
     pub const POLL_STACK_TERMINAL_SESSION: &str = "poll_stack_terminal_session";
+    pub const LIST_STACK_TERMINALS: &str = "list_stack_terminals";
+    pub const RENAME_STACK_TERMINAL: &str = "rename_stack_terminal";
+    pub const STOP_TERMINAL_PANEL_SESSIONS: &str = "stop_terminal_panel_sessions";
     pub const GET_STACK_TERMINAL_CWD: &str = "get_stack_terminal_cwd";
     pub const REVEAL_STACK_ITEM: &str = "reveal_stack_item";
     pub const EXTRACT_STACK_ARCHIVE: &str = "extract_stack_archive";
@@ -261,6 +264,9 @@ pub mod commands {
         RESIZE_STACK_TERMINAL,
         STOP_STACK_TERMINAL,
         POLL_STACK_TERMINAL_SESSION,
+        LIST_STACK_TERMINALS,
+        RENAME_STACK_TERMINAL,
+        STOP_TERMINAL_PANEL_SESSIONS,
         GET_STACK_TERMINAL_CWD,
         REVEAL_STACK_ITEM,
         EXTRACT_STACK_ARCHIVE,

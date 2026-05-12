@@ -55,7 +55,6 @@
     'MM/dd/yyyy'
   ];
   const dateFormatOptions = dateFormatExamples.map((format) => ({ value: format, label: format }));
-
   let preferences: ShellPreferences = getInitialShellPreferences();
   let shellSettings: ShellSettings = defaultShellSettings();
   let selectedThemeId: ShellThemeId = getInitialShellThemeId();

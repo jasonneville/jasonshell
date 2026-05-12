@@ -546,7 +546,7 @@ Residual risk:
 
 ## Phase 5: Shell Integration, Cwd Truth, And Command Marks
 
-Status: Implementation not started
+Status: Implemented 2026-05-10
 
 ### Objective
 
@@ -649,9 +649,25 @@ Make the terminal understand prompts, commands, outputs, exit codes, and cwd usi
   - failed cd
 - Confirm command marks, cwd sync, and output copy.
 
+### Phase 5 Result
+
+- Added `src/features/stack-browser/terminalShellIntegration.ts` as the pure command/cwd marker parser and bounded command-record reducer.
+- Wired `TerminalPanelSurface.svelte` to xterm OSC 133 / 1337 / 633 parser hooks, authoritative shell cwd markers, fallback cwd events before markers arrive, command record creation from submitted input, `Alt+Up` / `Alt+Down` command jumps, and command-output copy via `Ctrl+Shift+C` or context menu.
+- Added quiet static PowerShell prompt OSC marker emission and Git Bash `PROMPT_COMMAND` environment injection without user dotfile mutation. Shell integration can be disabled with `JASONSHELL_TERMINAL_SHELL_INTEGRATION=0` / `false` until a future Settings UI exists.
+
+Validation performed:
+
+- `node --test tests/terminalShellIntegration.test.mjs tests/stackBrowserTerminal.test.mjs tests/persistentTerminalPanel.test.mjs`
+- `cargo test --manifest-path src-tauri/Cargo.toml terminal`
+- `npm run check`
+
+Residual risk:
+
+- Live WebView2/ConPTY smoke for PowerShell and Git Bash command markers, cwd sync, nonzero exit status, and command-output copy is still pending.
+
 ## Phase 6: Developer Ergonomics And Terminal Actions
 
-Status: Implementation not started
+Status: Completed 2026-05-10
 
 ### Objective
 
@@ -759,7 +775,7 @@ Add the features that make the embedded CLI faster for daily developer work than
 
 ## Phase 7: Sessions, Splits, Persistence Policy, And Workbench Layout
 
-Status: Implementation not started
+Status: Completed 2026-05-10 (terminal-panel focused slice)
 
 ### Objective
 
@@ -839,7 +855,7 @@ Make CLI mode a real terminal workbench with multiple terminal sessions and opti
 
 ## Phase 8: Appearance, Accessibility, And Settings
 
-Status: Implementation not started
+Status: Reverted 2026-05-10 at user request
 
 ### Objective
 
@@ -926,6 +942,10 @@ Make terminal readable, configurable, accessible, and consistent with JasonShell
 - Change terminal font size, profile, and theme; reopen CLI.
 - Keyboard-only path through Settings and CLI.
 - Narrow/minimum Stack Browser size visual check.
+
+### Phase 8 Result
+
+- Reverted at user request on 2026-05-10. Phase 7 terminal sessions/splits and Phase 6 actions remain preserved.
 
 ## Phase 9: Performance Benchmarks And Stress Harness
 

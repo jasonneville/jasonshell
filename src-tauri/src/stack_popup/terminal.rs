@@ -19,7 +19,6 @@ use windows::core::PCWSTR;
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::GetShortPathNameW;
 
-pub(crate) const MAX_STACK_TERMINAL_SESSIONS: usize = 4;
 pub(crate) const MAX_STACK_TERMINAL_SESSION_ID_LEN: usize = 48;
 const MAX_STACK_TERMINAL_WRITE_BYTES: usize = 16 * 1024;
 const STACK_TERMINAL_SESSION_PREFIX: &str = "stack-term-";
@@ -59,6 +58,13 @@ pub struct StackTerminalStopRequest {
     pub session_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackTerminalRenameRequest {
+    pub session_id: String,
+    pub title: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackTerminalSessionSnapshot {
@@ -66,6 +72,10 @@ pub struct StackTerminalSessionSnapshot {
     pub profile: TerminalProfile,
     pub cwd: String,
     pub running: bool,
+    pub title: String,
+    pub created_at: u64,
+    pub last_output_at: Option<u64>,
+    pub command_count: u32,
     pub cols: u16,
     pub rows: u16,
     pub pixel_width: Option<u16>,
@@ -147,10 +157,6 @@ impl Default for StackTerminalRegistry {
 }
 
 impl StackTerminalRegistry {
-    pub(crate) fn can_start_session(&self) -> bool {
-        self.sessions.len() < MAX_STACK_TERMINAL_SESSIONS
-    }
-
     fn insert(&mut self, session: StackTerminalSession) {
         self.stop_requested.remove(&session.id);
         self.sessions.insert(session.id.clone(), session);
@@ -181,8 +187,47 @@ impl StackTerminalRegistry {
             .ok_or_else(|| "Terminal session not found".to_string())
     }
 
+    fn list_by_target(&self, target_label: Option<&str>) -> Vec<StackTerminalSessionSnapshot> {
+        let mut sessions = self.sessions
+            .values()
+            .filter(|session| target_label.map(|label| session.target_label == label).unwrap_or(true))
+            .map(StackTerminalSession::snapshot)
+            .collect::<Vec<_>>();
+        sessions.sort_by_key(|session| session.created_at);
+        sessions
+    }
+
+    #[cfg(test)]
+    fn rename(&mut self, session_id: &str, title: String) -> Result<StackTerminalSessionSnapshot, String> {
+        let title = sanitize_stack_terminal_title(&title)?;
+        let session = self.session_mut(session_id)?;
+        session.title = title;
+        Ok(session.snapshot())
+    }
+
+    fn request_stop_by_target(&mut self, target_label: &str) -> Vec<StackTerminalSession> {
+        let ids = self.sessions
+            .values()
+            .filter(|session| session.target_label == target_label)
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        let mut stopped = Vec::new();
+        for id in ids {
+            self.stop_requested.insert(id.clone());
+            if let Some(session) = self.sessions.remove(&id) {
+                stopped.push(session);
+            }
+        }
+        stopped
+    }
+
     #[cfg(test)]
     pub(crate) fn insert_test_session(&mut self, id: String, cwd: PathBuf) {
+        self.insert_test_session_for_target(id, cwd, shell_windows::STACK_POPUP_LABEL.to_string());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_test_session_for_target(&mut self, id: String, cwd: PathBuf, target_label: String) {
         self.sessions.insert(
             id.clone(),
             StackTerminalSession {
@@ -194,9 +239,13 @@ impl StackTerminalRegistry {
                 writer: None,
                 input_buffer: String::new(),
                 output_rx: mpsc::sync_channel(1024).1,
-                target_label: shell_windows::STACK_POPUP_LABEL.to_string(),
+                target_label,
                 next_sequence: 1,
                 running: true,
+                title: "PowerShell".to_string(),
+                created_at: stack_terminal_epoch_ms(),
+                last_output_at: None,
+                command_count: 0,
                 size: StackTerminalSize {
                     cols: 120,
                     rows: 30,
@@ -265,6 +314,10 @@ struct StackTerminalSession {
     target_label: String,
     next_sequence: u64,
     running: bool,
+    title: String,
+    created_at: u64,
+    last_output_at: Option<u64>,
+    command_count: u32,
     size: StackTerminalSize,
     #[cfg(test)]
     test_size: Option<StackTerminalSize>,
@@ -283,21 +336,10 @@ pub(crate) async fn start_stack_terminal_session(
     request: StackTerminalStartRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
     let cwd = PathBuf::from(super::paths::normalize_existing_dir(&request.folder_path)?);
-    let profile = request.profile.unwrap_or(
-        settings::load_shell_settings_for_app(app_handle)?
-            .stack_browser
-            .terminal_profile,
-    );
-    {
-        let runtime = state
-            .lock()
-            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-        if !runtime.terminal_sessions.can_start_session() {
-            return Err(format!(
-                "Stack Browser terminal sessions are limited to {MAX_STACK_TERMINAL_SESSIONS}"
-            ));
-        }
-    }
+    let shell_settings = settings::load_shell_settings_for_app(app_handle)?;
+    let profile = request
+        .profile
+        .unwrap_or(shell_settings.stack_browser.terminal_profile);
     let target_label = terminal_event_target_label(request.target_label.as_deref())?;
     let app_handle_for_spawn = app_handle.clone();
     let session = tauri::async_runtime::spawn_blocking(move || {
@@ -310,16 +352,6 @@ pub(crate) async fn start_stack_terminal_session(
     let mut runtime = state
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    if !runtime.terminal_sessions.can_start_session() {
-        drop(runtime);
-        let mut session = session;
-        let _ = session.child.kill();
-        let _ = session.child.wait();
-        return Err(format!(
-            "Stack Browser terminal sessions are limited to {MAX_STACK_TERMINAL_SESSIONS}"
-        ));
-    }
-
     runtime.terminal_sessions.insert(session);
     drop(runtime);
     emit_cwd_update(app_handle, &target_label, &snapshot);
@@ -491,6 +523,10 @@ pub(crate) fn stop_stack_terminal_session(
             profile: TerminalProfile::WindowsTerminal,
             cwd: String::new(),
             running: false,
+            title: "Terminal".to_string(),
+            created_at: stack_terminal_epoch_ms(),
+            last_output_at: None,
+            command_count: 0,
             cols: 0,
             rows: 0,
             pixel_width: None,
@@ -526,6 +562,54 @@ pub(crate) fn stop_stack_terminal(
     stop_stack_terminal_session(app_handle, state, request).map(|_| ())
 }
 
+pub(crate) fn list_stack_terminals(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    target_label: Option<String>,
+) -> Result<Vec<StackTerminalSessionSnapshot>, String> {
+    if let Some(label) = target_label.as_deref() {
+        terminal_event_target_label(Some(label))?;
+    }
+    let runtime = state
+        .lock()
+        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+    Ok(runtime.terminal_sessions.list_by_target(target_label.as_deref()))
+}
+
+pub(crate) fn rename_stack_terminal(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    request: StackTerminalRenameRequest,
+) -> Result<StackTerminalSessionSnapshot, String> {
+    validate_stack_terminal_session_id(&request.session_id)?;
+    let title = sanitize_stack_terminal_title(&request.title)?;
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+    let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+    session.title = title;
+    Ok(session.snapshot())
+}
+
+pub(crate) fn stop_terminal_sessions_for_target(
+    app_handle: &AppHandle,
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    target_label: &str,
+) -> Result<(), String> {
+    let mut sessions = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        runtime.terminal_sessions.request_stop_by_target(target_label)
+    };
+    for session in sessions.iter_mut() {
+        let _ = session.child.kill();
+        let _ = session.child.wait();
+        session.running = false;
+        let snapshot = session.snapshot();
+        emit_terminal_closed(app_handle, target_label, &snapshot);
+    }
+    Ok(())
+}
+
 pub(crate) fn get_stack_terminal_cwd(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
@@ -556,6 +640,11 @@ fn spawn_terminal_session(
     let mut command = CommandBuilder::new(plan.executable.to_string_lossy().to_string());
     command.args(&plan.args);
     apply_terminal_capability_environment(&mut command);
+    let shell_integration = shell_integration_enabled();
+    command.env(
+        "JASONSHELL_TERMINAL_SHELL_INTEGRATION",
+        if shell_integration { "1" } else { "0" },
+    );
     if matches!(
         profile,
         TerminalProfile::WindowsTerminal | TerminalProfile::PowerShell
@@ -563,6 +652,10 @@ fn spawn_terminal_session(
         if let Some(path) = powershell_augmented_path() {
             command.env("PATH", path);
         }
+        command.env("JASONSHELL_POWERSHELL_STARTUP", powershell_startup_script());
+    }
+    if shell_integration && matches!(profile, TerminalProfile::GitBash) {
+        apply_git_bash_shell_integration(&mut command);
     }
     command.cwd(&cwd);
     let child = pty_pair.slave.spawn_command(command).map_err(|error| {
@@ -601,6 +694,10 @@ fn spawn_terminal_session(
         target_label,
         next_sequence: 1,
         running: true,
+        title: default_terminal_title(profile),
+        created_at: stack_terminal_epoch_ms(),
+        last_output_at: None,
+        command_count: 0,
         size: StackTerminalSize {
             cols: 120,
             rows: 30,
@@ -616,6 +713,19 @@ fn apply_terminal_capability_environment(command: &mut CommandBuilder) {
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "JasonShell");
+}
+
+fn shell_integration_enabled() -> bool {
+    std::env::var("JASONSHELL_TERMINAL_SHELL_INTEGRATION")
+        .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+        .unwrap_or(true)
+}
+
+fn apply_git_bash_shell_integration(command: &mut CommandBuilder) {
+    command.env(
+        "PROMPT_COMMAND",
+        r#"__js_ec=$?; printf '\033]133;D;%s\a\033]133;CurrentDir;%s\a\033]133;A\a' "$__js_ec" "$PWD"; printf '\033]133;B\a'"#,
+    );
 }
 
 fn spawn_terminal_reader<R>(
@@ -654,15 +764,14 @@ fn spawn_terminal_reader<R>(
                         );
                     }
                     sequence = sequence.saturating_add(1);
-                    if tx
-                        .send(TerminalReaderMessage {
-                            stream,
-                            text,
-                            sequence: chunk.sequence,
-                        })
-                        .is_err()
-                    {
-                        break;
+                    match tx.try_send(TerminalReaderMessage {
+                        stream,
+                        text,
+                        sequence: chunk.sequence,
+                    }) {
+                        Ok(()) => {}
+                        Err(mpsc::TrySendError::Full(_)) => {}
+                        Err(mpsc::TrySendError::Disconnected(_)) => break,
                     }
                 }
                 Err(_) => break,
@@ -683,7 +792,7 @@ fn spawn_terminal_reader<R>(
                     &chunk,
                 );
             }
-            let _ = tx.send(TerminalReaderMessage {
+            let _ = tx.try_send(TerminalReaderMessage {
                 stream,
                 text,
                 sequence: chunk.sequence,
@@ -735,6 +844,7 @@ fn flush_terminal_output_decoder(pending: &mut Vec<u8>) -> String {
 fn drain_terminal_output(session: &mut StackTerminalSession) -> Vec<StackTerminalOutputChunk> {
     let mut chunks = Vec::new();
     while let Ok(message) = session.output_rx.try_recv() {
+        session.last_output_at = Some(stack_terminal_epoch_ms());
         chunks.push(StackTerminalOutputChunk {
             session_id: session.id.clone(),
             stream: message.stream,
@@ -781,6 +891,10 @@ impl StackTerminalSession {
             profile: self.profile,
             cwd: stack_terminal_cwd_string(&self.cwd),
             running: self.running,
+            title: self.title.clone(),
+            created_at: self.created_at,
+            last_output_at: self.last_output_at,
+            command_count: self.command_count,
             cols: self.size.cols,
             rows: self.size.rows,
             pixel_width: self.size.pixel_width,
@@ -861,7 +975,7 @@ pub(crate) fn terminal_process_plan(
 fn powershell_cmd_launch_line(powershell: PathBuf) -> String {
     let trusted_path =
         short_windows_path(&powershell).unwrap_or_else(|| powershell.to_string_lossy().to_string());
-    let encoded_startup = powershell_encoded_command(&powershell_startup_script());
+    let encoded_bootstrap = powershell_encoded_command("Invoke-Expression $env:JASONSHELL_POWERSHELL_STARTUP");
     format!(
         "{} {}",
         trusted_path,
@@ -872,7 +986,7 @@ fn powershell_cmd_launch_line(powershell: PathBuf) -> String {
             "Bypass".to_string(),
             "-NoExit".to_string(),
             "-EncodedCommand".to_string(),
-            encoded_startup,
+            encoded_bootstrap,
         ]
         .join(" ")
     )
@@ -912,15 +1026,15 @@ fn powershell_augmented_path() -> Option<String> {
 
 fn powershell_startup_script() -> String {
     [
-        "$ErrorActionPreference = 'SilentlyContinue'",
-        "if (Get-Module -ListAvailable -Name PSReadLine) { Import-Module PSReadLine; Set-PSReadLineOption -Colors @{ InlinePrediction = \"`e[38;5;240m\"; ListPrediction = \"`e[38;5;244m\"; ListPredictionSelected = \"`e[48;5;238m\" }; Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion; Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext; Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious; Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete }",
+        "$ErrorActionPreference = 'Continue'",
+        "if (Get-Module -ListAvailable -Name PSReadLine) { Import-Module PSReadLine; Set-PSReadLineOption -Colors @{ InlinePrediction = \"`e[38;5;240m\"; ListPrediction = \"`e[38;5;244m\"; ListPredictionSelected = \"`e[48;5;238m\" }; Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion; Set-PSReadLineKeyHandler -Key Tab -ScriptBlock { $beforeLine = $null; $beforeCursor = $null; [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$beforeLine, [ref]$beforeCursor); $linePrefix = $beforeLine.Substring(0, $beforeCursor); $currentToken = ($linePrefix -split '\\s+')[-1].Trim([char]34, [char]39); if ($currentToken -and (Test-Path -LiteralPath $currentToken -PathType Container)) { [Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext(); return }; [Microsoft.PowerShell.PSConsoleReadLine]::AcceptSuggestion(); $afterLine = $null; $afterCursor = $null; [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$afterLine, [ref]$afterCursor); if ($beforeLine -eq $afterLine -and $beforeCursor -eq $afterCursor) { [Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext() } }; Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious; Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete }",
         "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name ll -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name clear -Value Clear-Host -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name cat -Value Get-Content -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name grep -Value Select-String -Force -ErrorAction SilentlyContinue",
         "function which { Get-Command @args }",
-        r#"function prompt { $gitLine = $null; if (Get-Command git -ErrorAction SilentlyContinue) { $inside = git rev-parse --is-inside-work-tree 2>$null; if ($LASTEXITCODE -eq 0 -and $inside -eq 'true') { $branch = git symbolic-ref --quiet --short HEAD 2>$null; if (-not $branch) { $branch = git rev-parse --short HEAD 2>$null }; $raw = git status --porcelain=v1 -z 2>$null; $modified = 0; $deleted = 0; $untracked = 0; if ($raw) { foreach ($entry in ($raw -split "`0")) { if (-not $entry) { continue }; if ($entry.StartsWith('??')) { $untracked += 1; continue }; $xy = $entry.Substring(0, [Math]::Min(2, $entry.Length)); if ($xy.Contains('D')) { $deleted += 1 } else { $modified += 1 } } }; $parts = @($branch); if ($modified -gt 0) { $parts += "+$modified" }; if ($deleted -gt 0) { $parts += "-$deleted" }; if ($untracked -gt 0) { $parts += "?$untracked" }; $gitLine = $parts -join ' ' } }; Write-Host -NoNewline "$($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1))"; if ($gitLine) { Write-Host -NoNewline " ($gitLine)" -ForegroundColor Cyan }; " " }"#,
+        r#"function prompt { $last = if ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } elseif ($?) { 0 } else { 1 }; $cwd = $executionContext.SessionState.Path.CurrentLocation.Path; if ($env:JASONSHELL_TERMINAL_SHELL_INTEGRATION -ne '0' -and $env:JASONSHELL_TERMINAL_SHELL_INTEGRATION -ne 'false') { Write-Host -NoNewline "`e]133;D;$last`a`e]133;CurrentDir;$cwd`a`e]133;A`a" }; $gitLine = $null; if (Get-Command git -ErrorAction SilentlyContinue) { $inside = git rev-parse --is-inside-work-tree 2>$null; if ($LASTEXITCODE -eq 0 -and $inside -eq 'true') { $branch = git symbolic-ref --quiet --short HEAD 2>$null; if (-not $branch) { $branch = git rev-parse --short HEAD 2>$null }; $raw = git status --porcelain=v1 -z 2>$null; $modified = 0; $deleted = 0; $untracked = 0; if ($raw) { foreach ($entry in ($raw -split "`0")) { if (-not $entry) { continue }; if ($entry.StartsWith('??')) { $untracked += 1; continue }; $xy = $entry.Substring(0, [Math]::Min(2, $entry.Length)); if ($xy.Contains('D')) { $deleted += 1 } else { $modified += 1 } } }; $parts = @($branch); if ($modified -gt 0) { $parts += "+$modified" }; if ($deleted -gt 0) { $parts += "-$deleted" }; if ($untracked -gt 0) { $parts += "?$untracked" }; $gitLine = $parts -join ' ' } }; Write-Host -NoNewline "$($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1))"; if ($gitLine) { Write-Host -NoNewline " ($gitLine)" -ForegroundColor Cyan }; " " }"#,
     ]
     .join("; ")
 }
@@ -1007,11 +1121,35 @@ fn git_bash_candidates() -> Vec<PathBuf> {
 
 pub(crate) fn new_stack_terminal_session_id() -> String {
     let counter = STACK_TERMINAL_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let epoch_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
+    let epoch_ms = stack_terminal_epoch_ms();
     format!("{STACK_TERMINAL_SESSION_PREFIX}{epoch_ms:x}-{counter:x}")
+}
+
+fn stack_terminal_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
+}
+
+fn default_terminal_title(profile: TerminalProfile) -> String {
+    match profile {
+        TerminalProfile::WindowsTerminal => "Windows Terminal",
+        TerminalProfile::GitBash => "Git Bash",
+        TerminalProfile::PowerShell => "PowerShell",
+    }
+    .to_string()
+}
+
+fn sanitize_stack_terminal_title(title: &str) -> Result<String, String> {
+    let value = title.trim();
+    if value.is_empty() {
+        return Err("Terminal title is required".to_string());
+    }
+    if value.chars().count() > 64 || value.chars().any(|ch| ch.is_control()) {
+        return Err("Terminal title is invalid".to_string());
+    }
+    Ok(value.to_string())
 }
 
 pub(crate) fn validate_stack_terminal_session_id(value: &str) -> Result<(), String> {
@@ -1256,17 +1394,24 @@ mod tests {
     }
 
     #[test]
-    fn powershell_startup_is_hidden_and_right_arrow_accepts_muted_suggestions() {
+    fn powershell_startup_is_hidden_and_preserves_tab_completion_cycling() {
         let startup_script = powershell_startup_script();
         assert!(startup_script.contains("InlinePrediction = \"`e[38;5;240m\""));
         assert!(startup_script.contains("ListPrediction = \"`e[38;5;244m\""));
         assert!(startup_script
             .contains("Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion"));
-        assert!(
-            startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext")
-        );
+        assert!(startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -ScriptBlock"));
+        assert!(startup_script.contains("$linePrefix = $beforeLine.Substring(0, $beforeCursor)"));
+        assert!(startup_script.contains("$currentToken = ($linePrefix -split '\\s+')[-1].Trim([char]34, [char]39)"));
+        assert!(startup_script.contains("Test-Path -LiteralPath $currentToken -PathType Container"));
+        assert!(startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::AcceptSuggestion()"));
+        assert!(startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext()"));
+        assert!(startup_script.contains("if ($beforeLine -eq $afterLine -and $beforeCursor -eq $afterCursor)"));
+        assert!(!startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -Function AcceptSuggestion"));
         assert!(startup_script
             .contains("Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious"));
+        assert!(startup_script
+            .contains("Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete"));
         assert!(startup_script.contains(
             "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue"
         ));
@@ -1299,6 +1444,8 @@ mod tests {
             powershell_cmd_launch_line(PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe"));
         assert!(launch_line.contains("-NoProfile"));
         assert!(launch_line.contains("-EncodedCommand"));
+        assert!(!launch_line.contains("-Command"));
+        assert!(!launch_line.contains("Invoke-Expression $env:JASONSHELL_POWERSHELL_STARTUP"));
         assert!(!launch_line.contains("Set-Alias"));
         assert!(!launch_line.contains("Set-PSReadLineKeyHandler"));
     }
@@ -1443,15 +1590,13 @@ mod tests {
     }
 
     #[test]
-    fn terminal_runtime_state_caps_active_sessions() {
+    fn terminal_runtime_state_keeps_more_than_four_active_sessions() {
         let mut registry = StackTerminalRegistry::default();
-        for index in 0..(MAX_STACK_TERMINAL_SESSIONS - 1) {
+        for index in 0..6 {
             registry.insert_test_session(format!("stack-term-{index}"), PathBuf::from(r"C:\dev"));
         }
 
-        assert!(registry.can_start_session());
-        registry.insert_test_session("stack-term-live".to_string(), PathBuf::from(r"C:\dev"));
-        assert!(!registry.can_start_session());
+        assert_eq!(registry.list_by_target(None).len(), 6);
     }
 
     #[test]
@@ -1462,6 +1607,59 @@ mod tests {
         assert!(registry.request_stop(session_id).unwrap().is_none());
         assert!(registry.should_drop_for_stop(session_id));
         assert!(!registry.should_drop_for_stop(session_id));
+    }
+
+    #[test]
+    fn terminal_registry_lists_and_renames_target_scoped_sessions() {
+        let mut registry = StackTerminalRegistry::default();
+        registry.insert_test_session_for_target(
+            "stack-term-panel".to_string(),
+            PathBuf::from(r"C:\dev\panel"),
+            shell_windows::TERMINAL_PANEL_LABEL.to_string(),
+        );
+        registry.insert_test_session_for_target(
+            "stack-term-popup".to_string(),
+            PathBuf::from(r"C:\dev\popup"),
+            shell_windows::STACK_POPUP_LABEL.to_string(),
+        );
+
+        let panel_sessions = registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL));
+        assert_eq!(panel_sessions.len(), 1);
+        assert_eq!(panel_sessions[0].session_id, "stack-term-panel");
+        assert_eq!(panel_sessions[0].title, "PowerShell");
+        assert!(panel_sessions[0].created_at > 0);
+
+        let renamed = registry.rename("stack-term-panel", "API server".to_string()).unwrap();
+        assert_eq!(renamed.title, "API server");
+        assert_eq!(registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL))[0].title, "API server");
+    }
+
+    #[test]
+    fn terminal_registry_stops_only_requested_target_sessions() {
+        let mut registry = StackTerminalRegistry::default();
+        registry.insert_test_session_for_target(
+            "stack-term-panel-a".to_string(),
+            PathBuf::from(r"C:\dev\panel-a"),
+            shell_windows::TERMINAL_PANEL_LABEL.to_string(),
+        );
+        registry.insert_test_session_for_target(
+            "stack-term-panel-b".to_string(),
+            PathBuf::from(r"C:\dev\panel-b"),
+            shell_windows::TERMINAL_PANEL_LABEL.to_string(),
+        );
+        registry.insert_test_session_for_target(
+            "stack-term-popup".to_string(),
+            PathBuf::from(r"C:\dev\popup"),
+            shell_windows::STACK_POPUP_LABEL.to_string(),
+        );
+
+        let stopped = registry.request_stop_by_target(shell_windows::TERMINAL_PANEL_LABEL);
+        assert_eq!(stopped.len(), 2);
+        assert!(registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL)).is_empty());
+        assert_eq!(registry.list_by_target(Some(shell_windows::STACK_POPUP_LABEL)).len(), 1);
+        assert!(registry.should_drop_for_stop("stack-term-panel-a"));
+        assert!(registry.should_drop_for_stop("stack-term-panel-b"));
+        assert!(!registry.should_drop_for_stop("stack-term-popup"));
     }
 
     #[test]
