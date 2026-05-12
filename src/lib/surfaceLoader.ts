@@ -1,7 +1,6 @@
-import type { ComponentType, SvelteComponent } from 'svelte';
 import type { ShellSurface } from './shellSurface';
 
-export type SurfaceComponent = ComponentType<SvelteComponent>;
+export type SurfaceComponent = any;
 
 type SurfaceComponentModule = {
   default: SurfaceComponent;

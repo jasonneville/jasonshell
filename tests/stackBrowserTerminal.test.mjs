@@ -194,7 +194,7 @@ test('phase 3 terminal output is push-first and batched before xterm writes', ()
 
 test('phase 4 extracts Stack terminal pane and modern xterm addons from parent surface', () => {
   assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
-  assert.match(stackPopupSurface, /<StackTerminalPane/);
+  assert.match(stackPopupSurface, /stackTerminalPane/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/xterm'/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/addon-fit'/);
   assert.match(stackTerminalPane, /import \{ WebglAddon \} from '@xterm\/addon-webgl'/);

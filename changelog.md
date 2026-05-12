@@ -1,5 +1,10 @@
 ## Change Ledger
 
+- 2026-05-11 `[CODE]` IMPLEMENTED: Frontend surface boot now resolves the Tauri window label first and lazy-loads only the matching Svelte surface component through `src/lib/surfaceLoader.ts`; `src/App.svelte` no longer statically imports all top/bottom/search/stack/process/terminal/auxiliary surfaces, and unsupported labels or lazy import failures show the fallback panel with diagnostics.
+- 2026-05-11 `[CODE]` TESTED: Added source coverage preventing static surface imports from returning to `App.svelte` and requiring a dynamic import mapping for every non-`unknown` `ShellSurface`; existing App-routing source tests now assert the lazy bootstrap/loader contract.
+- 2026-05-11 `[TOOL]` MEASURED: Production JS changed from one `index-A03REyX5.js` chunk at 856.49 kB (gzip 244.28 kB) to a 72.76 kB bootstrap (`index-B5UD5iDL.js`, gzip 25.21 kB) plus lazy surface chunks; the largest remaining chunk is the shared lazy `contextMenuPosition-mZZYrnWJ.js` at 366.15 kB (gzip 94.42 kB), with `TerminalPanelSurface` split to 45.01 kB and `StackPopupSurface` split to 126.75 kB.
+- 2026-05-11 `[TOOL]` VALIDATED: Code-splitting validation passed with `npm run check`, `npm run test:node`, `npm run build`, `npm run cargo:check`, and `npm run cargo:test`; stale top-bar tray/sound ordering assertions were resolved by restoring the documented command → tray → sound markup order.
+
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
 - 2026-05-11 `[USER]` REPORTED: Terminal opened showing the startup `Invoke-Expression` command, and PSReadLine suggestion color was no longer the muted gray expected from the previous startup path.
