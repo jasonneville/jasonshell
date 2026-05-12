@@ -32,6 +32,8 @@
   import { getTerminalAction, terminalActions, type TerminalActionId, type TerminalActionState } from '../features/terminal/terminalActions';
   import { detectTerminalQuickSelectTargets, type TerminalQuickSelectTarget } from '../features/terminal/terminalQuickSelect';
   import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
+  import { addShellSettingsChangeListener, loadShellSettings, type ShellSettings } from '../lib/settings';
+  import { terminalThemeById, type TerminalTheme } from '../lib/terminalThemes.js';
 
   type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalSplitOrientation = 'single' | 'vertical' | 'horizontal';
@@ -120,6 +122,7 @@
   let recentOutputText = '';
   let sessionReplayBuffers = new Map<string, string>();
   let renderedSequenceKeysBySession = new Map<string, Set<string>>();
+  let currentTerminalTheme: TerminalTheme = terminalThemeById('base-dark');
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -176,6 +179,9 @@
     listenersDisposed = false;
     document.addEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
     window.addEventListener('focus', handlePanelOpen);
+    const disposeSettingsListener = addShellSettingsChangeListener(applyShellSettingsToTerminalTheme);
+    unlisteners.push(disposeSettingsListener);
+    void loadTerminalThemeSetting();
     void initializeTerminalListeners();
     void startTerminal();
     return () => {
@@ -194,6 +200,32 @@
       }
     };
   });
+
+  async function loadTerminalThemeSetting() {
+    try {
+      applyShellSettingsToTerminalTheme(await loadShellSettings());
+    } catch (error) {
+      console.error('Failed to load terminal theme setting', error);
+      applyTerminalTheme(terminalThemeById(currentTerminalTheme.id));
+    }
+  }
+
+  function applyShellSettingsToTerminalTheme(settings: ShellSettings) {
+    applyTerminalTheme(terminalThemeById(settings.stackBrowser?.terminalTheme));
+  }
+
+  function applyTerminalTheme(nextTheme: TerminalTheme) {
+    currentTerminalTheme = nextTheme;
+    const xtermTheme = { ...nextTheme.theme };
+    if (terminal) {
+      terminal.options.theme = { ...xtermTheme };
+    }
+    for (const runtime of paneRuntimes.values()) {
+      if (runtime.terminal) {
+        runtime.terminal.options.theme = { ...xtermTheme };
+      }
+    }
+  }
 
   async function initializeTerminalListeners() {
     const register = (promise: Promise<UnlistenFn>) => {
@@ -484,6 +516,7 @@
       scrollback: 8000,
       letterSpacing: 0,
       screenReaderMode: false,
+      theme: { ...currentTerminalTheme.theme },
       windowsPty: { backend: 'conpty' }
     });
     fitAddon = new FitAddon();
@@ -584,6 +617,7 @@
       scrollback: 8000,
       letterSpacing: 0,
       screenReaderMode: false,
+      theme: { ...currentTerminalTheme.theme },
       windowsPty: { backend: 'conpty' }
     });
     runtime.terminal = paneTerminal;

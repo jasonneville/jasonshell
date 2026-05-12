@@ -90,6 +90,15 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   );
   assert.match(terminalPanel, /convertEol:\s*false/);
   assert.match(terminalPanel, /windowsPty:\s*\{\s*backend:\s*'conpty'\s*\}/);
+  assert.match(terminalPanel, /terminalThemeById/);
+  assert.match(terminalPanel, /addShellSettingsChangeListener\(applyShellSettingsToTerminalTheme\)/);
+  assert.match(terminalPanel, /loadShellSettings\(\)/);
+  assert.match(terminalPanel, /currentTerminalTheme: TerminalTheme = terminalThemeById\('base-dark'\)/);
+  assert.match(terminalPanel, /theme:\s*\{ \.\.\.currentTerminalTheme\.theme \}/g);
+  assert.match(terminalPanel, /terminal\.options\.theme = \{ \.\.\.xtermTheme \}/);
+  assert.match(terminalPanel, /runtime\.terminal\.options\.theme = \{ \.\.\.xtermTheme \}/);
+  assert.match(terminalPanel, /for \(const unlisten of unlisteners\.splice\(0\)\)/);
+  assert.doesNotMatch(terminalPanel, /background:\s*['"]#[0-9a-f]{3,8}['"]/i);
   assert.doesNotMatch(
     terminalPanel,
     /function writeTerminalOutput[\s\S]{0,460}terminal\?\.scrollToBottom\(\)/,
