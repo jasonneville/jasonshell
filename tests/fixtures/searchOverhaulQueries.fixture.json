@@ -1,0 +1,108 @@
+{
+  "phase": "search_overhaul.phase0",
+  "description": "Baseline acceptance query table for the clean search rewrite.",
+  "queries": [
+    {
+      "query": "display settings",
+      "expectedTop": {
+        "id": "setting:display",
+        "kind": "setting",
+        "title": "Display Settings",
+        "path": "ms-settings:display",
+        "providerId": "settings"
+      },
+      "mustOutrankKinds": ["file", "folder"]
+    },
+    {
+      "query": "sound settings",
+      "expectedTop": {
+        "id": "setting:sound",
+        "kind": "setting",
+        "title": "Sound Settings",
+        "path": "ms-settings:sound",
+        "providerId": "settings"
+      },
+      "mustOutrankKinds": ["file", "folder"]
+    },
+    {
+      "query": "jnev1",
+      "expectedTop": {
+        "kind": "folder",
+        "titleContains": "jnev1",
+        "pathContains": "jnev1",
+        "providerId": "everything"
+      },
+      "mustNotWaitFor": ["windowsSearch", "warmedCache"]
+    },
+    {
+      "query": "spotify",
+      "expectedTop": {
+        "kind": "app",
+        "title": "Spotify"
+      },
+      "mustOutrankKinds": ["file", "folder"]
+    },
+    {
+      "query": "control panel",
+      "expectedTop": {
+        "id": "setting:control-panel",
+        "kind": "setting",
+        "title": "Control Panel",
+        "path": "control.exe",
+        "providerId": "settings"
+      },
+      "mustOutrankKinds": ["file", "folder"]
+    },
+    {
+      "query": "windows settings",
+      "expectedTop": {
+        "id": "setting:windows-settings",
+        "kind": "setting",
+        "title": "Windows Settings",
+        "path": "ms-settings:",
+        "providerId": "settings"
+      },
+      "mustOutrankKinds": ["file", "folder"]
+    },
+    {
+      "query": "C:\\dev",
+      "expectedTop": {
+        "kind": "folder",
+        "title": "dev",
+        "path": "C:\\dev",
+        "providerId": "localFolders"
+      },
+      "mustOutrankKinds": ["file"]
+    },
+    {
+      "query": "C://dev",
+      "expectedTop": {
+        "kind": "folder",
+        "title": "dev",
+        "path": "C:\\dev",
+        "providerId": "localFolders"
+      },
+      "mustOutrankKinds": ["file"]
+    },
+    {
+      "query": "c dev",
+      "expectedTop": {
+        "kind": "folder",
+        "title": "dev",
+        "path": "C:\\dev",
+        "providerId": "localFolders"
+      },
+      "mustOutrankKinds": ["file"]
+    },
+    {
+      "query": "dev",
+      "expectedTop": {
+        "kind": "folder",
+        "title": "dev",
+        "path": "C:\\dev",
+        "providerId": "localFolders"
+      },
+      "mustOutrankKinds": ["file"]
+    }
+  ]
+}

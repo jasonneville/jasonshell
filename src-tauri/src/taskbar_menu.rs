@@ -1,11 +1,10 @@
 use crate::launchers;
+use crate::process_manager;
 use crate::shell_windows::{BOTTOM_BAR_LABEL, TOP_BAR_LABEL};
 use crate::task_windows::{self, TaskWindowAction};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use base64::Engine;
 use serde::Deserialize;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::{AppHandle, Emitter, LogicalPosition, Manager};
 
@@ -20,6 +19,7 @@ const TOP_BAR_PIN_MENU_PREFIX: &str = "top-bar-pin";
 #[serde(rename_all = "camelCase")]
 pub struct ShowTaskWindowContextMenuRequest {
     pub hwnd: String,
+    pub process_id: u32,
     pub is_minimized: bool,
     pub x: f64,
     pub y: f64,
@@ -76,7 +76,7 @@ pub fn show_task_window_context_menu(
         !request.is_minimized,
         None::<&str>,
     )
-    .map_err(|error| format!("Failed to build task window minimize item: {error}"))?;
+    .map_err(|error| format!("Failed to build task window close item: {error}"))?;
     let close_item = MenuItem::with_id(
         &app_handle,
         format!("{TASK_WINDOW_MENU_PREFIX}:close:{}", request.hwnd),
@@ -84,9 +84,32 @@ pub fn show_task_window_context_menu(
         true,
         None::<&str>,
     )
-    .map_err(|error| format!("Failed to build task window close item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&focus_item, &minimize_item, &close_item])
-        .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
+    .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
+    let process_item = MenuItem::with_id(
+        &app_handle,
+        format!(
+            "{TASK_WINDOW_MENU_PREFIX}:process:{}:{}",
+            request.process_id, request.hwnd
+        ),
+        format!("PID {} - open in Process Manager", request.process_id),
+        request.process_id != 0,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build task window process item: {error}"))?;
+    let pin_enabled = launchers::can_pin_task_window_to_taskbar(&request.hwnd).unwrap_or(false);
+    let pin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TASK_WINDOW_MENU_PREFIX}:pin:{}", request.hwnd),
+        "Pin to taskbar",
+        pin_enabled,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[&focus_item, &minimize_item, &process_item, &pin_item, &close_item],
+    )
+    .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
 
     bottom_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -118,8 +141,59 @@ pub fn show_launcher_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build launcher reveal item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&launch_item, &reveal_item])
-        .map_err(|error| format!("Failed to build launcher context menu: {error}"))?;
+    let admin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:runas:{encoded_shortcut}"),
+        "Run as administrator",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher administrator item: {error}"))?;
+    let properties_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:properties:{encoded_shortcut}"),
+        "Properties",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher properties item: {error}"))?;
+    let reveal_target_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:reveal-target:{encoded_shortcut}"),
+        "Open target location",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher target reveal item: {error}"))?;
+    let copy_path_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:copy-path:{encoded_shortcut}"),
+        "Copy shortcut path",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher copy path item: {error}"))?;
+    let unpin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{LAUNCHER_MENU_PREFIX}:unpin:{encoded_shortcut}"),
+        "Unpin from taskbar",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build launcher unpin item: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[
+            &launch_item,
+            &admin_item,
+            &properties_item,
+            &reveal_item,
+            &reveal_target_item,
+            &copy_path_item,
+            &unpin_item,
+        ],
+    )
+    .map_err(|error| format!("Failed to build launcher context menu: {error}"))?;
 
     bottom_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -143,6 +217,14 @@ pub fn show_top_bar_pin_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build top-bar pin open item: {error}"))?;
+    let open_in_vscode_item = MenuItem::with_id(
+        &app_handle,
+        format!("{TOP_BAR_PIN_MENU_PREFIX}:open-in-vscode:{encoded_path}"),
+        "Open in VS Code",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build top-bar pin vscode item: {error}"))?;
     let unpin_item = MenuItem::with_id(
         &app_handle,
         format!("{TOP_BAR_PIN_MENU_PREFIX}:unpin:{encoded_path}"),
@@ -151,8 +233,11 @@ pub fn show_top_bar_pin_context_menu(
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build top-bar pin unpin item: {error}"))?;
-    let menu = Menu::with_items(&app_handle, &[&open_item, &unpin_item])
-        .map_err(|error| format!("Failed to build top-bar pin context menu: {error}"))?;
+    let menu = Menu::with_items(
+        &app_handle,
+        &[&open_item, &open_in_vscode_item, &unpin_item],
+    )
+    .map_err(|error| format!("Failed to build top-bar pin context menu: {error}"))?;
 
     top_bar
         .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
@@ -174,6 +259,25 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
             "close" => {
                 task_windows::perform_task_window_action(hwnd.to_string(), TaskWindowAction::Close)
             }
+            "pin" => launchers::pin_task_window_to_taskbar(hwnd.to_string()),
+            "process" => {
+                let Some((pid, _)) = hwnd.split_once(':') else {
+                    eprintln!("task window process menu payload missing pid");
+                    return;
+                };
+                let Ok(focus_pid) = pid.parse::<u32>() else {
+                    eprintln!("task window process menu payload invalid pid: {pid}");
+                    return;
+                };
+                process_manager::show_process_manager(
+                    app_handle.clone(),
+                    process_manager::ShowProcessManagerRequest {
+                        anchor_left: 0.0,
+                        anchor_width: 0.0,
+                        focus_pid: Some(focus_pid),
+                    },
+                )
+            }
             _ => return,
         };
 
@@ -181,12 +285,13 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
             eprintln!("task window menu action failed: {error}");
         }
 
+        let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
         let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
         return;
     }
 
     if let Some((action, encoded_shortcut)) = parse_menu_payload(id, LAUNCHER_MENU_PREFIX) {
-        let shortcut_path = match decode_shortcut_path(encoded_shortcut) {
+        let shortcut_path = match decode_menu_payload(encoded_shortcut) {
             Ok(path) => path,
             Err(error) => {
                 eprintln!("launcher menu decode failed: {error}");
@@ -196,7 +301,12 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
 
         let result = match action {
             "launch" => launchers::launch_pinned_taskbar_app(shortcut_path.clone()),
-            "reveal" => reveal_pinned_shortcut(&shortcut_path),
+            "runas" => launchers::run_pinned_taskbar_app_as_admin(shortcut_path.clone()),
+            "properties" => launchers::open_pinned_shortcut_properties(shortcut_path.clone()),
+            "reveal" => launchers::reveal_pinned_shortcut(shortcut_path.clone()),
+            "reveal-target" => launchers::reveal_pinned_shortcut_target(shortcut_path.clone()),
+            "copy-path" => launchers::copy_pinned_shortcut_path(shortcut_path.clone()),
+            "unpin" => launchers::unpin_pinned_taskbar_app(shortcut_path.clone()),
             _ => return,
         };
 
@@ -210,7 +320,7 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
     }
 
     if let Some((action, encoded_path)) = parse_menu_payload(id, TOP_BAR_PIN_MENU_PREFIX) {
-        let path = match decode_shortcut_path(encoded_path) {
+        let path = match decode_menu_payload(encoded_path) {
             Ok(path) => path,
             Err(error) => {
                 eprintln!("top-bar pin menu decode failed: {error}");
@@ -219,7 +329,11 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
         };
 
         let payload = TopBarPinMenuActionPayload {
-            action: action.to_string(),
+            action: if action == "open-in-vscode" {
+                "openInVscode".to_string()
+            } else {
+                action.to_string()
+            },
             path,
         };
         let _ = app_handle.emit_to(TOP_BAR_LABEL, TOP_BAR_PIN_MENU_ACTION_EVENT, payload);
@@ -235,7 +349,7 @@ fn parse_menu_payload<'a>(id: &'a str, prefix: &str) -> Option<(&'a str, &'a str
     rest.split_once(':')
 }
 
-fn decode_shortcut_path(encoded_shortcut: &str) -> Result<String, String> {
+fn decode_menu_payload(encoded_shortcut: &str) -> Result<String, String> {
     let decoded = BASE64_URL
         .decode(encoded_shortcut)
         .map_err(|error| format!("Failed to decode launcher payload: {error}"))?;
@@ -244,55 +358,46 @@ fn decode_shortcut_path(encoded_shortcut: &str) -> Result<String, String> {
         .map_err(|error| format!("Launcher payload was not valid UTF-8: {error}"))
 }
 
-fn reveal_pinned_shortcut(shortcut_path: &str) -> Result<(), String> {
-    let shortcut_path = validate_shortcut_path(shortcut_path)?;
+#[cfg(test)]
+mod tests {
+    use super::{
+        decode_menu_payload, parse_menu_payload, LAUNCHER_MENU_PREFIX, TASK_WINDOW_MENU_PREFIX,
+        TOP_BAR_PIN_MENU_PREFIX,
+    };
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
+    use base64::Engine;
 
-    std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{}", shortcut_path.display()))
-        .spawn()
-        .map_err(|error| format!("Failed to reveal pinned shortcut: {error}"))?;
-
-    Ok(())
-}
-
-fn validate_shortcut_path(shortcut_path: &str) -> Result<PathBuf, String> {
-    let requested_path = PathBuf::from(shortcut_path);
-    if !has_lnk_extension(&requested_path) {
-        return Err("Only pinned .lnk shortcuts may be revealed".to_string());
+    #[test]
+    fn parses_known_menu_prefix_payloads() {
+        assert_eq!(
+            parse_menu_payload("task-window:focus:1234", TASK_WINDOW_MENU_PREFIX),
+            Some(("focus", "1234"))
+        );
+        assert_eq!(
+            parse_menu_payload("launcher:launch:abcd", LAUNCHER_MENU_PREFIX),
+            Some(("launch", "abcd"))
+        );
+        assert_eq!(
+            parse_menu_payload("top-bar-pin:open-in-vscode:abcd", TOP_BAR_PIN_MENU_PREFIX),
+            Some(("open-in-vscode", "abcd"))
+        );
     }
 
-    let canonical_dir = fs::canonicalize(pinned_taskbar_dir()?)
-        .map_err(|error| format!("Failed to resolve pinned taskbar directory: {error}"))?;
-    let canonical_shortcut = fs::canonicalize(&requested_path)
-        .map_err(|error| format!("Failed to resolve pinned shortcut path: {error}"))?;
-    let Some(parent) = canonical_shortcut.parent() else {
-        return Err("Pinned shortcut parent directory is unavailable".to_string());
-    };
-
-    if parent != canonical_dir {
-        return Err("Pinned shortcut path is outside the taskbar pin directory".to_string());
+    #[test]
+    fn rejects_wrong_prefix_payloads() {
+        assert_eq!(
+            parse_menu_payload("quick-icon:launch:abcd", LAUNCHER_MENU_PREFIX),
+            None
+        );
+        assert_eq!(
+            parse_menu_payload("invalid-payload", TASK_WINDOW_MENU_PREFIX),
+            None
+        );
     }
 
-    Ok(canonical_shortcut)
-}
-
-fn pinned_taskbar_dir() -> Result<PathBuf, String> {
-    let Some(appdata) = std::env::var_os("APPDATA") else {
-        return Err("APPDATA is unavailable".to_string());
-    };
-
-    Ok(PathBuf::from(appdata).join(
-        Path::new("Microsoft")
-            .join("Internet Explorer")
-            .join("Quick Launch")
-            .join("User Pinned")
-            .join("TaskBar"),
-    ))
-}
-
-fn has_lnk_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case("lnk"))
-        .unwrap_or(false)
+    #[test]
+    fn decodes_menu_payload_values() {
+        let encoded = BASE64_URL.encode(r"C:\Apps\Code.exe");
+        assert_eq!(decode_menu_payload(&encoded).unwrap(), r"C:\Apps\Code.exe");
+    }
 }

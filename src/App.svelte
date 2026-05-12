@@ -1,16 +1,14 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import BottomBar from './components/BottomBar.svelte';
-  import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
-  import SearchPanelSurface from './components/SearchPanelSurface.svelte';
-  import StackPopupSurface from './components/StackPopupSurface.svelte';
-  import TaskPreviewSurface from './components/TaskPreviewSurface.svelte';
-  import TopBar from './components/TopBar.svelte';
+  import { onMount } from 'svelte';
+  import { installShellPreferencesSync } from './lib/shellPreferences';
   import {
     resolveSurfaceFromLabel,
     shellSurfaceMetadata,
     type ShellSurface
   } from './lib/shellSurface';
+  import { loadSurfaceComponent, type SurfaceComponent as LoadedSurfaceComponent } from './lib/surfaceLoader';
+  import { installShellThemeSync } from './lib/themes';
 
   let label = 'bottom-bar';
 
@@ -22,10 +20,40 @@
 
   const surface: ShellSurface = resolveSurfaceFromLabel(label);
   const metadata = shellSurfaceMetadata[surface];
+  let SurfaceComponent: LoadedSurfaceComponent | null = null;
+  let surfaceLoadFailed = false;
 
   function suppressNativeContextMenu(event: MouseEvent) {
     event.preventDefault();
   }
+
+  onMount(() => {
+    let mounted = true;
+    const uninstallThemeSync = installShellThemeSync();
+    const uninstallPreferencesSync = installShellPreferencesSync();
+    const loadableSurface = loadSurfaceComponent(surface);
+
+    if (loadableSurface) {
+      void loadableSurface
+        .then((module) => {
+          if (mounted) {
+            SurfaceComponent = module.default;
+          }
+        })
+        .catch((error) => {
+          console.error(`JasonShell failed to load surface component for ${surface}`, error);
+          if (mounted) {
+            surfaceLoadFailed = true;
+          }
+        });
+    }
+
+    return () => {
+      mounted = false;
+      uninstallThemeSync();
+      uninstallPreferencesSync();
+    };
+  });
 </script>
 
 <svelte:head>
@@ -34,23 +62,23 @@
 
 <svelte:window on:contextmenu={suppressNativeContextMenu} />
 
-{#if surface === 'top-bar'}
-  <TopBar />
-{:else if surface === 'bottom-bar'}
-  <BottomBar />
-{:else if surface === 'task-preview'}
-  <TaskPreviewSurface />
-{:else if surface === 'search-panel'}
-  <SearchPanelSurface />
-{:else if surface === 'stack-popup'}
-  <StackPopupSurface />
-{:else if surface === 'process-manager'}
-  <ProcessManagerSurface />
-{:else}
-  <main class="unsupported-surface">
+{#if SurfaceComponent}
+  <SurfaceComponent />
+{:else if surfaceLoadFailed || surface === 'unknown'}
+  <main class="unsupported-surface" data-surface={surface} data-label={label}>
     <div class="panel">
       <strong>{metadata.title}</strong>
       <p>{metadata.subtitle}</p>
+      {#if surfaceLoadFailed}
+        <p class="diagnostic">Failed to load the {surface} surface. Check developer console diagnostics.</p>
+      {/if}
+    </div>
+  </main>
+{:else}
+  <main class="unsupported-surface loading-surface" data-surface={surface} data-label={label} aria-busy="true">
+    <div class="panel">
+      <strong>{metadata.title}</strong>
+      <p>Loading {metadata.subtitle.toLowerCase()}…</p>
     </div>
   </main>
 {/if}
@@ -58,7 +86,7 @@
 <style>
   .unsupported-surface {
     align-items: center;
-    background: linear-gradient(180deg, #0d1118, #06080d);
+    background: #0d1118;
     color: #f3f5ff;
     display: grid;
     height: 100%;
@@ -83,5 +111,10 @@
   .panel p {
     color: rgba(229, 234, 250, 0.72);
     margin: 0;
+  }
+
+  .panel .diagnostic {
+    color: rgba(255, 180, 180, 0.82);
+    margin-top: 0.65rem;
   }
 </style>

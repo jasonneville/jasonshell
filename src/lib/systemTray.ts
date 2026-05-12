@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export type SystemTrayMouseButton = 'left' | 'right';
 
@@ -41,9 +42,9 @@ export function trayClickRequest(id: string, button: SystemTrayMouseButton): Inv
 }
 
 export async function listSystemTrayIcons() {
-  return normalizeTrayIcons(await invoke<SystemTrayIconSnapshot[]>('list_system_tray_icons'));
+  return normalizeTrayIcons(await invoke<SystemTrayIconSnapshot[]>(IPC_COMMANDS.listSystemTrayIcons));
 }
 
 export async function invokeSystemTrayIcon(request: InvokeSystemTrayIconRequest) {
-  await invoke('invoke_system_tray_icon', { request });
+  await invoke(IPC_COMMANDS.invokeSystemTrayIcon, { request });
 }

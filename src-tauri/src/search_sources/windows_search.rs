@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::SystemSearchResult;
 
 const MAX_WINDOWS_RESULTS: usize = 100;
@@ -66,12 +68,20 @@ fn map_windows_search_row(row: WindowsSearchRow, rank_index: usize) -> Option<Sy
 
     Some(SystemSearchResult {
         id: format!("system:{kind}:{path}"),
-        kind,
+        provider_id: Some("windowsSearch".to_string()),
+        kind: kind.clone(),
         title,
         subtitle,
         terms,
         priority,
-        path,
+        path: path.clone(),
+        record_key: Some(format!(
+            "{}:{}",
+            kind,
+            path.trim().replace('/', r"\").to_lowercase()
+        )),
+        run_count: None,
+        top_most: None,
     })
 }
 

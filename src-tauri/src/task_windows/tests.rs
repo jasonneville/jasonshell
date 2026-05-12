@@ -1,14 +1,14 @@
+use super::{actions::should_fallback_post_close, TaskbarWindow, TaskbarWindowActivityState};
 use super::{
     actions::should_minimize_window,
     windows::{
-        infer_activity_state, is_activity_indicator_eligible, is_taskbar_candidate,
-        sort_windows_stably, ActivitySnapshot, WindowCandidate,
+        infer_activity_state, is_activity_indicator_eligible, is_internal_notification_window,
+        is_taskbar_candidate, sort_windows_stably, ActivitySnapshot, WindowCandidate,
     },
 };
-use super::{TaskbarWindow, TaskbarWindowActivityState};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    WINDOW_EX_STYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WINDOW_EX_STYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 fn candidate() -> WindowCandidate {
@@ -64,10 +64,40 @@ fn excludes_dwm_process_windows() {
 }
 
 #[test]
+fn excludes_dwm_notification_window_even_when_process_name_is_missing() {
+    let mut window = candidate();
+    window.process_name = String::new();
+    window.class_name = "Dwm".to_string();
+    window.title = "DWM Notification Window".to_string();
+
+    assert!(is_internal_notification_window(&window));
+    assert!(!is_taskbar_candidate(&window, 999));
+}
+
+#[test]
 fn includes_minimized_windows_with_identity() {
     let mut window = candidate();
     window.is_visible = false;
     window.is_minimized = true;
+
+    assert!(is_taskbar_candidate(&window, 999));
+}
+
+#[test]
+fn excludes_empty_title_helper_windows_without_explicit_taskbar_style() {
+    let mut window = candidate();
+    window.title = String::new();
+    window.process_name = "helper".to_string();
+
+    assert!(!is_taskbar_candidate(&window, 999));
+}
+
+#[test]
+fn allows_empty_title_windows_that_force_taskbar_presence() {
+    let mut window = candidate();
+    window.title = String::new();
+    window.process_name = "tool".to_string();
+    window.ex_style = WINDOW_EX_STYLE(WS_EX_APPWINDOW.0);
 
     assert!(is_taskbar_candidate(&window, 999));
 }
@@ -78,6 +108,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
         TaskbarWindow {
             hwnd: "42".to_string(),
             title: "Third".to_string(),
+            process_id: 42,
             process_name: "third".to_string(),
             icon_data_url: String::new(),
             is_active: true,
@@ -87,6 +118,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
         TaskbarWindow {
             hwnd: "7".to_string(),
             title: "First".to_string(),
+            process_id: 7,
             process_name: "first".to_string(),
             icon_data_url: String::new(),
             is_active: false,
@@ -96,6 +128,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
         TaskbarWindow {
             hwnd: "15".to_string(),
             title: "Second".to_string(),
+            process_id: 15,
             process_name: "second".to_string(),
             icon_data_url: String::new(),
             is_active: false,
@@ -123,6 +156,13 @@ fn minimizes_rendered_active_window_even_after_shell_focuses() {
 #[test]
 fn does_not_minimize_already_minimized_window() {
     assert!(!should_minimize_window(true, false, true));
+}
+
+#[test]
+fn retries_close_with_post_message_when_window_remains() {
+    assert!(should_fallback_post_close(false, true));
+    assert!(should_fallback_post_close(true, true));
+    assert!(!should_fallback_post_close(false, false));
 }
 
 #[test]

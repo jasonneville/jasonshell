@@ -1,7 +1,10 @@
-use super::scoring::{normalize, search_ranked_results};
-use super::{apps, files, windows_search, SystemSearchResult};
+use super::scoring::normalize;
+#[cfg(test)]
+use super::scoring::search_ranked_results;
+use super::{apps, files, provider, SystemSearchResult};
+use provider::ProviderHealthState;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -10,15 +13,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
 const CACHE_VERSION: u32 = 1;
-const INDEX_LIMIT: usize = 40;
 const REFRESH_TTL: Duration = Duration::from_secs(300);
 const SEARCH_INDEX_REFRESHED_EVENT: &str = "search-index:refreshed";
 
 #[derive(Default)]
 pub struct SearchIndexRuntimeState {
     entries: Vec<SystemSearchResult>,
-    provider_results_by_query: HashMap<String, Vec<SystemSearchResult>>,
-    provider_queries_in_flight: HashSet<String>,
     loaded_cache: bool,
     refreshing: bool,
     refreshed_at: Option<SystemTime>,
@@ -44,23 +44,25 @@ pub fn warm_search_index(app_handle: AppHandle) {
 
 pub fn search_index(
     app_handle: &AppHandle,
-    state: &Mutex<SearchIndexRuntimeState>,
+    _state: &Mutex<SearchIndexRuntimeState>,
     query: &str,
 ) -> Result<Vec<SystemSearchResult>, String> {
     ensure_refresh(app_handle, false);
-    ensure_provider_search(app_handle, query);
+    if !provider_query_key(query).is_empty() {
+        let settings = crate::settings::load_shell_settings_for_app(app_handle)
+            .unwrap_or_else(|_| crate::settings::ShellSettings::default());
+        let batch = provider::search_provider_results(query, &settings);
+        let everything_ready = batch.health.iter().any(|health| {
+            health.provider_id == provider::SearchProviderId::Everything
+                && health.state == ProviderHealthState::Ready
+        });
+        if everything_ready || !batch.results.is_empty() {
+            return Ok(batch.results);
+        }
+        return Ok(Vec::new());
+    }
 
-    let guard = state
-        .lock()
-        .map_err(|_| "Search index state is unavailable".to_string())?;
-    Ok(search_ranked_snapshot(
-        &guard.entries,
-        guard
-            .provider_results_by_query
-            .get(&provider_query_key(query)),
-        query,
-        INDEX_LIMIT,
-    ))
+    Ok(Vec::new())
 }
 
 fn ensure_refresh(app_handle: &AppHandle, force: bool) {
@@ -116,95 +118,6 @@ fn ensure_refresh(app_handle: &AppHandle, force: bool) {
             search_index_refreshed_payload(entry_count, generated_at_epoch_secs),
         );
     });
-}
-
-fn ensure_provider_search(app_handle: &AppHandle, query: &str) {
-    let key = provider_query_key(query);
-    if key.len() < 2 {
-        return;
-    }
-
-    let state = app_handle.state::<Mutex<SearchIndexRuntimeState>>();
-    let should_search = {
-        let Ok(mut guard) = state.lock() else {
-            return;
-        };
-        if guard.provider_results_by_query.contains_key(&key)
-            || guard.provider_queries_in_flight.contains(&key)
-        {
-            false
-        } else {
-            guard.provider_queries_in_flight.insert(key.clone());
-            true
-        }
-    };
-
-    if !should_search {
-        return;
-    }
-
-    let app_handle = app_handle.clone();
-    let query = query.trim().to_string();
-    thread::spawn(move || {
-        let results = match windows_search::search_windows(&query, INDEX_LIMIT) {
-            windows_search::ProviderSearchOutcome::Results(results) => results,
-            windows_search::ProviderSearchOutcome::Fallback { reason } => {
-                let _ = reason;
-                Vec::new()
-            }
-        };
-        let entry_count = results.len();
-        let state = app_handle.state::<Mutex<SearchIndexRuntimeState>>();
-        if let Ok(mut guard) = state.lock() {
-            guard.provider_queries_in_flight.remove(&key);
-            guard.provider_results_by_query.insert(key, results);
-        }
-
-        if entry_count > 0 {
-            let _ = app_handle.emit(
-                SEARCH_INDEX_REFRESHED_EVENT,
-                search_index_refreshed_payload(entry_count, current_epoch_secs()),
-            );
-        }
-    });
-}
-
-fn search_ranked_snapshot(
-    entries: &[SystemSearchResult],
-    provider_results: Option<&Vec<SystemSearchResult>>,
-    query: &str,
-    limit: usize,
-) -> Vec<SystemSearchResult> {
-    let local_results = search_ranked_results(entries, query, limit);
-    let Some(provider_results) = provider_results else {
-        return local_results;
-    };
-
-    merge_provider_and_local_results(provider_results, local_results, limit)
-}
-
-fn merge_provider_and_local_results(
-    provider_results: &[SystemSearchResult],
-    local_results: Vec<SystemSearchResult>,
-    limit: usize,
-) -> Vec<SystemSearchResult> {
-    let mut seen = HashSet::new();
-    let mut merged = Vec::new();
-
-    for result in provider_results.iter().cloned().chain(local_results) {
-        if seen.insert(result.id.to_lowercase()) {
-            merged.push(result);
-        }
-    }
-
-    merged.sort_by(|left, right| {
-        right
-            .priority
-            .cmp(&left.priority)
-            .then(left.title.to_lowercase().cmp(&right.title.to_lowercase()))
-    });
-    merged.truncate(limit);
-    merged
 }
 
 fn provider_query_key(query: &str) -> String {
@@ -319,21 +232,29 @@ mod tests {
         let entries = vec![
             SystemSearchResult {
                 id: "system:app:C:\\Tools\\DevBox.lnk".to_string(),
+                provider_id: Some("apps".to_string()),
                 kind: "app".to_string(),
                 title: "DevBox".to_string(),
                 subtitle: "Installed app - Start Menu".to_string(),
                 terms: "devbox installed program".to_string(),
                 priority: 112,
                 path: "C:\\Tools\\DevBox.lnk".to_string(),
+                record_key: Some("app:c:\\tools\\devbox.lnk".to_string()),
+                run_count: None,
+                top_most: None,
             },
             SystemSearchResult {
                 id: "system:folder:C:\\Users\\me\\Documents\\Plans".to_string(),
+                provider_id: Some("warmedCache".to_string()),
                 kind: "folder".to_string(),
                 title: "Plans".to_string(),
                 subtitle: "Folder - Documents".to_string(),
                 terms: "plans folder".to_string(),
                 priority: 76,
                 path: "C:\\Users\\me\\Documents\\Plans".to_string(),
+                record_key: Some("folder:c:\\users\\me\\documents\\plans".to_string()),
+                run_count: None,
+                top_most: None,
             },
         ];
 
@@ -350,42 +271,22 @@ mod tests {
     fn query_uses_cached_entries() {
         let entries = vec![SystemSearchResult {
             id: "system:file:C:\\Users\\me\\Downloads\\Invoice.pdf".to_string(),
+            provider_id: Some("warmedCache".to_string()),
             kind: "file".to_string(),
             title: "Invoice".to_string(),
             subtitle: "File - Downloads".to_string(),
             terms: "invoice pdf downloads".to_string(),
             priority: 76,
             path: "C:\\Users\\me\\Downloads\\Invoice.pdf".to_string(),
+            record_key: Some("file:c:\\users\\me\\downloads\\invoice.pdf".to_string()),
+            run_count: None,
+            top_most: None,
         }];
 
         let results = search_ranked_results(&entries, "invoice", 8);
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].kind, "file");
-    }
-
-    #[test]
-    fn provider_results_merge_with_local_snapshot_without_duplicates() {
-        let provider_results = vec![
-            search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 118),
-            search_result("system:file:C:\\Docs\\Plan.docx", "file", "Plan", 80),
-        ];
-        let local_results = vec![
-            search_result("system:app:C:\\Apps\\Terminal.lnk", "app", "Terminal", 150),
-            search_result("system:file:C:\\Docs\\Notes.txt", "file", "Notes", 90),
-        ];
-
-        let results = merge_provider_and_local_results(&provider_results, local_results, 8);
-
-        assert_eq!(results.len(), 3);
-        assert_eq!(
-            results
-                .iter()
-                .filter(|result| result.id == "system:app:C:\\Apps\\Terminal.lnk")
-                .count(),
-            1
-        );
-        assert!(results.iter().any(|result| result.title == "Notes"));
     }
 
     #[test]
@@ -403,19 +304,6 @@ mod tests {
         assert_eq!(payload.entry_count, 42);
         assert_eq!(payload.generated_at_epoch_secs, 1_773_910_800);
     }
-
-    fn search_result(id: &str, kind: &str, title: &str, priority: i32) -> SystemSearchResult {
-        SystemSearchResult {
-            id: id.to_string(),
-            kind: kind.to_string(),
-            title: title.to_string(),
-            subtitle: title.to_string(),
-            terms: title.to_string(),
-            priority,
-            path: id.replace(&format!("system:{kind}:"), ""),
-        }
-    }
-
     fn test_dir(name: &str) -> PathBuf {
         let id = SystemTime::now()
             .duration_since(UNIX_EPOCH)

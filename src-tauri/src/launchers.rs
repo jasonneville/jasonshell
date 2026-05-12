@@ -6,6 +6,7 @@ pub struct PinnedTaskbarLauncher {
     pub id: String,
     pub name: String,
     pub shortcut_path: String,
+    pub target_path: Option<String>,
     pub icon_data_url: String,
 }
 
@@ -17,6 +18,38 @@ pub fn list_pinned_taskbar_apps() -> Result<Vec<PinnedTaskbarLauncher>, String> 
 #[tauri::command]
 pub fn launch_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
     imp::launch_pinned_taskbar_app(shortcut_path)
+}
+
+pub fn run_pinned_taskbar_app_as_admin(shortcut_path: String) -> Result<(), String> {
+    imp::run_pinned_taskbar_app_as_admin(shortcut_path)
+}
+
+pub fn open_pinned_shortcut_properties(shortcut_path: String) -> Result<(), String> {
+    imp::open_pinned_shortcut_properties(shortcut_path)
+}
+
+pub fn reveal_pinned_shortcut(shortcut_path: String) -> Result<(), String> {
+    imp::reveal_pinned_shortcut(shortcut_path)
+}
+
+pub fn reveal_pinned_shortcut_target(shortcut_path: String) -> Result<(), String> {
+    imp::reveal_pinned_shortcut_target(shortcut_path)
+}
+
+pub fn copy_pinned_shortcut_path(shortcut_path: String) -> Result<(), String> {
+    imp::copy_pinned_shortcut_path(shortcut_path)
+}
+
+pub fn unpin_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
+    imp::unpin_pinned_taskbar_app(shortcut_path)
+}
+
+pub fn can_pin_task_window_to_taskbar(hwnd: &str) -> Result<bool, String> {
+    imp::can_pin_task_window_to_taskbar(hwnd)
+}
+
+pub fn pin_task_window_to_taskbar(hwnd: String) -> Result<(), String> {
+    imp::pin_task_window_to_taskbar(hwnd)
 }
 
 #[cfg(target_os = "windows")]
@@ -44,11 +77,13 @@ mod imp {
     };
     use windows::Win32::UI::Shell::{
         ExtractIconExW, IShellLinkW, SHGetFileInfoW, ShellExecuteW, SHFILEINFOW, SHGFI_ICON,
-        SHGFI_SMALLICON, SLR_NOSEARCH, SLR_NOTRACK, SLR_NO_UI,
+        SHGFI_SMALLICON,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, GetIconInfo, HICON, ICONINFO, SW_SHOWNORMAL,
     };
+
+    const SE_ERR_ACCESSDENIED: isize = 5;
 
     pub fn list_pinned_taskbar_apps() -> Result<Vec<PinnedTaskbarLauncher>, String> {
         run_in_sta(|| {
@@ -69,18 +104,14 @@ mod imp {
             let mut launchers = Vec::new();
 
             for shortcut_path in entries {
-                if !shortcut_resolves(&shortcut_path) {
-                    continue;
-                }
-
-                let Ok(icon_data_url) = extract_icon_data_url(&shortcut_path) else {
-                    continue;
-                };
+                let icon_data_url = extract_icon_data_url(&shortcut_path)
+                    .unwrap_or_else(|_| fallback_launcher_icon_data_url());
 
                 launchers.push(PinnedTaskbarLauncher {
                     id: shortcut_path.to_string_lossy().into_owned(),
                     name: launcher_name(&shortcut_path),
                     shortcut_path: shortcut_path.to_string_lossy().into_owned(),
+                    target_path: resolved_shortcut_target_path(&shortcut_path),
                     icon_data_url,
                 });
             }
@@ -91,22 +122,217 @@ mod imp {
 
     pub fn launch_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
         let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        match shell_execute_shortcut(shortcut_path.clone(), None, "launch pinned shortcut") {
+            Ok(SE_ERR_ACCESSDENIED) => shell_execute_shortcut(
+                shortcut_path,
+                Some("runas"),
+                "launch pinned shortcut as administrator after access denied",
+            )
+            .map(|_| ()),
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
 
+    pub fn run_pinned_taskbar_app_as_admin(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        shell_execute_shortcut(
+            shortcut_path,
+            Some("runas"),
+            "run pinned shortcut as administrator",
+        )
+        .map(|_| ())
+    }
+
+    pub fn open_pinned_shortcut_properties(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        shell_execute_shortcut(
+            shortcut_path,
+            Some("properties"),
+            "open pinned shortcut properties",
+        )
+        .map(|_| ())
+    }
+
+    pub fn reveal_pinned_shortcut(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        reveal_path_in_explorer(&shortcut_path, "pinned shortcut")
+    }
+
+    pub fn reveal_pinned_shortcut_target(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
         run_in_sta({
             let shortcut_path = shortcut_path.clone();
             move || {
-                if !shortcut_resolves(&shortcut_path) {
-                    return Err(format!(
-                        "Pinned shortcut is no longer launchable: {}",
+                let shell_link = load_shell_link(&shortcut_path)?;
+                let target_path = resolved_shortcut_target(&shell_link)?.ok_or_else(|| {
+                    format!(
+                        "Pinned shortcut target is unavailable: {}",
                         shortcut_path.display()
+                    )
+                })?;
+                if !target_path.exists() {
+                    return Err(format!(
+                        "Pinned shortcut target no longer exists: {}",
+                        target_path.display()
                     ));
                 }
+                reveal_path_in_explorer(&target_path, "pinned shortcut target")
+            }
+        })
+    }
 
+    pub fn copy_pinned_shortcut_path(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        copy_text_to_clipboard(&shortcut_path.to_string_lossy())
+    }
+
+    pub fn unpin_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
+        let shortcut_path = validate_shortcut_path(&shortcut_path)?;
+        fs::remove_file(&shortcut_path).map_err(|error| {
+            format!(
+                "Failed to unpin taskbar shortcut {}: {error}",
+                shortcut_path.display()
+            )
+        })
+    }
+
+    pub fn can_pin_task_window_to_taskbar(hwnd: &str) -> Result<bool, String> {
+        let target_path = crate::task_windows::task_window_process_path(hwnd)?;
+        Ok(!taskbar_target_already_pinned(&target_path)?)
+    }
+
+    pub fn pin_task_window_to_taskbar(hwnd: String) -> Result<(), String> {
+        let target_path = crate::task_windows::task_window_process_path(&hwnd)?;
+        if taskbar_target_already_pinned(&target_path)? {
+            return Ok(());
+        }
+        create_taskbar_shortcut(&target_path)
+    }
+
+    fn taskbar_target_already_pinned(target_path: &Path) -> Result<bool, String> {
+        let target_identity = normalized_path_identity(target_path);
+        for entry in fs::read_dir(pinned_taskbar_dir()?)
+            .map_err(|error| format!("Failed to read pinned taskbar shortcuts: {error}"))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| has_lnk_extension(path))
+        {
+            let Some(pinned_target) = resolved_shortcut_target_path(&entry) else {
+                continue;
+            };
+            if normalized_path_identity(Path::new(&pinned_target)) == target_identity {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn create_taskbar_shortcut(target_path: &Path) -> Result<(), String> {
+        let taskbar_dir = pinned_taskbar_dir()?;
+        fs::create_dir_all(&taskbar_dir)
+            .map_err(|error| format!("Failed to create pinned taskbar directory: {error}"))?;
+        let shortcut_path = next_available_shortcut_path(&taskbar_dir, target_path);
+        run_in_sta({
+            let target_path = target_path.to_path_buf();
+            let shortcut_path = shortcut_path.clone();
+            move || {
+                let shell_link: IShellLinkW = unsafe {
+                    CoCreateInstance(
+                        &windows::Win32::UI::Shell::ShellLink,
+                        None,
+                        CLSCTX_INPROC_SERVER,
+                    )
+                }
+                .map_err(|error| format!("Failed to create ShellLink COM object: {error}"))?;
+                let target_wide = to_wide(&target_path);
+                unsafe {
+                    shell_link
+                        .SetPath(PCWSTR(target_wide.as_ptr()))
+                        .map_err(|error| {
+                            format!(
+                                "Failed to set taskbar shortcut target {}: {error}",
+                                target_path.display()
+                            )
+                        })?;
+                }
+                let persist_file: IPersistFile = shell_link
+                    .cast()
+                    .map_err(|error| format!("Failed to bind ShellLink persistence: {error}"))?;
                 let shortcut_wide = to_wide(&shortcut_path);
+                unsafe {
+                    persist_file
+                        .Save(PCWSTR(shortcut_wide.as_ptr()), true)
+                        .map_err(|error| {
+                            format!(
+                                "Failed to save taskbar shortcut {}: {error}",
+                                shortcut_path.display()
+                            )
+                        })?;
+                }
+                Ok(())
+            }
+        })
+    }
+
+    fn next_available_shortcut_path(taskbar_dir: &Path, target_path: &Path) -> PathBuf {
+        let base_name = target_path
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .map(sanitize_shortcut_name)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Pinned App".to_string());
+        let first = taskbar_dir.join(format!("{base_name}.lnk"));
+        if !first.exists() {
+            return first;
+        }
+        for index in 2..=99 {
+            let candidate = taskbar_dir.join(format!("{base_name} ({index}).lnk"));
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        taskbar_dir.join(format!("{base_name} ({}).lnk", std::process::id()))
+    }
+
+    fn sanitize_shortcut_name(name: &str) -> String {
+        name.chars()
+            .map(|ch| match ch {
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+                _ => ch,
+            })
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    fn normalized_path_identity(path: &Path) -> String {
+        fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    }
+
+    fn shell_execute_shortcut(
+        shortcut_path: PathBuf,
+        verb: Option<&str>,
+        context: &str,
+    ) -> Result<isize, String> {
+        run_in_sta({
+            let shortcut_path = shortcut_path.clone();
+            let verb = verb.map(str::to_string);
+            let context = context.to_string();
+            move || {
+                let shortcut_wide = to_wide(&shortcut_path);
+                let verb_wide = verb.as_deref().map(|value| to_wide(OsStr::new(value)));
                 let result = unsafe {
                     ShellExecuteW(
                         Some(HWND::default()),
-                        None,
+                        verb_wide
+                            .as_ref()
+                            .map(|value| PCWSTR(value.as_ptr()))
+                            .unwrap_or(PCWSTR::null()),
                         PCWSTR(shortcut_wide.as_ptr()),
                         None,
                         None,
@@ -116,15 +342,42 @@ mod imp {
                 let code = result.0 as isize;
 
                 if code <= 32 {
+                    if verb.is_none() && code == SE_ERR_ACCESSDENIED {
+                        return Ok(code);
+                    }
+
                     return Err(format!(
-                        "ShellExecuteW failed for {} with code {code}",
+                        "ShellExecuteW failed to {context} {} with code {code}",
                         shortcut_path.display()
                     ));
                 }
 
-                Ok(())
+                Ok(code)
             }
         })
+    }
+
+    fn reveal_path_in_explorer(path: &Path, context: &str) -> Result<(), String> {
+        std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map_err(|error| format!("Failed to reveal {context}: {error}"))?;
+
+        Ok(())
+    }
+
+    fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
+        std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Set-Clipboard -Value $env:JASONSHELL_CLIPBOARD_TEXT",
+            ])
+            .env("JASONSHELL_CLIPBOARD_TEXT", text)
+            .spawn()
+            .map_err(|error| format!("Failed to copy launcher path: {error}"))?;
+
+        Ok(())
     }
 
     fn run_in_sta<T, F>(operation: F) -> Result<T, String>
@@ -204,21 +457,6 @@ mod imp {
             .unwrap_or(false)
     }
 
-    fn shortcut_resolves(shortcut_path: &Path) -> bool {
-        load_shell_link(shortcut_path)
-            .and_then(|shell_link| unsafe {
-                shell_link
-                    .Resolve(
-                        HWND::default(),
-                        (SLR_NO_UI.0 | SLR_NOSEARCH.0 | SLR_NOTRACK.0) as u32,
-                    )
-                    .map_err(|error| {
-                        format!("Failed to resolve {}: {error}", shortcut_path.display())
-                    })
-            })
-            .is_ok()
-    }
-
     fn load_shell_link(shortcut_path: &Path) -> Result<IShellLinkW, String> {
         let shell_link: IShellLinkW = unsafe {
             CoCreateInstance(
@@ -263,6 +501,12 @@ mod imp {
         }
 
         extract_file_icon_data_url(shortcut_path)
+    }
+
+    fn resolved_shortcut_target_path(shortcut_path: &Path) -> Option<String> {
+        let shell_link = load_shell_link(shortcut_path).ok()?;
+        let target = resolved_shortcut_target(&shell_link).ok()??;
+        Some(target.to_string_lossy().into_owned())
     }
 
     fn explicit_icon_location(shell_link: &IShellLinkW) -> Result<Option<(PathBuf, i32)>, String> {
@@ -326,6 +570,11 @@ mod imp {
             "data:image/png;base64,{}",
             BASE64.encode(png_result?)
         ))
+    }
+
+    fn fallback_launcher_icon_data_url() -> String {
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lTMmZQAAAABJRU5ErkJggg=="
+            .to_string()
     }
 
     fn extract_icon_at_location(path: &Path, icon_index: i32) -> Result<String, String> {
@@ -490,7 +739,10 @@ mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::{has_lnk_extension, launcher_name, trim_wide_buffer};
+        use super::{
+            fallback_launcher_icon_data_url, has_lnk_extension, launcher_name,
+            sanitize_shortcut_name, trim_wide_buffer,
+        };
         use std::path::Path;
 
         #[test]
@@ -524,6 +776,16 @@ mod imp {
 
             assert_eq!(trim_wide_buffer(&buffer), "C:\\Icon");
         }
+
+        #[test]
+        fn fallback_launcher_icon_is_image_data_url() {
+            assert!(fallback_launcher_icon_data_url().starts_with("data:image/png;base64,"));
+        }
+
+        #[test]
+        fn sanitizes_shortcut_names() {
+            assert_eq!(sanitize_shortcut_name("Bad:Name*"), "Bad_Name_");
+        }
     }
 }
 
@@ -537,5 +799,37 @@ mod imp {
 
     pub fn launch_pinned_taskbar_app(_shortcut_path: String) -> Result<(), String> {
         Err("Pinned taskbar launchers are only supported on Windows".to_string())
+    }
+
+    pub fn run_pinned_taskbar_app_as_admin(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launchers are only supported on Windows".to_string())
+    }
+
+    pub fn open_pinned_shortcut_properties(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher properties are only supported on Windows".to_string())
+    }
+
+    pub fn reveal_pinned_shortcut(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher reveal is only supported on Windows".to_string())
+    }
+
+    pub fn reveal_pinned_shortcut_target(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher target reveal is only supported on Windows".to_string())
+    }
+
+    pub fn copy_pinned_shortcut_path(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher path copy is only supported on Windows".to_string())
+    }
+
+    pub fn unpin_pinned_taskbar_app(_shortcut_path: String) -> Result<(), String> {
+        Err("Pinned taskbar launcher unpin is only supported on Windows".to_string())
+    }
+
+    pub fn can_pin_task_window_to_taskbar(_hwnd: &str) -> Result<bool, String> {
+        Err("Taskbar pinning is only supported on Windows".to_string())
+    }
+
+    pub fn pin_task_window_to_taskbar(_hwnd: String) -> Result<(), String> {
+        Err("Taskbar pinning is only supported on Windows".to_string())
     }
 }

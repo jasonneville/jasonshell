@@ -3,24 +3,26 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use png::{BitDepth, ColorType, Encoder};
 use std::mem::size_of;
-use windows::Win32::Foundation::RECT;
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
-    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS,
-    HBITMAP, HDC, ROP_CODE, SRCCOPY,
+    GetWindowDC, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
+    DIB_RGB_COLORS, HBITMAP, HDC, ROP_CODE, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsHungAppWindow, IsIconic};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowRect, IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible,
+};
 
 const MAX_PREVIEW_WIDTH: u32 = 320;
 const MAX_PREVIEW_HEIGHT: u32 = 180;
+const MAX_CAPTURE_DIMENSION: u32 = 8192;
+const MAX_CAPTURE_PIXELS: u64 = 33_554_432;
 
 pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
-    let hwnd = parse_hwnd(&hwnd)?;
-
-    if unsafe { IsHungAppWindow(hwnd).as_bool() } {
-        return Err("Preview unavailable because the target window is not responding".to_string());
-    }
+    let hwnd = validate_task_window_preview_source(&hwnd)?;
 
     if unsafe { IsIconic(hwnd).as_bool() } {
         return Err("Preview unavailable for minimized windows".to_string());
@@ -39,53 +41,165 @@ pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPrev
     })
 }
 
-fn capture_window_rgba(
-    hwnd: windows::Win32::Foundation::HWND,
-) -> Result<(u32, u32, Vec<u8>), String> {
+pub(crate) fn validate_task_window_preview_source(hwnd: &str) -> Result<HWND, String> {
+    let hwnd = parse_hwnd(hwnd)?;
+
+    if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+        return Err("Preview unavailable because the target window no longer exists".to_string());
+    }
+
+    if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+        return Err("Preview unavailable because the target window is not responding".to_string());
+    }
+
+    if !unsafe { IsWindowVisible(hwnd).as_bool() } {
+        return Err("Preview unavailable because the target window is hidden".to_string());
+    }
+
+    if is_window_cloaked(hwnd) {
+        return Err("Preview unavailable because the target window is cloaked".to_string());
+    }
+
+    Ok(hwnd)
+}
+
+fn capture_window_rgba(hwnd: HWND) -> Result<(u32, u32, Vec<u8>), String> {
     let rect = window_bounds(hwnd)?;
     let width = rect_width(&rect)?;
     let height = rect_height(&rect)?;
+
+    if let Ok(pixels) = capture_window_dc(hwnd, width, height) {
+        return Ok((width, height, pixels));
+    }
+
+    capture_screen_region(rect, width, height)
+}
+
+fn capture_window_dc(hwnd: HWND, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let window_dc = unsafe { GetWindowDC(Some(hwnd)) };
+    if window_dc.0.is_null() {
+        return Err("Failed to acquire the target window device context".to_string());
+    }
+
+    let pixels = capture_into_bitmap(width, height, |memory_dc| {
+        unsafe {
+            BitBlt(
+                memory_dc,
+                0,
+                0,
+                width as i32,
+                height as i32,
+                Some(window_dc),
+                0,
+                0,
+                capture_raster_operation(),
+            )
+        }
+        .map_err(|error| format!("Failed to capture the target window device context: {error}"))
+    });
+
+    unsafe {
+        let _ = ReleaseDC(Some(hwnd), window_dc);
+    }
+
+    pixels
+}
+
+fn capture_screen_region(
+    rect: RECT,
+    width: u32,
+    height: u32,
+) -> Result<(u32, u32, Vec<u8>), String> {
+    let pixels = capture_screen_region_pixels(rect, width, height)?;
+
+    Ok((width, height, pixels))
+}
+
+fn capture_screen_region_pixels(rect: RECT, width: u32, height: u32) -> Result<Vec<u8>, String> {
     let screen_dc = unsafe { GetDC(None) };
     if screen_dc.0.is_null() {
         return Err("Failed to acquire a screen device context for the task preview".to_string());
     }
 
-    let memory_dc = unsafe { CreateCompatibleDC(Some(screen_dc)) };
-    if memory_dc.0.is_null() {
+    let pixels = capture_into_bitmap_with_source(width, height, screen_dc, rect.left, rect.top)
+        .map_err(|error| format!("Failed to capture the visible task preview: {error}"));
+
+    unsafe {
+        let _ = ReleaseDC(None, screen_dc);
+    }
+
+    pixels
+}
+
+fn capture_into_bitmap<DrawFn>(width: u32, height: u32, draw: DrawFn) -> Result<Vec<u8>, String>
+where
+    DrawFn: FnOnce(HDC) -> Result<(), String>,
+{
+    let screen_dc = unsafe { GetDC(None) };
+    if screen_dc.0.is_null() {
+        return Err("Failed to acquire a screen device context for the task preview".to_string());
+    }
+
+    let result = capture_into_bitmap_with_draw(width, height, screen_dc, draw);
+
+    unsafe {
+        let _ = ReleaseDC(None, screen_dc);
+    }
+
+    result
+}
+
+fn capture_into_bitmap_with_source(
+    width: u32,
+    height: u32,
+    source_dc: HDC,
+    source_x: i32,
+    source_y: i32,
+) -> Result<Vec<u8>, String> {
+    capture_into_bitmap_with_draw(width, height, source_dc, |memory_dc| {
         unsafe {
-            let _ = ReleaseDC(None, screen_dc);
+            BitBlt(
+                memory_dc,
+                0,
+                0,
+                width as i32,
+                height as i32,
+                Some(source_dc),
+                source_x,
+                source_y,
+                capture_raster_operation(),
+            )
         }
+        .map_err(|error| error.to_string())
+    })
+}
+
+fn capture_into_bitmap_with_draw<DrawFn>(
+    width: u32,
+    height: u32,
+    compatible_dc: HDC,
+    draw: DrawFn,
+) -> Result<Vec<u8>, String>
+where
+    DrawFn: FnOnce(HDC) -> Result<(), String>,
+{
+    let memory_dc = unsafe { CreateCompatibleDC(Some(compatible_dc)) };
+    if memory_dc.0.is_null() {
         return Err("Failed to create a memory device context for the task preview".to_string());
     }
 
-    let bitmap = unsafe { CreateCompatibleBitmap(screen_dc, width as i32, height as i32) };
+    let bitmap = unsafe { CreateCompatibleBitmap(compatible_dc, width as i32, height as i32) };
     if bitmap.0.is_null() {
         unsafe {
             let _ = DeleteDC(memory_dc);
-            let _ = ReleaseDC(None, screen_dc);
         }
         return Err("Failed to allocate a bitmap for the task preview".to_string());
     }
 
     let previous = unsafe { SelectObject(memory_dc, bitmap.into()) };
-    let pixels = match unsafe {
-        BitBlt(
-            memory_dc,
-            0,
-            0,
-            width as i32,
-            height as i32,
-            Some(screen_dc),
-            rect.left,
-            rect.top,
-            capture_raster_operation(),
-        )
-    } {
-        Ok(()) => read_bitmap_rgba(memory_dc, bitmap, width, height),
-        Err(error) => Err(format!(
-            "Failed to capture the visible task preview: {error}"
-        )),
-    };
+    let pixels = draw(memory_dc).and_then(|()| {
+        read_bitmap_rgba(memory_dc, bitmap, width, height).map(|(_, _, pixels)| pixels)
+    });
 
     unsafe {
         if !previous.0.is_null() {
@@ -93,31 +207,22 @@ fn capture_window_rgba(
         }
         delete_bitmap(bitmap);
         let _ = DeleteDC(memory_dc);
-        let _ = ReleaseDC(None, screen_dc);
     }
 
     pixels
 }
 
-fn window_bounds(hwnd: windows::Win32::Foundation::HWND) -> Result<RECT, String> {
-    if let Some(rect) = extended_frame_bounds(hwnd) {
-        return Ok(rect);
-    }
-
+fn window_bounds(hwnd: HWND) -> Result<RECT, String> {
     let mut rect = RECT::default();
     unsafe {
         GetWindowRect(hwnd, &mut rect)
             .map_err(|error| format!("Failed to read the task preview bounds: {error}"))?;
     }
 
-    if rect_has_area(&rect) {
-        return Ok(rect);
-    }
-
-    Err("Task preview bounds were empty".to_string())
+    select_preview_bounds(extended_frame_bounds(hwnd), Some(rect))
 }
 
-fn extended_frame_bounds(hwnd: windows::Win32::Foundation::HWND) -> Option<RECT> {
+fn extended_frame_bounds(hwnd: HWND) -> Option<RECT> {
     let mut rect = RECT::default();
     let result = unsafe {
         DwmGetWindowAttribute(
@@ -129,6 +234,25 @@ fn extended_frame_bounds(hwnd: windows::Win32::Foundation::HWND) -> Option<RECT>
     };
 
     result.ok().filter(|_| rect_has_area(&rect)).map(|_| rect)
+}
+
+fn select_preview_bounds(
+    extended_frame: Option<RECT>,
+    window_rect: Option<RECT>,
+) -> Result<RECT, String> {
+    for rect in [extended_frame, window_rect].into_iter().flatten() {
+        if !rect_has_area(&rect) {
+            continue;
+        }
+
+        let width = rect_width(&rect)?;
+        let height = rect_height(&rect)?;
+        if preview_dimensions_are_sane(width, height) {
+            return Ok(rect);
+        }
+    }
+
+    Err("Task preview bounds were empty or too large".to_string())
 }
 
 fn rect_has_area(rect: &RECT) -> bool {
@@ -153,8 +277,30 @@ fn rect_height(rect: &RECT) -> Result<u32, String> {
     Ok(height as u32)
 }
 
+fn preview_dimensions_are_sane(width: u32, height: u32) -> bool {
+    width > 0
+        && height > 0
+        && width <= MAX_CAPTURE_DIMENSION
+        && height <= MAX_CAPTURE_DIMENSION
+        && u64::from(width) * u64::from(height) <= MAX_CAPTURE_PIXELS
+}
+
 fn capture_raster_operation() -> ROP_CODE {
     ROP_CODE(SRCCOPY.0 | CAPTUREBLT.0)
+}
+
+fn is_window_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0_u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            (&mut cloaked as *mut u32).cast(),
+            size_of::<u32>() as u32,
+        )
+    }
+    .is_ok()
+        && cloaked != 0
 }
 
 fn read_bitmap_rgba(
@@ -259,7 +405,7 @@ unsafe fn delete_bitmap(bitmap: HBITMAP) {
 mod preview_tests {
     use super::{
         capture_raster_operation, normalize_rgba_pixels_from_gdi, rect_has_area, rect_height,
-        rect_width,
+        rect_width, select_preview_bounds,
     };
     use windows::Win32::Foundation::RECT;
 
@@ -291,5 +437,59 @@ mod preview_tests {
         let rop = capture_raster_operation();
 
         assert_eq!(rop.0, 13369376 | 1073741824);
+    }
+
+    #[test]
+    fn preview_bounds_prefers_sane_extended_frame() {
+        let extended = RECT {
+            left: 10,
+            top: 20,
+            right: 210,
+            bottom: 140,
+        };
+        let window = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+
+        assert_eq!(
+            select_preview_bounds(Some(extended), Some(window)).unwrap(),
+            extended
+        );
+    }
+
+    #[test]
+    fn preview_bounds_falls_back_when_extended_frame_is_empty() {
+        let extended = RECT {
+            left: 10,
+            top: 20,
+            right: 10,
+            bottom: 140,
+        };
+        let window = RECT {
+            left: 30,
+            top: 40,
+            right: 430,
+            bottom: 340,
+        };
+
+        assert_eq!(
+            select_preview_bounds(Some(extended), Some(window)).unwrap(),
+            window
+        );
+    }
+
+    #[test]
+    fn preview_bounds_rejects_unsane_whole_virtual_desktop_bounds() {
+        let too_large = RECT {
+            left: -20000,
+            top: -20000,
+            right: 20000,
+            bottom: 20000,
+        };
+
+        assert!(select_preview_bounds(Some(too_large), None).is_err());
     }
 }

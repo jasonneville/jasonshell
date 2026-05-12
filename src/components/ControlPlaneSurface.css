@@ -1,0 +1,323 @@
+.control-plane-surface {
+  background: var(--js-bg-surface);
+  color: var(--js-color-text);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--js-font-sans);
+  gap: 0.8rem;
+  height: 100vh;
+  overflow: auto;
+  padding: 1rem;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+  width: 100vw;
+}
+
+.control-plane-hero {
+  align-items: stretch;
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-lg);
+  box-shadow: var(--js-shadow-panel);
+  background: var(--js-color-surface-overlay);
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.45fr);
+  padding: 1rem;
+}
+
+.eyebrow {
+  color: var(--js-color-accent);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  margin: 0 0 0.35rem;
+  text-transform: uppercase;
+}
+
+.control-plane-hero h1 {
+  font-size: clamp(1.35rem, 3vw, 2.4rem);
+  letter-spacing: 0;
+  line-height: 1;
+  margin: 0;
+}
+
+.control-plane-hero p {
+  color: var(--js-color-text-muted);
+  margin: 0.55rem 0 0;
+  max-width: 46rem;
+}
+
+.control-plane-hero dl {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.control-plane-hero dl div {
+  background: var(--js-color-surface-overlay);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-md);
+  padding: 0.7rem;
+}
+
+.control-plane-hero dt {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.control-plane-hero dd {
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin: 0.18rem 0 0;
+}
+
+.control-plane-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.control-plane-toolbar label {
+  align-items: center;
+  background: var(--js-color-surface-overlay);
+  border: 1px solid var(--js-color-border);
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 0.5rem;
+  min-width: min(28rem, 100%);
+  padding: 0.35rem 0.55rem;
+}
+
+.control-plane-toolbar span {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.control-plane-toolbar input,
+.control-plane-toolbar select {
+  background: transparent;
+  border: 0;
+  color: var(--js-color-text);
+  flex: 1 1 auto;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+}
+
+.control-plane-toolbar .theme-picker {
+  display: grid;
+  gap: 0.22rem;
+  min-width: min(18rem, 100%);
+}
+
+:global(.control-plane-toolbar .theme-picker .melt-select-label) {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+:global(.control-plane-toolbar .theme-picker .melt-select-trigger) {
+  background: var(--js-color-surface-overlay);
+  border-radius: 999px;
+  min-height: 2rem;
+}
+
+.control-plane-toolbar p {
+  color: var(--js-color-text-subtle);
+  font-size: 0.7rem;
+  margin: 0;
+}
+
+.control-plane-tabs {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.control-plane-tabs button {
+  align-items: center;
+  background: var(--js-color-surface-overlay);
+  border: 1px solid var(--js-color-border);
+  border-radius: 999px;
+  color: var(--js-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.62rem;
+}
+
+.control-plane-tabs button.active,
+.control-plane-tabs button:hover {
+  background: var(--js-color-selected);
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text);
+}
+
+.control-plane-tabs span {
+  background: var(--js-color-surface-overlay);
+  border-radius: 999px;
+  min-width: 1.35rem;
+  padding: 0.05rem 0.32rem;
+  text-align: center;
+}
+
+.control-plane-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.control-plane-grid section {
+  background: var(--js-color-surface-overlay);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-lg);
+  min-width: 0;
+  padding: 0.78rem;
+}
+
+.control-plane-grid section.active-card {
+  border-color: var(--js-color-accent-border);
+  box-shadow: inset 0 0 0 1px var(--js-color-accent-soft);
+}
+
+.section-head {
+  align-items: start;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.section-head h2 {
+  font-size: 0.94rem;
+  margin: 0;
+}
+
+.section-head p {
+  color: var(--js-color-text-muted);
+  font-size: 0.72rem;
+  margin: 0.18rem 0 0;
+}
+
+.section-status {
+  color: var(--js-color-text-muted);
+  flex: 0 1 14rem;
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  margin-top: 0.65rem;
+}
+
+.section-actions button {
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-md);
+  color: var(--js-color-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  min-height: 1.7rem;
+  padding: 0.22rem 0.55rem;
+}
+
+.section-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.summary-list {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+}
+
+.summary-list li {
+  border-left: 3px solid var(--js-color-border);
+  border-radius: var(--js-radius-md);
+  background: var(--js-color-surface-sunken);
+  min-width: 0;
+  padding: 0.55rem 0.62rem;
+}
+
+.summary-list li.tone-good {
+  border-left-color: var(--js-color-success-border);
+}
+
+.summary-list li.tone-warning {
+  border-left-color: var(--js-color-warning-border);
+}
+
+.summary-list li.tone-danger {
+  border-left-color: var(--js-color-error-border);
+}
+
+.summary-list strong,
+.summary-list span,
+.summary-list p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-list strong {
+  font-size: 0.74rem;
+}
+
+.summary-list span {
+  color: var(--js-color-text-muted);
+  font-size: 0.66rem;
+  margin-top: 0.08rem;
+}
+
+.summary-list p,
+.empty-state {
+  color: var(--js-color-text-subtle);
+  font-size: 0.66rem;
+  margin: 0.18rem 0 0;
+}
+
+@media (max-width: 760px) {
+  .control-plane-hero,
+  .control-plane-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .control-plane-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .control-plane-toolbar label {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .section-head {
+    flex-direction: column;
+  }
+
+  .section-status {
+    flex: 0 1 auto;
+    text-align: left;
+  }
+}

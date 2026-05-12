@@ -1,14 +1,25 @@
 <script lang="ts">
-  import { emit } from '@tauri-apps/api/event';
+  import './SearchPanelSurface.css';
+  import { emitTo } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     getSearchPanelPayload,
+    hideSearchPanel,
+    readCenteredSearchPanelSize,
+    resizeSearchPanel,
     SEARCH_PANEL_ACTIVATE_EVENT,
+    SEARCH_PANEL_INTERACTION_EVENT,
+    SEARCH_PANEL_KEY_EVENT,
+    SEARCH_PANEL_EXPAND_GROUP_EVENT,
     SEARCH_PANEL_PIN_FOLDER_EVENT,
+    SEARCH_PANEL_QUERY_EVENT,
     SEARCH_PANEL_SELECT_EVENT,
     SEARCH_PANEL_UPDATE_EVENT,
+    writeCenteredSearchPanelSize,
     type SearchPanelPayload,
+    type SearchPanelQueryPayload,
     type SearchPanelResult
   } from '../lib/searchPanel';
   import {
@@ -17,64 +28,283 @@
     shouldRevealSelectedResult
   } from '../lib/searchPanelState';
   import { setFolderDragPayload } from '../lib/folderDrag';
+  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
+  import {
+    buildVisibleSearchRows,
+    buildVisibleSearchGroupOverflows,
+    DEFAULT_VISIBLE_GROUP_LIMIT,
+    nextSearchPanelFallbackDelay,
+    nextVisibleRowIndex,
+    type SearchExpandableGroupId,
+    selectedVisibleRowIndex,
+    searchVisibleRowIdentity,
+    searchResultActionHints,
+    type SearchVisibleRow,
+    shouldContinueSearchPanelFallbackPolling
+  } from '../features/search/searchUxState';
 
   let panelState = defaultSearchPanelViewState;
+  let optimisticQueryDraft: string | null = null;
   let resultRows: Array<HTMLDivElement | undefined> = [];
+  let queryInput: HTMLInputElement | null = null;
   let lastRevealedSelection = '';
+  let expandedVisibleGroups = new Set<SearchExpandableGroupId>();
+  let fallbackTimer: number | null = null;
+  let fallbackAttempt = 0;
+  let fallbackGeneration = 0;
+  let queryInputSequence = 0;
+  let resizeDrag: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+  } | null = null;
   $: query = panelState.query;
+  $: displayedQuery = optimisticQueryDraft ?? query;
   $: results = panelState.results;
   $: selectedIndex = panelState.selectedIndex;
   $: statusMessage = panelState.statusMessage;
-  $: void revealSelectedResult(selectedIndex, results.length);
+  $: presentation = panelState.presentation;
+  $: visibleRows = buildVisibleSearchRows(results, {
+    expandedGroups: expandedVisibleGroups,
+    perGroupLimit: DEFAULT_VISIBLE_GROUP_LIMIT
+  });
+  $: visibleGroupOverflows = buildVisibleSearchGroupOverflows(results, {
+    expandedGroups: expandedVisibleGroups,
+    perGroupLimit: DEFAULT_VISIBLE_GROUP_LIMIT
+  });
+  $: overflowByGroup = new Map(visibleGroupOverflows.map((overflow) => [overflow.groupId, overflow]));
+  $: lastVisibleIndexByGroup = visibleRows.reduce((lookup, row, index) => {
+    lookup.set(row.groupId, index);
+    return lookup;
+  }, new Map<string, number>());
+  $: selectedRowIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  $: selectedRow = selectedRowIndex >= 0 ? visibleRows[selectedRowIndex] : null;
+  $: void revealSelectedResult(selectedRowIndex, visibleRows.length);
+  const topBarTarget = topBarWebviewWindowEventTarget();
 
   function applyPayload(payload: SearchPanelPayload | null) {
+    const previousQuery = panelState.query;
     panelState = applySearchPanelPayload(panelState, payload);
+    if (panelState.query !== previousQuery) {
+      expandedVisibleGroups = new Set<SearchExpandableGroupId>();
+    }
+    if (panelState.query === '' || optimisticQueryDraft === panelState.query) {
+      optimisticQueryDraft = null;
+    }
   }
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
-    void getCurrentWindow().listen<SearchPanelPayload>(SEARCH_PANEL_UPDATE_EVENT, (event) => {
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
+    registerAsyncUnlistener(getCurrentWindow().listen<SearchPanelPayload>(SEARCH_PANEL_UPDATE_EVENT, (event) => {
+      fallbackGeneration += 1;
+      stopFallbackPolling();
+      fallbackAttempt = 0;
       applyPayload(event.payload);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
-    void getSearchPanelPayload().then(applyPayload);
-    const refreshTimer = window.setInterval(() => {
-      void getSearchPanelPayload().then(applyPayload);
-    }, 120);
+      if (shouldFocusCenteredQueryInput()) {
+        void focusQueryInput();
+      }
+      scheduleFallbackPoll();
+    }));
+    scheduleFallbackPoll(0);
 
     return () => {
-      window.clearInterval(refreshTimer);
+      disposed = true;
+      fallbackGeneration += 1;
+      stopFallbackPolling();
+      cancelQueuedQueryEmit();
       for (const unlisten of unlisteners) {
         unlisten();
       }
     };
   });
 
-  function activateResult(result: SearchPanelResult) {
-    void emit(SEARCH_PANEL_ACTIVATE_EVENT, result.id);
+  function scheduleFallbackPoll(delay: number | null = nextSearchPanelFallbackDelay(fallbackAttempt)) {
+    if (delay === null || fallbackTimer !== null) {
+      return;
+    }
+    fallbackTimer = window.setTimeout(() => {
+      fallbackTimer = null;
+      const attempt = fallbackAttempt;
+      const generation = fallbackGeneration;
+      fallbackAttempt += 1;
+      void getSearchPanelPayload().then((payload) => {
+        if (generation !== fallbackGeneration) {
+          return;
+        }
+        applyPayload(payload);
+        if (shouldFocusCenteredQueryInput()) {
+          void focusQueryInput();
+        }
+        if (
+          shouldContinueSearchPanelFallbackPolling(
+            attempt,
+            Boolean(payload),
+            Boolean(panelState.query || panelState.results.length)
+          )
+        ) {
+          scheduleFallbackPoll();
+        }
+      }).catch(() => {
+        if (generation !== fallbackGeneration) {
+          return;
+        }
+        if (
+          shouldContinueSearchPanelFallbackPolling(
+            attempt,
+            false,
+            Boolean(panelState.query || panelState.results.length)
+          )
+        ) {
+          scheduleFallbackPoll();
+        }
+      });
+    }, delay);
   }
 
-  function selectResult(result: SearchPanelResult) {
-    void emit(SEARCH_PANEL_SELECT_EVENT, result.id);
+  function stopFallbackPolling() {
+    if (fallbackTimer !== null) {
+      window.clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
+  }
+
+  function activateRow(row: SearchVisibleRow) {
+    markPanelInteraction();
+    void emitTo(topBarTarget, SEARCH_PANEL_ACTIVATE_EVENT, searchVisibleRowIdentity(row));
+  }
+
+  function updateQuery(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    optimisticQueryDraft = value;
+    announcePanelInteraction();
+    queueQueryEmit(value);
+  }
+
+  function hasCenteredSearchClearValue() {
+    return Boolean(displayedQuery);
+  }
+
+  async function clearCenteredSearch() {
+    optimisticQueryDraft = '';
+    announcePanelInteraction();
+    queueQueryEmit('');
+    await tick();
+    queryInput?.focus({ preventScroll: true });
+  }
+
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+
+  function closeCenteredPanelFromHotkey() {
+    hideCenteredPanelImmediately();
+  }
+
+  function handleQueryKeydown(event: KeyboardEvent) {
+    if (isCtrlSpaceHotkey(event)) {
+      event.preventDefault();
+      closeCenteredPanelFromHotkey();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    announcePanelInteraction();
+    if (event.key === 'ArrowDown') {
+      selectVisibleOffset(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      selectVisibleOffset(-1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      if (selectedRow) {
+        activateRow(selectedRow);
+        return;
+      }
+    }
+    if (event.key === 'Escape' && presentation === 'centered') {
+      hideCenteredPanelImmediately();
+      return;
+    }
+    void emitTo(topBarTarget, SEARCH_PANEL_KEY_EVENT, event.key);
+  }
+
+  function selectRow(row: SearchVisibleRow) {
+    markPanelInteraction();
+    void emitTo(topBarTarget, SEARCH_PANEL_SELECT_EVENT, searchVisibleRowIdentity(row));
+  }
+
+  function markPanelInteraction() {
+    announcePanelInteraction();
+  }
+
+  function announcePanelInteraction() {
+    void emitTo(topBarTarget, SEARCH_PANEL_INTERACTION_EVENT, null);
   }
 
   function pinFolderResult(event: MouseEvent, result: SearchPanelResult) {
     event.preventDefault();
     event.stopPropagation();
+    markPanelInteraction();
     if (result.kind === 'folder' && result.path) {
-      void emit(SEARCH_PANEL_PIN_FOLDER_EVENT, result.path);
+      void emitTo(topBarTarget, SEARCH_PANEL_PIN_FOLDER_EVENT, result.path);
     }
   }
 
-  function handleResultKeydown(event: KeyboardEvent, result: SearchPanelResult) {
-    if (event.key === 'Enter') {
+  function expandGroup(groupId: SearchExpandableGroupId) {
+    markPanelInteraction();
+    expandedVisibleGroups = new Set([...expandedVisibleGroups, groupId]);
+    void emitTo(topBarTarget, SEARCH_PANEL_EXPAND_GROUP_EVENT, groupId);
+  }
+
+  function handleResultKeydown(event: KeyboardEvent, row: SearchVisibleRow) {
+    if (isCtrlSpaceHotkey(event)) {
       event.preventDefault();
-      activateResult(result);
+      closeCenteredPanelFromHotkey();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      activateRow(row);
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      selectVisibleOffset(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      selectVisibleOffset(-1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (presentation === 'centered') {
+        hideCenteredPanelImmediately();
+        return;
+      }
+      announcePanelInteraction();
+      void emitTo(topBarTarget, SEARCH_PANEL_KEY_EVENT, event.key);
     } else if (event.key === ' ') {
       event.preventDefault();
-      selectResult(result);
+      selectRow(row);
     }
+  }
+
+  function selectVisibleOffset(direction: -1 | 1) {
+    const nextIndex = nextVisibleRowIndex(visibleRows, selectedRowIndex, direction);
+    if (nextIndex < 0) {
+      return;
+    }
+    selectRow(visibleRows[nextIndex]);
   }
 
   function startFolderDrag(event: DragEvent, result: SearchPanelResult) {
@@ -85,7 +315,7 @@
     setFolderDragPayload(event.dataTransfer, [result.path], 'copy');
   }
 
-  function trackResultRow(node: HTMLDivElement, index: number) {
+  function trackVisibleRow(node: HTMLDivElement, index: number) {
     resultRows[index] = node;
 
     return {
@@ -114,28 +344,150 @@
     await tick();
     resultRows[index]?.scrollIntoView({ block: 'nearest' });
   }
+
+  async function focusQueryInput() {
+    await tick();
+    queryInput?.focus({ preventScroll: true });
+  }
+
+  function shouldFocusCenteredQueryInput() {
+    if (presentation !== 'centered' || !queryInput || document.activeElement === queryInput) {
+      return false;
+    }
+    return !(document.activeElement instanceof HTMLElement && document.activeElement.closest('.search-panel'));
+  }
+
+  function hideCenteredPanelImmediately() {
+    optimisticQueryDraft = null;
+    cancelQueuedQueryEmit();
+    queryInput?.blur();
+    fallbackGeneration += 1;
+    stopFallbackPolling();
+    void hideSearchPanel().catch(() => undefined);
+    announcePanelInteraction();
+    void emitTo(topBarTarget, SEARCH_PANEL_KEY_EVENT, 'Escape');
+  }
+
+  function queueQueryEmit(value: string) {
+    queryInputSequence += 1;
+    const payload: SearchPanelQueryPayload = {
+      query: value,
+      inputSequence: queryInputSequence
+    };
+    void emitTo(topBarTarget, SEARCH_PANEL_QUERY_EVENT, payload);
+  }
+
+  function cancelQueuedQueryEmit() {
+    // Query emits are per-event; cleanup hook stays for lifecycle symmetry.
+  }
+
+  function beginResize(event: PointerEvent) {
+    if (presentation !== 'centered') {
+      return;
+    }
+    event.preventDefault();
+    const size = readCenteredSearchPanelSize();
+    resizeDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: size.width,
+      startHeight: size.height
+    };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function updateResize(event: PointerEvent) {
+    if (!resizeDrag || resizeDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    const size = writeCenteredSearchPanelSize({
+      width: resizeDrag.startWidth + event.clientX - resizeDrag.startX,
+      height: resizeDrag.startHeight + event.clientY - resizeDrag.startY
+    });
+    void resizeSearchPanel(size).catch(() => undefined);
+  }
+
+  function endResize(event: PointerEvent) {
+    if (!resizeDrag || resizeDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    updateResize(event);
+    resizeDrag = null;
+  }
+
+  function highlightParts(text: string, indexes?: number[]) {
+    const selected = new Set<number>();
+    for (let index = 0; index < (indexes?.length ?? 0); index += 2) {
+      const start = indexes?.[index] ?? 0;
+      const length = indexes?.[index + 1] ?? 0;
+      for (let offset = 0; offset < length; offset += 1) {
+        selected.add(start + offset);
+      }
+    }
+    return Array.from(text).map((character, index) => ({
+      character,
+      highlighted: selected.has(index)
+    }));
+  }
 </script>
 
-<section class="search-panel" aria-label="Search results">
+<svelte:window on:mousedown={markPanelInteraction} />
+
+<section
+  class="search-panel"
+  aria-label="Search results"
+  tabindex="-1"
+>
   <header class="search-panel-header">
-    <strong>Search</strong>
-    <span>{query || 'Apps, windows, files, folders, commands'}</span>
+    {#if presentation === 'centered'}
+      <input
+        bind:this={queryInput}
+        aria-label="Search Everything"
+        autocomplete="off"
+        class="search-panel-query"
+        placeholder="Search Everything"
+        value={displayedQuery}
+        on:input={updateQuery}
+        on:keydown={handleQueryKeydown}
+      />
+      {#if presentation === 'centered' && hasCenteredSearchClearValue()}
+        <MeltActionButton
+          class="search-panel-clear-button"
+          ariaLabel="Clear search"
+          tooltip="Clear search"
+          onClick={() => void clearCenteredSearch()}
+        >
+          ×
+        </MeltActionButton>
+      {/if}
+    {:else}
+      <strong>Search</strong>
+      <span>{query || 'Everything files and folders'}</span>
+    {/if}
+    <kbd>Enter opens</kbd>
   </header>
 
   {#if results.length}
-    <div class="result-list" role="listbox" aria-label="Search results">
-      {#each results as result, index (result.id)}
+    <div class="result-list" role="listbox" tabindex="0" aria-label="Search results" aria-activedescendant={selectedRow?.domId}>
+      {#each visibleRows as row, index (row.rowKey)}
+        {@const result = row.result}
+        {@const hints = searchResultActionHints(result)}
+        {#if row.showGroupLabel}
+          <div class="result-group-label">{row.groupLabel}</div>
+        {/if}
         <div
-          class:result-selected={index === selectedIndex}
+          id={row.domId}
+          class:result-selected={index === selectedRowIndex}
           class="result-row"
           role="option"
           tabindex="0"
           draggable={result.kind === 'folder' && !!result.path}
-          aria-selected={index === selectedIndex}
-          use:trackResultRow={index}
-          on:click={() => selectResult(result)}
-          on:dblclick={() => activateResult(result)}
-          on:keydown={(event) => handleResultKeydown(event, result)}
+          aria-selected={index === selectedRowIndex}
+          use:trackVisibleRow={index}
+          on:click={() => selectRow(row)}
+          on:dblclick={() => activateRow(row)}
+          on:keydown={(event) => handleResultKeydown(event, row)}
           on:dragstart={(event) => startFolderDrag(event, result)}
         >
           <span class="result-icon" aria-hidden="true">
@@ -146,164 +498,58 @@
             {/if}
           </span>
           <span class="result-copy">
-            <strong>{result.title}</strong>
-            <small>{result.subtitle}</small>
+            <strong>
+              {#each highlightParts(result.title, result.titleHighlightData) as part}
+                <span class:result-highlight={part.highlighted}>{part.character}</span>
+              {/each}
+            </strong>
+            <small>
+              {#each highlightParts(result.subtitle, result.subtitleHighlightData) as part}
+                <span class:result-highlight={part.highlighted}>{part.character}</span>
+              {/each}
+            </small>
           </span>
-          {#if result.kind === 'folder' && result.path}
-            <span class="result-actions">
-              <span class="result-kind">{result.kind}</span>
-              <button
+          <span class="result-actions">
+            <span class="result-action-primary">{hints.primary}</span>
+            {#if hints.secondary === 'Pin' && result.kind === 'folder' && result.path}
+              <MeltActionButton
                 class="pin-folder"
-                type="button"
-                on:click={(event) => pinFolderResult(event, result)}
+                ariaLabel={`Pin ${result.title} to the top bar`}
+                onClick={(event) => pinFolderResult(event, result)}
               >
                 Pin
-              </button>
-            </span>
-          {:else}
-            <span class="result-kind">{result.kind}</span>
-          {/if}
+              </MeltActionButton>
+            {:else if hints.secondary}
+              <span class="result-kind">{hints.secondary}</span>
+            {:else}
+              <span class="result-kind">{result.kind}</span>
+            {/if}
+          </span>
         </div>
+        {@const overflow = overflowByGroup.get(row.groupId as SearchExpandableGroupId)}
+        {#if overflow && lastVisibleIndexByGroup.get(row.groupId) === index}
+          <button
+            type="button"
+            class="result-show-more"
+            on:click={() => expandGroup(overflow.groupId)}
+          >
+            Show {overflow.hiddenCount} more {overflow.groupLabel.toLowerCase()}
+          </button>
+        {/if}
       {/each}
     </div>
   {:else}
-    <div class="empty-state">{statusMessage}</div>
+    <div class="empty-state surface-state info" role="status">{statusMessage}</div>
+  {/if}
+  {#if presentation === 'centered'}
+    <button
+      type="button"
+      class="search-resize-grip"
+      aria-label="Resize search panel"
+      on:pointerdown={beginResize}
+      on:pointermove={updateResize}
+      on:pointerup={endResize}
+      on:pointercancel={endResize}
+    ></button>
   {/if}
 </section>
-
-<style>
-  .search-panel {
-    background:
-      linear-gradient(180deg, rgba(23, 28, 39, 0.98), rgba(11, 14, 22, 0.98));
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.45rem;
-    box-shadow: 0 22px 46px rgba(0, 0, 0, 0.44);
-    color: #f0f4ff;
-    height: 100%;
-    overflow: hidden;
-    padding: 0.7rem;
-    width: 100%;
-  }
-
-  .search-panel-header {
-    align-items: baseline;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    display: flex;
-    gap: 0.55rem;
-    padding: 0 0.15rem 0.55rem;
-  }
-
-  .search-panel-header strong {
-    font-size: 0.9rem;
-    font-weight: 800;
-  }
-
-  .search-panel-header span {
-    color: rgba(221, 229, 250, 0.62);
-    font-size: 0.72rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .result-list {
-    display: grid;
-    gap: 0.35rem;
-    max-height: calc(100% - 2rem);
-    overflow-y: auto;
-    padding-top: 0.55rem;
-    scrollbar-color: rgba(124, 160, 255, 0.45) rgba(255, 255, 255, 0.06);
-  }
-
-  .result-row {
-    align-items: center;
-    border: 1px solid transparent;
-    border-radius: 0.38rem;
-    display: grid;
-    gap: 0.55rem;
-    grid-template-columns: 1.8rem minmax(0, 1fr) auto;
-    min-height: 2.55rem;
-    padding: 0.34rem 0.45rem;
-    text-align: left;
-    user-select: none;
-  }
-
-  .result-row:hover,
-  .result-selected {
-    background: rgba(77, 124, 254, 0.15);
-    border-color: rgba(124, 160, 255, 0.3);
-  }
-
-  .result-icon {
-    align-items: center;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 0.3rem;
-    color: rgba(228, 235, 255, 0.74);
-    display: grid;
-    font-size: 0.72rem;
-    font-weight: 800;
-    height: 1.8rem;
-    justify-items: center;
-    width: 1.8rem;
-  }
-
-  .result-icon img {
-    height: 1.1rem;
-    width: 1.1rem;
-  }
-
-  .result-copy {
-    display: grid;
-    min-width: 0;
-  }
-
-  .result-copy strong,
-  .result-copy small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .result-copy strong {
-    font-size: 0.76rem;
-    font-weight: 750;
-  }
-
-  .result-copy small,
-  .result-kind,
-  .empty-state {
-    color: rgba(218, 226, 248, 0.58);
-    font-size: 0.62rem;
-  }
-
-  .result-kind {
-    text-transform: uppercase;
-  }
-
-  .result-actions {
-    align-items: center;
-    display: flex;
-    gap: 0.35rem;
-  }
-
-  .pin-folder {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.25rem;
-    color: #eef3ff;
-    font-size: 0.58rem;
-    font-weight: 800;
-    padding: 0.12rem 0.36rem;
-  }
-
-  .pin-folder:hover {
-    background: rgba(77, 124, 254, 0.18);
-    border-color: rgba(124, 160, 255, 0.36);
-  }
-
-  .empty-state {
-    display: grid;
-    height: calc(100% - 2rem);
-    place-items: center;
-  }
-</style>

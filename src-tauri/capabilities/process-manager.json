@@ -1,0 +1,11 @@
+{
+  "identifier": "process-manager",
+  "description": "Process Manager auxiliary surface capability: process-list events, process action IPC, JasonShell task metadata references, and window-label access.",
+  "windows": [
+    "process-manager"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

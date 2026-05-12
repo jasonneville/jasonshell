@@ -6,7 +6,7 @@ import {
   folderPathToUri,
   normalizeDroppedPath,
   setFolderDragPayload
-} from '../dist-tests/folderDrag.js';
+} from '../dist-tests/lib/folderDrag.js';
 
 test('normalizes local file uri paths', () => {
   assert.equal(

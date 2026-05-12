@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { IPC_COMMANDS } from '../ipc/commands.js';
 
 type FrontendSurfaceMetrics = {
   label: 'top-bar' | 'bottom-bar';
@@ -27,7 +28,7 @@ export type ShellSurfaceRuntimeMetrics = {
 export async function reportShellSurfaceRuntimeMetrics(
   label: FrontendSurfaceMetrics['label']
 ): Promise<ShellSurfaceRuntimeMetrics> {
-  return invoke('report_shell_surface_runtime_metrics', {
+  return invoke(IPC_COMMANDS.reportShellSurfaceRuntimeMetrics, {
     metrics: {
       label,
       outerHeight: Math.round(window.outerHeight),

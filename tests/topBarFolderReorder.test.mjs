@@ -1,0 +1,68 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import { reorderPinnedFolders } from '../dist-tests/lib/topBarPins.js';
+
+const alpha = { id: 'a', name: 'Work', path: 'C:\\Alpha\\Work' };
+const beta = { id: 'b', name: 'Work', path: 'D:\\Beta\\Work' };
+const gamma = { id: 'c', name: 'Gamma', path: 'C:\\Gamma' };
+
+test('reorders first pinned folder to the end', () => {
+  assert.deepEqual(reorderPinnedFolders([alpha, beta, gamma], alpha.path, 2), [beta, gamma, alpha]);
+});
+
+test('reorders last pinned folder to the beginning', () => {
+  assert.deepEqual(reorderPinnedFolders([alpha, beta, gamma], gamma.path, 0), [gamma, alpha, beta]);
+});
+
+test('reorders a middle pinned folder by path not display name', () => {
+  assert.deepEqual(reorderPinnedFolders([alpha, beta, gamma], beta.path, 0), [beta, alpha, gamma]);
+});
+
+test('keeps same array for same slot and missing source', () => {
+  const pins = [alpha, beta, gamma];
+  assert.equal(reorderPinnedFolders(pins, beta.path, 1), pins);
+  assert.equal(reorderPinnedFolders(pins, 'C:\\Missing', 1), pins);
+});
+
+test('TopBar pinned folders wire drag reorder through existing persistence path', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  assert.match(source, /reorderPinnedFolders/);
+  assert.match(source, /startPinPointerDrag\(pin, event\)/);
+  assert.match(source, /movePinPointerDrag/);
+  assert.match(source, /finishPinPointerDrag/);
+  assert.match(source, /await applyStackPins\(await reorderStackPins\(nextPins\.map\(\(pin\) => pin\.path\)\)\)/);
+});
+
+test('TopBar keeps click and context menu behavior below drag threshold', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  assert.match(source, /const PIN_REORDER_DRAG_THRESHOLD_PX = \d+/);
+  assert.match(source, /let suppressNextPinClickPath: string \| null = null/);
+  assert.match(source, /if \(suppressNextPinClickPath === pin\.path\) \{[\s\S]*event\.preventDefault\(\);[\s\S]*return;/);
+  assert.match(source, /openStackPath\(pin\.path, event\.currentTarget\)/);
+  assert.match(source, /function handlePinContextMenu\(event: MouseEvent, pin: StackPin\)/);
+});
+
+test('TopBar holds stack popup focus while a pinned folder is pressed', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  assert.match(source, /beginStackPopupFocusLossHold/);
+  assert.match(source, /endStackPopupFocusLossHold/);
+  assert.match(source, /let stackPinFocusHoldActive = false/);
+  assert.match(source, /let stackPinFocusHoldPromise: Promise<void> \| null = null/);
+  assert.match(source, /function startPinPointerDrag[\s\S]*event\.preventDefault\(\);[\s\S]*beginStackPinFocusHold\(\);[\s\S]*function movePinPointerDrag/);
+  assert.match(source, /function finishPinPointerDrag[\s\S]*openStackPath\(sourcePath, event\.currentTarget\)\.finally\(\(\) => \{[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*function beginStackPinFocusHold/);
+  assert.match(source, /const pendingHold = stackPinFocusHoldPromise;[\s\S]*\(pendingHold \?\? Promise\.resolve\(\)\)[\s\S]*\.then\(\(\) => endStackPopupFocusLossHold\(\)\)/);
+  assert.match(source, /function cancelPinPointerDrag[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*releasePinPointerCapture\(\);/);
+  assert.match(source, /return \(\) => \{[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*cancelSearchBlurClose\(\);/);
+});
+
+test('TopBar ordinary pointerdown hides stack popup but pinned-folder pointerdown keeps switch path', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  assert.match(source, /hideStackPopup/);
+  assert.match(source, /function isPinnedFolderPointerTarget\(target: Node \| null\)/);
+  assert.match(source, /closest\('button\[data-path\]'\)/);
+  assert.match(source, /function handleTopBarPointerDown[\s\S]*if \(!isPinnedFolderPointerTarget\(target\)\) \{[\s\S]*void hideStackPopup\(\)/);
+  assert.match(source, /function handleTopBarPointerDown[\s\S]*if \(!searchOpen \|\| !searchControl\)/);
+  assert.match(source, /function startPinPointerDrag[\s\S]*beginStackPinFocusHold\(\);[\s\S]*draggingPinPath = pin\.path/);
+  assert.match(source, /function finishPinPointerDrag[\s\S]*void openStackPath\(sourcePath, event\.currentTarget\)\.finally\(\(\) => \{[\s\S]*releaseStackPinFocusHold\(\);/);
+});

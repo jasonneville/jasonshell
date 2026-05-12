@@ -1,6 +1,6 @@
 use super::{
     icons::{window_icon_data_url, EMPTY_ICON_DATA_URL},
-    TaskbarWindow, TaskbarWindowActivityState,
+    TaskbarProcessWindow, TaskbarWindow, TaskbarWindowActivityState,
 };
 use std::collections::HashMap;
 use std::mem::size_of;
@@ -27,8 +27,10 @@ const EXCLUDED_CLASSES: &[&str] = &[
     "Shell_SecondaryTrayWnd",
     "Progman",
     "WorkerW",
+    "Dwm",
 ];
 const EXCLUDED_PROCESS_NAMES: &[&str] = &["dwm"];
+const EXCLUDED_TITLES: &[&str] = &["DWM Notification Window"];
 const CPU_TIME_BUSY_DELTA_TICKS: u64 = 200_000;
 
 #[derive(Clone, Debug)]
@@ -99,6 +101,7 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
         windows.push(TaskbarWindow {
             hwnd,
             title: candidate.title,
+            process_id: candidate.process_id,
             process_name: candidate.process_name,
             icon_data_url,
             is_active: candidate.is_active,
@@ -110,6 +113,58 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
     sort_windows_stably(&mut windows);
     retain_activity_snapshots(windows.iter().map(|window| window.hwnd.as_str()));
     Ok(windows)
+}
+
+pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {
+    let current_process_id = std::process::id();
+    let foreground = unsafe { GetForegroundWindow() };
+    let primary_monitor =
+        unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+    let mut handles = Vec::new();
+
+    unsafe {
+        EnumWindows(
+            Some(enum_windows_callback),
+            LPARAM((&mut handles as *mut Vec<HWND>) as isize),
+        )
+        .map_err(|error| format!("Failed to enumerate top-level windows: {error}"))?;
+    }
+
+    let mut windows = Vec::new();
+    for hwnd in handles {
+        let Some(candidate) =
+            build_window_candidate(hwnd, foreground, primary_monitor, current_process_id)?
+        else {
+            continue;
+        };
+
+        if !is_taskbar_candidate(&candidate, current_process_id) {
+            continue;
+        }
+
+        windows.push(TaskbarProcessWindow {
+            hwnd: candidate.hwnd_string(),
+            title: candidate.title,
+            process_id: candidate.process_id,
+            is_active: candidate.is_active,
+        });
+    }
+
+    windows.sort_by(|left, right| compare_window_handles(&left.hwnd, &right.hwnd));
+    Ok(windows)
+}
+
+pub(super) fn process_image_path_for_hwnd(hwnd: HWND) -> Result<PathBuf, String> {
+    let mut process_id = 0;
+    unsafe {
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    }
+    if process_id == 0 {
+        return Err("Task window process id is unavailable".to_string());
+    }
+
+    process_image_path(process_id)
+        .ok_or_else(|| "Task window executable path is unavailable".to_string())
 }
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
@@ -169,7 +224,9 @@ pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_
     let is_tool_window = (candidate.ex_style.0 & WS_EX_TOOLWINDOW.0) != 0
         && (candidate.ex_style.0 & WS_EX_APPWINDOW.0) == 0;
     let is_no_activate_window = (candidate.ex_style.0 & WS_EX_NOACTIVATE.0) != 0;
-    let has_identity = !candidate.title.trim().is_empty() || !candidate.process_name.is_empty();
+    let forces_taskbar = (candidate.ex_style.0 & WS_EX_APPWINDOW.0) != 0;
+    let has_taskbar_identity = !candidate.title.trim().is_empty()
+        || (forces_taskbar && !candidate.process_name.is_empty());
 
     (candidate.is_visible || candidate.is_minimized)
         && candidate.is_primary_monitor
@@ -179,13 +236,29 @@ pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_
         && !candidate.is_cloaked
         && !is_tool_window
         && !is_no_activate_window
-        && has_identity
+        && has_taskbar_identity
+        && !is_internal_notification_window(candidate)
         && !EXCLUDED_PROCESS_NAMES
             .iter()
             .any(|process_name| candidate.process_name.eq_ignore_ascii_case(process_name))
         && !EXCLUDED_CLASSES
             .iter()
             .any(|class_name| candidate.class_name.eq_ignore_ascii_case(class_name))
+}
+
+pub(super) fn is_internal_notification_window(candidate: &WindowCandidate) -> bool {
+    let title = candidate.title.trim();
+    if EXCLUDED_TITLES
+        .iter()
+        .any(|excluded| title.eq_ignore_ascii_case(excluded))
+    {
+        return true;
+    }
+
+    title.eq_ignore_ascii_case("Notification")
+        && (candidate.process_name.is_empty()
+            || candidate.process_name.eq_ignore_ascii_case("dwm")
+            || candidate.class_name.to_ascii_lowercase().contains("dwm"))
 }
 
 pub(super) fn sort_windows_stably(windows: &mut [TaskbarWindow]) {

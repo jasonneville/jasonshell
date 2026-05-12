@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import {
   applySearchPanelPayload,
   defaultSearchPanelViewState,
   shouldRevealSelectedResult
-} from '../dist-tests/searchPanelState.js';
-import { buildSearchCatalog } from '../dist-tests/searchCatalog.js';
+} from '../dist-tests/lib/searchPanelState.js';
+import { buildSearchCatalog } from '../dist-tests/lib/searchCatalog.js';
 import {
   shouldRefreshSystemSearchAfterIndexUpdate,
   shouldApplySystemSearchResponse,
-  shouldRetryIndexedSearch
-} from '../dist-tests/systemSearchState.js';
+  shouldRetryIndexedSearch,
+  searchPanelAnchorState,
+  searchPanelPayloadSignature,
+  shouldPublishSearchPanelPayload,
+  shouldShowSearchPanelForAnchor
+} from '../dist-tests/lib/systemSearchState.js';
 
 test('applies a typed search payload with visible results and selection', () => {
   const next = applySearchPanelPayload(defaultSearchPanelViewState, {
@@ -33,6 +38,7 @@ test('applies a typed search payload with visible results and selection', () => 
   assert.equal(next.results.length, 1);
   assert.equal(next.results[0].title, 'Firefox');
   assert.equal(next.selectedIndex, 0);
+  assert.equal(next.sequence, 0);
 });
 
 test('applies filesystem search results with launch paths', () => {
@@ -84,6 +90,26 @@ test('includes backend app and file results in the visible catalog', () => {
   assert.equal(catalog.some((result) => result.kind === 'file'), true);
 });
 
+test('catalog exposes system settings intents before incidental filesystem matches', () => {
+  const catalog = buildSearchCatalog([], [], [
+    {
+      id: 'system:folder:C:\\Docs\\Control Panel',
+      providerId: 'everything',
+      kind: 'folder',
+      path: 'C:\\Docs\\Control Panel',
+      title: 'Control Panel',
+      subtitle: 'Folder',
+      terms: 'control panel folder',
+      priority: 999
+    }
+  ]);
+
+  assert.equal(catalog.some((result) => result.id === 'setting:windows-settings'), true);
+  assert.equal(catalog.some((result) => result.id === 'setting:control-panel'), true);
+  assert.equal(catalog.find((result) => result.id === 'setting:windows-settings')?.path, 'ms-settings:');
+  assert.equal(catalog.find((result) => result.id === 'setting:control-panel')?.path, 'control.exe');
+});
+
 test('ignores stale system search responses while keeping latest query live', () => {
   assert.equal(shouldApplySystemSearchResponse('spot', 3, 'spotify', 4), false);
   assert.equal(shouldApplySystemSearchResponse('spotify', 4, 'spotify', 4), true);
@@ -103,6 +129,433 @@ test('reveals only valid selected search rows', () => {
 
 test('refreshes current system search after an index event', () => {
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 'spotify'), true);
-  assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 's'), false);
+  assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, 's'), true);
+  assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(true, '   '), false);
   assert.equal(shouldRefreshSystemSearchAfterIndexUpdate(false, 'spotify'), false);
+});
+
+test('keeps search panel show and publish idempotent for realtime typing', () => {
+  const anchor = searchPanelAnchorState({ left: 10.4, width: 220.2 });
+  assert.deepEqual(anchor, { left: 10, width: 220 });
+  assert.equal(shouldShowSearchPanelForAnchor(false, null, anchor), true);
+  assert.equal(shouldShowSearchPanelForAnchor(true, anchor, anchor), false);
+  assert.equal(shouldShowSearchPanelForAnchor(true, anchor, { left: 11, width: 220 }), true);
+
+  const payload = {
+    query: 'dev',
+    results: [{ id: 'command:open-control-plane', kind: 'command', title: 'Open developer dashboard', subtitle: 'Developer dashboard', terms: 'dev', priority: 92 }],
+    selectedIndex: 0,
+    statusMessage: 'Showing apps, windows, files, folders, and commands'
+  };
+  const signature = searchPanelPayloadSignature(payload);
+  assert.equal(shouldPublishSearchPanelPayload(null, payload), true);
+  assert.equal(shouldPublishSearchPanelPayload(signature, payload), false);
+});
+
+test('search panel payload signature includes presentation and ranking metadata', () => {
+  const basePayload = {
+    query: 'spotify',
+    presentation: 'centered',
+    results: [{
+      id: 'system:app:C:\\Spotify.exe',
+      providerId: 'everything',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Application',
+      terms: 'spotify',
+      priority: 100,
+      path: 'C:\\Spotify.exe',
+      recordKey: 'app:c:\\spotify.exe',
+      runCount: 2,
+      topMost: false
+    }],
+    selectedIndex: 0,
+    statusMessage: 'Showing ranked search results'
+  };
+  const changedPayload = {
+    ...basePayload,
+    presentation: 'anchored',
+    results: [{ ...basePayload.results[0], topMost: true, runCount: 5 }]
+  };
+
+  assert.notEqual(searchPanelPayloadSignature(basePayload), searchPanelPayloadSignature(changedPayload));
+});
+
+test('search panel state rejects stale query and phase regressions for the same sequence', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 5
+  });
+  const staleQuery = applySearchPanelPayload(local, {
+    query: 'spot',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'stale',
+    phase: 'provider',
+    sequence: 5
+  });
+  const regressedPhase = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'older local',
+    phase: 'typing',
+    sequence: 5
+  });
+
+  assert.equal(staleQuery.query, 'spotify');
+  assert.equal(staleQuery.statusMessage, '1 local result');
+  assert.equal(regressedPhase.phase, 'local');
+});
+
+test('search panel state keeps useful rows for typing and empty error payloads', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 6
+  });
+  const typing = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Searching...',
+    phase: 'typing',
+    sequence: 6
+  });
+  const errored = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Provider error',
+    phase: 'error',
+    sequence: 6
+  });
+
+  assert.equal(typing.results.length, 1);
+  assert.equal(errored.results.length, 1);
+  assert.equal(errored.statusMessage, 'Provider error');
+});
+
+test('search panel state clears old typing rows for a changed query and normalizes trailing-space identity', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 6
+  });
+
+  const changedTyping = applySearchPanelPayload(local, {
+    query: 'firefox',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Searching...',
+    phase: 'typing',
+    sequence: 7
+  });
+  const trailingSpaceTyping = applySearchPanelPayload(local, {
+    query: 'spotify ',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Searching...',
+    phase: 'typing',
+    sequence: 7
+  });
+  const complete = applySearchPanelPayload(trailingSpaceTyping, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\FreshSpotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'Fresh app',
+      terms: 'spotify',
+      priority: 200,
+      recordKey: 'app:c:\\freshspotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: 'Showing search results',
+    phase: 'complete',
+    sequence: 7
+  });
+
+  assert.equal(changedTyping.query, 'firefox');
+  assert.equal(changedTyping.results.length, 0);
+  assert.equal(trailingSpaceTyping.query, 'spotify');
+  assert.equal(trailingSpaceTyping.results.length, 1);
+  assert.equal(complete.results[0].recordKey, 'app:c:\\freshspotify.exe');
+});
+
+test('search panel state applies rapid Windows settings typing payloads without stale rows', () => {
+  let state = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: 'Showing search results',
+    phase: 'complete',
+    sequence: 1
+  });
+
+  for (const [index, query] of ['W', 'Wi', 'Win', 'Wind', 'Windo', 'Window', 'Windows', 'Windows ', 'Windows s', 'Windows se', 'Windows set', 'Windows sett', 'Windows setti', 'Windows settin', 'Windows setting', 'Windows settings'].entries()) {
+    state = applySearchPanelPayload(state, {
+      query,
+      results: [],
+      selectedIndex: 0,
+      statusMessage: 'Searching...',
+      phase: 'typing',
+      sequence: index + 2
+    });
+    assert.equal(state.query, query.trim());
+    assert.equal(state.results.length, 0);
+    assert.equal(state.phase, 'typing');
+  }
+});
+
+test('search panel state allows complete payload after recoverable provider error', () => {
+  const local = applySearchPanelPayload(defaultSearchPanelViewState, {
+    query: 'spotify',
+    results: [{
+      id: 'app:C:\\Spotify.exe',
+      providerId: 'apps',
+      kind: 'app',
+      title: 'Spotify',
+      subtitle: 'App',
+      terms: 'spotify',
+      priority: 100,
+      recordKey: 'app:c:\\spotify.exe'
+    }],
+    selectedIndex: 0,
+    statusMessage: '1 local result',
+    phase: 'local',
+    sequence: 9
+  });
+  const errored = applySearchPanelPayload(local, {
+    query: 'spotify',
+    results: [],
+    selectedIndex: 0,
+    statusMessage: 'Everything unavailable',
+    phase: 'error',
+    sequence: 9
+  });
+  const completed = applySearchPanelPayload(errored, {
+    query: 'spotify',
+    results: local.results,
+    selectedIndex: 0,
+    statusMessage: 'Showing search results',
+    phase: 'complete',
+    sequence: 9
+  });
+
+  assert.equal(completed.phase, 'complete');
+  assert.equal(completed.statusMessage, 'Showing search results');
+  assert.equal(completed.results.length, 1);
+});
+
+test('search panel state source has no stray debug console literals', () => {
+  const source = readFileSync(new URL('../src/lib/searchPanelState.ts', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(source, /console\.log\(["']FALSE1["']\)/);
+  assert.doesNotMatch(source, /console\.log\(["']FALSE2["']\)/);
+  assert.doesNotMatch(source, /console\.log\(["']here["']\)/);
+});
+
+test('top-bar defers expensive search render work out of the input handler', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const inputHandler = source.match(/function handleSearchInput\(event: Event\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(inputHandler, /const nextQuery = \(event\.currentTarget as HTMLInputElement\)\.value;/);
+  assert.match(inputHandler, /const request = publishImmediateSearchInputState\(nextQuery\)/);
+  assert.match(inputHandler, /startImmediateSearchQueryExecution\(request\)/);
+  assert.match(source, /function publishImmediateSearchInputState\(nextQuery: string\)[\s\S]*queueSearchPanelPublish\(\{/);
+  assert.match(source, /function startImmediateSearchQueryExecution\(request: SearchEngineQueryRequestState\)[\s\S]*void loadSearchEngineResults\(request\)/);
+  assert.match(source, /function publishPendingSearchPayload/);
+  assert.match(source, /function scheduleSearchEngine\(query: string, existingRequest\?: \{ query: string; sequence: number \} \| null\)/);
+  assert.doesNotMatch(source, /queuedSearchEngineRequest/);
+  assert.doesNotMatch(source, /queueSearchQueryProcessing|flushQueuedSearchQuery|searchQueryProcessingQueue|SEARCH_QUERY_PROCESSING_DELAY_MS/);
+  assert.match(source, /searchEngine\(\{/);
+  assert.match(source, /SEARCH_ENGINE_PROGRESS_EVENT/);
+  assert.match(source, /applySearchEngineProgress\(event\.payload\)/);
+  assert.doesNotMatch(source, /mergeSearchPanelResultsByStableKey/);
+  assert.match(source, /shouldApplySearchEngineResponse\(/);
+  assert.match(source, /searchEngineResponseToPanelPayload\(response, selectedIndex, searchPresentation\)/);
+  assert.doesNotMatch(inputHandler, /rankSearchResults\(/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{[\s\S]*loadSearchEngineResults\(request\)/);
+  assert.doesNotMatch(source, /buildSearchCatalog\(launchers, openWindows, systemResults\)/);
+  assert.doesNotMatch(source, /rankSearchResults\(allResults, query\)/);
+  assert.doesNotMatch(source, /\$:\s*searchResults\s*=\s*rankSearchResults\(allResults, searchQuery\)/);
+  assert.match(source, /function queueSearchPanelPublish/);
+  assert.match(source, /lastSearchPanelPayloadSignature = signature/);
+  assert.match(source, /payload\.sequence === undefined/);
+  assert.doesNotMatch(source, /await publishSearchPanel\(sequencedPayload\)/);
+  assert.match(source, /result\.kind === 'setting' && result\.path/);
+  const appActivationBranch = source.match(/else if \(result\.kind === 'app'\) \{[\s\S]*?\n    \} else if \(result\.kind === 'window'\)/)?.[0] ?? '';
+  assert.match(source, /launchAppPath/);
+  assert.match(appActivationBranch, /await launchAppPath\(result\.path\)/);
+  assert.doesNotMatch(appActivationBranch, /await openShellPath\(result\.path\)/);
+  assert.match(source, /await openShellPath\(result\.path\)/);
+  assert.match(source, /const needsNativeShow = !searchOpen \|\| searchPresentation !== 'centered'/);
+  assert.match(source, /if \(needsNativeShow\) \{[\s\S]*showCenteredSearchPanel\(readCenteredSearchPanelSize\(\)\)/);
+  assert.match(source, /visibleRows = buildVisibleSearchRows\(searchResults,\s*\{/);
+  assert.match(source, /selectedVisibleIndex = selectedVisibleRowIndex\(visibleRows, selectedIndex\)/);
+  assert.match(source, /const nextIndex = nextVisibleRowIndex\(visibleRows, selectedVisibleIndex, 1\)/);
+  assert.match(source, /const nextIndex = nextVisibleRowIndex\(visibleRows, selectedVisibleIndex, -1\)/);
+  assert.match(source, /void activateResult\(selectedVisibleResult\)/);
+});
+
+test('top-bar cancels search work on native panel close and listens only to app index refreshes', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const closeHandler = source.match(/(?:void listen|registerAsyncUnlistener\(listen)\(SEARCH_PANEL_CLOSED_EVENT,[\s\S]*?\}\)\)?/)?.[0] ?? '';
+  const refreshHandler = source.match(/(?:void listen<SearchIndexRefreshedPayload>|registerAsyncUnlistener\(listen<SearchIndexRefreshedPayload>)\(SEARCH_INDEX_REFRESHED_EVENT,[\s\S]*?\}\)\)?/)?.[0] ?? '';
+  const immediate = source.match(/function publishImmediateSearchInputState\(nextQuery: string\)[\s\S]*?\n  \}/)?.[0] ?? '';
+  const start = source.match(/function startImmediateSearchQueryExecution\(request: SearchEngineQueryRequestState\)[\s\S]*?\n  \}/)?.[0] ?? '';
+
+  assert.match(source, /function cleanupSearchWorkAfterClose\(\)/);
+  assert.match(closeHandler, /resetActiveSearchState\(\)/);
+  assert.match(source, /function resetActiveSearchState\(\) \{[\s\S]*cleanupSearchWorkAfterClose\(\)[\s\S]*invalidateSearchEngineResponses\(\)/);
+  assert.match(source, /function publishPendingSearchPayload\(sequence: number, results: SearchPanelResult\[\] = searchResults\)/);
+  assert.match(immediate, /if \(!request\.query \|\| normalizedChanged\) \{[\s\S]*searchResults = \[\];[\s\S]*searchResultsQuery = '';/);
+  assert.match(start, /publishPendingSearchPayload\(request\.sequence, searchResults\)/);
+  assert.match(start, /void loadSearchEngineResults\(request\)/);
+  assert.match(source, /const selectedIndexBeforeUpdate = selectedIndex/);
+  assert.match(source, /selectedIndexBeforeUpdate <= 0/);
+  assert.match(source, /if \(!shouldRetry\) \{[\s\S]*resetSearchProviderCacheRetry\(\)/);
+  assert.match(refreshHandler, /isAppSearchIndexRefreshedPayload\(event\.payload\)/);
+  assert.match(refreshHandler, /lastAppIndexRefreshGeneration/);
+});
+
+test('top-bar tracks and clears delayed rail scroll button updates', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const scheduler = source.match(/function scheduleRailScrollButtonUpdate\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const canceler = source.match(/function cancelRailScrollButtonUpdate\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const cleanup = source.match(/return \(\) => \{[\s\S]*?\n    \};/)?.[0] ?? '';
+
+  assert.match(source, /let railScrollUpdateTimeout: number \| null = null;/);
+  assert.match(source, /let railScrollButtonsDisposed = false;/);
+  assert.match(source, /function updateRailScrollButtons\(\) \{[\s\S]*if \(railScrollButtonsDisposed\) \{[\s\S]*return;[\s\S]*\}/);
+  assert.match(scheduler, /if \(railScrollUpdateTimeout !== null\) \{[\s\S]*window\.clearTimeout\(railScrollUpdateTimeout\)/);
+  assert.match(scheduler, /railScrollUpdateTimeout = window\.setTimeout\(\(\) => \{[\s\S]*railScrollUpdateTimeout = null;[\s\S]*updateRailScrollButtons\(\);[\s\S]*\}, 160\)/);
+  assert.match(canceler, /window\.clearTimeout\(railScrollUpdateTimeout\)/);
+  assert.match(canceler, /railScrollUpdateTimeout = null;/);
+  assert.match(cleanup, /railScrollButtonsDisposed = true;/);
+  assert.match(cleanup, /cancelRailScrollButtonUpdate\(\)/);
+  assert.doesNotMatch(source, /(?<!window\.)setTimeout\(updateRailScrollButtons, 160\)/);
+});
+
+test('search-panel fallback fetches cannot overwrite newer event payloads', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  assert.match(source, /let fallbackGeneration = 0/);
+  assert.match(source, /SEARCH_PANEL_UPDATE_EVENT[\s\S]*fallbackGeneration \+= 1/);
+  assert.match(source, /const generation = fallbackGeneration[\s\S]*getSearchPanelPayload\(\)\.then/);
+  assert.match(source, /if \(generation !== fallbackGeneration\) \{[\s\S]*return;[\s\S]*\}[\s\S]*applyPayload\(payload\)/);
+});
+
+test('centered search surface keeps local typing immediate without unconditional payload refocus', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /let optimisticQueryDraft: string \| null = null;/);
+  assert.match(source, /\$: displayedQuery = optimisticQueryDraft \?\? query;/);
+  assert.match(source, /optimisticQueryDraft = value;/);
+  assert.match(source, /queueQueryEmit\(value\)/);
+  assert.match(source, /function cancelQueuedQueryEmit\(\) \{/);
+  assert.match(source, /let queryInputSequence = 0;/);
+  assert.match(source, /const payload: SearchPanelQueryPayload = \{/);
+  assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_QUERY_EVENT, payload\)/);
+  assert.doesNotMatch(source, /pendingQueryEmitValue|queryEmitTimer/);
+  assert.match(source, /if \(shouldFocusCenteredQueryInput\(\)\) \{\s*void focusQueryInput\(\);/);
+  assert.doesNotMatch(source, /if \(event\.payload\.presentation === 'centered'\) \{\s*void focusQueryInput\(\);/);
+});
+
+test('top-bar search closes with blur and can reopen immediately from pointer interaction', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /async function closePanel\(\) \{[\s\S]*searchInput\?\.blur\(\);/);
+  assert.match(source, /function handleSearchPointerDown\(\) \{[\s\S]*if \(!searchOpen\) \{[\s\S]*openConfiguredPanel\(\);/);
+  assert.match(source, /on:pointerdown=\{handleSearchPointerDown\}/);
+});
+
+test('search panel renders a flat visibleRows model instead of grouped buckets', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /visibleRows = buildVisibleSearchRows\(results,\s*\{/);
+  assert.match(source, /\{#each visibleRows as row, index/);
+  assert.doesNotMatch(source, /resultGroups = groupSearchResults\(results\)/);
+  assert.doesNotMatch(source, /\{#each resultGroups as group/);
+});
+
+test('search panel keyboard and aria state follow visibleRows order', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+
+  assert.match(source, /selectedRowIndex = selectedVisibleRowIndex\(visibleRows, selectedIndex\)/);
+  assert.match(source, /aria-activedescendant=\{selectedRow\?\.domId\}/);
+  assert.match(source, /\{#each visibleRows as row, index \(row\.rowKey\)\}/);
+  assert.match(source, /id=\{row\.domId\}/);
+  assert.match(source, /use:trackVisibleRow=\{index\}/);
+  assert.match(source, /selectVisibleOffset\(1\)/);
+  assert.match(source, /selectVisibleOffset\(-1\)/);
+  assert.match(source, /activateRow\(selectedRow\)/);
+  assert.match(source, /searchVisibleRowIdentity\(row\)/);
+  assert.doesNotMatch(source, /use:trackResultRow=\{index\}/);
+});
+
+test('search panel minimum layout keeps header outside internal result scroller', () => {
+  const css = readFileSync(new URL('../src/components/SearchPanelSurface.css', import.meta.url), 'utf8');
+  const rootRule = css.match(/\.search-panel\s*\{(?<body>[\s\S]*?)\}/)?.groups?.body ?? '';
+  const headerRule = css.match(/\.search-panel-header\s*\{(?<body>[\s\S]*?)\}/)?.groups?.body ?? '';
+  const resultsRule = css.match(/\.result-list\s*\{(?<body>[\s\S]*?)\}/)?.groups?.body ?? '';
+
+  assert.match(rootRule, /display:\s*flex;/);
+  assert.match(rootRule, /flex-direction:\s*column;/);
+  assert.match(rootRule, /min-height:\s*0;/);
+  assert.match(rootRule, /overflow:\s*hidden;/);
+  assert.match(headerRule, /flex:\s*0 0 auto;/);
+  assert.match(resultsRule, /flex:\s*1 1 auto;/);
+  assert.match(resultsRule, /align-content:\s*start;/);
+  assert.match(resultsRule, /grid-auto-rows:\s*minmax\(2\.55rem,\s*max-content\);/);
+  assert.doesNotMatch(resultsRule, /grid-auto-rows:\s*minmax\(2\.55rem,\s*2\.55rem\);/);
+  assert.match(resultsRule, /min-height:\s*0;/);
+  assert.match(resultsRule, /overflow-y:\s*auto;/);
+  assert.doesNotMatch(resultsRule, /max-height:\s*calc\(/);
 });

@@ -1,0 +1,1 @@
+JasonShell: Windows shell-foundation prototype using Tauri 2, Svelte 5, TypeScript, Rust, Win32 APIs. Multiple Tauri webview windows: top-bar, bottom-bar, search-panel, stack-popup, task-preview, process-manager. Canonical docs: master_spec.md; source/tests override stale docs.

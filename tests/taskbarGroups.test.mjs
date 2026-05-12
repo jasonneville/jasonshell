@@ -12,9 +12,8 @@ import {
   taskbarGroupDropTargetFromPointer,
   taskbarGroupDropPlacement,
   taskbarGroupReorderOffset,
-  taskbarGroupCloseAllRequest,
   taskWindowGroupKey
-} from '../dist-tests/taskbarGroups.js';
+} from '../dist-tests/lib/taskbarGroups.js';
 
 function taskWindow(overrides) {
   return {
@@ -38,18 +37,6 @@ test('groups open task windows by application identity', () => {
   assert.deepEqual(groups.map((group) => group.key), ['firefox', 'code']);
   assert.equal(groups[0].windows.length, 2);
   assert.equal(groups[0].isActive, true);
-});
-
-test('builds close-all request payloads for grouped task count menus', () => {
-  const [group] = buildTaskWindowGroups([
-    taskWindow({ hwnd: '10', processName: 'firefox', title: 'Docs' }),
-    taskWindow({ hwnd: '11', processName: 'Firefox', title: 'Mail' })
-  ]);
-
-  assert.deepEqual(taskbarGroupCloseAllRequest(group), {
-    hwnds: ['10', '11'],
-    label: 'firefox'
-  });
 });
 
 test('marks a task window group busy when any eligible contained window is busy', () => {

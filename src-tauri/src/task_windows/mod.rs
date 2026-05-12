@@ -5,11 +5,21 @@ use serde::{Deserialize, Serialize};
 pub struct TaskbarWindow {
     pub hwnd: String,
     pub title: String,
+    pub process_id: u32,
     pub process_name: String,
     pub icon_data_url: String,
     pub is_active: bool,
     pub is_minimized: bool,
     pub activity_state: TaskbarWindowActivityState,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskbarProcessWindow {
+    pub hwnd: String,
+    pub title: String,
+    pub process_id: u32,
+    pub is_active: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -60,6 +70,18 @@ pub fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
 }
 
 #[tauri::command]
+pub fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::list_taskbar_process_windows()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
 pub fn activate_task_window(hwnd: String, was_active: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -85,6 +107,39 @@ pub fn maximize_task_window(hwnd: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+pub fn close_task_window(hwnd: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        reject_internal_shell_hwnd(&hwnd)?;
+        validate_task_window_preview_source(&hwnd)?;
+        actions::perform_task_window_action(hwnd, TaskWindowAction::Close)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = hwnd;
+        Err("Taskbar window integration is only supported on Windows".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn reject_internal_shell_hwnd(hwnd: &str) -> Result<(), String> {
+    if is_jasonshell_window(hwnd)? {
+        return Err(
+            "Refusing to close an internal JasonShell window from task preview".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn is_jasonshell_window(hwnd: &str) -> Result<bool, String> {
+    let target_path = task_window_process_path(hwnd)?;
+    let current_exe = std::env::current_exe()
+        .map_err(|error| format!("Current JasonShell executable path is unavailable: {error}"))?;
+    Ok(target_path == current_exe)
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn perform_task_window_action(
     hwnd: String,
@@ -93,9 +148,31 @@ pub(crate) fn perform_task_window_action(
     actions::perform_task_window_action(hwnd, action)
 }
 
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn perform_task_window_action(
+    hwnd: String,
+    action: TaskWindowAction,
+) -> Result<(), String> {
+    let _ = (hwnd, action);
+    Err("Taskbar window integration is only supported on Windows".to_string())
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
     previews::capture_task_window_preview(hwnd)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn validate_task_window_preview_source(
+    hwnd: &str,
+) -> Result<::windows::Win32::Foundation::HWND, String> {
+    previews::validate_task_window_preview_source(hwnd)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn capture_task_window_preview(hwnd: String) -> Result<TaskWindowPreviewImage, String> {
+    let _ = hwnd;
+    Err("Taskbar window previews are only supported on Windows".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -110,4 +187,10 @@ pub(super) fn parse_hwnd(hwnd: &str) -> Result<::windows::Win32::Foundation::HWN
         .map_err(|error| format!("Invalid window handle '{hwnd}': {error}"))?;
 
     Ok(::windows::Win32::Foundation::HWND(hwnd_value as *mut _))
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn task_window_process_path(hwnd: &str) -> Result<std::path::PathBuf, String> {
+    let hwnd = parse_hwnd(hwnd)?;
+    windows::process_image_path_for_hwnd(hwnd)
 }

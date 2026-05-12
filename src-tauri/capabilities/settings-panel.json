@@ -1,0 +1,11 @@
+{
+  "identifier": "settings-panel",
+  "description": "Settings dropdown auxiliary surface capability: renderer-only shell preferences and theme/font/date controls.",
+  "windows": [
+    "settings-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

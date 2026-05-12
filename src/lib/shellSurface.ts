@@ -5,6 +5,13 @@ export type ShellSurface =
   | 'search-panel'
   | 'stack-popup'
   | 'process-manager'
+  | 'control-plane'
+  | 'settings-panel'
+  | 'tray-panel'
+  | 'terminal-panel'
+  | 'command-panel'
+  | 'audio-panel'
+  | 'calendar-panel'
   | 'unknown';
 
 type SurfaceMeta = {
@@ -37,6 +44,34 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Running process monitor',
     title: 'JasonShell Process Manager'
   },
+  'control-plane': {
+    subtitle: 'Settings and developer dashboard',
+    title: 'JasonShell Control Plane'
+  },
+  'settings-panel': {
+    subtitle: 'Quick shell preferences',
+    title: 'JasonShell Settings'
+  },
+  'tray-panel': {
+    subtitle: 'Notification area icon relay',
+    title: 'JasonShell Tray'
+  },
+  'terminal-panel': {
+    subtitle: 'Persistent JasonShell terminal',
+    title: 'JasonShell Terminal'
+  },
+  'command-panel': {
+    subtitle: 'Quick command launcher and editor',
+    title: 'JasonShell Commands'
+  },
+  'audio-panel': {
+    subtitle: 'Quick audio controls',
+    title: 'JasonShell Sound'
+  },
+  'calendar-panel': {
+    subtitle: 'Clock calendar and timezone details',
+    title: 'JasonShell Calendar'
+  },
   unknown: {
     subtitle: 'Surface route unavailable',
     title: 'JasonShell'
@@ -51,6 +86,13 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'search-panel'
     || label === 'stack-popup'
     || label === 'process-manager'
+    || label === 'control-plane'
+    || label === 'settings-panel'
+    || label === 'tray-panel'
+    || label === 'terminal-panel'
+    || label === 'command-panel'
+    || label === 'audio-panel'
+    || label === 'calendar-panel'
   ) {
     return label;
   }

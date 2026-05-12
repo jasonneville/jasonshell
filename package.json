@@ -8,14 +8,27 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test:search": "tsc -p tsconfig.test.json && node --test tests/searchPanelState.test.mjs tests/stackPopupState.test.mjs tests/folderDrag.test.mjs tests/taskbarGroups.test.mjs tests/taskbarTilePointer.test.mjs tests/topBarPins.test.mjs tests/stackBrowserTopBarPinFlow.test.mjs tests/contextMenuPosition.test.mjs tests/stackPopupContextMenu.test.mjs tests/processManagerState.test.mjs tests/processManagerWiring.test.mjs",
+    "test:node": "node scripts/clean-dist-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
+    "test:search": "npm run test:node",
     "cargo:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "validate": "npm run check && npm run build && npm run test:search && npm run cargo:test && npm run cargo:check",
+    "validate": "npm run check && npm run build && npm run test:node && npm run cargo:test && npm run cargo:check",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "afplay": "^1.0.4",
+    "bun": "^1.3.13",
+    "bunx": "^0.1.0",
+    "melt": "^0.44.0",
+    "osascript": "^1.2.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
@@ -25,6 +38,7 @@
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.0.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vite-plugin-terminal": "^1.4.0"
   }
 }

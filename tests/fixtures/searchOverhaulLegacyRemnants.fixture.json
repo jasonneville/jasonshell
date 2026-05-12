@@ -1,0 +1,94 @@
+{
+  "phase": "search_overhaul.phase0",
+  "description": "Legacy search files that must be deleted, rewritten, or proven outside the production hot path before the overhaul is complete.",
+  "phase7AuditExpectations": {
+    "status": "phases 0-8 implemented and validated",
+    "requiredValidationEvidence": [
+      "rg checks proving removed legacy entry points are not imported by the hot path",
+      "Source tests proving the top-bar input path imports only the new search wrapper and panel contracts",
+      "Source tests proving legacy search_system is not registered as a Tauri command",
+      "Full npm run validate"
+    ],
+    "bannedRustSearchSourceModules": [
+      "everything",
+      "index",
+      "provider",
+      "windows_search",
+      "files"
+    ],
+    "allowedRustSearchSourceInfrastructure": [
+      "everything_ffi",
+      "everything_install"
+    ]
+  },
+  "phase8AuditExpectations": {
+    "requiredDeliverables": [
+      "QA report",
+      "Validation results",
+      "Performance notes in master_spec.md"
+    ],
+    "liveSmokeQueries": [
+      "display settings",
+      "sound settings",
+      "jnev1",
+      "spotify",
+      "control panel",
+      "one installed app other than Spotify",
+      "C:\\dev",
+      "C://dev",
+      "dev",
+      "downloads",
+      "one-character query"
+    ],
+    "performanceBudgetsMs": {
+      "firstVisiblePayload": 50,
+      "warmLocalIntent": 10,
+      "everythingTypical": 150,
+      "rendererSyncWork": 8
+    }
+  },
+  "remnants": [
+    {
+      "path": "src/lib/searchCatalog.ts",
+      "currentRole": "TypeScript mixed local catalog",
+      "targetDisposition": "delete-or-ui-only-adapter",
+      "mustNotBeImportedByHotPath": true
+    },
+    {
+      "path": "src/lib/searchRanking.ts",
+      "currentRole": "Duplicate TypeScript visible ranking",
+      "targetDisposition": "delete-or-grouping-only-helper",
+      "mustNotBeImportedByHotPath": true
+    },
+    {
+      "path": "src/lib/systemSearch.ts",
+      "currentRole": "Legacy frontend wrapper for search_system",
+      "targetDisposition": "deprecated-compatibility-wrapper-no-registered-command",
+      "mustNotBeImportedByHotPath": true
+    },
+    {
+      "path": "src-tauri/src/search_sources/index.rs",
+      "currentRole": "Old mixed provider coordinator and warmed-cache path",
+      "targetDisposition": "remove-from-production-hot-path",
+      "mustNotBeImportedByHotPath": true
+    },
+    {
+      "path": "src-tauri/src/search_sources/files.rs",
+      "currentRole": "Legacy warmed file cache",
+      "targetDisposition": "delete-or-diagnostic-only",
+      "mustNotBeImportedByHotPath": true
+    },
+    {
+      "path": "src-tauri/src/search_sources/windows_search.rs",
+      "currentRole": "Windows Search fallback provider",
+      "targetDisposition": "delete-or-disabled-explicit-provider",
+      "mustNotBeImportedByHotPath": true
+    },
+    {
+      "path": "src-tauri/src/search_sources/provider.rs",
+      "currentRole": "Old provider contracts",
+      "targetDisposition": "replace-with-new-search-contracts",
+      "mustNotBeImportedByHotPath": true
+    }
+  ]
+}

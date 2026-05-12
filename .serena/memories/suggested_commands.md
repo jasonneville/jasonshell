@@ -1,0 +1,1 @@
+Windows/PowerShell. Install: npm install. Dev: npm run tauri dev. Frontend/type checks: npm run check; npm run build. Node tests: npm run test:node (focused args supported by node --test, e.g. npm run test:node -- trayPanelRetention). Rust: npm run cargo:test; npm run cargo:check. Full validation: npm run validate. Git status: git status --short.

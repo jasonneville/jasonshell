@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  applyStackEntryIconUpdates,
   applyStackEntries,
   applyStackFolderListing,
   canNavigateStackBack,
   canNavigateStackForward,
+  commitValidatedStackFolderListing,
   defaultStackPopupViewState,
   findTypeToSelectPath,
   formatStackSize,
@@ -15,18 +17,22 @@ import {
   parentStackPath,
   selectAllStackEntries,
   selectStackEntry,
+  selectStackEntryPaths,
   selectedStackEntry,
   selectedStackPaths,
   sortStackEntries,
+  stackOpenWithSuggestions,
+  stackSortHeaderState,
   stackBreadcrumbSegments,
   stackPopupHasRetainedRows,
   stackListingStatus,
   stackPopupOpenPath,
   stackPopupRequestKey,
   stackItemNameFromPath,
+  stackIconHydrationStatus,
   updateStackSort
-} from '../dist-tests/stackPopupState.js';
-import { stackFileIconForEntry } from '../dist-tests/stackFileIcons.js';
+} from '../dist-tests/lib/stackPopupState.js';
+import { stackFileIconForEntry } from '../dist-tests/lib/stackFileIcons.js';
 
 const documents = 'C:\\Users\\me\\Documents';
 const downloads = 'C:\\Users\\me\\Downloads';
@@ -140,6 +146,46 @@ test('retains previous entries while a different folder is loading', () => {
   assert.equal(stackPopupHasRetainedRows(state), true);
 });
 
+test('typed path validation success commits current path history and listing together', () => {
+  const entries = [stackEntry('alpha.txt')];
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [stackEntry('old.txt')]);
+
+  state = commitValidatedStackFolderListing(state, downloads, {
+    path: downloads,
+    entries,
+    total: 1,
+    warnings: []
+  });
+
+  assert.equal(state.currentPath, downloads);
+  assert.equal(state.entriesPath, downloads);
+  assert.deepEqual(state.history, [documents, downloads]);
+  assert.equal(stackPopupHasRetainedRows(state), false);
+  assert.deepEqual(state.entries.map((entry) => entry.name), ['alpha.txt']);
+});
+
+test('typed path validation failure leaves previous folder state non-retained', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [stackEntry('old.txt')]);
+  const before = state;
+  const missing = 'Z:\\Missing';
+
+  // If typed validation fails, no commit happens; stale data for the typed path cannot move state.
+  state = applyStackFolderListing(state, missing, {
+    path: missing,
+    entries: [stackEntry('bad.txt')],
+    total: 1,
+    warnings: []
+  });
+
+  assert.equal(state.currentPath, documents);
+  assert.equal(state.entriesPath, documents);
+  assert.deepEqual(state.history, [documents]);
+  assert.equal(stackPopupHasRetainedRows(state), false);
+  assert.deepEqual(state.entries.map((entry) => entry.name), ['old.txt']);
+});
+
 test('retains previous entries while navigating history loads another folder', () => {
   const entries = [
     {
@@ -222,6 +268,23 @@ test('supports toggle, range, and select-all stack selection', () => {
   assert.deepEqual(selectedStackPaths(state), entries.map((entry) => entry.path));
 });
 
+test('applies marquee-selected stack entry paths while filtering stale and duplicate paths', () => {
+  const entries = [stackEntry('alpha.txt'), stackEntry('bravo.txt'), stackEntry('charlie.txt')];
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, entries);
+
+  state = selectStackEntryPaths(state, [
+    entries[1].path,
+    'C:\\Users\\me\\Documents\\missing.txt',
+    entries[1].path,
+    entries[2].path
+  ]);
+
+  assert.equal(state.selectedPath, entries[2].path);
+  assert.deepEqual(state.selectedPaths, [entries[1].path, entries[2].path]);
+  assert.equal(state.selectionAnchorPath, entries[1].path);
+});
+
 test('preserves visible selections and drops stale selections after refresh', () => {
   const entries = [stackEntry('alpha.txt'), stackEntry('bravo.txt'), stackEntry('charlie.txt')];
   let state = openStackFolder(defaultStackPopupViewState, documents);
@@ -278,6 +341,46 @@ test('updates stack sort column and toggles direction', () => {
   assert.equal(state.sortDirection, 'asc');
 });
 
+test('reports stack sort header aria state and active indicator', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+
+  assert.deepEqual(stackSortHeaderState(state, 'name'), {
+    active: true,
+    ariaSort: 'ascending',
+    className: 'details-sort active asc',
+    indicator: '↑'
+  });
+  assert.deepEqual(stackSortHeaderState(state, 'size'), {
+    active: false,
+    ariaSort: 'none',
+    className: 'details-sort',
+    indicator: ''
+  });
+
+  state = updateStackSort(state, 'name');
+  assert.deepEqual(stackSortHeaderState(state, 'name'), {
+    active: true,
+    ariaSort: 'descending',
+    className: 'details-sort active desc',
+    indicator: '↓'
+  });
+});
+
+test('suggests useful Open With apps for developer text files', () => {
+  assert.deepEqual(
+    stackOpenWithSuggestions(stackEntry('notes.txt')).map((app) => [
+      app.label,
+      app.commandContract
+    ]),
+    [
+      ['Notepad', 'open_stack_item_with_app'],
+      ['Notepad++', 'open_stack_item_with_app'],
+      ['Visual Studio Code', 'open_stack_item_with_app']
+    ]
+  );
+  assert.deepEqual(stackOpenWithSuggestions(stackEntry('Projects', 'Folder')), []);
+});
+
 test('ignores stale folder entry payloads', () => {
   let state = openStackFolder(defaultStackPopupViewState, documents);
   state = applyStackEntries(state, downloads, [
@@ -327,6 +430,17 @@ test('applies complete stack folder listings with partial warning status', () =>
   assert.equal(stackListingStatus(listing), state.statusMessage);
 });
 
+test('reports progressive count status as soon as first metadata page lands', () => {
+  const listing = {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 505,
+    warnings: []
+  };
+
+  assert.equal(stackListingStatus(listing), '1 of 505 items');
+});
+
 test('merges incremental stack folder pages for immediate first render', () => {
   const firstPage = {
     path: documents,
@@ -355,6 +469,73 @@ test('merges incremental stack folder pages for immediate first render', () => {
   assert.deepEqual(merged.entries.map((entry) => entry.name), ['Alpha', 'bravo.txt']);
   assert.equal(merged.total, 3);
   assert.deepEqual(merged.warnings.map((warning) => warning.message), ['first warning', 'second warning']);
+});
+
+test('progressive stack folder merge grows visible rows monotonically by page', () => {
+  const page1 = {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 3,
+    warnings: [],
+    offset: 0,
+    limit: 1,
+    hasMore: true
+  };
+  const page2 = {
+    path: documents,
+    entries: [stackEntry('bravo.txt')],
+    total: 3,
+    warnings: [],
+    offset: 1,
+    limit: 1,
+    hasMore: true
+  };
+  const page3 = {
+    path: documents,
+    entries: [stackEntry('charlie.txt')],
+    total: 3,
+    warnings: [],
+    offset: 2,
+    limit: 1,
+    hasMore: false
+  };
+
+  const merged1 = mergeStackFolderListings(null, page1);
+  const merged2 = mergeStackFolderListings(merged1, page2);
+  const merged3 = mergeStackFolderListings(merged2, page3);
+
+  assert.equal(merged1.entries.length, 1);
+  assert.equal(merged2.entries.length, 2);
+  assert.equal(merged3.entries.length, 3);
+});
+
+test('switching folders resets progressive merge and avoids old-row append into new folder', () => {
+  const oldFolderPage = {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 2,
+    warnings: [],
+    offset: 0,
+    limit: 1,
+    hasMore: true
+  };
+  const newFolderPage = {
+    path: downloads,
+    entries: [{
+      ...stackEntry('fresh.txt'),
+      id: 'C:\\Users\\me\\Downloads\\fresh.txt',
+      path: 'C:\\Users\\me\\Downloads\\fresh.txt'
+    }],
+    total: 1,
+    warnings: [],
+    offset: 0,
+    limit: 1,
+    hasMore: false
+  };
+
+  const merged = mergeStackFolderListings(oldFolderPage, newFolderPage);
+  assert.equal(merged.path, downloads);
+  assert.deepEqual(merged.entries.map((entry) => entry.path), ['C:\\Users\\me\\Downloads\\fresh.txt']);
 });
 
 test('ignores stale folder listing payloads', () => {
@@ -412,4 +593,82 @@ test('stack browser fallback icon metadata does not use text abbreviations', () 
   ]) {
     assert.equal(Object.hasOwn(stackFileIconForEntry(entry), 'glyph'), false);
   }
+});
+
+test('updates row icons in place without changing progressive row ordering', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [
+    {
+      ...stackEntry('alpha.txt'),
+      iconDataUrl: null
+    },
+    {
+      ...stackEntry('bravo.txt'),
+      iconDataUrl: null
+    }
+  ]);
+
+  const updated = applyStackEntryIconUpdates(state, documents, [
+    {
+      path: 'C:\\Users\\me\\Documents\\bravo.txt',
+      iconDataUrl: 'data:image/png;base64,icon-bravo'
+    },
+    {
+      path: 'C:\\Users\\me\\Documents\\alpha.txt',
+      iconDataUrl: 'data:image/png;base64,icon-alpha'
+    }
+  ]);
+
+  assert.deepEqual(updated.entries.map((entry) => entry.name), ['alpha.txt', 'bravo.txt']);
+  assert.equal(updated.entries[0].iconDataUrl, 'data:image/png;base64,icon-alpha');
+  assert.equal(updated.entries[1].iconDataUrl, 'data:image/png;base64,icon-bravo');
+});
+
+test('reports icon hydration progress distinctly from metadata listing completion', () => {
+  assert.equal(stackIconHydrationStatus(0, 0), '');
+  assert.equal(stackIconHydrationStatus(0, 5), 'Loading icons 0 of 5');
+  assert.equal(stackIconHydrationStatus(2, 5), 'Loading icons 2 of 5');
+  assert.equal(stackIconHydrationStatus(5, 5), '');
+  assert.equal(stackIconHydrationStatus(8, 5), '');
+});
+
+test('status transitions cover loading, progressive count, metadata done, and icon completion', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  assert.equal(state.statusMessage, 'Loading folder...');
+
+  state = applyStackFolderListing(state, documents, {
+    path: documents,
+    entries: [stackEntry('alpha.txt')],
+    total: 505,
+    warnings: []
+  });
+  assert.equal(state.statusMessage, '1 of 505 items');
+  assert.equal(stackIconHydrationStatus(0, 1), 'Loading icons 0 of 1');
+  assert.equal(stackIconHydrationStatus(1, 1), '');
+});
+
+test('regression: progressive merge grows past legacy 80-row first page without stalling', () => {
+  const page1 = {
+    path: documents,
+    entries: Array.from({ length: 80 }, (_, index) => stackEntry(`alpha-${index.toString().padStart(3, '0')}.txt`)),
+    total: 505,
+    warnings: [],
+    offset: 0,
+    limit: 80,
+    hasMore: true
+  };
+  const page2 = {
+    path: documents,
+    entries: Array.from({ length: 60 }, (_, index) => stackEntry(`bravo-${index.toString().padStart(3, '0')}.txt`)),
+    total: 505,
+    warnings: [],
+    offset: 80,
+    limit: 60,
+    hasMore: true
+  };
+
+  const merged = mergeStackFolderListings(mergeStackFolderListings(null, page1), page2);
+
+  assert.equal(merged.entries.length, 140);
+  assert.equal(stackListingStatus(merged), '140 of 505 items');
 });

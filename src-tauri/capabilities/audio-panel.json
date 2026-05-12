@@ -1,0 +1,11 @@
+{
+  "identifier": "audio-panel",
+  "description": "Audio panel auxiliary surface capability: volume/device controls and window-label access.",
+  "windows": [
+    "audio-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

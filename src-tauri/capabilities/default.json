@@ -1,9 +1,8 @@
 {
-  "identifier": "default",
-  "description": "Default capability for the shell bars prototype.",
+  "identifier": "top-bar",
+  "description": "Top-bar shell surface capability: search, workspace activation, stack pin, workspace tooling action plans, event, and window-label access.",
   "windows": [
-    "top-bar",
-    "bottom-bar"
+    "top-bar"
   ],
   "permissions": [
     "core:default",

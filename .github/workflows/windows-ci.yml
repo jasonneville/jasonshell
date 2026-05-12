@@ -1,0 +1,43 @@
+name: Windows CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  validate:
+    name: Validate on Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Svelte check
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Node tests
+        run: npm run test:node
+
+      - name: Cargo test
+        run: npm run cargo:test
+
+      - name: Cargo check
+        run: npm run cargo:check

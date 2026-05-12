@@ -1,0 +1,64 @@
+{
+  "phase": "search_overhaul.phase6",
+  "pipeline": [
+    "input echo",
+    "pending payload publish",
+    "deferred provider request",
+    "latest response apply",
+    "stale response ignore"
+  ],
+  "pendingPayload": {
+    "query": "disp",
+    "sequence": 4,
+    "phase": "typing",
+    "statusMessage": "Searching...",
+    "results": []
+  },
+  "latestResponse": {
+    "query": "display",
+    "sequence": 5,
+    "topResult": {
+      "id": "setting:display",
+      "providerId": "settings",
+      "kind": "setting",
+      "title": "Display Settings",
+      "path": "ms-settings:display"
+    }
+  },
+  "staleResponse": {
+    "query": "disp",
+    "sequence": 4
+  },
+  "forbiddenBeforeInputEcho": [
+    {
+      "name": "provider calls",
+      "patterns": ["searchEngine\\(", "searchSystem\\(", "invoke\\(", "fetch\\("]
+    },
+    {
+      "name": "ranking/catalog work",
+      "patterns": ["rankSearchResults\\(", "buildSearchCatalog\\(", "collapseDuplicateResults\\("]
+    },
+    {
+      "name": "native panel show/reposition",
+      "patterns": ["showSearchPanel\\(", "showCenteredSearchPanel\\(", "readCenteredSearchPanelSize\\("]
+    },
+    {
+      "name": "sync storage/filesystem/icon work",
+      "patterns": ["localStorage", "readFileSync\\(", "readdirSync\\(", "statSync\\(", "iconDataUrl"]
+    }
+  ],
+  "legacyHotPathImports": [
+    "../lib/searchCatalog",
+    "../lib/searchRanking",
+    "../lib/systemSearch"
+  ],
+  "requiredTopBarImports": [
+    "../lib/searchEngine"
+  ],
+  "requiredCodeSeams": [
+    "createLatestSearchQueryController",
+    "publishPendingSearchPayload",
+    "shouldApplySearchEngineResponse",
+    "searchEngineResponseToPanelPayload"
+  ]
+}

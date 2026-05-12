@@ -1,8 +1,12 @@
 <script lang="ts">
+  import './TaskPreviewSurface.css';
   import { onMount } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
+    closePreviewedTaskWindow,
     hideTaskWindowPreview,
+    isNativeLiveTaskPreviewPayload,
     type TaskPreviewPayload
   } from '../lib/taskbarPreview';
   import {
@@ -12,6 +16,10 @@
   import { maximizeTaskWindow } from '../lib/taskbarWindows';
 
   let preview: TaskPreviewPayload | null = null;
+  $: isNativeLivePreview = preview ? isNativeLiveTaskPreviewPayload(preview) : false;
+  $: previewSurfaceClass = `surface preview-surface${isNativeLivePreview ? ' preview-surface-native' : ''}`;
+  $: previewPrimaryTitle = preview ? (preview.title || preview.processName) : '';
+  $: previewSecondaryText = preview && preview.processName !== previewPrimaryTitle ? preview.processName : '';
 
   async function hidePreviewSurface() {
     preview = null;
@@ -43,22 +51,58 @@
     await handlePreviewActivate();
   }
 
+  function handlePreviewPointerEnter() {
+    void emit(TASK_PREVIEW_HOVER_ENTER_EVENT);
+  }
+
+  async function handlePreviewPointerLeave(event: PointerEvent) {
+    const root = event.currentTarget as HTMLElement | null;
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (root && relatedTarget && root.contains(relatedTarget)) {
+      return;
+    }
+    await hidePreviewSurface();
+  }
+
+  async function handlePreviewClose(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!preview) {
+      return;
+    }
+
+    try {
+      await closePreviewedTaskWindow(preview.hwnd);
+      await emit(TASKBAR_REFRESH_WINDOWS_EVENT);
+      await hidePreviewSurface();
+    } catch (error) {
+      console.error(`Failed to close task window ${preview.hwnd}`, error);
+    }
+  }
+
   onMount(() => {
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
 
-    void listen<TaskPreviewPayload>('task-preview:update', (event) => {
+    registerAsyncUnlistener(listen<TaskPreviewPayload>('task-preview:update', (event) => {
       preview = event.payload;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
-    void listen('task-preview:hide', () => {
+    registerAsyncUnlistener(listen('task-preview:hide', () => {
       preview = null;
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
     return () => {
+      disposed = true;
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -67,25 +111,32 @@
 </script>
 
 <div
-  class="surface preview-surface"
-  aria-disabled={!preview}
-  role="button"
-  tabindex="0"
-  on:click={() => void handlePreviewActivate()}
-  on:keydown={(event) => void handlePreviewKeydown(event)}
-  on:mouseenter={() => void emit(TASK_PREVIEW_HOVER_ENTER_EVENT)}
-  on:mouseleave={() => void hidePreviewSurface()}
+  class="preview-interaction-root"
+  role="group"
+  aria-label="Task preview"
+  on:pointerenter={handlePreviewPointerEnter}
+  on:pointerleave={(event) => void handlePreviewPointerLeave(event)}
 >
+  <MeltActionButton
+    class={previewSurfaceClass}
+    ariaDisabled={!preview}
+    ariaLabel={preview ? `Activate ${preview.title || preview.processName}` : 'Task preview unavailable'}
+    onClick={() => void handlePreviewActivate()}
+    onKeyDown={(event) => void handlePreviewKeydown(event)}
+  >
   {#if preview}
-    <div class="preview-header">
-      <img class="preview-icon" src={preview.iconDataUrl} alt="" draggable="false" />
+    <div class="preview-header" aria-hidden="true">
       <div class="preview-copy">
-        <strong>{preview.title || preview.processName}</strong>
-        <span>{preview.isMinimized ? 'Minimized window' : preview.processName}</span>
+        <div class="preview-title">{previewPrimaryTitle}</div>
+        {#if previewSecondaryText}
+          <div class="preview-process">{previewSecondaryText}</div>
+        {/if}
       </div>
     </div>
 
-    {#if preview.imageDataUrl}
+    {#if isNativeLivePreview}
+      <div class="preview-frame preview-frame-native" aria-hidden="true"></div>
+    {:else if preview.imageDataUrl}
       <div class="preview-frame">
         <img
           class="preview-image"
@@ -100,98 +151,13 @@
       </div>
     {/if}
   {/if}
+  </MeltActionButton>
+
+  {#if preview}
+    <MeltActionButton
+      class="preview-close-button"
+      ariaLabel="Close previewed window"
+      onClick={(event) => void handlePreviewClose(event)}
+    >×</MeltActionButton>
+  {/if}
 </div>
-
-<style>
-  .surface {
-    background:
-      linear-gradient(180deg, rgba(17, 22, 31, 0.98) 0%, rgba(10, 13, 20, 0.99) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.26rem;
-    box-shadow:
-      0 18px 36px rgba(0, 0, 0, 0.42),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    color: #eef3ff;
-    display: grid;
-    gap: 0.5rem;
-    height: 100%;
-    outline: none;
-    padding: 0.55rem;
-    width: 100%;
-  }
-
-  .preview-surface {
-    cursor: pointer;
-  }
-
-  .preview-surface:focus-visible {
-    border-color: rgba(152, 186, 255, 0.72);
-    box-shadow:
-      0 18px 36px rgba(0, 0, 0, 0.42),
-      inset 0 0 0 1px rgba(152, 186, 255, 0.4);
-  }
-
-  .preview-header {
-    align-items: center;
-    display: flex;
-    gap: 0.45rem;
-    min-width: 0;
-  }
-
-  .preview-icon {
-    display: block;
-    flex: 0 0 auto;
-    height: 1rem;
-    width: 1rem;
-  }
-
-  .preview-copy {
-    display: grid;
-    gap: 0.08rem;
-    min-width: 0;
-  }
-
-  .preview-copy strong {
-    font-size: 0.72rem;
-    font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .preview-copy span {
-    color: rgba(215, 223, 245, 0.72);
-    font-size: 0.58rem;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .preview-frame,
-  .preview-empty {
-    align-items: center;
-    background: rgba(7, 9, 14, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    display: flex;
-    flex: 1;
-    justify-content: center;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .preview-image {
-    display: block;
-    height: 100%;
-    object-fit: contain;
-    width: 100%;
-  }
-
-  .preview-empty {
-    color: rgba(214, 223, 255, 0.74);
-    font-size: 0.64rem;
-    font-weight: 600;
-    padding: 0.75rem;
-    text-align: center;
-  }
-</style>

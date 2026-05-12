@@ -1,28 +1,73 @@
 <script lang="ts">
+  import './StackPopupSurface.css';
+  import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
+  import StackTerminalPane from './StackTerminalPane.svelte';
   import {
+    beginStackPopupFocusLossHold,
     copyStackItems,
     deleteStackItem,
+    endStackPopupFocusLossHold,
+    emitStackFolderListingDiagnostics,
+    extractStackArchive,
+    getStackGitStatus,
     getStackPopupRequest,
     hideStackPopup,
+    listStackOpenWithCandidates,
     listStackFolder,
     newStackFolder,
+    newStackTextFile,
     openStackItem,
+    openStackItemWithApp,
     openStackItemWithPicker,
+    openStackFolderInVscode,
+    openStackTerminalHere,
     pinStackFolder,
     pasteStackItems,
+    prepareStackFileDrag,
     renameStackItem,
+    resolveStackItemIcons,
+    resizeStackPopup,
     revealStackItem,
+    showStackItemProperties,
+    stackGitAddPaths,
+    stackGitCheckoutBranch,
+    stackGitCommit,
+    stackGitCreateBranch,
+    stackGitBranches,
+    stackGitFetch,
+    stackGitLog,
+    stackGitPull,
+    stackGitPush,
+    stackGitTree,
+    suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
+    STACK_TERMINAL_PROFILE_OPTIONS,
     type StackEntry,
-    type StackFolderListing
+    type StackArchiveDestinationMode,
+    type StackArchiveExtractor,
+    type StackGitBranches,
+    type StackGitLog,
+    type StackGitStatus,
+    type StackGitFileStatusKind,
+    type StackGitTree,
+    type StackItemIconResolution,
+    type StackFolderListing,
+    type StackOpenWithCandidate,
+    type StackPathSuggestion,
+    type StackTerminalProfile
   } from '../lib/stackPopup';
-  import { folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
+  import { loadShellSettings } from '../lib/settings';
+  import { normalizeStackTerminalProfile } from '../lib/stackPopup';
+  import { folderPathToUri, folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
   import {
+    applyStackEntryIconUpdates,
     applyStackFolderListing,
     canNavigateStackBack,
     canNavigateStackForward,
+    commitValidatedStackFolderListing,
     mergeStackFolderListings,
     defaultStackPopupViewState,
     findTypeToSelectPath,
@@ -34,26 +79,68 @@
     selectedStackEntry,
     selectedStackPaths,
     selectStackEntry,
+    selectStackEntryPaths,
     stackPopupHasRetainedRows,
+    stackIconHydrationStatus,
     stackBreadcrumbSegments,
     stackPopupOpenPath,
     stackPopupRequestKey,
+    stackOpenWithSuggestions,
+    stackSortHeaderState,
     updateStackSort,
+    type StackEntryIconUpdate,
+    type StackOpenWithSuggestion,
     type StackPopupOpenPayload,
     type StackSortColumn
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
-  import { positionContextMenuInViewport } from '../lib/contextMenuPosition';
+  import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
+  import {
+    STACK_BROWSER_FRONTEND_EVENTS,
+    STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
+    classifyStackMarqueeStartTarget,
+    stackBrowserBreadcrumbOverflow,
+    stackBrowserCreatedTextFileRenamePlan,
+    stackBrowserDeletePrompt,
+    getStackPathAutocompleteQuery,
+    getStackPathInlineCompletion,
+    getNextStackPathCompletionCycleIndex,
+    isStackBrowsableArchiveEntry,
+    stackBrowserMarqueeRect,
+    stackBrowserMarqueeSelectedVirtualPaths,
+    stackBrowserSearchEntries,
+    stackBrowserScrollTopForIndex,
+    stackBrowserVirtualWindow,
+    type StackBrowserMarqueePoint,
+    type StackBrowserMarqueeRect
+  } from '../features/stack-browser/viewModel';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
+  const STACK_POPUP_MIN_WIDTH = 560;
+  const STACK_POPUP_MIN_HEIGHT = 280;
+  const STACK_ICON_RESOLVE_BATCH_SIZE = 24;
+  const STACK_ICON_RESOLVE_MAX_CONCURRENCY = 2;
+  const STACK_CONTEXT_MENU_VIEWPORT_PADDING = 8;
+  type StackContextMenuPlacement = {
+    x: number;
+    y: number;
+    maxHeight?: number;
+    width?: number;
+    submenuMaxHeight?: number;
+  };
 
+  type StackGitWorkbenchView = 'changes' | 'log' | 'tree' | 'branches';
+  type StackBrowserViewMode = 'files' | 'terminal';
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
   let errorMessage = '';
-  let rowMenu: { x: number; y: number; path: string } | null = null;
-  let backgroundMenu: { x: number; y: number } | null = null;
+  let rowMenu: (StackContextMenuPlacement & { path: string }) | null = null;
+  let backgroundMenu: StackContextMenuPlacement | null = null;
   let rowMenuElement: HTMLDivElement | null = null;
   let backgroundMenuElement: HTMLDivElement | null = null;
+  let rowSubmenuElement: HTMLDivElement | null = null;
+  let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
+  let deleteCancelButton: HTMLButtonElement | null = null;
   let rowSubmenuOpensLeft = false;
   let createFolderDraft: string | null = null;
   let renameDraft: string | null = null;
@@ -62,19 +149,118 @@
   let typeToSelectTimer: number | null = null;
   let lastHtmlDropAt = 0;
   let detailsGrid: HTMLDivElement | null = null;
+  let detailsBody: HTMLDivElement | null = null;
+  let detailsBodyScrollTop = 0;
+  let detailsBodyHeight = 0;
   let lastHandledOpenRequestKey: string | null = null;
   let pendingOpenRequestKey: string | null = null;
   let folderLoadSequence = 0;
+  let resizeGrip: HTMLButtonElement | null = null;
+  let resizeDrag:
+    | {
+        pointerId: number;
+        startX: number;
+        startY: number;
+        startWidth: number;
+        startHeight: number;
+      }
+    | null = null;
+  let pendingResize: { width: number; height: number; persist: boolean } | null = null;
+  let resizeFrame: number | null = null;
+  let resizeRequestChain: Promise<void> = Promise.resolve();
+  let marqueeSelection:
+    | {
+        pointerId: number;
+        start: StackBrowserMarqueePoint;
+        current: StackBrowserMarqueePoint;
+        additive: boolean;
+        baseSelection: string[];
+        folderPath: string;
+      }
+    | null = null;
+  let marqueeAutoscrollFrame: number | null = null;
+  let pathDraft = '';
+  let pathDraftBase = '';
+  let pathInput: HTMLInputElement | null = null;
+  let pathInputFocused = false;
+  let pathBlurResetTimer: number | null = null;
+  let pathSuggestions: StackPathSuggestion[] = [];
+  let pathCompletionCycleIndex = -1;
+  let pathSuggestionRequestSeq = 0;
+  let searchQuery = '';
+  let openWithCandidates: StackOpenWithCandidate[] = [];
+  let openWithCandidatePath: string | null = null;
+  let iconCache = new Map<string, string | null>();
+  let iconHydrationJobToken = 0;
+  let iconHydrationVisiblePriority: string[] = [];
+  let iconHydrationPending: string[] = [];
+  let iconHydrationInFlight = 0;
+  let iconHydrationInFlightPathCount = 0;
+  let iconHydrationResolvedCount = 0;
+  let iconHydrationTargetCount = 0;
+  let iconHydrationStatusMessage = '';
+  let iconHydrationCacheHits = 0;
+  let iconHydrationCacheMisses = 0;
+  let iconHydrationFallbackCount = 0;
+  let iconHydrationStartedAt = 0;
+  let iconQueueCompleteDurationMs = 0;
+  let iconQueueDiagnosticsEmitted = false;
+  let iconDiagnosticsPath: string | null = null;
+  let iconDiagnosticsFirstPaintDurationMs = 0;
+  let iconDiagnosticsMetadataCompleteDurationMs = 0;
+  let gitStatus: StackGitStatus | null = null;
+  let gitStatusPath = '';
+  let gitStatusRequestSequence = 0;
+  let gitStatusPopupOpen = false;
+  let gitStatusPopupFilter: StackGitFileStatusKind | 'all' = 'all';
+  let gitStatusSelectedPaths: string[] = [];
+  let gitCommitMessage = '';
+  let gitOperationPending = false;
+  let gitOperationMessage = '';
+  let gitWorkbenchView: StackGitWorkbenchView = 'changes';
+  let gitWorkbenchExpanded = false;
+  let gitBranchDraft = '';
+  let gitNewBranchDraft = '';
+  let gitLog: StackGitLog | null = null;
+  let gitTree: StackGitTree | null = null;
+  let gitBranches: StackGitBranches | null = null;
+  let gitWorkbenchLoading = false;
+  let gitWorkbenchRequestSequence = 0;
+  let pendingGitMutation:
+    | { kind: 'add'; paths: string[] }
+    | { kind: 'commit'; message: string; paths: string[] }
+    | { kind: 'remote'; operation: 'pull' | 'push' }
+    | { kind: 'checkout'; branchName: string }
+    | { kind: 'createBranch'; branchName: string }
+    | null = null;
+  let stackBrowserViewMode: StackBrowserViewMode = 'files';
+  let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
+  let stackTerminalPane: InstanceType<typeof StackTerminalPane> | null = null;
+  $: stackTerminalProfileLabel =
+    STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
 
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
+  $: visibleEntries = stackBrowserSearchEntries(entries, searchQuery);
   $: selectedEntry = selectedStackEntry(stackState);
   $: selectedPaths = selectedStackPaths(stackState);
   $: hasSelection = selectedPaths.length > 0;
   $: canGoBack = canNavigateStackBack(stackState);
   $: canGoForward = canNavigateStackForward(stackState);
   $: breadcrumbs = stackBreadcrumbSegments(currentPath);
+  $: breadcrumbOverflow = stackBrowserBreadcrumbOverflow(breadcrumbs, 5);
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
+  $: virtualEntries = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
+  $: marqueeRect = marqueeSelection ? stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current) : null;
+  $: openWithSuggestions = openWithCandidates.length ? openWithCandidates : stackOpenWithSuggestions(selectedEntry);
+  $: if (currentPath !== pathDraftBase && (!pathInputFocused || pathDraft === pathDraftBase)) {
+    pathDraft = currentPath;
+    pathDraftBase = currentPath;
+  }
+  $: pathInlineCompletion = getStackPathInlineCompletion(
+    pathDraft,
+    pathSuggestions[pathCompletionCycleIndex >= 0 ? pathCompletionCycleIndex : 0]
+  );
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
@@ -84,6 +270,7 @@
     }, 250);
 
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
+    void loadStackTerminalProfile();
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
         void pasteDroppedPaths(event.payload.paths, currentPath, false);
@@ -100,6 +287,14 @@
       disposed = true;
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
+      }
+      cancelPathBlurReset();
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
+      }
+      stopMarqueeAutoscroll();
+      if (stackTerminalPane) {
+        void (stackTerminalPane as InstanceType<typeof StackTerminalPane>).stopTerminal();
       }
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
@@ -150,6 +345,8 @@
 
     pendingOpenRequestKey = requestKey;
     try {
+      await stopCurrentStackTerminal();
+      stackBrowserViewMode = 'files';
       await openFolder(path);
       lastHandledOpenRequestKey = requestKey;
     } finally {
@@ -159,10 +356,175 @@
     }
   }
 
-  async function openFolder(folderPath: string) {
+  async function openFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
     closeMenus();
     stackState = openStackFolder(stackState, folderPath);
     await loadFolder(stackState.currentPath);
+  }
+
+  async function submitPathDraft() {
+    clearPathSuggestions();
+    const folderPath = pathDraft.trim();
+    if (!folderPath) {
+      resetPathDraft();
+      return;
+    }
+
+    closeMenus();
+    const loadSequence = ++folderLoadSequence;
+    startNewIconHydrationSession(folderPath);
+    const listingStartedAt = performance.now();
+    let firstPaintDurationMs = 0;
+    loadingPath = folderPath;
+    errorMessage = '';
+    try {
+      const listing = await listStackFolder(folderPath, async (page) => {
+        if (!firstPaintDurationMs && page.entries.length) {
+          firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
+        }
+        maybeFocusDetailsGridAfterPageAppend();
+      });
+      if (loadSequence !== folderLoadSequence) {
+        return;
+      }
+      iconDiagnosticsPath = folderPath;
+      iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
+      iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
+      stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
+      void refreshStackGitStatus(folderPath, loadSequence);
+      scheduleVisibleIconHydration(folderPath, loadSequence);
+      pathDraft = stackState.currentPath;
+      pathDraftBase = stackState.currentPath;
+      updateDetailsViewport();
+      focusDetailsGrid();
+    } catch (error) {
+      console.error('Failed to open typed stack folder path', error);
+      if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
+        errorMessage = operationErrorMessage(error, `Folder unavailable: ${folderPath}`);
+      }
+    } finally {
+      if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
+        loadingPath = null;
+      }
+    }
+  }
+
+  function resetPathDraft() {
+    pathDraft = currentPath;
+    pathDraftBase = currentPath;
+    clearPathSuggestions();
+  }
+
+  function handlePathKeydown(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (pathInlineCompletion && event.key === 'ArrowRight') {
+      event.preventDefault();
+      acceptInlinePathCompletion();
+      return;
+    }
+    if (event.key === 'Tab' && !event.shiftKey) {
+      const caret = event.currentTarget instanceof HTMLInputElement ? (event.currentTarget.selectionStart ?? pathDraft.length) : pathDraft.length;
+      if (pathSuggestions.length || getStackPathAutocompleteQuery(pathDraft, caret)) {
+        event.preventDefault();
+        void cyclePathCompletion(caret);
+        return;
+      }
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      resetPathDraft();
+    }
+  }
+
+  async function refreshPathSuggestions(input: HTMLInputElement) {
+    pathDraft = input.value;
+    await refreshPathSuggestionsForValue(input.value, input.selectionStart ?? input.value.length);
+  }
+
+  async function refreshPathSuggestionsForValue(value: string, caret: number) {
+    pathDraft = value;
+    const query = getStackPathAutocompleteQuery(value, caret);
+    const requestSeq = ++pathSuggestionRequestSeq;
+    if (!query) {
+      clearPathSuggestions();
+      return false;
+    }
+
+    clearPathSuggestions(false);
+
+    try {
+      const suggestions = await suggestStackPaths({ ...query, limit: 20 });
+      if (requestSeq !== pathSuggestionRequestSeq || value !== pathDraft) {
+        return false;
+      }
+      pathCompletionCycleIndex = -1;
+      pathSuggestions = suggestions;
+      return suggestions.length > 0;
+    } catch {
+      if (requestSeq === pathSuggestionRequestSeq) {
+        clearPathSuggestions();
+      }
+      return false;
+    }
+  }
+
+  function clearPathSuggestions(invalidateRequests = true) {
+    pathSuggestions = [];
+    pathCompletionCycleIndex = -1;
+    if (invalidateRequests) {
+      pathSuggestionRequestSeq += 1;
+    }
+  }
+
+  async function cyclePathCompletion(caret = pathDraft.length) {
+    if (!pathSuggestions.length) {
+      const refreshed = await refreshPathSuggestionsForValue(pathDraft, caret);
+      if (!refreshed) {
+        return;
+      }
+    }
+    cancelPathBlurReset();
+    // Keep the original suggestion set so repeated Tab walks sibling matches after the draft becomes a full candidate.
+    pathCompletionCycleIndex = getNextStackPathCompletionCycleIndex(pathDraft, pathSuggestions, pathCompletionCycleIndex);
+    const suggestion = pathSuggestions[pathCompletionCycleIndex];
+    const committedPath = suggestion.path;
+    pathDraft = committedPath;
+    void focusPathInput(committedPath.length);
+  }
+
+  function acceptInlinePathCompletion() {
+    if (!pathInlineCompletion) {
+      return;
+    }
+    cancelPathBlurReset();
+    const committedPath = pathInlineCompletion.commitPath;
+    pathDraft = pathInlineCompletion.commitPath;
+    clearPathSuggestions();
+    void focusPathInput(committedPath.length);
+    void refreshPathSuggestionsForValue(committedPath, committedPath.length);
+  }
+
+  function schedulePathBlurReset() {
+    cancelPathBlurReset();
+    pathBlurResetTimer = window.setTimeout(() => {
+      pathBlurResetTimer = null;
+      if (!pathInputFocused) {
+        resetPathDraft();
+      }
+    }, 100);
+  }
+
+  function cancelPathBlurReset() {
+    if (pathBlurResetTimer !== null) {
+      window.clearTimeout(pathBlurResetTimer);
+      pathBlurResetTimer = null;
+    }
+  }
+
+  async function focusPathInput(caret = pathDraft.length) {
+    await tick();
+    pathInput?.focus();
+    pathInput?.setSelectionRange(caret, caret);
   }
 
   async function loadFolder(folderPath: string) {
@@ -171,9 +533,13 @@
     }
 
     const loadSequence = ++folderLoadSequence;
+    startNewIconHydrationSession(folderPath);
+    const listingStartedAt = performance.now();
+    let firstPaintDurationMs = 0;
     let mergedListing: StackFolderListing | null = null;
     loadingPath = folderPath;
     errorMessage = '';
+    void refreshStackGitStatus(folderPath, loadSequence);
     try {
       const listing = await listStackFolder(folderPath, async (page) => {
         if (loadSequence !== folderLoadSequence) {
@@ -181,14 +547,24 @@
         }
 
         mergedListing = mergeStackFolderListings(mergedListing, page);
+        if (!firstPaintDurationMs && mergedListing.entries.length > 0) {
+          firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
+        }
         stackState = applyStackFolderListing(stackState, folderPath, mergedListing);
-        focusDetailsGrid();
+        scheduleVisibleIconHydration(folderPath, loadSequence);
+        updateDetailsViewport();
+        maybeFocusDetailsGridAfterPageAppend();
       });
       if (loadSequence !== folderLoadSequence) {
         return;
       }
+      iconDiagnosticsPath = folderPath;
+      iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
+      iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
       stackState = applyStackFolderListing(stackState, folderPath, mergedListing ?? listing);
-      focusDetailsGrid();
+      scheduleVisibleIconHydration(folderPath, loadSequence);
+      updateDetailsViewport();
+      maybeFocusDetailsGridAfterPageAppend();
     } catch (error) {
       console.error('Failed to load stack folder', error);
       if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
@@ -201,6 +577,266 @@
     }
   }
 
+  async function refreshStackGitStatus(folderPath: string, loadSequence: number) {
+    const requestSequence = ++gitStatusRequestSequence;
+    gitStatusPath = folderPath;
+    gitStatus = null;
+    try {
+      const status = await getStackGitStatus(folderPath);
+      if (
+        requestSequence !== gitStatusRequestSequence
+        || loadSequence !== folderLoadSequence
+        || folderPath !== stackState.currentPath
+      ) {
+        return;
+      }
+      gitStatus = status;
+      if (status && gitStatusPopupOpen) {
+        void refreshGitWorkbenchData(gitWorkbenchView, folderPath);
+      }
+    } catch (error) {
+      if (requestSequence === gitStatusRequestSequence && loadSequence === folderLoadSequence) {
+        console.debug('Stack git status unavailable', error);
+        gitStatus = null;
+      }
+    }
+  }
+
+  function startNewIconHydrationSession(folderPath: string) {
+    iconHydrationJobToken += 1;
+    iconHydrationVisiblePriority = [];
+    iconHydrationPending = [];
+    iconHydrationInFlight = 0;
+    iconHydrationInFlightPathCount = 0;
+    iconHydrationResolvedCount = 0;
+    iconHydrationTargetCount = 0;
+    iconHydrationStatusMessage = '';
+    iconHydrationCacheHits = 0;
+    iconHydrationCacheMisses = 0;
+    iconHydrationFallbackCount = 0;
+    iconHydrationStartedAt = performance.now();
+    iconQueueCompleteDurationMs = 0;
+    iconQueueDiagnosticsEmitted = false;
+    iconDiagnosticsPath = folderPath;
+    iconDiagnosticsFirstPaintDurationMs = 0;
+    iconDiagnosticsMetadataCompleteDurationMs = 0;
+  }
+
+  function scheduleVisibleIconHydration(folderPath: string, loadSequence: number) {
+    if (loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
+      return;
+    }
+
+    const cachedUpdates: StackEntryIconUpdate[] = [];
+    const pending = new Set([...iconHydrationVisiblePriority, ...iconHydrationPending]);
+    let targetCount = 0;
+    for (const entry of stackState.entries) {
+      if (entry.iconDataUrl) {
+        continue;
+      }
+      const cacheKey = normalizeIconCacheKey(entry.path);
+      if (!cacheKey) {
+        continue;
+      }
+      targetCount += 1;
+      if (iconCache.has(cacheKey)) {
+        const cachedIcon = iconCache.get(cacheKey) ?? null;
+        if (cachedIcon) {
+          cachedUpdates.push({ path: entry.path, iconDataUrl: cachedIcon });
+        }
+        continue;
+      }
+      pending.add(entry.path);
+    }
+
+    if (cachedUpdates.length) {
+      stackState = applyStackEntryIconUpdates(stackState, folderPath, cachedUpdates);
+    }
+
+    iconHydrationPending = mergeIconHydrationPending([], [...pending]);
+    queueVisibleIconHydrationPriority(folderPath, loadSequence);
+    iconHydrationTargetCount = targetCount;
+    iconHydrationResolvedCount = resolvedIconHydrationCount();
+    updateIconHydrationStatusMessage();
+    void drainIconHydrationQueue(folderPath, loadSequence, iconHydrationJobToken);
+  }
+
+  async function drainIconHydrationQueue(folderPath: string, loadSequence: number, jobToken: number) {
+    while (
+      loadSequence === folderLoadSequence
+      && folderPath === stackState.currentPath
+      && jobToken === iconHydrationJobToken
+      && iconHydrationInFlight < STACK_ICON_RESOLVE_MAX_CONCURRENCY
+      && (iconHydrationVisiblePriority.length > 0 || iconHydrationPending.length > 0)
+    ) {
+      const batchPaths = nextIconHydrationBatch();
+      iconHydrationInFlight += 1;
+      iconHydrationInFlightPathCount += batchPaths.length;
+      void resolveIconBatch(folderPath, loadSequence, jobToken, batchPaths);
+    }
+  }
+
+  function nextIconHydrationBatch() {
+    const priorityBatch = iconHydrationVisiblePriority.slice(0, STACK_ICON_RESOLVE_BATCH_SIZE);
+    iconHydrationVisiblePriority = iconHydrationVisiblePriority.slice(priorityBatch.length);
+    const remaining = STACK_ICON_RESOLVE_BATCH_SIZE - priorityBatch.length;
+    if (remaining <= 0) {
+      return priorityBatch;
+    }
+    const backlogBatch = iconHydrationPending
+      .filter((path) => !priorityBatch.includes(path))
+      .slice(0, remaining);
+    iconHydrationPending = iconHydrationPending.filter(
+      (path) => !priorityBatch.includes(path) && !backlogBatch.includes(path)
+    );
+    return [...priorityBatch, ...backlogBatch];
+  }
+
+  function queueVisibleIconHydrationPriority(folderPath: string, loadSequence: number) {
+    if (loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
+      return;
+    }
+    const visiblePaths = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight)
+      .rows
+      .map((row) => row.item)
+      .filter((entry) => !entry.iconDataUrl && !iconCache.has(normalizeIconCacheKey(entry.path)))
+      .map((entry) => entry.path);
+    iconHydrationVisiblePriority = mergeIconHydrationPending(iconHydrationVisiblePriority, visiblePaths);
+    iconHydrationPending = iconHydrationPending.filter((path) => !iconHydrationVisiblePriority.includes(path));
+    void drainIconHydrationQueue(folderPath, loadSequence, iconHydrationJobToken);
+  }
+
+  function mergeIconHydrationPending(existing: string[], incoming: string[]) {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const path of [...existing, ...incoming]) {
+      const key = normalizeIconCacheKey(path);
+      if (!key || iconCache.has(key) || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(path);
+    }
+    return merged;
+  }
+
+  async function resolveIconBatch(
+    folderPath: string,
+    loadSequence: number,
+    jobToken: number,
+    paths: string[]
+  ) {
+    try {
+      const batch = await resolveStackItemIcons(paths);
+      iconHydrationCacheHits += batch.cacheHits;
+      iconHydrationCacheMisses += batch.cacheMisses;
+      iconHydrationFallbackCount += batch.items.filter((item) => !item.iconDataUrl).length;
+      const updates = stackIconUpdatesFromBatch(batch.items);
+      for (const item of batch.items) {
+        const cacheKey = normalizeIconCacheKey(item.path);
+        if (!cacheKey) {
+          continue;
+        }
+        iconCache.set(cacheKey, item.iconDataUrl ?? null);
+      }
+      if (
+        updates.length
+        && loadSequence === folderLoadSequence
+        && folderPath === stackState.currentPath
+        && jobToken === iconHydrationJobToken
+      ) {
+        stackState = applyStackEntryIconUpdates(stackState, folderPath, updates);
+      }
+    } catch (error) {
+      console.error('Failed to resolve stack row icons', error);
+    } finally {
+      if (jobToken !== iconHydrationJobToken) {
+        return;
+      }
+      iconHydrationInFlight = Math.max(0, iconHydrationInFlight - 1);
+      iconHydrationInFlightPathCount = Math.max(0, iconHydrationInFlightPathCount - paths.length);
+      iconHydrationResolvedCount = resolvedIconHydrationCount();
+      updateIconHydrationStatusMessage();
+      maybeEmitIconQueueCompletionDiagnostics(folderPath, loadSequence, jobToken);
+      await drainIconHydrationQueue(folderPath, loadSequence, jobToken);
+    }
+  }
+
+  function stackIconUpdatesFromBatch(items: StackItemIconResolution[]): StackEntryIconUpdate[] {
+    return items
+      .filter((item) => Boolean(item.path && item.iconDataUrl))
+      .map((item) => ({
+        path: item.path,
+        iconDataUrl: item.iconDataUrl
+      }));
+  }
+
+  function unresolvedIconHydrationCount() {
+    return iconHydrationPending.length + iconHydrationVisiblePriority.length + iconHydrationInFlightPathCount;
+  }
+
+  function resolvedIconHydrationCount() {
+    return Math.max(0, iconHydrationTargetCount - unresolvedIconHydrationCount());
+  }
+
+  function normalizeIconCacheKey(path: string) {
+    const trimmed = path.trim();
+    if (!trimmed) {
+      return '';
+    }
+    return trimmed.replace(/\//g, '\\').toLocaleLowerCase();
+  }
+
+  function updateIconHydrationStatusMessage() {
+    iconHydrationStatusMessage = stackIconHydrationStatus(
+      iconHydrationResolvedCount,
+      iconHydrationTargetCount
+    );
+  }
+
+  function maybeEmitIconQueueCompletionDiagnostics(
+    folderPath: string,
+    loadSequence: number,
+    jobToken: number
+  ) {
+    if (
+      iconQueueDiagnosticsEmitted
+      || jobToken !== iconHydrationJobToken
+      || loadSequence !== folderLoadSequence
+      || folderPath !== stackState.currentPath
+      || iconHydrationPending.length > 0
+      || iconHydrationVisiblePriority.length > 0
+      || iconHydrationInFlight > 0
+      || !iconHydrationTargetCount
+      || iconDiagnosticsPath !== folderPath
+    ) {
+      return;
+    }
+
+    iconQueueCompleteDurationMs = Math.max(0, performance.now() - iconHydrationStartedAt);
+    iconQueueDiagnosticsEmitted = true;
+    emitStackFolderListingDiagnostics({
+      phase: 'icon-queue-complete',
+      path: folderPath,
+      pageOffset: stackState.entries.length,
+      requestedLimit: 0,
+      pageDurationMs: 0,
+      folderOpenDurationMs: iconDiagnosticsMetadataCompleteDurationMs,
+      firstPaintDurationMs: iconDiagnosticsFirstPaintDurationMs,
+      metadataListingCompleteDurationMs: iconDiagnosticsMetadataCompleteDurationMs,
+      iconQueueCompleteDurationMs,
+      pageItemCount: stackState.entries.length,
+      iconResolutionCount: iconHydrationResolvedCount,
+      iconResolutionDurationMs: iconQueueCompleteDurationMs,
+      iconCacheHits: iconHydrationCacheHits,
+      iconCacheMisses: iconHydrationCacheMisses,
+      iconFallbackCount: iconHydrationFallbackCount,
+      payloadItemCount: stackState.entries.length,
+      totalItems: stackState.entries.length,
+      hasMore: false
+    });
+  }
+
   async function navigateHistory(direction: -1 | 1) {
     stackState = navigateStackHistory(stackState, direction);
     await loadFolder(stackState.currentPath);
@@ -208,7 +844,7 @@
 
   async function activateEntry(entry: StackEntry) {
     closeMenus();
-    if (entry.entryType === 'Folder') {
+    if (entry.entryType === 'Folder' || isStackBrowsableArchiveEntry(entry)) {
       await openFolder(entry.path);
     } else {
       await openStackItem(entry.path);
@@ -227,6 +863,37 @@
     } catch (error) {
       console.error('Failed to open stack item with picker', error);
       errorMessage = operationErrorMessage(error, 'Open with unavailable');
+    }
+  }
+
+  async function loadOpenWithCandidates(entry: StackEntry) {
+    openWithCandidatePath = entry.path;
+    openWithCandidates = [];
+    if (entry.entryType !== 'File') {
+      return;
+    }
+
+    try {
+      const candidates = await listStackOpenWithCandidates(entry.path);
+      if (openWithCandidatePath === entry.path) {
+        openWithCandidates = candidates;
+      }
+    } catch (error) {
+      console.error('Failed to load Open With candidates', error);
+    }
+  }
+
+  async function openSelectedWithSuggestedApp(app: StackOpenWithSuggestion | StackOpenWithCandidate) {
+    closeMenus();
+    if (!selectedEntry || selectedEntry.entryType !== 'File') {
+      return;
+    }
+    try {
+      await openStackItemWithApp(selectedEntry.path, app.id);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open stack item with app', error);
+      errorMessage = operationErrorMessage(error, `Open with ${app.label} unavailable`);
     }
   }
 
@@ -267,28 +934,67 @@
       return;
     }
 
-    const label = selectedPaths.length === 1 && selectedEntry ? selectedEntry.name : `${selectedPaths.length} items`;
-    if (!window.confirm(`Delete ${label}?`)) {
+    const deletePrompt = stackBrowserDeletePrompt(entries, selectedPaths, stackState.selectedPath);
+    if (!deletePrompt.canDelete) {
       return;
     }
 
+    deleteConfirmation = {
+      title: deletePrompt.title,
+      message: deletePrompt.message,
+      paths: deletePrompt.paths,
+      folderPath: currentPath
+    };
+    await tick();
+    deleteCancelButton?.focus();
+  }
+
+  function cancelDeleteConfirmation() {
+    deleteConfirmation = null;
+    focusDetailsGrid();
+  }
+
+  async function confirmDeleteSelection() {
+    const pendingDelete = deleteConfirmation;
+    if (!pendingDelete) {
+      return;
+    }
+
+    deleteConfirmation = null;
+    let focusHoldStarted = false;
     try {
+      await beginStackPopupFocusLossHold();
+      focusHoldStarted = true;
       const failures: string[] = [];
-      for (const path of selectedPaths) {
+      for (const path of pendingDelete.paths) {
         try {
           await deleteStackItem(path);
         } catch (error) {
           failures.push(operationErrorMessage(error, `Failed to delete ${path}`));
         }
       }
-      const listing = await listStackFolder(currentPath);
-      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      const listing = await listStackFolder(pendingDelete.folderPath);
+      if (currentPath === pendingDelete.folderPath) {
+        stackState = applyStackFolderListing(stackState, pendingDelete.folderPath, listing);
+      } else {
+        await loadFolder(currentPath);
+      }
+      focusDetailsGrid();
       errorMessage = failures.length
         ? `Delete completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: ${failures[0]}`
         : '';
     } catch (error) {
       console.error('Failed to delete stack item', error);
       errorMessage = operationErrorMessage(error, 'Delete unavailable');
+    } finally {
+      if (focusHoldStarted) {
+        try {
+          await endStackPopupFocusLossHold();
+        } catch (error) {
+          console.error('Failed to release stack popup focus hold', error);
+          errorMessage ||= operationErrorMessage(error, 'Stack Browser focus restore failed');
+        }
+      }
     }
   }
 
@@ -300,6 +1006,160 @@
     renameDraft = null;
     createFolderDraft = 'New Folder';
     focusEditorInput();
+  }
+
+  async function beginCreateTextFile() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      const created = await newStackTextFile(currentPath);
+      const listing = await listStackFolder(currentPath);
+      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      const renamePlan = stackBrowserCreatedTextFileRenamePlan(created);
+      stackState = selectStackEntry(stackState, renamePlan.selectedPath);
+      createFolderDraft = null;
+      renameDraft = renamePlan.renameDraft;
+      errorMessage = '';
+      updateDetailsViewport();
+      if (renamePlan.focusTarget === 'inline-editor') {
+        focusEditorInput();
+      }
+    } catch (error) {
+      console.error('Failed to create text file', error);
+      errorMessage = operationErrorMessage(error, 'New Text File unavailable');
+    }
+  }
+
+  async function openTerminalHere() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      await openStackTerminalHere(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open terminal here', error);
+      errorMessage = operationErrorMessage(error, 'Open Terminal Here unavailable');
+    }
+  }
+
+  async function loadStackTerminalProfile() {
+    try {
+      const settings = await loadShellSettings();
+      stackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
+    } catch (error) {
+      console.debug('Stack terminal profile unavailable', error);
+      stackTerminalProfile = 'windowsTerminal';
+    }
+  }
+
+  async function switchStackBrowserView(mode: StackBrowserViewMode) {
+    closeMenus();
+    if (mode === 'files') {
+      await stackTerminalPane?.syncFolderToTerminalCwd();
+      stackBrowserViewMode = 'files';
+      return;
+    }
+    stackBrowserViewMode = 'terminal';
+    await tick();
+    await stackTerminalPane?.startTerminal(true);
+  }
+
+  async function ensureStackTerminal() {
+    if (!currentPath) {
+      return;
+    }
+    await tick();
+    await stackTerminalPane?.startTerminal(true);
+  }
+
+  async function warmStackTerminalForCurrentFolder() {
+    if (!currentPath) {
+      return;
+    }
+    await tick();
+    await stackTerminalPane?.startTerminal(false);
+  }
+
+  async function restartStackTerminal(focusAfterStart = false) {
+    await loadStackTerminalProfile();
+    await tick();
+    await stackTerminalPane?.startTerminal(focusAfterStart || stackBrowserViewMode === 'terminal');
+  }
+
+  function focusStackTerminalInput() {
+    stackTerminalPane?.focusTerminal();
+  }
+
+  async function stopCurrentStackTerminal() {
+    await stackTerminalPane?.stopTerminal();
+  }
+
+  async function handleStackTerminalCwdChange(cwd: string) {
+    if (stackBrowserViewMode === 'terminal' && cwd && cwd !== currentPath) {
+      await openFolder(cwd, { warmTerminal: false });
+    }
+  }
+
+  async function closeStackPopupFromSurface() {
+    await stopCurrentStackTerminal();
+    stackBrowserViewMode = 'files';
+    await hideStackPopup();
+  }
+
+  async function openSelectedFolderInVscode() {
+    closeMenus();
+    if (!selectedEntry || selectedEntry.entryType !== 'Folder') {
+      return;
+    }
+    try {
+      await openStackFolderInVscode(selectedEntry.path);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open folder in VS Code', error);
+      errorMessage = operationErrorMessage(error, 'Open in VS Code unavailable');
+    }
+  }
+
+  async function openCurrentFolderInVscode() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      await openStackFolderInVscode(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open current folder in VS Code', error);
+      errorMessage = operationErrorMessage(error, 'Open in VS Code unavailable');
+    }
+  }
+
+  async function copyTextToClipboard(text: string, fallback: string) {
+    closeMenus();
+    if (!text) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to copy stack browser text', error);
+      errorMessage = operationErrorMessage(error, fallback);
+    }
+  }
+
+  function selectedDirectoryPath() {
+    if (!selectedEntry) {
+      return currentPath;
+    }
+    if (selectedEntry.entryType === 'Folder') {
+      return selectedEntry.path;
+    }
+    return parentStackPath(selectedEntry.path) || currentPath;
   }
 
   async function createFolder() {
@@ -368,6 +1228,68 @@
     focusEditorInput();
   }
 
+  async function showSelectedProperties() {
+    closeMenus();
+    if (!selectedEntry) {
+      return;
+    }
+    try {
+      await showStackItemProperties(selectedEntry.path);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to show stack item properties', error);
+      errorMessage = operationErrorMessage(error, 'Properties unavailable');
+    }
+  }
+
+  async function showCurrentFolderProperties() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+    try {
+      await showStackItemProperties(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to show current folder properties', error);
+      errorMessage = operationErrorMessage(error, 'Properties unavailable');
+    }
+  }
+
+  function selectedArchiveEntry() {
+    if (!selectedEntry || selectedEntry.entryType !== 'File' || !/\.(zip|rar)$/i.test(selectedEntry.name)) {
+      return null;
+    }
+    return selectedEntry;
+  }
+
+  function selectedZipArchiveEntry() {
+    const archive = selectedArchiveEntry();
+    return archive && /\.zip$/i.test(archive.name) ? archive : null;
+  }
+
+  function selectedSevenZipArchiveEntry() {
+    return selectedArchiveEntry();
+  }
+
+  async function extractSelectedArchive(destinationMode: StackArchiveDestinationMode, extractor: StackArchiveExtractor = 'builtin') {
+    closeMenus();
+    const archive = selectedArchiveEntry();
+    if (!archive) {
+      return;
+    }
+
+    try {
+      await extractStackArchive(archive.path, destinationMode, extractor);
+      const listing = await listStackFolder(currentPath);
+      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to extract stack archive', error);
+      errorMessage = operationErrorMessage(error, 'Extract archive unavailable');
+    }
+  }
+
   async function renameSelected() {
     closeMenus();
     if (!selectedEntry || renameDraft === null) {
@@ -429,6 +1351,27 @@
     backgroundMenu = null;
   }
 
+  function openGitStatusPopup(filter: StackGitFileStatusKind | 'all' = 'all') {
+    closeMenus();
+    gitStatusPopupFilter = filter;
+    gitStatusPopupOpen = true;
+    gitOperationMessage = '';
+    reconcileGitStatusSelection();
+    void refreshGitWorkbenchData(gitWorkbenchView, currentPath);
+  }
+
+  function closeGitStatusPopup() {
+    gitStatusPopupOpen = false;
+  }
+
+  function setGitWorkbenchView(view: StackGitWorkbenchView) {
+    gitWorkbenchView = view;
+    if (view === 'changes') {
+      reconcileGitStatusSelection();
+    }
+    void refreshGitWorkbenchData(view, currentPath);
+  }
+
   function cancelInlineEditor() {
     createFolderDraft = null;
     renameDraft = null;
@@ -446,26 +1389,121 @@
     if (rowMenu && rowMenuElement) {
       rowMenu = positionedMenu(rowMenu, rowMenuElement);
       rowSubmenuOpensLeft = rowMenu.x + rowMenuElement.getBoundingClientRect().width + 154 > window.innerWidth;
+      await tick();
+      if (rowMenu && rowMenuElement) {
+        rowMenu = positionedSubmenu(rowMenu, rowMenuElement);
+      }
     }
     if (backgroundMenu && backgroundMenuElement) {
       backgroundMenu = positionedMenu(backgroundMenu, backgroundMenuElement);
     }
   }
 
-  function positionedMenu<T extends { x: number; y: number }>(menu: T, element: HTMLElement): T {
+  function positionedMenu<T extends StackContextMenuPlacement>(menu: T, element: HTMLElement): T {
     const rect = element.getBoundingClientRect();
+    const placement = positionScrollableContextMenuInViewport(
+      menu,
+      { width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight },
+      STACK_CONTEXT_MENU_VIEWPORT_PADDING
+    );
     return {
       ...menu,
-      ...positionContextMenuInViewport(
-        menu,
-        { width: rect.width, height: rect.height },
-        { width: window.innerWidth, height: window.innerHeight }
-      )
+      ...placement,
+      width: rect.width,
+      submenuMaxHeight: placement.maxHeight
     };
+  }
+
+  function positionedSubmenu<T extends StackContextMenuPlacement>(menu: T, element: HTMLElement): T {
+    const rect = element.getBoundingClientRect();
+    const triggerTop = rowSubmenuElement?.getBoundingClientRect().top ?? rect.top;
+    const maxHeight = availableContextMenuHeightFromTop(triggerTop);
+    return {
+      ...menu,
+      width: rect.width,
+      submenuMaxHeight: maxHeight
+    };
+  }
+
+  function availableContextMenuHeight() {
+    return Math.max(0, window.innerHeight - STACK_CONTEXT_MENU_VIEWPORT_PADDING * 2);
+  }
+
+  function availableContextMenuHeightFromTop(top: number) {
+    return Math.max(
+      0,
+      window.innerHeight - Math.max(top, STACK_CONTEXT_MENU_VIEWPORT_PADDING) - STACK_CONTEXT_MENU_VIEWPORT_PADDING
+    );
+  }
+
+  function contextMenuMaxHeightCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.maxHeight ?? availableContextMenuHeight()))}px`;
+  }
+
+  function contextMenuWidthCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.width ?? 0))}px`;
+  }
+
+  function contextSubmenuMaxHeightCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.submenuMaxHeight ?? menu.maxHeight ?? availableContextMenuHeight()))}px`;
   }
 
   function focusDetailsGrid() {
     window.requestAnimationFrame(() => detailsGrid?.focus());
+  }
+
+  function maybeFocusDetailsGridAfterPageAppend() {
+    if (!detailsGrid) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active && (active === detailsGrid || detailsGrid.contains(active))) {
+      return;
+    }
+    focusDetailsGrid();
+  }
+
+  function updateDetailsViewport() {
+    window.requestAnimationFrame(() => {
+      if (!detailsBody) {
+        detailsBodyScrollTop = 0;
+        detailsBodyHeight = 0;
+        emitVisibleRowsWindowChanged();
+        return;
+      }
+      detailsBodyScrollTop = detailsBody.scrollTop;
+      detailsBodyHeight = detailsBody.getBoundingClientRect().height;
+      emitVisibleRowsWindowChanged();
+    });
+  }
+
+  function handleDetailsBodyScroll() {
+    detailsBodyScrollTop = detailsBody?.scrollTop ?? 0;
+    detailsBodyHeight = detailsBody?.getBoundingClientRect().height ?? 0;
+    emitVisibleRowsWindowChanged();
+  }
+
+  async function handleStackSearchInput(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    searchQuery = input.value;
+    detailsBodyScrollTop = 0;
+    if (detailsBody) {
+      detailsBody.scrollTop = 0;
+    }
+    await tick();
+    emitVisibleRowsWindowChanged();
+  }
+
+  function emitVisibleRowsWindowChanged() {
+    const windowSlice = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
+    void emit(STACK_BROWSER_FRONTEND_EVENTS.folderRowsWindowChanged, {
+      path: currentPath,
+      startIndex: windowSlice.startIndex,
+      endIndex: windowSlice.endIndex,
+      totalRows: visibleEntries.length
+    }).catch(() => undefined);
+    queueVisibleIconHydrationPriority(currentPath, folderLoadSequence);
   }
 
   function sortBy(column: StackSortColumn) {
@@ -473,18 +1511,8 @@
     focusDetailsGrid();
   }
 
-  function ariaSort(column: StackSortColumn) {
-    if (stackState.sortColumn !== column) {
-      return 'none';
-    }
-    return stackState.sortDirection === 'asc' ? 'ascending' : 'descending';
-  }
-
-  function sortIndicator(column: StackSortColumn) {
-    if (stackState.sortColumn !== column) {
-      return '';
-    }
-    return stackState.sortDirection === 'asc' ? ' ▲' : ' ▼';
+  function sortHeader(column: StackSortColumn) {
+    return stackSortHeaderState(stackState, column);
   }
 
   function stackAttributeLabels(entry: StackEntry) {
@@ -504,18 +1532,502 @@
     stackState = selectStackEntry(stackState, entry.path, mode);
   }
 
+  function stackGitStatusSymbol(status: StackGitFileStatusKind | null | undefined) {
+    if (status === 'added') return '+';
+    if (status === 'deleted') return '-';
+    if (status === 'modified') return 'M';
+    if (status === 'untracked') return '?';
+    if (status === 'conflict') return '!';
+    return null;
+  }
+
+  function stackGitStatusLabel(status: StackGitFileStatusKind | null | undefined) {
+    if (status === 'added') return 'Added';
+    if (status === 'deleted') return 'Deleted';
+    if (status === 'modified') return 'Modified';
+    if (status === 'untracked') return 'Untracked';
+    if (status === 'conflict') return 'Conflict';
+    return '';
+  }
+
+  function stackGitSummaryParts(status: StackGitStatus | null) {
+    if (!status) return [];
+    const parts: Array<{ status: StackGitFileStatusKind; label: string; title: string }> = [];
+    if (status.added) parts.push({ status: 'added', label: `+${status.added}`, title: `${status.added} added` });
+    if (status.modified) parts.push({ status: 'modified', label: `M${status.modified}`, title: `${status.modified} modified` });
+    if (status.deleted) parts.push({ status: 'deleted', label: `-${status.deleted}`, title: `${status.deleted} deleted` });
+    if (status.untracked) parts.push({ status: 'untracked', label: `?${status.untracked}`, title: `${status.untracked} untracked` });
+    if (status.conflicts) parts.push({ status: 'conflict', label: `!${status.conflicts}`, title: `${status.conflicts} conflict${status.conflicts === 1 ? '' : 's'}` });
+    return parts;
+  }
+
+  function filteredGitStatusEntries() {
+    if (!gitStatus) return [];
+    if (gitStatusPopupFilter === 'all') {
+      return gitStatus.entries;
+    }
+    return gitStatus.entries.filter((entry) => entry.status === gitStatusPopupFilter);
+  }
+
+  function stagedGitStatusEntries() {
+    if (!gitStatus) return [];
+    return gitStatus.entries.filter((entry) => entry.staged);
+  }
+
+  function gitStatusFilterLabel() {
+    if (gitStatusPopupFilter === 'all') return 'All changes';
+    return stackGitStatusLabel(gitStatusPopupFilter);
+  }
+
+  function setAllGitPathsSelected(selected: boolean) {
+    gitStatusSelectedPaths = selected ? filteredGitStatusEntries().map((entry) => entry.path) : [];
+  }
+
+  function reconcileGitStatusSelection() {
+    const available = new Set(filteredGitStatusEntries().map((entry) => entry.path));
+    gitStatusSelectedPaths = gitStatusSelectedPaths.filter((path) => available.has(path));
+  }
+
+  async function addSelectedGitPaths() {
+    if (!gitStatus || !gitStatusSelectedPaths.length || gitOperationPending) {
+      return;
+    }
+    pendingGitMutation = { kind: 'add', paths: [...gitStatusSelectedPaths] };
+  }
+
+  async function executeAddSelectedGitPaths(paths: string[]) {
+    if (!gitStatus || !paths.length || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitAddPaths(currentPath, paths);
+      gitOperationMessage = result.summary;
+      gitStatusSelectedPaths = [];
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git add failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function commitGitStatus() {
+    if (!gitStatus || !gitCommitMessage.trim() || gitOperationPending) {
+      return;
+    }
+    pendingGitMutation = {
+      kind: 'commit',
+      message: gitCommitMessage,
+      paths: stagedGitStatusEntries().map((entry) => entry.path)
+    };
+  }
+
+  async function executeCommitGitStatus(message: string, paths: string[]) {
+    if (!gitStatus || !message.trim() || !paths.length || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitCommit(currentPath, message, paths);
+      gitOperationMessage = result.summary;
+      gitCommitMessage = '';
+      gitStatusSelectedPaths = [];
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git commit failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function runGitRemoteOperation(operation: 'fetch' | 'pull' | 'push') {
+    if (!gitStatus || gitOperationPending) {
+      return;
+    }
+    if (operation !== 'fetch') {
+      pendingGitMutation = { kind: 'remote', operation };
+      return;
+    }
+    await executeGitRemoteOperation(operation);
+  }
+
+  async function executeGitRemoteOperation(operation: 'fetch' | 'pull' | 'push') {
+    if (!gitStatus || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = operation === 'fetch'
+        ? await stackGitFetch(currentPath)
+        : operation === 'pull'
+          ? await stackGitPull(currentPath)
+          : await stackGitPush(currentPath);
+      gitOperationMessage = result.summary;
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+      await refreshGitWorkbenchData(gitWorkbenchView, currentPath, true);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, `Git ${operation} failed`);
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function checkoutGitBranch() {
+    if (!gitStatus || !gitBranchDraft.trim() || gitOperationPending) {
+      return;
+    }
+    pendingGitMutation = { kind: 'checkout', branchName: gitBranchDraft.trim() };
+  }
+
+  async function executeCheckoutGitBranch(branchName: string) {
+    if (!gitStatus || !branchName || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitCheckoutBranch(currentPath, branchName);
+      gitOperationMessage = result.summary;
+      gitBranchDraft = '';
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+      await refreshGitWorkbenchData(gitWorkbenchView, currentPath, true);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git checkout failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function createGitBranch() {
+    if (!gitStatus || !gitNewBranchDraft.trim() || gitOperationPending) {
+      return;
+    }
+    pendingGitMutation = { kind: 'createBranch', branchName: gitNewBranchDraft.trim() };
+  }
+
+  async function executeCreateGitBranch(branchName: string) {
+    if (!gitStatus || !branchName || gitOperationPending) {
+      return;
+    }
+    gitOperationPending = true;
+    gitOperationMessage = '';
+    try {
+      const result = await stackGitCreateBranch(currentPath, branchName, true);
+      gitOperationMessage = result.summary;
+      gitNewBranchDraft = '';
+      await refreshStackGitStatus(currentPath, folderLoadSequence);
+      await refreshGitWorkbenchData(gitWorkbenchView, currentPath, true);
+    } catch (error) {
+      gitOperationMessage = operationErrorMessage(error, 'Git branch create failed');
+    } finally {
+      gitOperationPending = false;
+    }
+  }
+
+  async function refreshGitWorkbenchData(view: StackGitWorkbenchView, folderPath: string, force = false) {
+    if (!gitStatus || !gitStatusPopupOpen || !folderPath || view === 'changes') {
+      return;
+    }
+    if (!force) {
+      if (view === 'log' && gitLog?.repositoryRoot === gitStatus.repositoryRoot) return;
+      if (view === 'tree' && gitTree?.repositoryRoot === gitStatus.repositoryRoot) return;
+      if (view === 'branches' && gitBranches?.repositoryRoot === gitStatus.repositoryRoot) return;
+    }
+
+    const requestSequence = ++gitWorkbenchRequestSequence;
+    const requestedLoadSequence = folderLoadSequence;
+    const requestedRepoRoot = gitStatus.repositoryRoot;
+    gitWorkbenchLoading = true;
+    try {
+      if (view === 'log') {
+        const log = await stackGitLog(folderPath, 80);
+        if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, log.repositoryRoot)) gitLog = log;
+      } else if (view === 'tree') {
+        const tree = await stackGitTree(folderPath, 'HEAD');
+        if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, tree.repositoryRoot)) gitTree = tree;
+      } else if (view === 'branches') {
+        const branches = await stackGitBranches(folderPath);
+        if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, branches.repositoryRoot)) gitBranches = branches;
+      }
+    } catch (error) {
+      if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, requestedRepoRoot)) {
+        gitOperationMessage = operationErrorMessage(error, `Git ${view} load failed`);
+      }
+    } finally {
+      if (isCurrentGitWorkbenchResponse(requestSequence, requestedLoadSequence, folderPath, requestedRepoRoot, requestedRepoRoot)) {
+        gitWorkbenchLoading = false;
+      }
+    }
+  }
+
+  function isCurrentGitWorkbenchResponse(
+    requestSequence: number,
+    requestedLoadSequence: number,
+    folderPath: string,
+    repositoryRoot: string,
+    responseRepositoryRoot: string
+  ) {
+    return requestSequence === gitWorkbenchRequestSequence
+      && requestedLoadSequence === folderLoadSequence
+      && folderPath === stackState.currentPath
+      && gitStatus?.repositoryRoot === repositoryRoot
+      && responseRepositoryRoot === repositoryRoot;
+  }
+
+  function gitMutationTitle() {
+    if (!pendingGitMutation) return '';
+    if (pendingGitMutation.kind === 'add') return 'Confirm git add';
+    if (pendingGitMutation.kind === 'commit') return 'Confirm git commit';
+    if (pendingGitMutation.kind === 'remote') return `Confirm git ${pendingGitMutation.operation}`;
+    if (pendingGitMutation.kind === 'checkout') return 'Confirm branch checkout';
+    return 'Confirm branch creation';
+  }
+
+  function gitMutationMessage() {
+    if (!pendingGitMutation) return '';
+    if (pendingGitMutation.kind === 'add') {
+      return `Add stages ${pendingGitMutation.paths.length} selected file(s) in this repository.`;
+    }
+    if (pendingGitMutation.kind === 'commit') {
+      return `Commit creates a new local commit from ${pendingGitMutation.paths.length} staged file(s).`;
+    }
+    if (pendingGitMutation.kind === 'remote') {
+      return pendingGitMutation.operation === 'push'
+        ? 'Push sends local commits to the configured remote for this repository.'
+        : 'Pull updates files in this working tree with fast-forward-only changes from the configured remote.';
+    }
+    if (pendingGitMutation.kind === 'checkout') {
+      return `Checkout switches this working tree to ${pendingGitMutation.branchName}.`;
+    }
+    return `Create branch makes and switches to ${pendingGitMutation.branchName}.`;
+  }
+
+  async function confirmGitMutation() {
+    const mutation = pendingGitMutation;
+    pendingGitMutation = null;
+    if (!mutation) return;
+    if (mutation.kind === 'add') {
+      await executeAddSelectedGitPaths(mutation.paths);
+    } else if (mutation.kind === 'commit') {
+      await executeCommitGitStatus(mutation.message, mutation.paths);
+    } else if (mutation.kind === 'remote') {
+      await executeGitRemoteOperation(mutation.operation);
+    } else if (mutation.kind === 'checkout') {
+      await executeCheckoutGitBranch(mutation.branchName);
+    } else {
+      await executeCreateGitBranch(mutation.branchName);
+    }
+  }
+
+  function stackGitStatusForEntry(entry: StackEntry) {
+    if (!gitStatus || gitStatusPath !== currentPath) {
+      return null;
+    }
+    const entryPath = normalizeStackPathKey(entry.path);
+    let nestedStatus: StackGitFileStatusKind | null = null;
+    for (const item of gitStatus.entries) {
+      const statusPath = normalizeStackPathKey(item.path);
+      if (statusPath === entryPath) {
+        return item.status;
+      }
+      if (entry.entryType === 'Folder' && statusPath.startsWith(`${entryPath}\\`)) {
+        nestedStatus = stackGitStatusPriority(nestedStatus, item.status);
+      }
+    }
+    return nestedStatus;
+  }
+
+  function normalizeStackPathKey(path: string) {
+    return path.replace(/\//g, '\\').replace(/\\+$/, '').toLocaleLowerCase();
+  }
+
+  function stackGitStatusPriority(current: StackGitFileStatusKind | null, next: StackGitFileStatusKind) {
+    const rank: Record<StackGitFileStatusKind, number> = {
+      modified: 1,
+      untracked: 2,
+      added: 3,
+      deleted: 4,
+      conflict: 5
+    };
+    return !current || rank[next] > rank[current] ? next : current;
+  }
+
+  function beginMarqueeSelection(event: PointerEvent) {
+    if (
+      event.button !== 0
+      || hasRetainedRows
+      || !detailsBody
+      || !isStackMarqueeStartTarget(event.target)
+    ) {
+      return;
+    }
+
+    closeMenus();
+    event.preventDefault();
+    event.stopPropagation();
+    const start = { x: event.clientX, y: event.clientY };
+    marqueeSelection = {
+      pointerId: event.pointerId,
+      start,
+      current: start,
+      additive: event.ctrlKey || event.metaKey,
+      baseSelection: [...selectedPaths],
+      folderPath: currentPath
+    };
+    try {
+      detailsBody.setPointerCapture(event.pointerId);
+    } catch {
+      marqueeSelection = null;
+      return;
+    }
+    updateMarqueeSelection();
+  }
+
+  function isStackMarqueeStartTarget(target: EventTarget | null) {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    return classifyStackMarqueeStartTarget({
+      self: target === detailsBody,
+      closest: (selector) => Boolean(target.closest(selector))
+    }) !== 'blocked';
+  }
+
+  function handleMarqueePointerMove(event: PointerEvent) {
+    if (!marqueeSelection || event.pointerId !== marqueeSelection.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    marqueeSelection = {
+      ...marqueeSelection,
+      current: { x: event.clientX, y: event.clientY }
+    };
+    updateMarqueeSelection();
+    scheduleMarqueeAutoscroll(event.clientY);
+  }
+
+  function endMarqueeSelection(event: PointerEvent) {
+    if (!marqueeSelection || event.pointerId !== marqueeSelection.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    try {
+      if (detailsBody?.hasPointerCapture(event.pointerId)) {
+        detailsBody.releasePointerCapture(event.pointerId);
+      }
+    } finally {
+      stopMarqueeAutoscroll();
+      marqueeSelection = null;
+    }
+  }
+
+  function updateMarqueeSelection() {
+    if (!marqueeSelection || !detailsBody || marqueeSelection.folderPath !== currentPath) {
+      marqueeSelection = null;
+      stopMarqueeAutoscroll();
+      return;
+    }
+
+    const rect = stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current);
+    const selected = stackBrowserMarqueeSelectedVirtualPaths(
+      entries.map((entry) => entry.path),
+      rect,
+      {
+        rowHeight: virtualEntries.rowHeight,
+        rowLeft: detailsBody.getBoundingClientRect().left,
+        rowRight: detailsBody.getBoundingClientRect().right,
+        viewportTop: detailsBody.getBoundingClientRect().top,
+        scrollTop: detailsBody.scrollTop,
+        existingSelection: marqueeSelection.additive ? marqueeSelection.baseSelection : undefined,
+        additive: marqueeSelection.additive
+      }
+    );
+    stackState = selectStackEntryPaths(stackState, selected);
+  }
+
+  function scheduleMarqueeAutoscroll(pointerY: number) {
+    if (!detailsBody) {
+      return;
+    }
+
+    const bounds = detailsBody.getBoundingClientRect();
+    const edgeSize = 32;
+    const maxStep = 18;
+    let step = 0;
+    if (pointerY < bounds.top + edgeSize) {
+      step = -Math.ceil(maxStep * (1 - Math.max(0, pointerY - bounds.top) / edgeSize));
+    } else if (pointerY > bounds.bottom - edgeSize) {
+      step = Math.ceil(maxStep * (1 - Math.max(0, bounds.bottom - pointerY) / edgeSize));
+    }
+
+    if (!step) {
+      stopMarqueeAutoscroll();
+      return;
+    }
+
+    if (marqueeAutoscrollFrame !== null) {
+      return;
+    }
+
+    marqueeAutoscrollFrame = window.requestAnimationFrame(() => {
+      marqueeAutoscrollFrame = null;
+      if (!marqueeSelection || !detailsBody) {
+        return;
+      }
+      detailsBody.scrollTop += step;
+      handleDetailsBodyScroll();
+      updateMarqueeSelection();
+      if (marqueeSelection) {
+        scheduleMarqueeAutoscroll(marqueeSelection.current.y);
+      }
+    });
+  }
+
+  function stopMarqueeAutoscroll() {
+    if (marqueeAutoscrollFrame !== null) {
+      window.cancelAnimationFrame(marqueeAutoscrollFrame);
+      marqueeAutoscrollFrame = null;
+    }
+  }
+
   function selectEntryByIndex(index: number, range = false) {
     if (hasRetainedRows) {
       return;
     }
-    const entry = entries[Math.max(0, Math.min(entries.length - 1, index))];
+    const normalizedIndex = Math.max(0, Math.min(entries.length - 1, index));
+    const entry = entries[normalizedIndex];
     if (entry) {
       stackState = selectStackEntry(stackState, entry.path, range ? 'range' : 'single');
+      scrollEntryIndexIntoView(normalizedIndex);
     }
   }
 
   function selectedIndex() {
     return entries.findIndex((entry) => entry.path === stackState.selectedPath);
+  }
+
+  function scrollEntryIndexIntoView(index: number) {
+    if (!detailsBody || index < 0 || !entries.length) {
+      return;
+    }
+    const viewportHeight = detailsBodyHeight || detailsBody.getBoundingClientRect().height;
+    const nextScrollTop = stackBrowserScrollTopForIndex(
+      index,
+      detailsBody.scrollTop,
+      viewportHeight,
+      entries.length
+    );
+    if (nextScrollTop !== detailsBody.scrollTop) {
+      detailsBody.scrollTop = nextScrollTop;
+      detailsBodyScrollTop = nextScrollTop;
+      detailsBodyHeight = viewportHeight;
+    }
   }
 
   async function navigateParent() {
@@ -534,13 +2046,23 @@
     if (!stackState.selectedPaths.includes(entry.path)) {
       stackState = selectStackEntry(stackState, entry.path);
     }
+    void loadOpenWithCandidates(entry);
     rowMenu = { x: event.clientX, y: event.clientY, path: entry.path };
     backgroundMenu = null;
     void positionOpenMenus();
   }
 
+  function shouldIgnoreBackgroundContextMenu(event: MouseEvent) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    return !!target?.closest(STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS.join(','));
+  }
+
   function handleBackgroundContextMenu(event: MouseEvent) {
+    if (shouldIgnoreBackgroundContextMenu(event)) {
+      return;
+    }
     event.preventDefault();
+    event.stopPropagation();
     rowMenu = null;
     backgroundMenu = { x: event.clientX, y: event.clientY };
     void positionOpenMenus();
@@ -559,13 +2081,18 @@
     if (!stackState.selectedPaths.includes(entry.path)) {
       stackState = selectStackEntry(stackState, entry.path);
     }
+    void prepareStackFileDrag(paths).catch((error) => {
+      console.error('Failed to prepare native Stack Browser file drag', error);
+    });
     event.dataTransfer?.setData(STACK_PATHS_DRAG_TYPE, JSON.stringify(paths));
     event.dataTransfer?.setData('text/plain', paths.join('\n'));
     if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'copyMove';
+      event.dataTransfer.effectAllowed = 'copy';
+      event.dataTransfer.setData('text/uri-list', paths.map((path) => folderPathToUri(path)).join('\r\n'));
+      event.dataTransfer.setData('DownloadURL', paths.map((path) => `application/octet-stream:${path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'file'}:${folderPathToUri(path)}`).join('\n'));
       const folderPaths = paths.filter((path) => entries.some((item) => item.path === path && item.entryType === 'Folder'));
       if (folderPaths.length) {
-        setFolderDragPayload(event.dataTransfer, folderPaths, 'copyMove');
+        setFolderDragPayload(event.dataTransfer, folderPaths, 'copy');
       }
     }
   }
@@ -643,6 +2170,7 @@
     const path = findTypeToSelectPath(entries, typeToSelectBuffer, stackState.selectedPath);
     if (path) {
       stackState = selectStackEntry(stackState, path);
+      scrollEntryIndexIntoView(entries.findIndex((entry) => entry.path === path));
     }
   }
 
@@ -660,12 +2188,21 @@
     const entry = stackState.entries[next];
     if (entry) {
       stackState = selectStackEntry(stackState, entry.path);
+      scrollEntryIndexIntoView(next);
     }
   }
 
   function handleKeydown(event: KeyboardEvent) {
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (target?.closest('.inline-editor') && event.key !== 'Escape') {
+      return;
+    }
+
+    if (deleteConfirmation) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelDeleteConfirmation();
+      }
       return;
     }
 
@@ -676,7 +2213,7 @@
       } else if (rowMenu || backgroundMenu) {
         closeMenus();
       } else {
-        void hideStackPopup();
+        void closeStackPopupFromSurface();
       }
     } else if (event.key === 'Enter' && selectedEntry) {
       event.preventDefault();
@@ -747,44 +2284,201 @@
       void navigateHistory(1);
     }
   }
+
+  function beginResize(event: PointerEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: window.innerWidth,
+      startHeight: window.innerHeight
+    };
+    resizeGrip?.setPointerCapture(event.pointerId);
+  }
+
+  function handleResizePointerMove(event: PointerEvent) {
+    if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const width = Math.max(
+      STACK_POPUP_MIN_WIDTH,
+      Math.round(resizeDrag.startWidth + event.clientX - resizeDrag.startX)
+    );
+    const height = Math.max(
+      STACK_POPUP_MIN_HEIGHT,
+      Math.round(resizeDrag.startHeight + event.clientY - resizeDrag.startY)
+    );
+    scheduleResize(width, height, false);
+  }
+
+  function endResize(event: PointerEvent) {
+    if (!resizeDrag || event.pointerId !== resizeDrag.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    resizeGrip?.releasePointerCapture(event.pointerId);
+    const width = Math.max(
+      STACK_POPUP_MIN_WIDTH,
+      Math.round(resizeDrag.startWidth + event.clientX - resizeDrag.startX)
+    );
+    const height = Math.max(
+      STACK_POPUP_MIN_HEIGHT,
+      Math.round(resizeDrag.startHeight + event.clientY - resizeDrag.startY)
+    );
+    resizeDrag = null;
+    scheduleResize(width, height, true);
+  }
+
+  function scheduleResize(width: number, height: number, persist: boolean) {
+    pendingResize = { width, height, persist: pendingResize?.persist || persist };
+    if (resizeFrame !== null) {
+      return;
+    }
+
+    resizeFrame = window.requestAnimationFrame(() => {
+      resizeFrame = null;
+      const request = pendingResize;
+      pendingResize = null;
+      if (!request) {
+        return;
+      }
+      resizeRequestChain = resizeRequestChain
+        .catch(() => undefined)
+        .then(() => resizeStackPopup(request.width, request.height, request.persist))
+        .then(() => updateDetailsViewport())
+        .catch((error) => {
+          console.error('Failed to resize stack popup', error);
+          errorMessage = operationErrorMessage(error, 'Resize unavailable');
+        });
+    });
+  }
 </script>
 
-<svelte:window on:keydown={handleKeydown} on:click={closeMenus} on:mousedown={handleMouseNavigation} />
+<svelte:window
+  on:keydown={handleKeydown}
+  on:click={closeMenus}
+  on:mousedown={handleMouseNavigation}
+  on:pointermove={handleResizePointerMove}
+  on:pointermove={handleMarqueePointerMove}
+  on:pointerup={endResize}
+  on:pointerup={endMarqueeSelection}
+  on:pointercancel={endResize}
+  on:pointercancel={endMarqueeSelection}
+  on:resize={updateDetailsViewport}
+/>
 
-<section class="stack-popup" aria-label="Stack browser">
+<section
+  class:resizing={!!resizeDrag}
+  class:terminal-mode={stackBrowserViewMode === 'terminal'}
+  class="stack-popup"
+  aria-label="Stack browser"
+  aria-busy={loadingPath ? 'true' : 'false'}
+  on:contextmenu={handleBackgroundContextMenu}
+>
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>
-      {#if currentPath}
-        <nav class="breadcrumbs" aria-label="Path breadcrumbs">
-          {#each breadcrumbs as crumb, i (crumb.path)}
-            <button type="button" class="crumb" on:click={() => void openFolder(crumb.path)}>{crumb.name}</button>
-            {#if i < breadcrumbs.length - 1}
-              <span class="crumb-sep">/</span>
+      <form
+        class="stack-path-editor"
+        aria-label="Current folder path"
+        on:submit|preventDefault={() => void submitPathDraft()}
+      >
+        <div class="path-input-shell">
+          <input
+            bind:this={pathInput}
+            aria-label="Current folder path"
+            value={pathDraft}
+            placeholder="Stack Browser"
+            spellcheck="false"
+            autocomplete="off"
+            on:focus={(event) => {
+              cancelPathBlurReset();
+              pathInputFocused = true;
+              void refreshPathSuggestions(event.currentTarget);
+            }}
+            on:blur={() => {
+              pathInputFocused = false;
+              schedulePathBlurReset();
+            }}
+            on:input={(event) => void refreshPathSuggestions(event.currentTarget)}
+            on:keydown={handlePathKeydown}
+          />
+          {#if pathInlineCompletion}
+            <span class="path-inline-ghost">
+              <span class="path-inline-typed" aria-hidden="true">{pathDraft}</span><button
+                type="button"
+                class="path-inline-completion"
+                aria-label={`Accept path autocomplete ${pathInlineCompletion.displayText}`}
+                tabindex="-1"
+                on:mousedown|preventDefault={acceptInlinePathCompletion}
+              >{pathInlineCompletion.displayText}</button>
+            </span>
+          {/if}
+        </div>
+        {#if currentPath}
+          <nav class="path-segments" aria-label="Path segments">
+            {#each breadcrumbOverflow.visibleSegments as crumb, i (crumb.path)}
+              <MeltActionButton class="path-segment" ariaCurrent={crumb.path === currentPath ? 'page' : undefined} title={crumb.path} onClick={() => void openFolder(crumb.path)}>{crumb.name}</MeltActionButton>
+              {#if i === 0 && breadcrumbOverflow.hiddenCount}
+                <span class="crumb-sep">/</span>
+                <span class="crumb-overflow" title={breadcrumbOverflow.hiddenTitle} aria-label={`${breadcrumbOverflow.hiddenCount} collapsed path segments`}>...</span>
+              {/if}
+              {#if i < breadcrumbOverflow.visibleSegments.length - 1}
+                <span class="crumb-sep">/</span>
+              {/if}
+            {/each}
+          </nav>
+        {/if}
+        {#if gitStatus}
+          <div class="stack-git-summary" aria-label={`Git ${gitStatus.branch} ${stackGitSummaryParts(gitStatus).map((part) => part.title).join(', ') || 'clean'}`}>
+            <button type="button" class="stack-git-branch" on:click={() => openGitStatusPopup('all')}>{gitStatus.branch}</button>
+            {#if stackGitSummaryParts(gitStatus).length}
+              {#each stackGitSummaryParts(gitStatus) as part}
+                <button type="button" class={`stack-git-count git-status-${part.status}`} title={part.title} on:click={() => openGitStatusPopup(part.status)}>{part.label}</button>
+              {/each}
+            {:else}
+              <button type="button" class="stack-git-clean" on:click={() => openGitStatusPopup('all')}>clean</button>
             {/if}
-          {/each}
-        </nav>
-      {:else}
-        Stack Browser
-      {/if}
+          </div>
+        {/if}
+      </form>
     </div>
     <div class="stack-actions">
-      <button type="button" disabled={!canGoBack} on:click={() => void navigateHistory(-1)}>Back</button>
-      <button type="button" disabled={!canGoForward} on:click={() => void navigateHistory(1)}>Forward</button>
-      <button type="button" on:click={() => void loadFolder(currentPath)}>Refresh</button>
-      <button type="button" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
-      <button type="button" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
-      <button type="button" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
-      <button type="button" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
-      <button type="button" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
-      <button type="button" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
-      <button type="button" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
+      <MeltActionButton disabled={!canGoBack} onClick={() => void navigateHistory(-1)}>Back</MeltActionButton>
+      <MeltActionButton disabled={!canGoForward} onClick={() => void navigateHistory(1)}>Forward</MeltActionButton>
+      <MeltActionButton onClick={() => void loadFolder(currentPath)}>Refresh</MeltActionButton>
+      <MeltActionButton disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+      <MeltActionButton disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+      <MeltActionButton disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</MeltActionButton>
+      <MeltActionButton disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+      <MeltActionButton disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+      <MeltActionButton disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
+      <MeltActionButton disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <label class="stack-search" aria-label="Search current folder">
+        <span>Search</span>
+        <input
+          aria-label="Search current folder"
+          value={searchQuery}
+          placeholder="Search folder"
+          spellcheck="false"
+          autocomplete="off"
+          on:input={handleStackSearchInput}
+          on:keydown={(event) => event.stopPropagation()}
+        />
+      </label>
     </div>
   </header>
 
-  <div class="stack-status">
+  <div class="stack-status surface-state" class:error={!!errorMessage} class:info={!errorMessage} role="status" aria-live="polite">
     <span>{errorMessage || stackState.statusMessage}</span>
     {#if loadingPath}
       <span>Loading...</span>
+    {:else if iconHydrationStatusMessage}
+      <span>{iconHydrationStatusMessage}</span>
     {/if}
   </div>
 
@@ -809,16 +2503,187 @@
         on:click|stopPropagation
         on:mousedown|stopPropagation
       />
-      <button type="submit">OK</button>
-      <button type="button" on:click={cancelInlineEditor}>Cancel</button>
+      <MeltActionButton type="submit">OK</MeltActionButton>
+      <MeltActionButton onClick={cancelInlineEditor}>Cancel</MeltActionButton>
     </form>
+  {/if}
+
+  {#if gitStatusPopupOpen && gitStatus}
+    <dialog
+      open
+      class="stack-git-popup"
+      class:expanded={gitWorkbenchExpanded}
+      aria-label="Git status"
+      on:click|stopPropagation
+      on:contextmenu|stopPropagation
+      on:keydown={(event) => event.key === 'Escape' && closeGitStatusPopup()}
+    >
+      <header>
+        <div>
+          <h2>{gitStatus.branch}</h2>
+          <p>{gitStatus.repositoryRoot}</p>
+        </div>
+        <div class="stack-git-window-actions">
+          <button type="button" aria-label={gitWorkbenchExpanded ? 'Restore git workbench' : 'Expand git workbench'} on:click={() => gitWorkbenchExpanded = !gitWorkbenchExpanded}>{gitWorkbenchExpanded ? 'Restore' : 'Expand'}</button>
+          <button type="button" aria-label="Close git status" on:click={closeGitStatusPopup}>Close</button>
+        </div>
+      </header>
+
+      <div class="stack-git-remote-actions" aria-label="Git remote actions">
+        <button type="button" disabled={gitOperationPending} on:click={() => void runGitRemoteOperation('fetch')}>Fetch</button>
+        <button type="button" disabled={gitOperationPending} on:click={() => void runGitRemoteOperation('pull')}>Pull</button>
+        <button type="button" disabled={gitOperationPending} on:click={() => void runGitRemoteOperation('push')}>Push</button>
+        <span role="status">{gitOperationMessage}</span>
+      </div>
+
+      <div class="stack-git-workbench">
+        <aside class="stack-git-workbench-sidebar" aria-label="Git repository summary">
+          <div class="stack-git-repo-meta">
+            <span>Current branch</span>
+            <strong>{gitStatus.branch}</strong>
+            <small title={gitStatus.repositoryRoot}>{gitStatus.repositoryRoot}</small>
+          </div>
+          <nav class="stack-git-workbench-views" aria-label="Git workbench views">
+            <button type="button" class:active={gitWorkbenchView === 'changes'} on:click={() => setGitWorkbenchView('changes')}>Changes</button>
+            <button type="button" class:active={gitWorkbenchView === 'log'} on:click={() => setGitWorkbenchView('log')}>Log</button>
+            <button type="button" class:active={gitWorkbenchView === 'tree'} on:click={() => setGitWorkbenchView('tree')}>Tree</button>
+            <button type="button" class:active={gitWorkbenchView === 'branches'} on:click={() => setGitWorkbenchView('branches')}>Branches</button>
+          </nav>
+          <div class="stack-git-sidebar-counts">
+            <span>{filteredGitStatusEntries().length} shown</span>
+            <span>{stagedGitStatusEntries().length} staged</span>
+            <span>{gitStatus.entries.length} total</span>
+          </div>
+        </aside>
+
+        <div class="stack-git-workbench-main">
+          {#if gitWorkbenchView === 'changes'}
+            <div class="stack-git-popup-tabs" aria-label="Git status filter">
+              <button type="button" class:active={gitStatusPopupFilter === 'all'} on:click={() => { gitStatusPopupFilter = 'all'; gitStatusSelectedPaths = []; }}>All</button>
+              {#each stackGitSummaryParts(gitStatus) as part}
+                <button type="button" class:active={gitStatusPopupFilter === part.status} on:click={() => { gitStatusPopupFilter = part.status; gitStatusSelectedPaths = []; }}>{part.label}</button>
+              {/each}
+            </div>
+            <div class="stack-git-popup-toolbar">
+              <span>{gitStatusFilterLabel()} · {filteredGitStatusEntries().length} · {gitStatusSelectedPaths.length} selected</span>
+              <button type="button" disabled={!filteredGitStatusEntries().length || gitOperationPending} on:click={() => setAllGitPathsSelected(true)}>Select all</button>
+              <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => setAllGitPathsSelected(false)}>Clear</button>
+              <button type="button" disabled={!gitStatusSelectedPaths.length || gitOperationPending} on:click={() => void addSelectedGitPaths()}>Add selected</button>
+            </div>
+            <div class="stack-git-file-list" role="list" aria-label="Git changed files">
+              {#if filteredGitStatusEntries().length}
+                {#each filteredGitStatusEntries() as entry (entry.path)}
+                  <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
+                    <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
+                    <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
+                    <span title={entry.path}>{entry.relativePath}</span>
+                    <small>{entry.staged ? 'Staged' : stackGitStatusLabel(entry.status)}</small>
+                  </label>
+                {/each}
+              {:else}
+                <div class="stack-git-empty" role="status">No files</div>
+              {/if}
+            </div>
+            <form class="stack-git-commit" on:submit|preventDefault={() => void commitGitStatus()}>
+              <label for="stack-git-commit-message">Commit message</label>
+              <textarea
+                id="stack-git-commit-message"
+                value={gitCommitMessage}
+                rows="3"
+                placeholder={stagedGitStatusEntries().length ? `${stagedGitStatusEntries().length} staged file(s)` : 'Add files before commit'}
+                on:input={(event) => gitCommitMessage = event.currentTarget.value}
+              ></textarea>
+              <div>
+                <span role="status">{gitOperationMessage}</span>
+                <button type="submit" disabled={!gitCommitMessage.trim() || gitOperationPending || !stagedGitStatusEntries().length}>Commit</button>
+              </div>
+            </form>
+          {:else if gitWorkbenchView === 'log'}
+            <div class="stack-git-log-list" role="list" aria-label="Git log">
+              {#if gitWorkbenchLoading && !gitLog}
+                <div class="stack-git-empty" role="status">Loading log...</div>
+              {:else if gitLog?.entries.length}
+                {#each gitLog.entries as entry (entry.commitHash)}
+                  <div class="stack-git-log-entry" role="listitem">
+                    <strong class="stack-git-log-subject" title={entry.subject}>{entry.subject}</strong>
+                    <div class="stack-git-log-meta">
+                      <code title={entry.commitHash}>{entry.shortHash}</code>
+                      <span title={entry.authorEmail}>{entry.authorName}</span>
+                      <time datetime={entry.authoredAt}>{entry.authoredAt}</time>
+                    </div>
+                  </div>
+                {/each}
+              {:else}
+                <div class="stack-git-empty" role="status">No commits</div>
+              {/if}
+            </div>
+          {:else if gitWorkbenchView === 'tree'}
+            <div class="stack-git-tree-list" role="list" aria-label="Git tree">
+              {#if gitWorkbenchLoading && !gitTree}
+                <div class="stack-git-empty" role="status">Loading tree...</div>
+              {:else if gitTree?.entries.length}
+                {#each gitTree.entries as entry (entry.objectHash + entry.path)}
+                  <div role="listitem">
+                    <span class="git-status-badge">{entry.kind === 'tree' ? 'dir' : 'file'}</span>
+                    <span title={entry.objectHash}>{entry.path}</span>
+                  </div>
+                {/each}
+              {:else}
+                <div class="stack-git-empty" role="status">No tree entries</div>
+              {/if}
+            </div>
+          {:else}
+            <div class="stack-git-branch-panel">
+              <div class="stack-git-branch-list" role="list" aria-label="Git branches">
+                {#if gitWorkbenchLoading && !gitBranches}
+                  <div class="stack-git-empty" role="status">Loading branches...</div>
+                {:else if gitBranches?.branches.length}
+                  {#each gitBranches.branches as branch (branch.name)}
+                    <button type="button" class:active={branch.current} disabled={gitOperationPending || branch.current} on:click={() => gitBranchDraft = branch.name}>
+                      <span>{branch.current ? '*' : branch.remote ? 'remote' : 'local'}</span>
+                      <strong>{branch.name}</strong>
+                    </button>
+                  {/each}
+                {:else}
+                  <div class="stack-git-empty" role="status">No branches</div>
+                {/if}
+              </div>
+              <form class="stack-git-branch-controls" on:submit|preventDefault={() => void checkoutGitBranch()}>
+                <label for="stack-git-checkout-branch">Checkout branch</label>
+                <input id="stack-git-checkout-branch" value={gitBranchDraft} placeholder="branch name" on:input={(event) => gitBranchDraft = event.currentTarget.value} />
+                <button type="submit" disabled={!gitBranchDraft.trim() || gitOperationPending}>Checkout branch</button>
+              </form>
+              <form class="stack-git-branch-controls" on:submit|preventDefault={() => void createGitBranch()}>
+                <label for="stack-git-create-branch">Create branch</label>
+                <input id="stack-git-create-branch" value={gitNewBranchDraft} placeholder="new branch" on:input={(event) => gitNewBranchDraft = event.currentTarget.value} />
+                <button type="submit" disabled={!gitNewBranchDraft.trim() || gitOperationPending}>Create branch</button>
+              </form>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </dialog>
+  {/if}
+
+  {#if pendingGitMutation}
+    <div class="git-confirm-backdrop" role="presentation" on:click|stopPropagation>
+      <div class="git-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="stack-git-confirm-title" aria-describedby="stack-git-confirm-message">
+        <h2 id="stack-git-confirm-title">{gitMutationTitle()}</h2>
+        <p id="stack-git-confirm-message">{gitMutationMessage()}</p>
+        <div class="git-confirm-actions">
+          <button type="button" on:click={() => pendingGitMutation = null}>Cancel</button>
+          <button type="button" class="danger" disabled={gitOperationPending} on:click={() => void confirmGitMutation()}>Confirm</button>
+        </div>
+      </div>
+    </div>
   {/if}
 
   <div
     class="details-table"
     role="grid"
     aria-label="Folder details"
-    aria-rowcount={entries.length + 1}
+    aria-busy={loadingPath ? 'true' : 'false'}
+    aria-rowcount={visibleEntries.length + 1}
     aria-colcount="4"
     tabindex="0"
     bind:this={detailsGrid}
@@ -827,29 +2692,49 @@
     on:drop={(event) => void handleDrop(event, currentPath)}
   >
     <div class="details-header" role="row" aria-rowindex="1">
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="1" aria-sort={ariaSort('name')} on:click={() => sortBy('name')}>Name{sortIndicator('name')}</button>
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="2" aria-sort={ariaSort('type')} on:click={() => sortBy('type')}>Type{sortIndicator('type')}</button>
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="3" aria-sort={ariaSort('size')} on:click={() => sortBy('size')}>Size{sortIndicator('size')}</button>
-      <button type="button" class="details-sort" role="columnheader" aria-colindex="4" aria-sort={ariaSort('modified')} on:click={() => sortBy('modified')}>Modified{sortIndicator('modified')}</button>
+      <MeltActionButton class={sortHeader('name').className} role="columnheader" ariaColindex={1} ariaSort={sortHeader('name').ariaSort} onClick={() => sortBy('name')}><span>Name</span><span class="sort-indicator" aria-hidden="true">{sortHeader('name').indicator}</span></MeltActionButton>
+      <MeltActionButton class={sortHeader('type').className} role="columnheader" ariaColindex={2} ariaSort={sortHeader('type').ariaSort} onClick={() => sortBy('type')}><span>Type</span><span class="sort-indicator" aria-hidden="true">{sortHeader('type').indicator}</span></MeltActionButton>
+      <MeltActionButton class={sortHeader('size').className} role="columnheader" ariaColindex={3} ariaSort={sortHeader('size').ariaSort} onClick={() => sortBy('size')}><span>Size</span><span class="sort-indicator" aria-hidden="true">{sortHeader('size').indicator}</span></MeltActionButton>
+      <MeltActionButton class={sortHeader('modified').className} role="columnheader" ariaColindex={4} ariaSort={sortHeader('modified').ariaSort} onClick={() => sortBy('modified')}><span>Modified</span><span class="sort-indicator" aria-hidden="true">{sortHeader('modified').indicator}</span></MeltActionButton>
     </div>
 
-    {#if entries.length}
-      <div class="details-body">
-        {#each entries as entry, index (entry.id)}
+    {#if visibleEntries.length}
+      <div
+        class="details-body"
+        class:marquee-selecting={!!marqueeSelection}
+        role="rowgroup"
+        bind:this={detailsBody}
+        data-stack-marquee-start="body"
+        on:pointerdown={beginMarqueeSelection}
+        on:scroll={handleDetailsBodyScroll}
+      >
+        {#if virtualEntries.beforeHeight}
+          <div class="virtual-spacer" data-stack-marquee-start="spacer" style={`height:${virtualEntries.beforeHeight}px`} aria-hidden="true"></div>
+        {/if}
+        {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
+          {@const entry = virtualRow.item}
           {@const fileIcon = stackFileIconForEntry(entry)}
+          {@const gitEntryStatus = stackGitStatusForEntry(entry)}
           <button
             class:selected={stackState.selectedPaths.includes(entry.path)}
             class:subdued={entry.isHidden || entry.isSystem}
             class:readonly={entry.isReadonly}
             class:linked={entry.isSymlink || entry.isReparsePoint}
             class:retained={hasRetainedRows}
+            class:git-added={gitEntryStatus === 'added'}
+            class:git-modified={gitEntryStatus === 'modified'}
+            class:git-deleted={gitEntryStatus === 'deleted'}
+            class:git-untracked={gitEntryStatus === 'untracked'}
+            class:git-conflicted={gitEntryStatus === 'conflict'}
+            data-git-status={gitEntryStatus ?? undefined}
             type="button"
             role="row"
-            aria-rowindex={index + 2}
+            aria-rowindex={virtualRow.index + 2}
             aria-selected={stackState.selectedPaths.includes(entry.path)}
             aria-disabled={hasRetainedRows}
             disabled={hasRetainedRows}
             draggable={!hasRetainedRows}
+            data-stack-entry-path={entry.path}
             on:click={(event) => selectEntryFromMouse(event, entry)}
             on:dblclick={() => void activateEntry(entry)}
             on:contextmenu={(event) => handleRowContextMenu(event, entry)}
@@ -877,537 +2762,124 @@
                   {/each}
                 </span>
               {/if}
+              {#if gitEntryStatus}
+                <span class={`git-file-badge git-status-badge git-status-${gitEntryStatus}`} aria-label={stackGitStatusLabel(gitEntryStatus)} title={stackGitStatusLabel(gitEntryStatus)}>{stackGitStatusSymbol(gitEntryStatus)}</span>
+              {/if}
             </span>
             <span role="gridcell" aria-colindex="2">{entry.typeLabel}</span>
             <span role="gridcell" aria-colindex="3">{formatStackSize(entry.size)}</span>
             <span role="gridcell" aria-colindex="4">{formatModified(entry.modifiedMs)}</span>
           </button>
         {/each}
+        {#if virtualEntries.afterHeight}
+          <div class="virtual-spacer" data-stack-marquee-start="spacer" style={`height:${virtualEntries.afterHeight}px`} aria-hidden="true"></div>
+        {/if}
+        {#if marqueeRect}
+          <div
+            class="stack-marquee-rect"
+            style={`left:${marqueeRect.left}px;top:${marqueeRect.top}px;width:${marqueeRect.width}px;height:${marqueeRect.height}px`}
+            aria-hidden="true"
+          ></div>
+        {/if}
       </div>
     {:else}
-      <div class="empty-stack">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
+      <div class="empty-stack surface-state" class:loading={!!loadingPath} class:info={!loadingPath} role="status">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
     {/if}
   </div>
 
   {#if rowMenu}
     <div
       class="context-menu"
-      style={`left:${rowMenu.x}px;top:${rowMenu.y}px`}
+      style={`left:${rowMenu.x}px;top:${rowMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(rowMenu)};--stack-context-menu-left:${rowMenu.x}px;--stack-context-menu-top:${rowMenu.y}px;--stack-context-menu-width:${contextMenuWidthCss(rowMenu)};--stack-context-submenu-max-height:${contextSubmenuMaxHeightCss(rowMenu)}`}
       role="menu"
       tabindex="-1"
       bind:this={rowMenuElement}
       on:click|stopPropagation
+      on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
+      on:scroll={() => void positionOpenMenus()}
     >
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => selectedEntry && void activateEntry(selectedEntry)}>Open</button>
-      <div class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
-        <button type="button" class="submenu-trigger" role="menuitem" aria-haspopup="true" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</button>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</MeltActionButton>
+      <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
+        <MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</MeltActionButton>
         <div class="context-menu context-submenu-panel" role="menu">
-          <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'File'} on:click={() => void openSelectedWithPicker()}>Choose app...</button>
+          {#each openWithSuggestions as app (app.id)}
+            <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</MeltActionButton>
+          {/each}
+          <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</MeltActionButton>
         </div>
       </div>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(false)}>Copy</button>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void copySelected(true)}>Cut</button>
-      <button type="button" role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} on:click={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={beginRenameSelected}>Rename</button>
-      <button type="button" role="menuitem" disabled={!hasSelection} on:click={() => void deleteSelected()}>Delete</button>
-      <button type="button" role="menuitem" disabled={!selectedEntry} on:click={() => void revealSelected()}>Reveal</button>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('here')}>Extract here</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder')}>Extract to folder</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('here', 'sevenZip')}>Extract here with 7-Zip</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder', 'sevenZip')}>Extract to folder with 7-Zip</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</MeltActionButton>
     </div>
   {/if}
 
   {#if backgroundMenu}
     <div
       class="context-menu"
-      style={`left:${backgroundMenu.x}px;top:${backgroundMenu.y}px`}
+      style={`left:${backgroundMenu.x}px;top:${backgroundMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(backgroundMenu)}`}
       role="menu"
       tabindex="-1"
       bind:this={backgroundMenuElement}
       on:click|stopPropagation
+      on:contextmenu|stopPropagation
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
-      <button type="button" role="menuitem" disabled={!currentPath} on:click={() => void pasteIntoCurrentFolder()}>Paste</button>
-      <button type="button" role="menuitem" disabled={!currentPath} on:click={beginCreateFolder}>New Folder</button>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void beginCreateTextFile()}>New Text File</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openCurrentFolderInVscode()}>Open in VS Code</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openTerminalHere()}>Open Terminal Here</MeltActionButton>
+      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void showCurrentFolderProperties()}>Properties</MeltActionButton>
     </div>
   {/if}
+
+  {#if deleteConfirmation}
+    <div class="delete-confirm-backdrop" role="presentation" on:click|stopPropagation>
+      <div
+        class="delete-confirm-dialog"
+        role="dialog"
+        tabindex="-1"
+        aria-modal="true"
+        aria-labelledby="stack-delete-confirm-title"
+        aria-describedby="stack-delete-confirm-message"
+      >
+        <h2 id="stack-delete-confirm-title">{deleteConfirmation.title}</h2>
+        <p id="stack-delete-confirm-message">{deleteConfirmation.message}</p>
+        <div class="delete-confirm-actions">
+          <button type="button" bind:this={deleteCancelButton} on:click={cancelDeleteConfirmation}>Cancel</button>
+          <MeltActionButton class="danger" onClick={() => void confirmDeleteSelection()}>Delete</MeltActionButton>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <button
+    type="button"
+    class="stack-resize-grip"
+    aria-label="Resize Stack Browser"
+    title="Resize Stack Browser"
+    bind:this={resizeGrip}
+    on:pointerdown={beginResize}
+    on:click|stopPropagation
+  ></button>
 </section>
-
-<style>
-  .stack-popup {
-    background: linear-gradient(180deg, rgba(23, 28, 39, 0.98), rgba(10, 13, 21, 0.98));
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.45rem;
-    box-shadow: 0 22px 46px rgba(0, 0, 0, 0.44);
-    color: #f0f4ff;
-    display: grid;
-    grid-template-rows: auto auto auto 1fr;
-    height: 100%;
-    overflow: hidden;
-    padding: 0.65rem;
-    width: 100%;
-  }
-
-  .stack-toolbar {
-    display: grid;
-    gap: 0.65rem;
-  }
-
-  .stack-path {
-    color: rgba(240, 244, 255, 0.92);
-    font-size: 0.82rem;
-    font-weight: 750;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .stack-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .stack-actions button {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.28rem;
-    color: #eef3ff;
-    font-size: 0.62rem;
-    font-weight: 750;
-    min-height: 1.45rem;
-    padding: 0 0.42rem;
-  }
-
-  .stack-actions button:disabled {
-    color: rgba(218, 226, 248, 0.32);
-  }
-
-  .stack-actions button:not(:disabled):hover {
-    background: rgba(77, 124, 254, 0.18);
-    border-color: rgba(124, 160, 255, 0.35);
-  }
-
-  .stack-status {
-    color: rgba(218, 226, 248, 0.58);
-    display: flex;
-    font-size: 0.62rem;
-    justify-content: space-between;
-    min-height: 1.45rem;
-    padding: 0.35rem 0.05rem 0.4rem;
-  }
-
-  .inline-editor {
-    align-items: center;
-    background: rgba(255, 255, 255, 0.055);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.35rem;
-    display: flex;
-    gap: 0.4rem;
-    margin-bottom: 0.45rem;
-    padding: 0.38rem;
-  }
-
-  .inline-editor label {
-    color: rgba(218, 226, 248, 0.72);
-    font-size: 0.62rem;
-    font-weight: 800;
-    text-transform: uppercase;
-  }
-
-  .inline-editor input {
-    background: rgba(5, 8, 15, 0.72);
-    border: 1px solid rgba(124, 160, 255, 0.34);
-    border-radius: 0.28rem;
-    color: #f0f4ff;
-    flex: 1 1 auto;
-    font: inherit;
-    font-size: 0.72rem;
-    min-width: 8rem;
-    padding: 0.28rem 0.45rem;
-  }
-
-  .inline-editor input:focus {
-    border-color: rgba(150, 184, 255, 0.72);
-    outline: 2px solid rgba(77, 124, 254, 0.28);
-  }
-
-  .inline-editor button {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.28rem;
-    color: #eef3ff;
-    font-size: 0.62rem;
-    font-weight: 750;
-    min-height: 1.55rem;
-    padding: 0 0.5rem;
-  }
-
-  .details-table {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 0.38rem;
-    display: grid;
-    grid-template-rows: auto 1fr;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .details-table:focus-visible {
-    outline: 2px solid rgba(150, 184, 255, 0.62);
-    outline-offset: -2px;
-  }
-
-  .details-header,
-  .details-body button {
-    display: grid;
-    grid-template-columns: minmax(10rem, 1fr) 5.5rem 5rem 8.5rem;
-  }
-
-  .details-header {
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(218, 226, 248, 0.58);
-    font-size: 0.58rem;
-    font-weight: 800;
-    min-height: 1.65rem;
-    text-transform: uppercase;
-  }
-
-  .details-header .details-sort,
-  .details-body button > span {
-    align-content: center;
-    min-width: 0;
-    overflow: hidden;
-    padding: 0 0.55rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .details-body button > span:first-child {
-    align-items: center;
-    display: flex;
-    gap: 0.4rem;
-  }
-
-  .stack-entry-icon {
-    align-items: center;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 0.18rem;
-    display: inline-flex;
-    flex: 0 0 auto;
-    height: 1rem;
-    justify-content: center;
-    min-width: 1rem;
-    overflow: hidden;
-    position: relative;
-    width: 1rem;
-  }
-
-  .stack-entry-icon img {
-    height: 1rem;
-    width: 1rem;
-  }
-
-  .stack-entry-icon-shape,
-  .stack-entry-icon-shape::before,
-  .stack-entry-icon-shape::after {
-    box-sizing: border-box;
-    display: block;
-    position: absolute;
-  }
-
-  .stack-entry-icon-shape {
-    inset: 0;
-  }
-
-  .stack-entry-icon-folder .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #ffd67a, #d79932);
-    border-radius: 0.1rem 0.1rem 0 0;
-    content: '';
-    height: 0.28rem;
-    left: 0.12rem;
-    top: 0.2rem;
-    width: 0.42rem;
-  }
-
-  .stack-entry-icon-folder .stack-entry-icon-shape::after {
-    background: linear-gradient(180deg, #ffd978, #b97920);
-    border: 1px solid rgba(255, 239, 177, 0.55);
-    border-radius: 0.12rem;
-    content: '';
-    height: 0.55rem;
-    inset: 0.34rem 0.1rem 0.11rem;
-  }
-
-  .stack-entry-icon-file .stack-entry-icon-shape::before,
-  .stack-entry-icon-document .stack-entry-icon-shape::before,
-  .stack-entry-icon-code .stack-entry-icon-shape::before,
-  .stack-entry-icon-image .stack-entry-icon-shape::before,
-  .stack-entry-icon-audio .stack-entry-icon-shape::before,
-  .stack-entry-icon-video .stack-entry-icon-shape::before,
-  .stack-entry-icon-archive .stack-entry-icon-shape::before,
-  .stack-entry-icon-app .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(184, 203, 242, 0.86));
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    border-radius: 0.12rem;
-    content: '';
-    inset: 0.13rem 0.2rem 0.12rem;
-  }
-
-  .stack-entry-icon-file .stack-entry-icon-shape::after,
-  .stack-entry-icon-document .stack-entry-icon-shape::after,
-  .stack-entry-icon-code .stack-entry-icon-shape::after,
-  .stack-entry-icon-image .stack-entry-icon-shape::after,
-  .stack-entry-icon-audio .stack-entry-icon-shape::after,
-  .stack-entry-icon-video .stack-entry-icon-shape::after,
-  .stack-entry-icon-archive .stack-entry-icon-shape::after,
-  .stack-entry-icon-app .stack-entry-icon-shape::after {
-    border-left: 0.2rem solid transparent;
-    border-top: 0.2rem solid rgba(105, 133, 190, 0.75);
-    content: '';
-    right: 0.2rem;
-    top: 0.13rem;
-  }
-
-  .stack-entry-icon-app .stack-entry-icon-shape::before {
-    background: linear-gradient(135deg, #8fc7ff, #3767d5);
-    border-radius: 0.18rem;
-    inset: 0.16rem;
-  }
-
-  .stack-entry-icon-app .stack-entry-icon-shape::after {
-    background: rgba(255, 255, 255, 0.72);
-    border: 0;
-    border-radius: 999px;
-    content: '';
-    height: 0.26rem;
-    inset: 0.37rem;
-  }
-
-  .stack-entry-icon-image .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #d9fff5, #6bd8bd);
-  }
-
-  .stack-entry-icon-archive .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #f0d6ff, #ac75df);
-  }
-
-  .stack-entry-icon-code .stack-entry-icon-shape::before {
-    background: linear-gradient(180deg, #e5edff, #83a3ff);
-  }
-
-  .stack-entry-icon-folder {
-    background: linear-gradient(180deg, rgba(245, 191, 92, 0.42), rgba(164, 113, 35, 0.32));
-    border-color: rgba(245, 191, 92, 0.38);
-    color: #fff0c7;
-  }
-
-  .stack-entry-icon-app {
-    background: linear-gradient(180deg, rgba(114, 178, 255, 0.42), rgba(45, 86, 177, 0.34));
-    border-color: rgba(132, 196, 255, 0.42);
-    color: #e9f3ff;
-  }
-
-  .stack-entry-icon-image,
-  .stack-entry-icon-video {
-    background: linear-gradient(180deg, rgba(100, 211, 181, 0.34), rgba(35, 112, 97, 0.28));
-    border-color: rgba(111, 230, 194, 0.32);
-  }
-
-  .stack-entry-icon-archive {
-    background: linear-gradient(180deg, rgba(204, 151, 255, 0.34), rgba(91, 51, 137, 0.32));
-    border-color: rgba(204, 151, 255, 0.32);
-  }
-
-  .stack-entry-icon-code {
-    background: linear-gradient(180deg, rgba(144, 181, 255, 0.32), rgba(57, 84, 158, 0.3));
-    border-color: rgba(144, 181, 255, 0.34);
-  }
-
-  .details-header .details-sort {
-    background: transparent;
-    border: 0;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    text-transform: inherit;
-  }
-
-  .details-header .details-sort:hover,
-  .details-header .details-sort:focus-visible {
-    background: rgba(124, 160, 255, 0.14);
-    color: rgba(240, 244, 255, 0.86);
-    outline: 0;
-  }
-
-  .details-body {
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-color: rgba(124, 160, 255, 0.45) rgba(255, 255, 255, 0.06);
-  }
-
-  .details-body button {
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
-    color: rgba(240, 244, 255, 0.9);
-    font: inherit;
-    font-size: 0.7rem;
-    min-height: 1.9rem;
-    text-align: left;
-    width: 100%;
-  }
-
-  .details-body button:hover,
-  .details-body button.selected {
-    background: rgba(77, 124, 254, 0.16);
-  }
-
-  .details-body button.selected {
-    outline: 1px solid rgba(124, 160, 255, 0.34);
-    outline-offset: -1px;
-  }
-
-  .details-body button.subdued {
-    color: rgba(218, 226, 248, 0.58);
-  }
-
-  .details-body button.readonly {
-    box-shadow: inset 3px 0 0 rgba(245, 191, 92, 0.42);
-  }
-
-  .details-body button.linked {
-    box-shadow: inset 3px 0 0 rgba(132, 196, 255, 0.48);
-  }
-
-  .details-body button.readonly.linked {
-    box-shadow:
-      inset 3px 0 0 rgba(245, 191, 92, 0.42),
-      inset 6px 0 0 rgba(132, 196, 255, 0.36);
-  }
-
-  .details-body button.retained {
-    cursor: progress;
-  }
-
-  .item-badges {
-    display: inline-flex;
-    gap: 0.18rem;
-    margin-left: 0.35rem;
-    padding: 0;
-    vertical-align: middle;
-  }
-
-  .item-badges span {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 999px;
-    color: rgba(240, 244, 255, 0.7);
-    font-size: 0.5rem;
-    font-weight: 800;
-    line-height: 1;
-    padding: 0.12rem 0.25rem;
-  }
-
-  .details-body button:focus-visible {
-    outline: 2px solid rgba(150, 184, 255, 0.72);
-    outline-offset: -2px;
-  }
-
-  .context-menu {
-    background: rgba(15, 20, 32, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 0.35rem;
-    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.42);
-    display: grid;
-    min-width: 8.5rem;
-    padding: 0.25rem;
-    position: fixed;
-    z-index: 50;
-  }
-
-  .context-submenu {
-    position: relative;
-  }
-
-  .context-submenu-panel {
-    display: none;
-    left: calc(100% + 0.25rem);
-    min-width: 9rem;
-    position: absolute;
-    top: 0;
-  }
-
-  .context-submenu.left .context-submenu-panel {
-    left: auto;
-    right: calc(100% + 0.25rem);
-  }
-
-  .context-submenu:hover .context-submenu-panel,
-  .context-submenu:focus-within .context-submenu-panel {
-    display: grid;
-  }
-
-  .context-menu button {
-    background: transparent;
-    border: 0;
-    border-radius: 0.24rem;
-    color: rgba(240, 244, 255, 0.92);
-    font: inherit;
-    font-size: 0.68rem;
-    min-height: 1.55rem;
-    padding: 0 0.55rem;
-    text-align: left;
-  }
-
-  .context-menu button:hover:not(:disabled),
-  .context-menu button:focus-visible {
-    background: rgba(77, 124, 254, 0.22);
-  }
-
-  .context-menu button:disabled {
-    color: rgba(218, 226, 248, 0.32);
-  }
-
-  .empty-stack {
-    align-items: center;
-    color: rgba(218, 226, 248, 0.58);
-    display: grid;
-    font-size: 0.72rem;
-    justify-items: center;
-  }
-
-  .breadcrumbs {
-    width: 100%;
-    display: flex;
-    gap: 0.25rem;
-    align-items: center;
-    flex-wrap: nowrap;
-    overflow: hidden;
-  }
-
-  .breadcrumbs .crumb {
-    background: transparent;
-    border: 0;
-    color: rgba(240, 244, 255, 0.9);
-    font-weight: 700;
-    min-width: 0;
-    padding: 0 0.25rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow: hidden;
-  }
-
-  .breadcrumbs .crumb:last-child {
-    flex: 1 1 auto;
-    text-align: left;
-  }
-
-  .breadcrumbs .crumb-sep {
-    color: rgba(218, 226, 248, 0.46);
-    padding: 0 0.12rem;
-  }
-
-  .stack-actions button:nth-child(3) {
-    background: rgba(255, 255, 255, 0.04);
-  }
-</style>

@@ -1,14 +1,38 @@
 <script lang="ts">
   import './BottomBar.css';
-  import { onMount } from 'svelte';
-  import { listen } from '@tauri-apps/api/event';
+  import { onMount, tick } from 'svelte';
+  import { emit, listen } from '@tauri-apps/api/event';
+  import MeltActionButton from './melt/MeltActionButton.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
+  import {
+    addShellSettingsChangeListener,
+    loadShellSettings,
+    saveShellBarHeight,
+    type ShellSettings
+  } from '../lib/settings';
+  import {
+    clampShellBarHeight,
+    createShellBarResizeScheduler,
+    resizeShellBar,
+    shellBarHeightForSettingsUpdate,
+    shellBarHeightFromDrag
+  } from '../lib/shellBarResize';
   import { showProcessManager } from '../lib/processManager';
   import {
     launchPinnedTaskbarLauncher,
     listPinnedTaskbarLaunchers,
     type PinnedTaskbarLauncher
   } from '../lib/taskbarLaunchers';
+  import {
+    hasTaskbarLauncherDragStarted,
+    orderTaskbarLaunchers,
+    preserveExplorerTaskbarPins,
+    reconcileTaskbarLauncherOrder,
+    resolveTaskbarLauncherPointerRelease,
+    taskbarLauncherDragDelta,
+    taskbarLauncherKey,
+    taskbarLauncherOrderFromDisplacement
+  } from '../lib/taskbarPins';
   import {
     showLauncherContextMenu,
     showTaskWindowContextMenu
@@ -45,8 +69,34 @@
     listOpenTaskWindows,
     type TaskbarWindow
   } from '../lib/taskbarWindows';
+  import {
+    nextTaskbarFocusIndex,
+    taskbarOverflowState,
+    taskGroupStateLabel
+  } from '../features/bottom-bar/taskbarUxState';
+  const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
   let launcherMessage = 'Loading Explorer taskbar pins…';
+  let shellSettings: ShellSettings | null = null;
+  let bottomBarHeightLogical = 32.4;
+  let bottomBarHeightLocked = true;
+  let bottomBarResizePointerId: number | null = null;
+  let bottomBarResizeStartY = 0;
+  let bottomBarResizeStartHeight = 32.4;
+  let bottomBarPendingPersistedHeight: number | null = null;
+  const bottomBarResizeScheduler = createShellBarResizeScheduler('bottom', (error) => {
+    console.error('Failed to resize bottom bar', error);
+  });
   let launchers: PinnedTaskbarLauncher[] = [];
+  let launcherOrder: string[] = readPersistedLauncherOrder();
+  let draggingLauncherPath: string | null = null;
+  let launcherDragPointerId: number | null = null;
+  let launcherDragStartX = 0;
+  let launcherDragCurrentX = 0;
+  let launcherDragStarted = false;
+  let launcherDragOriginalOrder: string[] = [];
+  let launcherDragElement: HTMLElement | null = null;
+  let launcherDragRects: ReturnType<typeof launcherRects> = [];
+  let suppressClickLauncherKey: string | null = null;
   let taskbarMessage = 'Loading open windows…';
   let openWindows: TaskbarWindow[] = [];
   let launchingShortcutPath: string | null = null;
@@ -67,10 +117,128 @@
   let taskGroupDragRects: ReturnType<typeof taskGroupRects> = [];
   let pendingTaskWindowHwnd: string | null = null;
   let suppressClickTaskWindowHwnd: string | null = null;
+  let taskStripEl: HTMLDivElement | null = null;
+  let taskbarOverflow = taskbarOverflowState(0, 0, 0);
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
+
+  function readPersistedLauncherOrder() {
+    try {
+      const raw = window.localStorage.getItem(TASKBAR_LAUNCHER_ORDER_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function loadBottomBarResizeSettings() {
+    try {
+      const settings = await loadShellSettings();
+      await applyBottomBarSettings(settings);
+    } catch (error) {
+      console.error('Failed to load bottom bar resize settings', error);
+    }
+  }
+
+  async function applyBottomBarSettings(settings: ShellSettings) {
+    shellSettings = settings;
+    bottomBarHeightLocked = settings.ui.lockBottomBarHeight;
+    const persistedHeight = clampShellBarHeight('bottom', settings.ui.bottomBarHeightLogical);
+    const pendingHeightSettled = bottomBarPendingPersistedHeight === persistedHeight;
+    bottomBarHeightLogical = shellBarHeightForSettingsUpdate(
+      'bottom',
+      persistedHeight,
+      bottomBarHeightLogical,
+      bottomBarResizePointerId !== null || (bottomBarPendingPersistedHeight !== null && !pendingHeightSettled)
+    );
+    if (pendingHeightSettled) {
+      bottomBarPendingPersistedHeight = null;
+    }
+    await resizeShellBar({ edge: 'bottom', heightLogical: bottomBarHeightLogical });
+  }
+
+  function startBottomBarHeightResize(event: PointerEvent) {
+    if (bottomBarHeightLocked || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    bottomBarResizePointerId = event.pointerId;
+    bottomBarResizeStartY = event.clientY;
+    bottomBarResizeStartHeight = bottomBarHeightLogical;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function moveBottomBarHeightResize(event: PointerEvent) {
+    if (bottomBarResizePointerId !== event.pointerId || bottomBarHeightLocked) {
+      return;
+    }
+    const nextHeight = shellBarHeightFromDrag(
+      'bottom',
+      bottomBarResizeStartHeight,
+      bottomBarResizeStartY,
+      event.clientY
+    );
+    if (nextHeight === bottomBarHeightLogical) {
+      return;
+    }
+    bottomBarHeightLogical = nextHeight;
+    bottomBarResizeScheduler.schedule(nextHeight);
+  }
+
+  function finishBottomBarHeightResize(event: PointerEvent) {
+    if (bottomBarResizePointerId !== event.pointerId) {
+      return;
+    }
+    bottomBarResizePointerId = null;
+    const nextHeight = clampShellBarHeight('bottom', bottomBarHeightLogical);
+    void bottomBarResizeScheduler.flush(nextHeight);
+    if (!shellSettings) {
+      return;
+    }
+    bottomBarPendingPersistedHeight = nextHeight;
+    shellSettings = {
+      ...shellSettings,
+      ui: {
+        ...shellSettings.ui,
+        bottomBarHeightLogical: nextHeight
+      }
+    };
+    void saveShellBarHeight('bottom', nextHeight)
+      .then((savedSettings) => {
+        shellSettings = savedSettings;
+        if (clampShellBarHeight('bottom', savedSettings.ui.bottomBarHeightLogical) === bottomBarPendingPersistedHeight) {
+          bottomBarPendingPersistedHeight = null;
+        }
+      })
+      .catch((error) => {
+        bottomBarPendingPersistedHeight = null;
+        console.error('Failed to save bottom bar height', error);
+      });
+  }
+
+  function writePersistedLauncherOrder(order: string[]) {
+    try {
+      window.localStorage.setItem(TASKBAR_LAUNCHER_ORDER_STORAGE_KEY, JSON.stringify(order));
+    } catch {
+      // Launcher order is a convenience preference; runtime ordering still works if storage is blocked.
+    }
+  }
 
   $: taskGroupDragDeltaX = taskGroupDragStarted
     ? taskbarGroupDragDelta(taskGroupDragStartX, taskGroupDragCurrentX)
     : 0;
+  $: launcherDragDeltaX = launcherDragStarted
+    ? taskbarLauncherDragDelta(launcherDragStartX, launcherDragCurrentX)
+    : 0;
+  $: launcherPreviewOrder = launcherDragStarted && draggingLauncherPath
+    ? taskbarLauncherOrderFromDisplacement(
+        draggingLauncherPath,
+        launcherDragOriginalOrder,
+        launcherDragRects,
+        launcherDragDeltaX
+      )
+    : launcherOrder;
   $: taskWindowGroups = buildTaskWindowGroups(openWindows, taskGroupOrder);
   $: taskGroupPreviewOrder = taskGroupDragStarted && draggingGroupKey
     ? taskbarGroupOrderFromDisplacement(
@@ -148,25 +316,35 @@
       openWindows = nextWindows;
       taskGroupOrder = nextGroups.map((group) => group.key);
       taskbarMessage = openWindows.length ? 'Open task windows' : 'No open task windows';
+      void tick().then(updateTaskbarOverflow);
     } catch (error) {
       console.error('Failed to load open task windows', error);
       openWindows = [];
       taskGroupOrder = [];
       taskbarMessage = 'Open windows unavailable';
+      updateTaskbarOverflow();
     }
   }
   async function loadPinnedLaunchers() {
     launcherMessage = 'Loading Explorer taskbar pins…';
     try {
-      launchers = await listPinnedTaskbarLaunchers();
+      const explorerLaunchers = await listPinnedTaskbarLaunchers();
+      const nextLaunchers = preserveExplorerTaskbarPins(explorerLaunchers);
+      launcherOrder = reconcileTaskbarLauncherOrder(launcherOrder, nextLaunchers);
+      writePersistedLauncherOrder(launcherOrder);
+      launchers = orderTaskbarLaunchers(nextLaunchers, launcherOrder);
       launcherMessage = launchers.length
         ? 'Pinned Explorer shortcuts'
         : 'No supported Explorer taskbar pins';
     } catch (error) {
       console.error('Failed to load pinned taskbar launchers', error);
       launchers = [];
+      launcherOrder = [];
       launcherMessage = 'Pinned taskbar shortcuts unavailable';
     }
+  }
+  async function refreshLauncherSections() {
+    await loadPinnedLaunchers();
   }
   async function launchApp(launcher: PinnedTaskbarLauncher) {
     if (launchingShortcutPath) {
@@ -179,12 +357,130 @@
       await refreshTaskbarWindows();
     } catch (error) {
       console.error(`Failed to launch pinned app ${launcher.name}`, error);
-      launchers = launchers.filter((item) => item.shortcutPath !== launcher.shortcutPath);
-      launcherMessage = `Skipped unavailable launcher: ${launcher.name}`;
+      launcherMessage = `Launch unavailable: ${launcher.name}`;
       await refreshTaskbarWindows();
     } finally {
       launchingShortcutPath = null;
     }
+  }
+  function launcherRects() {
+    return Array.from(document.querySelectorAll<HTMLElement>('.launcher-button[data-path]'))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          key: element.dataset.path ?? '',
+          left: rect.left,
+          width: rect.width
+        };
+      })
+      .filter((rect) => rect.key);
+  }
+  function launcherStyle(launcher: PinnedTaskbarLauncher) {
+    const key = taskbarLauncherKey(launcher);
+    const previewOrderIndex = launcherPreviewOrder.indexOf(key);
+    if (draggingLauncherPath !== key || !launcherDragStarted) {
+      return previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '';
+    }
+    const liveReorderOffset = taskbarGroupReorderOffset(
+      key,
+      launcherPreviewOrder,
+      launcherDragRects
+    );
+    const visualDelta = launcherDragDeltaX + liveReorderOffset;
+    return `order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`;
+  }
+  function releaseLauncherPointerCapture() {
+    if (!launcherDragElement || launcherDragPointerId === null) {
+      return;
+    }
+    try {
+      if (launcherDragElement.hasPointerCapture(launcherDragPointerId)) {
+        launcherDragElement.releasePointerCapture(launcherDragPointerId);
+      }
+    } catch {
+      // Capture can already be gone after OS/browser pointer cancellation.
+    }
+  }
+  function resetLauncherPointerDrag() {
+    draggingLauncherPath = null;
+    launcherDragPointerId = null;
+    launcherDragStartX = 0;
+    launcherDragCurrentX = 0;
+    launcherDragStarted = false;
+    launcherDragOriginalOrder = [];
+    launcherDragElement = null;
+    launcherDragRects = [];
+  }
+  function cancelLauncherPointerDrag() {
+    releaseLauncherPointerCapture();
+    resetLauncherPointerDrag();
+  }
+  function startLauncherPointerDrag(launcher: PinnedTaskbarLauncher, event: PointerEvent) {
+    if (event.button !== 0 || launchingShortcutPath) {
+      return;
+    }
+    draggingLauncherPath = taskbarLauncherKey(launcher);
+    launcherDragPointerId = event.pointerId;
+    launcherDragStartX = event.clientX;
+    launcherDragCurrentX = event.clientX;
+    launcherDragStarted = false;
+    launcherDragOriginalOrder = launchers.map(taskbarLauncherKey);
+    launcherDragElement = event.currentTarget as HTMLElement;
+    launcherDragRects = launcherRects();
+    try {
+      launcherDragElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Reorder still works while pointer remains over the launcher strip.
+    }
+  }
+  function moveLauncherPointerDrag(event: PointerEvent) {
+    if (launcherDragPointerId !== event.pointerId || !draggingLauncherPath) {
+      return;
+    }
+    launcherDragCurrentX = event.clientX;
+    const started = hasTaskbarLauncherDragStarted(launcherDragStartX, event.clientX);
+    if (!launcherDragStarted && started) {
+      launcherDragStarted = true;
+      clearPreviewShowTimer();
+      void hidePreview();
+    }
+    if (launcherDragStarted) {
+      event.preventDefault();
+    }
+  }
+  function finishLauncherPointerDrag(event: PointerEvent) {
+    if (launcherDragPointerId !== event.pointerId) {
+      return;
+    }
+    const sourcePath = draggingLauncherPath;
+    const didDrag = launcherDragStarted;
+    const releaseResult = resolveTaskbarLauncherPointerRelease(sourcePath, didDrag);
+    if (didDrag && sourcePath) {
+      const nextOrder = taskbarLauncherOrderFromDisplacement(
+        sourcePath,
+        launcherDragOriginalOrder,
+        launcherDragRects,
+        taskbarLauncherDragDelta(launcherDragStartX, event.clientX)
+      );
+      if (nextOrder !== launcherDragOriginalOrder) {
+        launcherOrder = nextOrder;
+        writePersistedLauncherOrder(launcherOrder);
+        launchers = orderTaskbarLaunchers(launchers, launcherOrder);
+        launcherMessage = 'Reordered pinned taskbar shortcuts';
+      }
+    }
+    releaseLauncherPointerCapture();
+    resetLauncherPointerDrag();
+    suppressClickLauncherKey = releaseResult.suppressClickKey;
+  }
+  function handleLauncherClick(launcher: PinnedTaskbarLauncher, event: MouseEvent) {
+    if (suppressClickLauncherKey === taskbarLauncherKey(launcher)) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClickLauncherKey = null;
+      return;
+    }
+    void launchApp(launcher);
   }
   async function toggleWindow(taskWindow: TaskbarWindow) {
     if (activatingHwnd) {
@@ -214,6 +510,7 @@
     try {
       await showTaskWindowContextMenu({
         hwnd: taskWindow.hwnd,
+        processId: taskWindow.processId ?? 0,
         isMinimized: taskWindow.isMinimized,
         x: event.clientX,
         y: event.clientY
@@ -237,9 +534,7 @@
     }
   }
   function taskGroupLabel(group: TaskWindowGroup) {
-    return group.windows.length > 1
-      ? `${group.label} (${group.windows.length} windows)`
-      : group.label;
+    return taskGroupStateLabel(group);
   }
   function taskGroupStyle(group: TaskWindowGroup) {
     const previewOrderIndex = taskGroupPreviewOrder.indexOf(group.key);
@@ -407,10 +702,59 @@
     void toggleWindow(taskWindow);
   }
   function handleGlobalKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && taskGroupDragPointerId !== null) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    if (launcherDragPointerId !== null) {
+      event.preventDefault();
+      cancelLauncherPointerDrag();
+      return;
+    }
+    if (taskGroupDragPointerId !== null) {
       event.preventDefault();
       cancelTaskGroupPointerDrag();
     }
+  }
+  function updateTaskbarOverflow() {
+    if (!taskStripEl) {
+      taskbarOverflow = taskbarOverflowState(0, 0, taskWindowGroups.length);
+      return;
+    }
+    taskbarOverflow = taskbarOverflowState(
+      taskStripEl.clientWidth,
+      taskStripEl.scrollWidth,
+      taskWindowGroups.length
+    );
+  }
+  function taskStripButtons() {
+    return Array.from(taskStripEl?.querySelectorAll<HTMLButtonElement>('.task-button') ?? []);
+  }
+  function handleTaskStripKeydown(event: KeyboardEvent) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+      return;
+    }
+    const buttons = taskStripButtons();
+    if (!buttons.length) {
+      return;
+    }
+    const currentIndex = Math.max(0, buttons.indexOf(document.activeElement as HTMLButtonElement));
+    const nextIndex = nextTaskbarFocusIndex(currentIndex, buttons.length, event.key);
+    if (nextIndex < 0) {
+      return;
+    }
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+    buttons[nextIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    updateTaskbarOverflow();
+  }
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+  function isAltBackquoteHotkey(event: KeyboardEvent) {
+    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
+  }
+  function isSpaceKey(event: KeyboardEvent) {
+    return event.code === 'Space';
   }
   async function openProcessManager(event: MouseEvent) {
     const button = event.currentTarget as HTMLButtonElement | null;
@@ -427,29 +771,79 @@
   }
   onMount(() => {
     const unlisteners: Array<() => void> = [];
-    void Promise.all([loadPinnedLaunchers(), refreshTaskbarWindows()]);
+    let disposed = false;
+    const registerAsyncUnlistener = (registration: Promise<() => void>) => {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      });
+    };
+    void loadBottomBarResizeSettings();
+    void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
-    void listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
+    registerAsyncUnlistener(listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
       void refreshTaskbarWindows();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
 
-    void listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
-      void loadPinnedLaunchers();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    registerAsyncUnlistener(listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
+      void refreshLauncherSections();
+    }));
 
-    void listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
+    registerAsyncUnlistener(listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
       clearPreviewHideTimer();
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
+    }));
+    unlisteners.push(addShellSettingsChangeListener((settings) => {
+      void applyBottomBarSettings(settings).catch((error) => {
+        console.error('Failed to apply bottom bar settings update', error);
+      });
+    }));
 
     const taskbarPollTimer = window.setInterval(() => {
       void refreshTaskbarWindows();
     }, 1_000);
+    const resizeHandler = () => updateTaskbarOverflow();
+    let shellSurfaceHotkeyHandled = false;
+    let terminalSurfaceHotkeyHandled = false;
+    const keydownHandler = (event: KeyboardEvent) => {
+      if (isAltBackquoteHotkey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!terminalSurfaceHotkeyHandled && !event.repeat) {
+          terminalSurfaceHotkeyHandled = true;
+          void emit(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT);
+        }
+        return;
+      }
+      if (!isCtrlSpaceHotkey(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!shellSurfaceHotkeyHandled && !event.repeat) {
+        shellSurfaceHotkeyHandled = true;
+        void emit(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
+      }
+    };
+    const keyupHandler = (event: KeyboardEvent) => {
+      if ((event.key === '`' || event.code === 'Backquote') && terminalSurfaceHotkeyHandled) {
+        event.preventDefault();
+        event.stopPropagation();
+        terminalSurfaceHotkeyHandled = false;
+        return;
+      }
+      if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      shellSurfaceHotkeyHandled = false;
+    };
+    window.addEventListener('resize', resizeHandler);
+    window.addEventListener('keydown', keydownHandler, true);
+    window.addEventListener('keyup', keyupHandler, true);
 
     const runtimeMetricsTimer = window.setTimeout(() => {
       void reportShellSurfaceRuntimeMetrics('bottom-bar').catch((error) => {
@@ -458,12 +852,16 @@
     }, 250);
 
     return () => {
+      disposed = true;
       clearPreviewShowTimer();
       clearPreviewHideTimer();
       const requestId = nextPreviewRequestId();
       void hideTaskWindowPreview(requestId).catch(() => undefined);
       window.clearInterval(taskbarPollTimer);
       window.clearTimeout(runtimeMetricsTimer);
+      window.removeEventListener('resize', resizeHandler);
+      window.removeEventListener('keydown', keydownHandler, true);
+      window.removeEventListener('keyup', keyupHandler, true);
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -473,38 +871,72 @@
 
 <svelte:window on:keydown={handleGlobalKeydown} />
 
-<div class="surface bottom-bar">
+<div class="surface bottom-bar" style={`--bottom-bar-height-logical: ${bottomBarHeightLogical}px;`}>
+  {#if !bottomBarHeightLocked}
+    <MeltActionButton
+      class="bar-resize-handle bottom-bar-resize-handle"
+      ariaLabel="Resize bottom bar"
+      onPointerDown={startBottomBarHeightResize}
+      onPointerMove={moveBottomBarHeightResize}
+      onPointerUp={finishBottomBarHeightResize}
+      onPointerCancel={finishBottomBarHeightResize}
+      onLostPointerCapture={finishBottomBarHeightResize}
+    ></MeltActionButton>
+  {/if}
   <section class="taskbar-strip" aria-label="Taskbar">
     <div class="launcher-strip" aria-label="Pinned Explorer taskbar apps">
       {#if launchers.length}
         {#each launchers as launcher (launcher.id)}
-          <button
-            class="launcher-button"
+          <MeltActionButton
+            class={`launcher-button${draggingLauncherPath === launcher.shortcutPath ? ' launcher-button-dragging' : ''}`}
             type="button"
             title={launcher.name}
-            aria-label={`Launch ${launcher.name}`}
+            dataPath={launcher.shortcutPath}
+            ariaLabel={`Launch ${launcher.name}`}
             disabled={launchingShortcutPath === launcher.shortcutPath}
-            on:click={() => void launchApp(launcher)}
-            on:contextmenu={(event) => void openLauncherMenu(launcher, event)}
+            style={launcherStyle(launcher)}
+            onPointerDown={(event) => startLauncherPointerDrag(launcher, event)}
+            onPointerMove={moveLauncherPointerDrag}
+            onPointerUp={finishLauncherPointerDrag}
+            onPointerCancel={cancelLauncherPointerDrag}
+            onLostPointerCapture={(event) => {
+              if (launcherDragPointerId === event.pointerId) {
+                cancelLauncherPointerDrag();
+              }
+            }}
+            onClick={(event) => handleLauncherClick(launcher, event)}
+            onContextMenu={(event) => void openLauncherMenu(launcher, event)}
           >
             <img class="launcher-icon" src={launcher.iconDataUrl} alt="" draggable="false" />
-          </button>
+          </MeltActionButton>
         {/each}
       {:else}
         <div class="strip-fallback">{launcherMessage}</div>
       {/if}
     </div>
 
-    <div class="task-strip" aria-label="Open windows">
+    <div
+      class:task-strip-overflow={taskbarOverflow.hasOverflow}
+      class="task-strip"
+      role="toolbar"
+      aria-label="Open windows"
+      aria-orientation="horizontal"
+      aria-describedby="taskbar-overflow-status"
+      tabindex="-1"
+      bind:this={taskStripEl}
+      on:keydown={handleTaskStripKeydown}
+    >
       {#if taskWindowGroups.length}
         {#each taskWindowGroups as group (group.key)}
           <div
             class:task-group-active={group.isActive}
             class:task-group-busy={group.isBusy}
+            class:task-group-minimized={group.isMinimized}
             class:task-group-dragging={draggingGroupKey === group.key}
             class:task-group-drop-target={dropTargetGroupKey === group.key && draggingGroupKey !== group.key}
             class="task-group"
             data-task-group-key={group.key}
+            data-window-count={group.windows.length}
             role="group"
             aria-label={taskGroupLabel(group)}
             style={taskGroupStyle(group)}
@@ -518,38 +950,45 @@
               <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
             {/if}
             {#each group.windows as taskWindow (taskWindow.hwnd)}
-              <button
-                class:task-button-active={taskWindow.isActive}
-                class:task-button-minimized={taskWindow.isMinimized}
-                class="task-button"
+              <MeltActionButton
+                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}`}
                 type="button"
                 title={taskWindowLabel(taskWindow)}
-                aria-label={taskWindowActionLabel(taskWindow)}
+                ariaLabel={taskWindowActionLabel(taskWindow)}
                 disabled={activatingHwnd === taskWindow.hwnd}
-                on:pointerdown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
-                on:click={(event) => handleTaskWindowClick(taskWindow, event)}
-                on:mouseenter={(event) => queuePreview(taskWindow, event)}
-                on:mouseleave={schedulePreviewHide}
-                on:contextmenu={(event) => void openTaskMenu(taskWindow, event)}
+                onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
+                onClick={(event) => handleTaskWindowClick(taskWindow, event)}
+                onMouseEnter={(event) => queuePreview(taskWindow, event)}
+                onMouseLeave={schedulePreviewHide}
+                onContextMenu={(event) => void openTaskMenu(taskWindow, event)}
               >
                 <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
                 <span class="task-label">{taskWindowLabel(taskWindow)}</span>
-              </button>
+              </MeltActionButton>
             {/each}
           </div>
         {/each}
       {:else}
         <div class="strip-fallback">{taskbarMessage}</div>
       {/if}
+      <div
+        id="taskbar-overflow-status"
+        class:visible={taskbarOverflow.hasOverflow}
+        class="taskbar-overflow-status"
+        role="status"
+        aria-live="polite"
+      >
+        {taskbarOverflow.summary}
+      </div>
     </div>
   </section>
-  <button
+  <MeltActionButton
     class="process-manager-button"
     type="button"
     title="Processes"
-    aria-label="Open process manager"
-    on:click={(event) => void openProcessManager(event)}
+    ariaLabel="Open process manager"
+    onClick={(event) => void openProcessManager(event)}
   >
     ▦
-  </button>
+  </MeltActionButton>
 </div>
