@@ -2,6 +2,9 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-12 `[CODE]` IMPLEMENTED: Added configurable terminal color themes through `src/lib/terminalThemes.ts`, persisted `stackBrowser.terminalTheme` in `jasonshell-settings-v1.json`, exposed a Settings Panel `Terminal color theme` selector, and applied theme updates live to all visible terminal-panel xterm tabs/split panes without restarting backend sessions.
+- 2026-05-12 `[TOOL]` VALIDATED: Terminal theme delivery passed `npm run check`, `npm run test:node`, `cargo test --manifest-path src-tauri/Cargo.toml settings`, `cargo test --manifest-path src-tauri/Cargo.toml terminal`, `npm run cargo:test`, `npm run cargo:check`, and `npm run build`.
+
 - 2026-05-11 `[USER]` REPORTED: Terminal opened showing the startup `Invoke-Expression` command, and PSReadLine suggestion color was no longer the muted gray expected from the previous startup path.
 - 2026-05-11 `[CODE]` FIXED: PowerShell terminal startup now keeps the long setup script in `JASONSHELL_POWERSHELL_STARTUP` but invokes it through a short encoded bootstrap, hiding startup text while preserving the muted PSReadLine inline/list prediction color configuration.
 - 2026-05-11 `[TOOL]` VALIDATED: Focused terminal startup validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup`.

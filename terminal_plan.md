@@ -855,7 +855,7 @@ Make CLI mode a real terminal workbench with multiple terminal sessions and opti
 
 ## Phase 8: Appearance, Accessibility, And Settings
 
-Status: Reverted 2026-05-10 at user request
+Status: Partially reintroduced 2026-05-12 for terminal color themes only; broader Phase 8 appearance/accessibility settings remain reverted/deferred.
 
 ### Objective
 
@@ -887,13 +887,10 @@ Make terminal readable, configurable, accessible, and consistent with JasonShell
    - Do not add terminal profile controls back to Stack Browser toolbar.
    - Validate numeric bounds in frontend and backend.
 
-3. Add themes.
-   - Start with a few built-in themes:
-     - JasonShell dark
-     - Windows Terminal dark-like
-     - high contrast
-   - Keep color values readable.
-   - Avoid one-note palettes.
+3. Add themes. (Implemented for current `terminal-panel` color themes on 2026-05-12.)
+   - Built-in xterm palettes now live in `src/lib/terminalThemes.ts` and mirror the JasonShell app theme list.
+   - `stackBrowser.terminalTheme` persists the selected theme id, defaults/normalizes safely, and applies live to visible terminal-panel tabs and split panes.
+   - Broader high-contrast/reduced-motion/accessibility work remains deferred.
 
 4. Improve font defaults.
    - Use monospace stack by default.
@@ -939,7 +936,7 @@ Make terminal readable, configurable, accessible, and consistent with JasonShell
 
 ### Live Smoke
 
-- Change terminal font size, profile, and theme; reopen CLI.
+- Change terminal font size, profile, and theme; confirm terminal-panel theme updates live and persists across reopen.
 - Keyboard-only path through Settings and CLI.
 - Narrow/minimum Stack Browser size visual check.
 
