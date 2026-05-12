@@ -288,6 +288,17 @@
   background: var(--js-color-surface-sunken);
 }
 
+.top-bar .terminal-button.terminal-complete {
+  background: var(--js-color-accent-soft);
+  box-shadow: 0 0 0 1px var(--js-color-accent-border), 0 0 0.7rem var(--js-color-accent-soft);
+  color: var(--js-color-text-strong);
+}
+
+.top-bar .terminal-button.terminal-complete .terminal-glyph {
+  color: var(--js-color-accent);
+  font-weight: 900;
+}
+
 .top-bar .terminal-glyph,
 .top-bar .command-glyph {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
