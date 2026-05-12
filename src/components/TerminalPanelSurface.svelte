@@ -1,7 +1,7 @@
 <script lang="ts">
   import './TerminalPanelSurface.css';
   import '@xterm/xterm/css/xterm.css';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { FitAddon } from '@xterm/addon-fit';
   import { SearchAddon } from '@xterm/addon-search';
   import { Terminal } from '@xterm/xterm';
@@ -18,6 +18,7 @@
     type StackTerminalOutputChunk,
     type StackTerminalSession
   } from '../lib/persistentTerminal';
+  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import { hideTerminalPanel } from '../lib/terminalPanel';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
   import { openStackFolderInVscode, openStackItem, openStackTerminalHere, revealStackItem } from '../lib/stackPopup';
@@ -32,6 +33,7 @@
   import { getTerminalAction, terminalActions, type TerminalActionId, type TerminalActionState } from '../features/terminal/terminalActions';
   import { detectTerminalQuickSelectTargets, type TerminalQuickSelectTarget } from '../features/terminal/terminalQuickSelect';
   import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
+  import { shouldAnimateTerminalCommand } from '../features/top-bar/topBarUxState';
 
   type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalSplitOrientation = 'single' | 'vertical' | 'horizontal';
@@ -78,6 +80,9 @@
   };
 
   const TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open';
+  const TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity';
+  const TOP_BAR_EVENT_TARGET = topBarWebviewWindowEventTarget();
+  const importantTerminalActivitySessions = new Set<string>();
 
   const TERMINAL_PANEL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SFMono-Regular", monospace';
   const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13;
@@ -218,6 +223,7 @@
 
     register(
       listen<TerminalOutputPayload>('stack-terminal:output', (event) => {
+        notifyTopBarForImportantTerminalOutput(event.payload.sessionId);
         const runtime = runtimeForSession(event.payload.sessionId);
         if (!runtime) {
           rememberTerminalChunkForSession(event.payload);
@@ -229,6 +235,7 @@
 
     register(
       listen<TerminalClosedPayload>('stack-terminal:closed', (event) => {
+        clearImportantTerminalActivity(event.payload.sessionId);
         const runtime = runtimeForSession(event.payload.sessionId);
         terminalSessions = terminalSessions.map((item) => item.sessionId === event.payload.sessionId ? { ...item, running: false } : item);
         if (!runtime) {
@@ -682,6 +689,9 @@
       runtime.shellCwdMarkerSeen = true;
       applyAuthoritativeTerminalCwdForRuntime(runtime, marker.cwd);
     }
+    if (marker.kind === 'end') {
+      clearImportantTerminalActivity(runtime.session.sessionId, true);
+    }
     commitRuntime(runtime);
     return true;
   }
@@ -700,6 +710,9 @@
     if (marker.kind === 'cwd' && marker.cwd) {
       shellCwdMarkerSeen = true;
       applyAuthoritativeTerminalCwd(marker.cwd);
+    }
+    if (marker.kind === 'end' && session?.sessionId) {
+      clearImportantTerminalActivity(session.sessionId, true);
     }
     return true;
   }
@@ -722,14 +735,37 @@
     }
   }
 
+  function emitTopBarTerminalActivity(sessionId: string, active: boolean, completed = false) {
+    void emitTo(TOP_BAR_EVENT_TARGET, TOP_BAR_TERMINAL_ACTIVITY_EVENT, { sessionId, active, completed });
+  }
+
+  function clearImportantTerminalActivity(sessionId: string | undefined, completed = false) {
+    if (!sessionId || !importantTerminalActivitySessions.delete(sessionId)) return;
+    emitTopBarTerminalActivity(sessionId, false, completed);
+  }
+
+  function notifyTopBarForSubmittedCommand(sessionId: string | undefined, commandText: string) {
+    if (!sessionId || !shouldAnimateTerminalCommand(commandText)) return;
+    importantTerminalActivitySessions.add(sessionId);
+    emitTopBarTerminalActivity(sessionId, true);
+  }
+
+  function notifyTopBarForImportantTerminalOutput(sessionId: string | undefined) {
+    if (!sessionId || !importantTerminalActivitySessions.has(sessionId)) return;
+    emitTopBarTerminalActivity(sessionId, true);
+  }
+
   function trackTerminalInputForRuntime(runtime: TerminalPaneRuntime, data: string) {
     runtime.currentInputSelectionActive = false;
     for (const ch of data) {
       if (ch === '\r' || ch === '\n' || ch === '\u0003') {
-        if ((ch === '\r' || ch === '\n') && runtime.commandState && runtime.currentInputText.trim()) {
-          const line = runtime.terminal ? runtime.terminal.buffer.active.baseY + runtime.terminal.buffer.active.cursorY : undefined;
-          runtime.commandState = beginTerminalCommandRecord(runtime.commandState, runtime.currentInputText.trim(), line);
-          runtime.selectedCommandIndex = runtime.commandState.records.length - 1;
+        if ((ch === '\r' || ch === '\n') && runtime.currentInputText.trim()) {
+          notifyTopBarForSubmittedCommand(runtime.session.sessionId, runtime.currentInputText);
+          if (runtime.commandState) {
+            const line = runtime.terminal ? runtime.terminal.buffer.active.baseY + runtime.terminal.buffer.active.cursorY : undefined;
+            runtime.commandState = beginTerminalCommandRecord(runtime.commandState, runtime.currentInputText.trim(), line);
+            runtime.selectedCommandIndex = runtime.commandState.records.length - 1;
+          }
         }
         runtime.currentInputText = '';
       } else if (ch === '\b' || ch === '\u007f') {
@@ -745,10 +781,13 @@
     currentInputSelectionActive = false;
     for (const ch of data) {
       if (ch === '\r' || ch === '\n' || ch === '\u0003') {
-        if ((ch === '\r' || ch === '\n') && commandState && currentInputText.trim()) {
-          const line = terminal ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY : undefined;
-          commandState = beginTerminalCommandRecord(commandState, currentInputText.trim(), line);
-          selectedCommandIndex = commandState.records.length - 1;
+        if ((ch === '\r' || ch === '\n') && currentInputText.trim()) {
+          notifyTopBarForSubmittedCommand(session?.sessionId, currentInputText);
+          if (commandState) {
+            const line = terminal ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY : undefined;
+            commandState = beginTerminalCommandRecord(commandState, currentInputText.trim(), line);
+            selectedCommandIndex = commandState.records.length - 1;
+          }
         }
         currentInputText = '';
       } else if (ch === '\b' || ch === '\u007f') {

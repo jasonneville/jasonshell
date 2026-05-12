@@ -2,6 +2,16 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-11 `[USER]` REQUESTED: Use the old Quick Commands `>_` prompt glyph for the top-bar terminal button, animate it during recent terminal output, and give Quick Commands a different fitting glyph.
+- 2026-05-11 `[CODE]` IMPLEMENTED: TerminalPanelSurface bridges terminal activity to TopBar via `terminal-panel:activity`; TopBar renders `>_` at rest, cycles `>.` / `>..` / `>...` while terminal activity is recent, and Quick Commands now uses `⌘`.
+- 2026-05-11 `[USER]` REPORTED: Terminal glyph animation was too broad because simple output-producing commands such as `ls` and `cat` triggered it; animation should be reserved for Maven builds and AI harness prompts.
+- 2026-05-11 `[CODE]` FIXED: TerminalPanelSurface now gates `terminal-panel:activity` on submitted command text, refreshes activity only for marked important sessions while output continues, and clears marked sessions on shell command end or terminal close.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/persistentTerminalPanel.test.mjs`.
+
+- 2026-05-11 `[USER]` REQUESTED: Notify when important top-bar terminal commands complete, with sound and a persistent terminal icon effect until the terminal is opened again, while keeping simple commands such as `ls`/`cat` quiet.
+- 2026-05-11 `[CODE]` IMPLEMENTED: Important command shell-end events now emit a completion payload to TopBar; TopBar plays a short Web Audio chime, shows a persistent highlighted `>✓` terminal glyph, clears the effect on terminal toggle/open, and preserves the existing Maven/AI harness command gating.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/persistentTerminalPanel.test.mjs`.
+
 - 2026-05-11 `[USER]` REPORTED: Terminal opened showing the startup `Invoke-Expression` command, and PSReadLine suggestion color was no longer the muted gray expected from the previous startup path.
 - 2026-05-11 `[CODE]` FIXED: PowerShell terminal startup now keeps the long setup script in `JASONSHELL_POWERSHELL_STARTUP` but invokes it through a short encoded bootstrap, hiding startup text while preserving the muted PSReadLine inline/list prediction color configuration.
 - 2026-05-11 `[TOOL]` VALIDATED: Focused terminal startup validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup`.
