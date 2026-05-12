@@ -87,7 +87,8 @@ test('RightArrow accept immediately refreshes suggestions for committed path', (
 test('Tab cycles through matching directory completions without opening the folder', () => {
   const tabBranchMatch = pathKeydownSource.match(/if \(event\.key === 'Tab' && !event\.shiftKey[\s\S]*?return;\s*\}/);
   assert.ok(tabBranchMatch, 'Tab keydown branch is present');
-  assert.match(tabBranchMatch[0], /cyclePathCompletion\(\)/);
+  assert.match(tabBranchMatch[0], /getStackPathAutocompleteQuery\(pathDraft, caret\)/);
+  assert.match(tabBranchMatch[0], /void cyclePathCompletion\(caret\)/);
   assert.doesNotMatch(tabBranchMatch[0], /acceptInlinePathCompletion\(\)/);
   const cycleSource = surface.slice(
     surface.indexOf('function cyclePathCompletion'),
@@ -95,6 +96,7 @@ test('Tab cycles through matching directory completions without opening the fold
   );
   assert.match(surface, /let pathCompletionCycleIndex = -1/);
   assert.match(cycleSource, /pathSuggestions\.length/);
+  assert.match(cycleSource, /await refreshPathSuggestionsForValue\(pathDraft, caret\)/);
   assert.match(cycleSource, /getNextStackPathCompletionCycleIndex\(pathDraft, pathSuggestions, pathCompletionCycleIndex\)/);
   assert.match(cycleSource, /const committedPath = suggestion\.path/);
   assert.match(cycleSource, /pathDraft = committedPath/);

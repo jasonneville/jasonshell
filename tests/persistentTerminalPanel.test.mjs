@@ -103,6 +103,19 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /<svelte:window on:keydown\|capture/);
   assert.match(terminalPanel, /return false;\s*}\s*if \(event\.type === 'keyup'/);
   assert.match(terminalPanel, /event\.preventDefault\(\);\s*\r?\n\s*event\.stopPropagation\(\);\s*\r?\n\s*void copySelection\(\)/);
+  assert.match(terminalPanel, /function isTerminalFontZoomKey\(event: KeyboardEvent\)[\s\S]*event\.key === '-' && !event\.shiftKey[\s\S]*event\.key === '\+' \|\| event\.key === '='/);
+  assert.match(terminalPanel, /function handleTerminalFontZoomWheel\(event: WheelEvent\)/);
+  assert.match(terminalPanel, /function setTerminalFontSize\(nextSize: number\)/);
+  assert.match(terminalPanel, /const clamped = clampTerminalFontSize\(nextSize\)/);
+  assert.match(terminalPanel, /event\.preventDefault\(\);\s*\r?\n\s*event\.stopPropagation\(\);\s*\r?\n\s*zoomTerminalFont\(event\.key === '-' \? -1 : 1\)/);
+  assert.match(terminalPanel, /function applyTerminalFontSizeToXterm\(xterm: Terminal\)/);
+  assert.match(terminalPanel, /xterm\.options\.fontSize = terminalFontSize/);
+  assert.doesNotMatch(terminalPanel, /xterm\.refresh\(0, Math\.max\(0, xterm\.rows - 1\)\)/);
+  assert.match(terminalPanel, /if \(runtime\.terminal\) applyTerminalFontSizeToXterm\(runtime\.terminal\)/);
+  assert.match(terminalPanel, /scheduleFitForRuntime\(runtime\)/);
+  assert.match(terminalPanel, /void resizeAllVisiblePanes\(\)/);
+  assert.match(terminalPanel, /on:wheel\|capture\|nonpassive=\{handleTerminalFontZoomWheel\}/);
+  assert.match(terminalPanel, /event\.preventDefault\(\);\s*\r?\n\s*event\.stopImmediatePropagation\?\.\(\);\s*\r?\n\s*event\.stopPropagation\(\);/);
   assert.doesNotMatch(terminalPanel, /slice\(0, midpoint\)|normalizeTerminalClipboardSelection/);
   assert.match(terminalPanel, /navigator\.clipboard\?\.writeText\(selection\)/);
   assert.match(terminalPanel, /navigator\.clipboard\?\.readText\(\)/);
@@ -117,7 +130,8 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /on:contextmenu=\{\(event\) => \{ activatePane\(pane\.paneId\); openTerminalContextMenu\(event\); \}\}/);
   assert.match(terminalPanel, /class="terminal-panel-context-menu"/);
   assert.match(terminalPanel, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
-  assert.match(terminalPanel, /fontSize: 13/);
+  assert.match(terminalPanel, /const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13/);
+  assert.match(terminalPanel, /fontSize: terminalFontSize/);
   assert.match(terminalPanel, /lineHeight: 1\.25/);
   assert.match(terminalPanel, /scrollback: 8000/);
   assert.match(terminalPanel, /letterSpacing: 0/);
@@ -168,8 +182,22 @@ test('terminal tabs are horizontal rectangular tabs', () => {
   assert.doesNotMatch(terminalPanelCss, /\.terminal-panel-title \{/);
   assert.match(terminalPanelCss, /\.terminal-session-tabs \{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*row;[\s\S]*flex-wrap:\s*nowrap;[\s\S]*justify-self:\s*stretch;[\s\S]*overflow-x:\s*auto;[\s\S]*width:\s*100%;/);
   assert.match(terminalPanelCss, /\.terminal-toolbar \{[\s\S]*flex-wrap:\s*nowrap;/);
-  assert.match(terminalPanelCss, /\.terminal-session-tabs button \{[\s\S]*border-radius:\s*0;/);
-  assert.doesNotMatch(terminalPanelCss, /\.terminal-session-tabs button \{[\s\S]{0,260}border-radius:\s*999px/);
+  assert.match(terminalPanelCss, /\.terminal-tab-shell \{[\s\S]*border-radius:\s*0;/);
+  assert.doesNotMatch(terminalPanelCss, /\.terminal-tab-shell \{[\s\S]{0,260}border-radius:\s*999px/);
+});
+
+test('terminal tab close lives in the header and replaces the status dot on hover', () => {
+  assert.match(terminalPanel, /function closeTerminalSessionTab\(sessionId: string\)/);
+  assert.match(terminalPanel, /class="terminal-tab-shell"[\s\S]*role="presentation"/);
+  assert.match(terminalPanel, /class="terminal-tab-button"[\s\S]*role="tab"[\s\S]*activateTerminalSession\(terminalSession\)/);
+  assert.match(terminalPanel, /class="terminal-tab-status"[\s\S]*terminalSession\.running \? '●' : '○'/);
+  assert.match(terminalPanel, /class="terminal-tab-close"[\s\S]*aria-label=\{`Close terminal session/);
+  assert.match(terminalPanel, /on:click\|stopPropagation=\{\(\) => void closeTerminalSessionTab\(terminalSession\.sessionId\)\}/);
+  assert.doesNotMatch(terminalPanel, /class="terminal-pane-close"/);
+  assert.match(terminalPanelCss, /\.terminal-tab-shell:hover \.terminal-tab-status[\s\S]*display:\s*none;/);
+  assert.match(terminalPanelCss, /\.terminal-tab-shell:hover \.terminal-tab-close[\s\S]*display:\s*flex;/);
+  assert.match(terminalPanelCss, /\.terminal-pane-chrome \{[\s\S]*grid-template-rows/);
+  assert.doesNotMatch(terminalPanelCss, /\.terminal-pane-close/);
 });
 
 test('terminal tab close does not recreate a replacement session while other tabs exist', () => {
@@ -214,7 +242,7 @@ test('phase 7 terminal panel owns real per-pane xterm runtimes and split resize'
   assert.match(terminalPanel, /function splitTerminal\(orientation: Exclude<TerminalSplitOrientation, 'single'>\)/);
   assert.match(terminalPanel, /use:bindPaneHost=\{pane\}/);
   assert.match(terminalPanel, /class="terminal-pane-grid"/);
-  assert.match(terminalPanel, /class="terminal-pane-close"/);
+  assert.match(terminalPanel, /function closeTerminalSessionTab\(sessionId: string\)/);
   assert.doesNotMatch(terminalPanel, /class="terminal-split-grid"/);
   assert.doesNotMatch(terminalPanel, /class="terminal-pane-title"/);
   assert.match(terminalPanelCss, /\.terminal-pane-grid\[data-split-orientation="vertical"\]/);

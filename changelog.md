@@ -2,6 +2,41 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-11 `[USER]` REPORTED: Terminal opened showing the startup `Invoke-Expression` command, and PSReadLine suggestion color was no longer the muted gray expected from the previous startup path.
+- 2026-05-11 `[CODE]` FIXED: PowerShell terminal startup now keeps the long setup script in `JASONSHELL_POWERSHELL_STARTUP` but invokes it through a short encoded bootstrap, hiding startup text while preserving the muted PSReadLine inline/list prediction color configuration.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused terminal startup validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup`.
+
+- 2026-05-11 `[USER]` REPORTED: Terminal startup failed with `The command line is too long` and exited with code 1 after PowerShell startup-script growth.
+- 2026-05-11 `[CODE]` FIXED: PowerShell terminal startup now passes the long JasonShell startup script through `JASONSHELL_POWERSHELL_STARTUP` and invokes it with a short `-Command` instead of placing the whole UTF-16 encoded script on the `cmd.exe /K` command line.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused terminal startup validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup`.
+
+- 2026-05-11 `[USER]` REPORTED: Terminal Tab same-prefix directory cycling regressed after accept-suggestion handling; from `C:\dev\jasonshell-terminal`, `cd ../jasonshell` + Tab should cycle sibling directories under `C:\dev` such as `jasonshell-embedded-shell` and `jasonshell-cli-improvements`.
+- 2026-05-11 `[CODE]` FIXED: PowerShell terminal Tab now detects when the current token already resolves to an existing directory and routes that case directly to `TabCompleteNext`, preserving sibling cycling while keeping inline suggestion acceptance for non-existing prefixes.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused terminal autocomplete validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup_is_hidden_and_preserves_tab_completion_cycling`.
+
+- 2026-05-11 `[USER]` REPORTED: Terminal Tab autocomplete still did not accept the visible inline suggestion for commands like `cd C:/dev/ja` when `C:/dev/jasonshell` was shown, even though RightArrow accepted it.
+- 2026-05-11 `[CODE]` FIXED: PowerShell terminal Tab now runs a PSReadLine scriptblock that accepts an active inline suggestion first, then falls back to `TabCompleteNext` only if accepting did not change the buffer/caret, preserving same-prefix directory cycling and Shift+Tab behavior.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused terminal autocomplete validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup_is_hidden_and_preserves_tab_completion_cycling`.
+
+- 2026-05-11 `[USER]` REQUESTED: Fix Stack Browser path textbox autocomplete so Tab selects/cycles suggested directories and also cycles sibling directories for an already typed absolute path/prefix, while preserving RightArrow accept and Shift+Tab behavior.
+- 2026-05-11 `[CODE]` FIXED: Stack Browser path textbox Tab now refreshes path suggestions when the current suggestion set is empty but the draft is an absolute path/prefix, then cycles the resulting sibling directory candidates without opening the folder.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused path autocomplete validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/stackBrowserPathAutocomplete.test.mjs`; initial direct `tsc` attempt failed because the binary was not on PATH.
+
+- 2026-05-11 `[USER]` REQUESTED: Add terminal font zoom with Ctrl+wheel, Ctrl+Plus, and Ctrl+Minus, and improve terminal autocomplete behavior.
+- 2026-05-11 `[CODE]` IMPLEMENTED: Added clamped current-panel terminal font zoom in `TerminalPanelSurface.svelte` for all visible/future panes with PTY refit/resize after changes. PowerShell PSReadLine startup keeps RightArrow as suggestion accept, Tab as next completion cycling, Shift+Tab as previous completion cycling, and Ctrl+Spacebar as menu completion.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node --test tests/persistentTerminalPanel.test.mjs tests/stackBrowserTerminal.test.mjs`, `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup_is_hidden_and_preserves_tab_completion_cycling`, and `npm run check`.
+- 2026-05-11 `[USER]` REPORTED: Terminal font zoom only became visible after restarting a terminal session.
+- 2026-05-11 `[CODE]` FIXED: Runtime font zoom now updates live xterm instances through `xterm.options.fontSize` without forcing a stale-geometry full viewport refresh before refitting/resizing PTYs, avoiding duplicate-looking command-line rows while still affecting current terminal views.
+- 2026-05-11 `[USER]` REPORTED: Holding Ctrl while wheel-zooming still scrolled terminal scrollback before the font grew.
+- 2026-05-11 `[CODE]` FIXED: Ctrl+wheel font zoom now runs on the terminal output wheel capture path, prevents default scrolling, and stops propagation immediately so xterm scrollback does not move while zooming.
+- 2026-05-11 `[USER]` REPORTED: Tab completion stopped cycling same-prefix directory names after recent autocomplete changes.
+- 2026-05-11 `[CODE]` FIXED: Restored PowerShell Tab to `TabCompleteNext` so repeated Tab cycles same-prefix command/path completions, while RightArrow remains the explicit inline suggestion accept key and Shift+Tab remains reverse completion.
+- 2026-05-11 `[TOOL]` VALIDATED: Follow-up Tab completion validation passed with `node --test tests/stackBrowserTerminal.test.mjs` and `cargo test --manifest-path src-tauri/Cargo.toml powershell_startup_is_hidden_and_preserves_tab_completion_cycling`.
+
+- 2026-05-11 `[USER]` REQUESTED: Move terminal tab closing from the top-right pane chrome into the tab header, replacing the green running dot with an `x` close affordance on tab hover like browser tabs.
+- 2026-05-11 `[CODE]` IMPLEMENTED: Added header tab close controls that stop the targeted terminal session without nesting buttons or triggering tab activation, made the green status dot swap to the close `×` on hover/focus, removed the per-pane top-right close button from terminal pane chrome, and updated terminal workbench source tests and `master_spec.md` behavior notes.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node --test tests/persistentTerminalPanel.test.mjs` and `npm run check`.
+
 - 2026-05-10 `[USER]` REQUESTED: Make terminal tabs lay out horizontally and use rectangular, non-rounded tab shapes.
 - 2026-05-10 `[CODE]` IMPLEMENTED: Updated terminal tab-strip CSS to force a single horizontal scrolling row and rectangular tab buttons, and added source-test coverage for the tab shape/layout contract. Follow-up changed the terminal header from wrapping flex to a fixed three-column grid and made the toolbar non-wrapping so tabs cannot stack vertically above the terminal editor. A second follow-up fixed the root CSS specificity bug where `.terminal-panel-header div` overrode `.terminal-session-tabs { display: flex; }`, by scoping title grid styling to `.terminal-panel-title` only. A third follow-up changed the header columns to title max-content, tabs flexible, toolbar max-content so the tab strip uses all space between the Terminal title and Search button, and fixed close behavior so closing extra tabs reselects an existing backend tab instead of creating a replacement session. A fourth follow-up removed the left Terminal/cwd title block and changed the header to tabs flexible plus toolbar max-content so tabs start at the left edge of the header.
 

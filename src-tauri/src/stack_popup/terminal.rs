@@ -652,6 +652,7 @@ fn spawn_terminal_session(
         if let Some(path) = powershell_augmented_path() {
             command.env("PATH", path);
         }
+        command.env("JASONSHELL_POWERSHELL_STARTUP", powershell_startup_script());
     }
     if shell_integration && matches!(profile, TerminalProfile::GitBash) {
         apply_git_bash_shell_integration(&mut command);
@@ -974,7 +975,7 @@ pub(crate) fn terminal_process_plan(
 fn powershell_cmd_launch_line(powershell: PathBuf) -> String {
     let trusted_path =
         short_windows_path(&powershell).unwrap_or_else(|| powershell.to_string_lossy().to_string());
-    let encoded_startup = powershell_encoded_command(&powershell_startup_script());
+    let encoded_bootstrap = powershell_encoded_command("Invoke-Expression $env:JASONSHELL_POWERSHELL_STARTUP");
     format!(
         "{} {}",
         trusted_path,
@@ -985,7 +986,7 @@ fn powershell_cmd_launch_line(powershell: PathBuf) -> String {
             "Bypass".to_string(),
             "-NoExit".to_string(),
             "-EncodedCommand".to_string(),
-            encoded_startup,
+            encoded_bootstrap,
         ]
         .join(" ")
     )
@@ -1026,7 +1027,7 @@ fn powershell_augmented_path() -> Option<String> {
 fn powershell_startup_script() -> String {
     [
         "$ErrorActionPreference = 'Continue'",
-        "if (Get-Module -ListAvailable -Name PSReadLine) { Import-Module PSReadLine; Set-PSReadLineOption -Colors @{ InlinePrediction = \"`e[38;5;240m\"; ListPrediction = \"`e[38;5;244m\"; ListPredictionSelected = \"`e[48;5;238m\" }; Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion; Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext; Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious; Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete }",
+        "if (Get-Module -ListAvailable -Name PSReadLine) { Import-Module PSReadLine; Set-PSReadLineOption -Colors @{ InlinePrediction = \"`e[38;5;240m\"; ListPrediction = \"`e[38;5;244m\"; ListPredictionSelected = \"`e[48;5;238m\" }; Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion; Set-PSReadLineKeyHandler -Key Tab -ScriptBlock { $beforeLine = $null; $beforeCursor = $null; [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$beforeLine, [ref]$beforeCursor); $linePrefix = $beforeLine.Substring(0, $beforeCursor); $currentToken = ($linePrefix -split '\\s+')[-1].Trim([char]34, [char]39); if ($currentToken -and (Test-Path -LiteralPath $currentToken -PathType Container)) { [Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext(); return }; [Microsoft.PowerShell.PSConsoleReadLine]::AcceptSuggestion(); $afterLine = $null; $afterCursor = $null; [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$afterLine, [ref]$afterCursor); if ($beforeLine -eq $afterLine -and $beforeCursor -eq $afterCursor) { [Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext() } }; Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious; Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete }",
         "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name ll -Value Get-ChildItem -Force -ErrorAction SilentlyContinue",
         "Set-Alias -Name clear -Value Clear-Host -Force -ErrorAction SilentlyContinue",
@@ -1393,17 +1394,24 @@ mod tests {
     }
 
     #[test]
-    fn powershell_startup_is_hidden_and_right_arrow_accepts_muted_suggestions() {
+    fn powershell_startup_is_hidden_and_preserves_tab_completion_cycling() {
         let startup_script = powershell_startup_script();
         assert!(startup_script.contains("InlinePrediction = \"`e[38;5;240m\""));
         assert!(startup_script.contains("ListPrediction = \"`e[38;5;244m\""));
         assert!(startup_script
             .contains("Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion"));
-        assert!(
-            startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext")
-        );
+        assert!(startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -ScriptBlock"));
+        assert!(startup_script.contains("$linePrefix = $beforeLine.Substring(0, $beforeCursor)"));
+        assert!(startup_script.contains("$currentToken = ($linePrefix -split '\\s+')[-1].Trim([char]34, [char]39)"));
+        assert!(startup_script.contains("Test-Path -LiteralPath $currentToken -PathType Container"));
+        assert!(startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::AcceptSuggestion()"));
+        assert!(startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext()"));
+        assert!(startup_script.contains("if ($beforeLine -eq $afterLine -and $beforeCursor -eq $afterCursor)"));
+        assert!(!startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -Function AcceptSuggestion"));
         assert!(startup_script
             .contains("Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious"));
+        assert!(startup_script
+            .contains("Set-PSReadLineKeyHandler -Key Ctrl+Spacebar -Function MenuComplete"));
         assert!(startup_script.contains(
             "Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue"
         ));
@@ -1436,6 +1444,8 @@ mod tests {
             powershell_cmd_launch_line(PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe"));
         assert!(launch_line.contains("-NoProfile"));
         assert!(launch_line.contains("-EncodedCommand"));
+        assert!(!launch_line.contains("-Command"));
+        assert!(!launch_line.contains("Invoke-Expression $env:JASONSHELL_POWERSHELL_STARTUP"));
         assert!(!launch_line.contains("Set-Alias"));
         assert!(!launch_line.contains("Set-PSReadLineKeyHandler"));
     }

@@ -420,10 +420,13 @@
       acceptInlinePathCompletion();
       return;
     }
-    if (event.key === 'Tab' && !event.shiftKey && pathSuggestions.length) {
-      event.preventDefault();
-      cyclePathCompletion();
-      return;
+    if (event.key === 'Tab' && !event.shiftKey) {
+      const caret = event.currentTarget instanceof HTMLInputElement ? (event.currentTarget.selectionStart ?? pathDraft.length) : pathDraft.length;
+      if (pathSuggestions.length || getStackPathAutocompleteQuery(pathDraft, caret)) {
+        event.preventDefault();
+        void cyclePathCompletion(caret);
+        return;
+      }
     }
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -442,7 +445,7 @@
     const requestSeq = ++pathSuggestionRequestSeq;
     if (!query) {
       clearPathSuggestions();
-      return;
+      return false;
     }
 
     clearPathSuggestions(false);
@@ -450,14 +453,16 @@
     try {
       const suggestions = await suggestStackPaths({ ...query, limit: 20 });
       if (requestSeq !== pathSuggestionRequestSeq || value !== pathDraft) {
-        return;
+        return false;
       }
       pathCompletionCycleIndex = -1;
       pathSuggestions = suggestions;
+      return suggestions.length > 0;
     } catch {
       if (requestSeq === pathSuggestionRequestSeq) {
         clearPathSuggestions();
       }
+      return false;
     }
   }
 
@@ -469,9 +474,12 @@
     }
   }
 
-  function cyclePathCompletion() {
+  async function cyclePathCompletion(caret = pathDraft.length) {
     if (!pathSuggestions.length) {
-      return;
+      const refreshed = await refreshPathSuggestionsForValue(pathDraft, caret);
+      if (!refreshed) {
+        return;
+      }
     }
     cancelPathBlurReset();
     // Keep the original suggestion set so repeated Tab walks sibling matches after the draft becomes a full candidate.

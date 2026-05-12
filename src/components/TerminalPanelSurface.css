@@ -50,38 +50,100 @@
   width: 100%;
 }
 
-.terminal-session-tabs button {
+.terminal-tab-shell {
+  align-items: center;
   background: #0b1220;
   border: 1px solid #27364d;
   border-radius: 0;
+  box-sizing: border-box;
   color: #c6d4ea;
-  cursor: pointer;
+  display: grid;
   flex: 0 0 auto;
-  font: inherit;
-  font-size: 0.66rem;
+  grid-template-columns: minmax(0, 1fr) 1rem;
   max-width: 11rem;
+  min-width: 5.5rem;
   overflow: hidden;
-  padding: 0.2rem 0.55rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.terminal-session-tabs button.active {
+.terminal-tab-shell.active {
   border-color: #67a3ff;
   box-shadow: 0 0 0 1px rgb(103 163 255 / 40%);
   color: #ffffff;
 }
 
+.terminal-tab-button,
+.terminal-session-tabs .terminal-tab-new,
+.terminal-tab-close {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.66rem;
+}
+
+.terminal-tab-button {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.2rem 0.2rem 0.2rem 0.55rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-tab-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-session-tabs .terminal-tab-new {
+  background: #0b1220;
+  border: 1px solid #27364d;
   flex: 0 0 auto;
   font-weight: 700;
   max-width: none;
   min-width: 1.7rem;
+  padding: 0.2rem 0.55rem;
 }
 
-.terminal-session-tabs small {
+.terminal-tab-status {
   color: #69d68b;
-  margin-left: 0.25rem;
+  font-size: 0.62rem;
+  justify-self: center;
+}
+
+.terminal-tab-close {
+  align-items: center;
+  color: #d7e2f5;
+  display: none;
+  font-size: 0.8rem;
+  height: 100%;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 1rem;
+}
+
+.terminal-tab-shell:hover .terminal-tab-status,
+.terminal-tab-shell:focus-within .terminal-tab-status {
+  display: none;
+}
+
+.terminal-tab-shell:hover .terminal-tab-close,
+.terminal-tab-shell:focus-within .terminal-tab-close {
+  display: flex;
+}
+
+.terminal-tab-button:hover,
+.terminal-tab-button:focus-visible,
+.terminal-tab-close:hover,
+.terminal-tab-close:focus-visible,
+.terminal-session-tabs .terminal-tab-new:hover,
+.terminal-session-tabs .terminal-tab-new:focus-visible {
+  background: #1d2b42;
+  outline: 0;
 }
 
 .terminal-toolbar {
@@ -228,13 +290,12 @@
   border-bottom: 1px solid #263246;
   box-sizing: border-box;
   color: #9fadbf;
-  display: flex;
+  display: grid;
   font-size: 0.62rem;
-  gap: 0.45rem;
-  justify-content: space-between;
+  grid-template-rows: minmax(1.3rem, auto);
   min-height: 1.55rem;
   min-width: 0;
-  padding: 0.12rem 0.3rem 0.12rem 0.55rem;
+  padding: 0.12rem 0.55rem;
   z-index: 4;
 }
 
@@ -242,32 +303,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.terminal-pane-close {
-  align-items: center;
-  background: #172235;
-  border: 1px solid #33435a;
-  border-radius: 999px;
-  color: #d7e2f5;
-  cursor: pointer;
-  display: flex;
-  flex: 0 0 auto;
-  font: inherit;
-  font-size: 0.8rem;
-  height: 1.15rem;
-  justify-content: center;
-  line-height: 1;
-  padding: 0;
-  width: 1.15rem;
-}
-
-.terminal-pane-close:hover,
-.terminal-pane-close:focus-visible {
-  background: #24324a;
-  border-color: #67a3ff;
-  opacity: 1;
-  outline: 0;
 }
 
 .terminal-pane-host {

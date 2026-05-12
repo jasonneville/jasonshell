@@ -274,8 +274,10 @@ test('phase 1 terminal PowerShell launch plan uses trusted path explicitly and h
   assert.match(rustTerminal, /powershell\.to_string_lossy\(\)/);
   assert.doesNotMatch(rustTerminal, /fn powershell_cmd_launch_line\(_powershell: PathBuf\)/);
   assert.doesNotMatch(rustTerminal, /"pwsh\.exe \{\}"/);
-  assert.match(rustTerminal, /powershell_encoded_command\(&powershell_startup_script\(\)\)/);
+  assert.match(rustTerminal, /command\.env\("JASONSHELL_POWERSHELL_STARTUP", powershell_startup_script\(\)\)/);
+  assert.match(rustTerminal, /powershell_encoded_command\("Invoke-Expression \$env:JASONSHELL_POWERSHELL_STARTUP"\)/);
   assert.match(rustTerminal, /"-EncodedCommand"\.to_string\(\)/);
+  assert.doesNotMatch(rustTerminal, /"-Command"\.to_string\(\)/);
   assert.match(rustTerminal, /"-NoProfile"\.to_string\(\)/);
   assert.match(rustTerminal, /trusted_powershell_candidates/);
   assert.match(rustTerminal, /WindowsPowerShell/);
@@ -330,7 +332,7 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
   assert.match(terminalPanelSurface, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
-  assert.match(terminalPanelSurface, /fontSize: 13/);
+  assert.match(terminalPanelSurface, /fontSize: terminalFontSize/);
   assert.match(terminalPanelSurface, /lineHeight: 1\.25/);
   assert.match(terminalPanelSurface, /scrollback: 8000/);
   assert.match(terminalPanelSurface, /letterSpacing: 0/);
@@ -417,11 +419,12 @@ test('terminal cwd changes update Stack Browser path and breadcrumbs immediately
   assert.match(stackPopupSurface, /await stackTerminalPane\?\.syncFolderToTerminalCwd\(\);[\s\S]*stackBrowserViewMode = 'files';/);
 });
 
-test('stack terminal PowerShell profile loads normal shell affordances and normalizes extended cwd paths', () => {
+test('stack terminal PowerShell profile loads normal shell affordances, preserves Tab completion cycling, and normalizes extended cwd paths', () => {
   assert.match(rustTerminal, /"-ExecutionPolicy"\.to_string\(\),\s*"Bypass"\.to_string\(\)/);
   assert.match(rustTerminal, /"-NoExit"\.to_string\(\)/);
   assert.match(rustTerminal, /"-EncodedCommand"\.to_string\(\)/);
-  assert.match(rustTerminal, /fn powershell_encoded_command\(script: &str\) -> String/);
+  assert.match(rustTerminal, /powershell_encoded_command\("Invoke-Expression \$env:JASONSHELL_POWERSHELL_STARTUP"\)/);
+  assert.match(rustTerminal, /command\.env\("JASONSHELL_POWERSHELL_STARTUP", powershell_startup_script\(\)\)/);
   assert.match(rustTerminal, /powershell_startup_script\(\)/);
   assert.match(rustTerminal, /powershell_augmented_path\(\)/);
   assert.match(rustTerminal, /command\.env\("PATH", path\)/);
@@ -429,8 +432,16 @@ test('stack terminal PowerShell profile loads normal shell affordances and norma
   assert.ok(rustTerminal.includes('InlinePrediction = \\"`e[38;5;240m\\"'));
   assert.ok(rustTerminal.includes('ListPrediction = \\"`e[38;5;244m\\"'));
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion/);
-  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Tab -Function TabCompleteNext/);
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Tab -ScriptBlock/);
+  assert.match(rustTerminal, /\$linePrefix = \$beforeLine\.Substring\(0, \$beforeCursor\)/);
+  assert.ok(rustTerminal.includes("$currentToken = ($linePrefix -split '\\\\s+')[-1].Trim([char]34, [char]39)"));
+  assert.match(rustTerminal, /Test-Path -LiteralPath \$currentToken -PathType Container/);
+  assert.match(rustTerminal, /if \(\$currentToken -and \(Test-Path -LiteralPath \$currentToken -PathType Container\)\) \{ \[Microsoft\.PowerShell\.PSConsoleReadLine\]::TabCompleteNext\(\); return \}/);
+  assert.match(rustTerminal, /\[Microsoft\.PowerShell\.PSConsoleReadLine\]::AcceptSuggestion\(\)/);
+  assert.match(rustTerminal, /\[Microsoft\.PowerShell\.PSConsoleReadLine\]::TabCompleteNext\(\)/);
+  assert.match(rustTerminal, /if \(\$beforeLine -eq \$afterLine -and \$beforeCursor -eq \$afterCursor\)/);
   assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Shift\+Tab -Function TabCompletePrevious/);
+  assert.match(rustTerminal, /Set-PSReadLineKeyHandler -Key Ctrl\+Spacebar -Function MenuComplete/);
   assert.match(rustTerminal, /\$ErrorActionPreference = 'Continue'/);
   assert.doesNotMatch(rustTerminal, /\$ErrorActionPreference = 'SilentlyContinue'/);
   assert.match(rustTerminal, /Set-Alias -Name ls -Value Get-ChildItem -Force -ErrorAction SilentlyContinue/);

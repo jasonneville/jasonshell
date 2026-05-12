@@ -80,6 +80,9 @@
   const TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open';
 
   const TERMINAL_PANEL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SFMono-Regular", monospace';
+  const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13;
+  const TERMINAL_PANEL_MIN_FONT_SIZE = 9;
+  const TERMINAL_PANEL_MAX_FONT_SIZE = 28;
 
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
@@ -91,6 +94,7 @@
   let paneRuntimes = new Map<string, TerminalPaneRuntime>();
   let terminalSessions: StackTerminalSession[] = [];
   let terminalPanes: TerminalPaneModel[] = [];
+  let terminalFontSize = TERMINAL_PANEL_DEFAULT_FONT_SIZE;
   let activePaneId = 'terminal-pane-primary';
   let splitOrientation: TerminalSplitOrientation = 'single';
   let status = 'Starting terminal...';
@@ -475,7 +479,7 @@
       convertEol: false,
       cursorBlink: true,
       fontFamily: TERMINAL_PANEL_FONT_FAMILY,
-      fontSize: 13,
+      fontSize: terminalFontSize,
       lineHeight: 1.25,
       scrollback: 8000,
       letterSpacing: 0,
@@ -511,6 +515,12 @@
           void openQuickSelectTarget(target);
           return false;
         }
+        return false;
+      }
+      if (event.type === 'keydown' && isTerminalFontZoomKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        zoomTerminalFont(event.key === '-' ? -1 : 1);
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'f') {
@@ -569,7 +579,7 @@
       convertEol: false,
       cursorBlink: true,
       fontFamily: TERMINAL_PANEL_FONT_FAMILY,
-      fontSize: 13,
+      fontSize: terminalFontSize,
       lineHeight: 1.25,
       scrollback: 8000,
       letterSpacing: 0,
@@ -620,6 +630,7 @@
         if (target) { void openQuickSelectTarget(target); return false; }
         return false;
       }
+      if (event.type === 'keydown' && isTerminalFontZoomKey(event)) { event.preventDefault(); event.stopPropagation(); zoomTerminalFont(event.key === '-' ? -1 : 1); return false; }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'f') { openSearch(); return false; }
       if (event.type === 'keydown' && searchOpen && event.key === 'Escape') { closeSearch(); return false; }
       if (event.type === 'keydown' && runtime.currentInputSelectionActive && (event.key === 'Backspace' || event.key === 'Delete')) { event.preventDefault(); event.stopPropagation(); void deleteSelectedCurrentInputForRuntime(runtime); return false; }
@@ -903,6 +914,49 @@
 
   function fitTerminal() {
     void resizeAllVisiblePanes();
+  }
+
+  function clampTerminalFontSize(value: number) {
+    return Math.min(TERMINAL_PANEL_MAX_FONT_SIZE, Math.max(TERMINAL_PANEL_MIN_FONT_SIZE, Math.round(value)));
+  }
+
+  function isTerminalFontZoomKey(event: KeyboardEvent) {
+    if (!event.ctrlKey || event.altKey || event.metaKey) return false;
+    if (event.key === '-' && !event.shiftKey) return true;
+    return event.key === '+' || event.key === '=';
+  }
+
+  function zoomTerminalFont(delta: number) {
+    setTerminalFontSize(terminalFontSize + delta);
+  }
+
+  function applyTerminalFontSizeToXterm(xterm: Terminal) {
+    xterm.options.fontSize = terminalFontSize;
+  }
+
+  function setTerminalFontSize(nextSize: number) {
+    const clamped = clampTerminalFontSize(nextSize);
+    if (clamped === terminalFontSize) return;
+    terminalFontSize = clamped;
+    if (terminal) applyTerminalFontSizeToXterm(terminal);
+    for (const runtime of paneRuntimes.values()) {
+      if (runtime.terminal) applyTerminalFontSizeToXterm(runtime.terminal);
+      runtime.lastResizeKey = '';
+      runtime.visibleResizeSettled = false;
+      scheduleFitForRuntime(runtime);
+    }
+    lastResizeKey = '';
+    visibleResizeSettled = false;
+    scheduleFit();
+    void resizeAllVisiblePanes();
+  }
+
+  function handleTerminalFontZoomWheel(event: WheelEvent) {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    event.stopImmediatePropagation?.();
+    event.stopPropagation();
+    zoomTerminalFont(event.deltaY > 0 ? -1 : 1);
   }
 
   async function resizeAllVisiblePanes() {
@@ -1323,6 +1377,21 @@
     if (cwd) await openStackFolderInVscode(cwd).catch((error) => console.debug('Persistent terminal VS Code open unavailable', error));
   }
 
+  async function closeTerminalSessionTab(sessionId: string) {
+    const runtime = runtimeForSession(sessionId);
+    if (runtime) {
+      activatePane(runtime.paneId);
+      await stopTerminal();
+      return;
+    }
+    await stopStackTerminal(sessionId).catch((error) => console.debug('Persistent terminal tab close unavailable', error));
+    terminalSessions = terminalSessions.filter((item) => item.sessionId !== sessionId);
+    sessionReplayBuffers.delete(sessionId);
+    sessionReplayBuffers = new Map(sessionReplayBuffers);
+    renderedSequenceKeysBySession.delete(sessionId);
+    renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession);
+  }
+
   async function stopTerminal() {
     const runtime = activeRuntime();
     if (!runtime) return;
@@ -1685,18 +1754,27 @@
   <header class="terminal-panel-header">
     <div class="terminal-session-tabs" role="tablist" aria-label="Terminal sessions">
       {#each terminalSessions as terminalSession, index}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={terminalSession.sessionId === session?.sessionId}
-          aria-label={`Switch to terminal session ${terminalSession.title || index + 1}`}
-          class:active={terminalSession.sessionId === session?.sessionId}
-          on:click={() => activateTerminalSession(terminalSession)}
-          title={terminalSession.cwd}
-        >
-          {terminalSession.title || `Session ${index + 1}`}
-          <small>{terminalSession.running ? '●' : '○'}</small>
-        </button>
+        <div class="terminal-tab-shell" class:active={terminalSession.sessionId === session?.sessionId} role="presentation">
+          <button
+            type="button"
+            class="terminal-tab-button"
+            role="tab"
+            aria-selected={terminalSession.sessionId === session?.sessionId}
+            aria-label={`Switch to terminal session ${terminalSession.title || index + 1}`}
+            on:click={() => activateTerminalSession(terminalSession)}
+            title={terminalSession.cwd}
+          >
+            <span>{terminalSession.title || `Session ${index + 1}`}</span>
+          </button>
+          <small class="terminal-tab-status" aria-hidden="true">{terminalSession.running ? '●' : '○'}</small>
+          <button
+            type="button"
+            class="terminal-tab-close"
+            aria-label={`Close terminal session ${terminalSession.title || index + 1}`}
+            title="Close terminal tab"
+            on:click|stopPropagation={() => void closeTerminalSessionTab(terminalSession.sessionId)}
+          >×</button>
+        </div>
       {/each}
       <button
         type="button"
@@ -1748,13 +1826,6 @@
         <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${pane.title}`}>
           <div class="terminal-pane-chrome">
             <span>{pane.title}</span>
-            <button
-              type="button"
-              class="terminal-pane-close"
-              aria-label={`Close terminal pane ${pane.title}`}
-              title="Close terminal pane"
-              on:click|stopPropagation={() => { activatePane(pane.paneId); void stopTerminal(); }}
-            >×</button>
           </div>
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
           <div
@@ -1764,6 +1835,7 @@
             aria-label="Terminal output"
             data-pane-id={pane.paneId}
             on:mousedown|capture={(event) => { activatePane(pane.paneId); handleTerminalMouseDown(event); }}
+            on:wheel|capture|nonpassive={handleTerminalFontZoomWheel}
             on:contextmenu={(event) => { activatePane(pane.paneId); openTerminalContextMenu(event); }}
           ></div>
           {#if paneRuntime && !paneRuntime.outputReceived && paneRuntime.lifecycle !== 'running'}
