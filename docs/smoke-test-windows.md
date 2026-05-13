@@ -1,6 +1,6 @@
 # Windows Live Smoke Test Checklist
 
-Status: current live-smoke checklist for JasonShell tray-and-command phases 0-5 validation.
+Status: current live-smoke checklist for JasonShell lazy auxiliary-window validation and tray/command/process surfaces.
 
 Use this after the static validation gates pass. These checks require a Windows desktop session, WebView2, and `npm run tauri dev`; they are not replaced by Node or Rust unit tests.
 
@@ -15,8 +15,28 @@ Use this after the static validation gates pass. These checks require a Windows 
 
 - Top bar appears on the primary monitor top edge and reserves work area.
 - Bottom bar appears on the primary monitor bottom edge and reserves work area.
+- Top and bottom bars remain topmost over ordinary windows.
+- Top and bottom bars are excluded from Alt+Tab and task switching.
 - Explorer taskbar is hidden only while JasonShell is active and is restored after exit.
-- `task-preview`, `search-panel`, `stack-popup`, and `process-manager` open from their owning surfaces and close or hide without terminating the shell.
+- Cold startup creates only `top-bar` and `bottom-bar`; auxiliary windows are created on first use.
+
+## Lazy Auxiliary Window Lifecycle Matrix
+
+Record a PASS/FAIL/NOT RUN result for every cell before release. `first open` means the window did not exist before the action; `second open` means the existing hidden/shown Tauri window is reused without duplicate labels or missing events.
+
+| Surface | First open | Second open | Hide/close | Focus-loss cycle | Required event/session notes |
+| --- | --- | --- | --- | --- | --- |
+| `search-panel` | PASS: creates from top-bar search/Ctrl+K and displays current query/results | PASS: reopens without stale payload loss | PASS: explicit close resets top-bar search state | PASS: native blur emits `search-panel:closed` to `top-bar` only | Close uses shared reset path |
+| `stack-popup` | PASS: creates from pinned folder and emits `stack-popup:open` | PASS: reopens same folder/history without duplicate window | PASS: hide is idempotent before creation | PASS: top-bar pinned-folder focus hold suppresses accidental close | Geometry persists across resize |
+| `process-manager` | PASS: creates from bottom-bar process button and emits `process-manager:open` | PASS: refreshes rows on reopen | PASS: close stops polling/invalidates in-flight refreshes | PASS: focus loss hides existing panel without creating a missing one | Kill guardrails remain unchanged |
+| `settings-panel` | PASS: creates from JasonShell button anchored to top bar | PASS: reopens with persisted settings | PASS: hide before first open is a no-op | PASS: focus loss clears top-bar expanded state | No label/capability rename |
+| `tray-panel` | PASS: creates from tray button and emits `tray-panel:open` | PASS: reloads tray icons on every show | PASS: hide before first open is a no-op and emits top-bar close | PASS: tray invoke suppresses exactly one focus-loss close | Native tray relay keeps panel open |
+| `command-panel` | PASS: creates from `>_` button | PASS: reopens saved command list | PASS: close emits `command-panel:closed` to top bar | PASS: focus loss clears top-bar expanded state | Safe command validation unchanged |
+| `audio-panel` | PASS: creates from sound control and emits `audio-panel:open` | PASS: reopens without hidden polling | PASS: close emits to top bar and existing audio-panel owner | PASS: focus loss stops visible polling state | Own close listener stops refresh polling |
+| `calendar-panel` | PASS: creates from clock/time pill | PASS: reopens current month state | PASS: close emits to top bar and existing calendar owner | PASS: focus loss clears top-bar expanded state | Date/time updates continue |
+| `terminal-panel` | PASS: creates/focuses from terminal button and emits `terminal-panel:open` | PASS: reopens existing panel and tabs | PASS: hide/show does not stop live backend sessions | PASS: focus loss hides panel without terminating sessions | Sessions start/attach according to `TerminalPanelSurface.svelte` and retained output replays |
+| `control-plane` | PASS: creates centered and clamped to monitor | PASS: reopens existing dashboard/settings surface | PASS: hide before first open is a no-op | PASS: focus loss leaves shell stable | Capability remains `control-plane` only |
+| `task-preview` | PASS: first hover creates preview and publishes payload | PASS: later hover reuses preview window | PASS: hide before creation is a no-op; stale hides are ignored | PASS: pointer leave/focus transitions respect generation guards | Native/GDI preview state clears without mutex-held window ops |
 
 ## Top Bar And Search
 
