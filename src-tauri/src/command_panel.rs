@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-use crate::shell_windows::{COMMAND_PANEL_LABEL, COMMAND_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
+use crate::shell_windows::{ensure_shell_window, COMMAND_PANEL_LABEL, COMMAND_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 pub const COMMAND_PANEL_CLOSED_EVENT: &str = "command-panel:closed";
 const COMMAND_PANEL_MARGIN_PHYSICAL: i32 = 6;
@@ -19,9 +19,8 @@ pub fn show_command_panel(
     app_handle: AppHandle,
     request: ShowCommandPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(COMMAND_PANEL_LABEL)
-        .ok_or_else(|| "Command panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, COMMAND_PANEL_LABEL)
+        .map_err(|error| format!("Command panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -59,12 +58,11 @@ pub fn show_command_panel(
 
 #[tauri::command]
 pub fn hide_command_panel(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(COMMAND_PANEL_LABEL)
-        .ok_or_else(|| "Command panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the command panel: {error}"))?;
+    if let Some(panel) = app_handle.get_webview_window(COMMAND_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the command panel: {error}"))?;
+    }
     app_handle
         .emit_to(TOP_BAR_LABEL, COMMAND_PANEL_CLOSED_EVENT, ())
         .map_err(|error| format!("Failed to publish command panel closed event: {error}"))

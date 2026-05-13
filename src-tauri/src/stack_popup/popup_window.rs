@@ -1,4 +1,4 @@
-use crate::shell_windows::{STACK_POPUP_LABEL, TOP_BAR_LABEL};
+use crate::shell_windows::{ensure_shell_window, STACK_POPUP_LABEL, TOP_BAR_LABEL};
 use crate::stack_popup::models::{
     ShowStackPopupRequest, StackPopupLogicalSize, StackPopupRuntimeState,
 };
@@ -36,9 +36,8 @@ pub(crate) fn show_stack_popup_window(
     let request = normalize_show_stack_popup_request(request)?;
     store_latest_request(&state, request.clone());
 
-    let popup = app_handle
-        .get_webview_window(STACK_POPUP_LABEL)
-        .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
+    let popup = ensure_shell_window(&app_handle, STACK_POPUP_LABEL)
+        .map_err(|error| format!("Stack popup window is unavailable: {error}"))?;
     let top = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -101,11 +100,12 @@ pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), Strin
         guard.restore_focus_after_hold = false;
     }
 
-    app_handle
-        .get_webview_window(STACK_POPUP_LABEL)
-        .ok_or_else(|| "Stack popup window is unavailable".to_string())?
-        .hide()
-        .map_err(|error| format!("Failed to hide the stack popup: {error}"))
+    if let Some(popup) = app_handle.get_webview_window(STACK_POPUP_LABEL) {
+        popup
+            .hide()
+            .map_err(|error| format!("Failed to hide the stack popup: {error}"))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn latest_stack_popup_request(
@@ -162,9 +162,8 @@ pub(crate) fn resize_stack_popup_window(
     height: f64,
     persist: bool,
 ) -> Result<StackPopupLogicalSize, String> {
-    let popup = app_handle
-        .get_webview_window(STACK_POPUP_LABEL)
-        .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
+    let popup = ensure_shell_window(&app_handle, STACK_POPUP_LABEL)
+        .map_err(|error| format!("Stack popup window is unavailable: {error}"))?;
     let monitor = popup
         .current_monitor()
         .map_err(|error| format!("Failed to inspect current monitor: {error}"))?

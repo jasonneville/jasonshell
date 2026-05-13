@@ -5,7 +5,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-use crate::shell_windows::{TOP_BAR_LABEL, TRAY_PANEL_LABEL, TRAY_PANEL_WIDTH_LOGICAL};
+use crate::shell_windows::{ensure_shell_window, TOP_BAR_LABEL, TRAY_PANEL_LABEL, TRAY_PANEL_WIDTH_LOGICAL};
 
 pub const TRAY_PANEL_OPEN_EVENT: &str = "tray-panel:open";
 pub const TRAY_PANEL_CLOSED_EVENT: &str = "tray-panel:closed";
@@ -23,9 +23,8 @@ pub struct ShowTrayPanelRequest {
 
 #[tauri::command]
 pub fn show_tray_panel(app_handle: AppHandle, request: ShowTrayPanelRequest) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(TRAY_PANEL_LABEL)
-        .ok_or_else(|| "Tray panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, TRAY_PANEL_LABEL)
+        .map_err(|error| format!("Tray panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -67,12 +66,11 @@ pub fn show_tray_panel(app_handle: AppHandle, request: ShowTrayPanelRequest) -> 
 #[tauri::command]
 pub fn hide_tray_panel(app_handle: AppHandle) -> Result<(), String> {
     clear_tray_panel_focus_loss_suppression();
-    let panel = app_handle
-        .get_webview_window(TRAY_PANEL_LABEL)
-        .ok_or_else(|| "Tray panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the tray panel: {error}"))?;
+    if let Some(panel) = app_handle.get_webview_window(TRAY_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the tray panel: {error}"))?;
+    }
     app_handle
         .emit_to(TOP_BAR_LABEL, TRAY_PANEL_CLOSED_EVENT, ())
         .map_err(|error| format!("Failed to publish tray panel closed event: {error}"))

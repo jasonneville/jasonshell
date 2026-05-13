@@ -1,4 +1,5 @@
 use crate::shell_windows::{
+    ensure_shell_window,
     SEARCH_PANEL_HEIGHT_LOGICAL, SEARCH_PANEL_LABEL, SEARCH_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL,
 };
 use serde::Deserialize;
@@ -45,9 +46,8 @@ pub fn show_search_panel(
     app_handle: AppHandle,
     request: ShowSearchPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(SEARCH_PANEL_LABEL)
-        .ok_or_else(|| "Search panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, SEARCH_PANEL_LABEL)
+        .map_err(|error| format!("Search panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -89,9 +89,8 @@ pub fn show_centered_search_panel(
     app_handle: AppHandle,
     request: CenteredSearchPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(SEARCH_PANEL_LABEL)
-        .ok_or_else(|| "Search panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, SEARCH_PANEL_LABEL)
+        .map_err(|error| format!("Search panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -129,9 +128,8 @@ pub fn resize_search_panel(
     app_handle: AppHandle,
     request: CenteredSearchPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(SEARCH_PANEL_LABEL)
-        .ok_or_else(|| "Search panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, SEARCH_PANEL_LABEL)
+        .map_err(|error| format!("Search panel window is unavailable: {error}"))?;
     let scale_factor = panel
         .scale_factor()
         .map_err(|error| format!("Failed to read the search panel scale factor: {error}"))?;
@@ -146,12 +144,11 @@ pub fn resize_search_panel(
 
 #[tauri::command]
 pub fn hide_search_panel(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(SEARCH_PANEL_LABEL)
-        .ok_or_else(|| "Search panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the search panel: {error}"))?;
+    if let Some(panel) = app_handle.get_webview_window(SEARCH_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the search panel: {error}"))?;
+    }
     emit_search_panel_closed_to_top_bar(&app_handle)
 }
 
@@ -170,9 +167,8 @@ pub fn publish_search_panel(
     if !store_search_panel_payload(&state, payload.clone()) {
         return Ok(());
     }
-    let _panel = app_handle
-        .get_webview_window(SEARCH_PANEL_LABEL)
-        .ok_or_else(|| "Search panel window is unavailable".to_string())?;
+    let _panel = ensure_shell_window(&app_handle, SEARCH_PANEL_LABEL)
+        .map_err(|error| format!("Search panel window is unavailable: {error}"))?;
     app_handle
         .emit_to(SEARCH_PANEL_LABEL, SEARCH_PANEL_UPDATE_EVENT, payload)
         .map_err(|error| format!("Failed to publish search panel results: {error}"))

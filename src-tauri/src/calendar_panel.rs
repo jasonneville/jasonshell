@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-use crate::shell_windows::{CALENDAR_PANEL_LABEL, CALENDAR_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
+use crate::shell_windows::{ensure_shell_window, CALENDAR_PANEL_LABEL, CALENDAR_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 pub const CALENDAR_PANEL_OPEN_EVENT: &str = "calendar-panel:open";
 pub const CALENDAR_PANEL_CLOSED_EVENT: &str = "calendar-panel:closed";
@@ -20,9 +20,8 @@ pub fn show_calendar_panel(
     app_handle: AppHandle,
     request: ShowCalendarPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(CALENDAR_PANEL_LABEL)
-        .ok_or_else(|| "Calendar panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, CALENDAR_PANEL_LABEL)
+        .map_err(|error| format!("Calendar panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -63,12 +62,11 @@ pub fn show_calendar_panel(
 
 #[tauri::command]
 pub fn hide_calendar_panel(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(CALENDAR_PANEL_LABEL)
-        .ok_or_else(|| "Calendar panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the calendar panel: {error}"))?;
+    if let Some(panel) = app_handle.get_webview_window(CALENDAR_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the calendar panel: {error}"))?;
+    }
     emit_calendar_panel_closed(&app_handle)
 }
 

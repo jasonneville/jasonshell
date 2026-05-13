@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::shell_windows::{
+    ensure_shell_window,
     CONTROL_PLANE_HEIGHT_LOGICAL, CONTROL_PLANE_LABEL, CONTROL_PLANE_WIDTH_LOGICAL,
 };
 
@@ -8,9 +9,8 @@ const CONTROL_PLANE_EDGE_PADDING_PHYSICAL: i32 = 24;
 
 #[tauri::command]
 pub fn show_control_plane(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(CONTROL_PLANE_LABEL)
-        .ok_or_else(|| "Control-plane window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, CONTROL_PLANE_LABEL)
+        .map_err(|error| format!("Control-plane window is unavailable: {error}"))?;
     let monitor = panel
         .current_monitor()
         .map_err(|error| format!("Failed to inspect control-plane monitor: {error}"))?
@@ -58,12 +58,12 @@ pub fn show_control_plane(app_handle: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn hide_control_plane(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(CONTROL_PLANE_LABEL)
-        .ok_or_else(|| "Control-plane window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the control plane: {error}"))
+    if let Some(panel) = app_handle.get_webview_window(CONTROL_PLANE_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the control plane: {error}"))?;
+    }
+    Ok(())
 }
 
 fn clamped_logical_size(logical_size: f64, scale_factor: f64, monitor_size: u32) -> u32 {

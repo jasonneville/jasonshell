@@ -1,4 +1,5 @@
 use crate::shell_windows::{
+    ensure_shell_window,
     BOTTOM_BAR_LABEL, TASK_PREVIEW_HEIGHT_LOGICAL, TASK_PREVIEW_LABEL, TASK_PREVIEW_WIDTH_LOGICAL,
 };
 use crate::task_windows;
@@ -95,9 +96,8 @@ pub fn show_task_window_preview(
     state: tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
     request: ShowTaskPreviewRequest,
 ) -> Result<(), String> {
-    let preview_window = app_handle
-        .get_webview_window(TASK_PREVIEW_LABEL)
-        .ok_or_else(|| "Task preview window is unavailable".to_string())?;
+    let preview_window = ensure_shell_window(&app_handle, TASK_PREVIEW_LABEL)
+        .map_err(|error| format!("Task preview window is unavailable: {error}"))?;
     let _ = preview_window.hide();
 
     {
@@ -233,15 +233,16 @@ pub fn hide_task_window_preview(
         begin_task_preview_hide(&mut state, request_id);
     }
 
-    let preview_window = app_handle
-        .get_webview_window(TASK_PREVIEW_LABEL)
-        .ok_or_else(|| "Task preview window is unavailable".to_string())?;
-    preview_window
-        .emit(TASK_PREVIEW_HIDE_EVENT, ())
-        .map_err(|error| format!("Failed to clear task preview data: {error}"))?;
-    preview_window
-        .hide()
-        .map_err(|error| format!("Failed to hide the task preview window: {error}"))
+    let preview_window = app_handle.get_webview_window(TASK_PREVIEW_LABEL);
+    if let Some(preview_window) = preview_window {
+        preview_window
+            .emit(TASK_PREVIEW_HIDE_EVENT, ())
+            .map_err(|error| format!("Failed to clear task preview data: {error}"))?;
+        preview_window
+            .hide()
+            .map_err(|error| format!("Failed to hide the task preview window: {error}"))?;
+    }
+    Ok(())
 }
 
 fn publish_and_show_preview(

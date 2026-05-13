@@ -140,6 +140,10 @@ pub fn ensure_shell_window(app_handle: &AppHandle, label: &str) -> AppResult<Web
             .ok_or_else(|| format!("startup shell window {label} has not been created").into());
     }
 
+    if !is_auxiliary_label(label) {
+        return Err(format!("unknown shell window label: {label}").into());
+    }
+
     if let Some(window) = app_handle.get_webview_window(label) {
         return Ok(window);
     }
@@ -147,6 +151,7 @@ pub fn ensure_shell_window(app_handle: &AppHandle, label: &str) -> AppResult<Web
     build_auxiliary_window(app_handle, label)
 }
 
+#[cfg(test)]
 fn matches_auxiliary_builder_label(label: &str) -> bool {
     matches!(
         label,

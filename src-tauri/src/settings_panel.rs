@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, PhysicalPosition};
 
-use crate::shell_windows::{SETTINGS_PANEL_LABEL, SETTINGS_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
+use crate::shell_windows::{ensure_shell_window, SETTINGS_PANEL_LABEL, SETTINGS_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 const SETTINGS_PANEL_MARGIN_PHYSICAL: i32 = 6;
 const SETTINGS_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
@@ -18,9 +18,8 @@ pub fn show_settings_panel(
     app_handle: AppHandle,
     request: ShowSettingsPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(SETTINGS_PANEL_LABEL)
-        .ok_or_else(|| "Settings panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, SETTINGS_PANEL_LABEL)
+        .map_err(|error| format!("Settings panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -58,12 +57,12 @@ pub fn show_settings_panel(
 
 #[tauri::command]
 pub fn hide_settings_panel(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(SETTINGS_PANEL_LABEL)
-        .ok_or_else(|| "Settings panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the settings panel: {error}"))
+    if let Some(panel) = app_handle.get_webview_window(SETTINGS_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the settings panel: {error}"))?;
+    }
+    Ok(())
 }
 
 fn anchored_panel_x(
