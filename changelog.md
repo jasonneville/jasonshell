@@ -2,6 +2,10 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-13 `[USER]` REPORTED: `svelte-check` failed in `src/App.svelte` because `LoadedSurfaceComponent` was referenced without a declaration.
+- 2026-05-13 `[CODE]` FIXED: `src/App.svelte` now imports `SurfaceComponent` from `src/lib/surfaceLoader.ts` as the `LoadedSurfaceComponent` type, lazy-loads the resolved surface on mount, renders `<SurfaceComponent />`, and preserves the unsupported/load-failure fallback; `tsconfig.test.json` now includes `src/vite-env.d.ts` so test TypeScript compilation can resolve dynamic `.svelte` imports.
+- 2026-05-13 `[TOOL]` VALIDATED: `npm run check` passed with 0 errors/0 warnings; focused surface/process-manager source tests passed after `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/surfaceCodeSplitting.test.mjs tests/processManagerWiring.test.mjs`.
+
 - 2026-05-13 `[USER]` REQUESTED: Add a measured delayed/idle/on-first-open prewarm policy for the hidden persistent terminal panel.
 - 2026-05-13 `[CODE]` IMPLEMENTED: `TerminalPanelSurface.svelte` now schedules a 5000 ms hidden idle prewarm instead of eagerly creating xterm/ConPTY on mount; first open/focus cancels the timer and starts immediately through a shared startup promise to avoid duplicate sessions, while tab/split/restart actions still create sessions on explicit user intent.
 - 2026-05-13 `[DOCS]` UPDATED: Added `docs/terminal-panel-prewarm-idle-policy.md` with baseline/after metrics, method limitations, policy details, latency/resource tradeoff, and smoke status; updated `master_spec.md` terminal-panel behavior.

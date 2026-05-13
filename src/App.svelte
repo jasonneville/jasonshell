@@ -1,19 +1,7 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
-  import BottomBar from './components/BottomBar.svelte';
-  import AudioPanelSurface from './components/AudioPanelSurface.svelte';
-  import CalendarPanelSurface from './components/CalendarPanelSurface.svelte';
-  import CommandPanelSurface from './components/CommandPanelSurface.svelte';
-  import ControlPlaneSurface from './components/ControlPlaneSurface.svelte';
-  import ProcessManagerSurface from './components/ProcessManagerSurface.svelte';
-  import SearchPanelSurface from './components/SearchPanelSurface.svelte';
-  import SettingsPanelSurface from './components/SettingsPanelSurface.svelte';
-  import StackPopupSurface from './components/StackPopupSurface.svelte';
-  import TaskPreviewSurface from './components/TaskPreviewSurface.svelte';
-  import TerminalPanelSurface from './components/TerminalPanelSurface.svelte';
-  import TrayPanelSurface from './components/TrayPanelSurface.svelte';
-  import TopBar from './components/TopBar.svelte';
+  import { loadSurfaceComponent, type SurfaceComponent as LoadedSurfaceComponent } from './lib/surfaceLoader';
   import { installShellPreferencesSync } from './lib/shellPreferences';
   import {
     resolveSurfaceFromLabel,
@@ -42,6 +30,18 @@
   onMount(() => {
     const uninstallThemeSync = installShellThemeSync();
     const uninstallPreferencesSync = installShellPreferencesSync();
+
+    if (surface !== 'unknown') {
+      loadSurfaceComponent(surface)
+        ?.then((module) => {
+          SurfaceComponent = module.default;
+        })
+        .catch((error) => {
+          surfaceLoadFailed = true;
+          console.error(`JasonShell failed to load surface component for ${surface}`, error);
+        });
+    }
+
     return () => {
       uninstallThemeSync();
       uninstallPreferencesSync();
@@ -55,33 +55,9 @@
 
 <svelte:window on:contextmenu={suppressNativeContextMenu} />
 
-{#if surface === 'top-bar'}
-  <TopBar />
-{:else if surface === 'bottom-bar'}
-  <BottomBar />
-{:else if surface === 'task-preview'}
-  <TaskPreviewSurface />
-{:else if surface === 'search-panel'}
-  <SearchPanelSurface />
-{:else if surface === 'stack-popup'}
-  <StackPopupSurface />
-{:else if surface === 'process-manager'}
-  <ProcessManagerSurface />
-{:else if surface === 'control-plane'}
-  <ControlPlaneSurface />
-{:else if surface === 'settings-panel'}
-  <SettingsPanelSurface />
-{:else if surface === 'tray-panel'}
-  <TrayPanelSurface />
-{:else if surface === 'terminal-panel'}
-  <TerminalPanelSurface />
-{:else if surface === 'command-panel'}
-  <CommandPanelSurface />
-{:else if surface === 'audio-panel'}
-  <AudioPanelSurface />
-{:else if surface === 'calendar-panel'}
-  <CalendarPanelSurface />
-{:else}
+{#if SurfaceComponent}
+  <SurfaceComponent />
+{:else if surface === 'unknown' || surfaceLoadFailed}
   <main class="unsupported-surface">
     <div class="panel">
       <strong>{metadata.title}</strong>
