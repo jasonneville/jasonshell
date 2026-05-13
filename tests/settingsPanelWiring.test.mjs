@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
 const settingsPanelSource = readFileSync(new URL('../src/components/SettingsPanelSurface.svelte', import.meta.url), 'utf8');
 const settingsPanelCss = readFileSync(new URL('../src/components/SettingsPanelSurface.css', import.meta.url), 'utf8');
@@ -17,7 +18,8 @@ const capabilitySource = readFileSync(new URL('../src-tauri/capabilities/setting
 
 test('settings panel is routed as an anchored auxiliary shell surface', () => {
   assert.match(shellSurfaceSource, /'settings-panel'/);
-  assert.match(appSource, /SettingsPanelSurface/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoaderSource, /'settings-panel': \(\) => import\('\.\.\/components\/SettingsPanelSurface\.svelte'\)/);
   assert.match(shellWindowsSource, /SETTINGS_PANEL_LABEL: &str = "settings-panel"/);
   assert.match(shellWindowsSource, /build_settings_panel_window/);
   assert.match(mainSource, /settings_panel::show_settings_panel/);

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 test('control-plane is routed as a hidden persistent shell surface with safe IPC', () => {
   const app = readFileSync('src/App.svelte', 'utf8');
+  const surfaceLoader = readFileSync('src/lib/surfaceLoader.ts', 'utf8');
   const shellSurface = readFileSync('src/lib/shellSurface.ts', 'utf8');
   const ipcSurfaces = readFileSync('src/ipc/surfaces.ts', 'utf8');
   const ipcCommands = readFileSync('src/ipc/commands.ts', 'utf8');
@@ -14,8 +15,8 @@ test('control-plane is routed as a hidden persistent shell surface with safe IPC
   const contracts = readFileSync('src-tauri/src/contracts.rs', 'utf8');
   const capability = JSON.parse(readFileSync('src-tauri/capabilities/control-plane.json', 'utf8'));
 
-  assert.match(app, /ControlPlaneSurface/);
-  assert.match(app, /surface === 'control-plane'/);
+  assert.match(app, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoader, /'control-plane': \(\) => import\('\.\.\/components\/ControlPlaneSurface\.svelte'\)/);
   assert.match(shellSurface, /'control-plane'/);
   assert.match(ipcSurfaces, /controlPlane: 'control-plane'/);
   assert.match(ipcCommands, /showControlPlane: 'show_control_plane'/);

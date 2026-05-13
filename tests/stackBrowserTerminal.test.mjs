@@ -381,6 +381,16 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(stackTerminalPane, /navigator\.clipboard\?\.writeText\(selection\)/);
   assert.match(stackTerminalPane, /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'/);
   assert.match(stackTerminalPane, /navigator\.clipboard\?\.readText\(\)/);
+  assert.match(
+    stackTerminalPane,
+    /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void pasteClipboard\(\);\s*return false;/,
+    'legacy Stack terminal Ctrl+V must stay parity-safe by suppressing native paste before explicit clipboard write'
+  );
+  assert.match(
+    stackTerminalPane,
+    /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'c' && nextTerminal\.hasSelection\(\)\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void copySelection\(\);/,
+    'legacy Stack terminal selection copy should not also use native browser\/xterm copy'
+  );
   assert.match(stackTerminalPane, /on:contextmenu=\{openTerminalContextMenu\}/);
   assert.match(stackTerminalPane, /class="stack-terminal-context-menu"/);
   assert.match(stackTerminalPane, /copySelectionFromContextMenu/);

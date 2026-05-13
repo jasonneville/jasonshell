@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
 const topBarCss = readFileSync(new URL('../src/components/TopBar.css', import.meta.url), 'utf8');
 const trayPanelSource = readFileSync(new URL('../src/components/TrayPanelSurface.svelte', import.meta.url), 'utf8');
@@ -19,8 +20,8 @@ const contractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs', im
 const capabilitySource = readFileSync(new URL('../src-tauri/capabilities/tray-panel.json', import.meta.url), 'utf8');
 
 test('tray panel is routed as a dedicated auxiliary shell surface', () => {
-  assert.match(appSource, /import TrayPanelSurface/);
-  assert.match(appSource, /surface === 'tray-panel'[\s\S]*<TrayPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoaderSource, /'tray-panel': \(\) => import\('\.\.\/components\/TrayPanelSurface\.svelte'\)/);
   assert.match(shellSurfaceSource, /\| 'tray-panel'/);
   assert.match(shellWindowsSource, /TRAY_PANEL_LABEL: &str = "tray-panel"/);
   assert.match(shellWindowsSource, /TRAY_PANEL_WIDTH_LOGICAL: f64 = 252\.0/);

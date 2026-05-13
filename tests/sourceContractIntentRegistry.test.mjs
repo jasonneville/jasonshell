@@ -35,6 +35,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'shellOpenCloseEvents.test.mjs',
     'shellPopupLayoutScrollPhase1.test.mjs',
     'shellPreferences.test.mjs',
+    'surfaceCodeSplitting.test.mjs',
     'stackBrowserMarginSelection.test.mjs',
     'stackBrowserGitStatus.test.mjs',
     'stackBrowserTerminal.test.mjs',

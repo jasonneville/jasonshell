@@ -14,6 +14,7 @@ const calendarPanelSource = readFileSync(new URL('../src/components/CalendarPane
 const calendarPanelCss = readFileSync(new URL('../src/components/CalendarPanelSurface.css', import.meta.url), 'utf8');
 const calendarPanelWrapper = readFileSync(new URL('../src/lib/calendarPanel.ts', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
 const mainRustSource = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
@@ -73,8 +74,8 @@ test('top bar time pill owns an Explorer-like scrollable calendar flyout', () =>
 });
 
 test('calendar panel is a dedicated top-bar anchored webview so it is not clipped by the compact bar', () => {
-  assert.match(appSource, /import CalendarPanelSurface/);
-  assert.match(appSource, /surface === 'calendar-panel'[\s\S]*<CalendarPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoaderSource, /'calendar-panel': \(\) => import\('\.\.\/components\/CalendarPanelSurface\.svelte'\)/);
   assert.match(shellSurfaceSource, /\| 'calendar-panel'/);
   assert.match(calendarPanelWrapper, /showCalendarPanel/);
   assert.match(calendarPanelWrapper, /hideCalendarPanel/);

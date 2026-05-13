@@ -6,6 +6,7 @@ import { shouldAnimateTerminalCommand, terminalActivityGlyph, terminalCompletion
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 const app = read('src/App.svelte');
+const surfaceLoader = read('src/lib/surfaceLoader.ts');
 const topBar = read('src/components/TopBar.svelte');
 const topBarCss = read('src/components/TopBar.css');
 const stackPopup = read('src/components/StackPopupSurface.svelte');
@@ -23,8 +24,8 @@ const contracts = read('src-tauri/src/contracts.rs');
 const capability = read('src-tauri/capabilities/terminal-panel.json');
 
 test('persistent terminal is its own shell surface and uses delayed first-open startup', () => {
-  assert.match(app, /import TerminalPanelSurface/);
-  assert.match(app, /surface === 'terminal-panel'[\s\S]*<TerminalPanelSurface \/>/);
+  assert.match(app, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoader, /'terminal-panel': \(\) => import\('\.\.\/components\/TerminalPanelSurface\.svelte'\)/);
   assert.match(shellSurface, /\| 'terminal-panel'/);
   assert.match(ipcSurfaces, /terminalPanel: 'terminal-panel'/);
   assert.match(shellWindows, /TERMINAL_PANEL_LABEL: &str = "terminal-panel"/);
@@ -161,6 +162,18 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.doesNotMatch(terminalPanel, /slice\(0, midpoint\)|normalizeTerminalClipboardSelection/);
   assert.match(terminalPanel, /navigator\.clipboard\?\.writeText\(selection\)/);
   assert.match(terminalPanel, /navigator\.clipboard\?\.readText\(\)/);
+  assert.match(
+    terminalPanel,
+    /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void pasteClipboard\(\);\s*return false;/,
+    'primary persistent Ctrl+V must suppress native browser\/xterm paste before JasonShell clipboard write'
+  );
+  assert.match(
+    terminalPanel,
+    /event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{ event\.preventDefault\(\); event\.stopPropagation\(\); void pasteClipboardForRuntime\(runtime\); return false; \}/,
+    'split-pane Ctrl+V must suppress native paste and route through the pane runtime'
+  );
+  assert.match(terminalPanel, /async function pasteClipboardForRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*await writeTerminalDataForRuntime\(runtime, text\)/);
+  assert.doesNotMatch(terminalPanel, /pasteClipboardForRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*await writeTerminalData\(text\)/);
   assert.match(terminalPanel, /function handleTerminalMouseDown\(event: MouseEvent\)/);
   assert.match(terminalPanel, /event\.detail < 3/);
   assert.match(terminalPanel, /terminal\.select\(startColumn, row, currentInputText\.length\)/);

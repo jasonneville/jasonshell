@@ -276,6 +276,8 @@
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') {
+        event.preventDefault();
+        event.stopPropagation();
         void pasteClipboard();
         return false;
       }
@@ -288,6 +290,8 @@
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'c' && nextTerminal.hasSelection()) {
+        event.preventDefault();
+        event.stopPropagation();
         void copySelection();
         return false;
       }

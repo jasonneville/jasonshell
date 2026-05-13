@@ -11,6 +11,7 @@ const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', imp
 const topBarCss = readFileSync(new URL('../src/components/TopBar.css', import.meta.url), 'utf8');
 const audioPanelSource = readFileSync(new URL('../src/components/AudioPanelSurface.svelte', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
 const mainRustSource = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
@@ -49,8 +50,8 @@ test('top bar adds sound control left of time with immediate audio command calls
 });
 
 test('audio panel surface owns usable dialog controls and immediate audio commands', () => {
-  assert.match(appSource, /import AudioPanelSurface/);
-  assert.match(appSource, /surface === 'audio-panel'[\s\S]*<AudioPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoaderSource, /'audio-panel': \(\) => import\('\.\.\/components\/AudioPanelSurface\.svelte'\)/);
   assert.match(shellSurfaceSource, /\| 'audio-panel'/);
   assert.match(audioPanelSource, /id="audio-panel" role="dialog"/);
   assert.match(audioPanelSource, /AUDIO_PANEL_OPEN_EVENT/);

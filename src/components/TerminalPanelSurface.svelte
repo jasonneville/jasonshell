@@ -601,6 +601,8 @@
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') {
+        event.preventDefault();
+        event.stopPropagation();
         void pasteClipboard();
         return false;
       }
@@ -683,7 +685,7 @@
       if (event.type === 'keydown' && event.altKey && event.key === 'ArrowUp') { jumpToCommandForRuntime(runtime, -1); return false; }
       if (event.type === 'keydown' && event.altKey && event.key === 'ArrowDown') { jumpToCommandForRuntime(runtime, 1); return false; }
       if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') { void copySelectedCommandOutput(); return false; }
-      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') { void pasteClipboard(); return false; }
+      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') { event.preventDefault(); event.stopPropagation(); void pasteClipboardForRuntime(runtime); return false; }
       return true;
     })() : true;
   }
@@ -1193,6 +1195,16 @@
     });
     if (text) {
       await writeTerminalData(text);
+    }
+  }
+
+  async function pasteClipboardForRuntime(runtime: TerminalPaneRuntime) {
+    const text = await navigator.clipboard?.readText().catch((error) => {
+      console.debug('Persistent terminal clipboard paste unavailable', error);
+      return '';
+    });
+    if (text) {
+      await writeTerminalDataForRuntime(runtime, text);
     }
   }
 

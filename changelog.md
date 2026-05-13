@@ -2,6 +2,10 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-13 `[CODE]` FIXED: Persistent and legacy xterm Ctrl+V handlers now prevent default behavior and stop propagation before JasonShell reads `navigator.clipboard` and writes to the PTY; split-pane paste uses the focused pane runtime path so the active session receives one paste.
+- 2026-05-13 `[CODE]` TESTED: Added source-contract coverage for Ctrl+V native paste suppression, split-pane runtime paste routing, and legacy Stack terminal parity; refreshed lazy-surface routing source tests to assert the current `surfaceLoader` dynamic import contract.
+- 2026-05-13 `[TOOL]` VALIDATED: `npm run test:node` passed with 603 tests, 0 failures after installing local npm dependencies.
+
 - 2026-05-13 `[USER]` REPORTED: `svelte-check` failed in `src/App.svelte` because `LoadedSurfaceComponent` was referenced without a declaration.
 - 2026-05-13 `[CODE]` FIXED: `src/App.svelte` now imports `SurfaceComponent` from `src/lib/surfaceLoader.ts` as the `LoadedSurfaceComponent` type, lazy-loads the resolved surface on mount, renders `<SurfaceComponent />`, and preserves the unsupported/load-failure fallback; `tsconfig.test.json` now includes `src/vite-env.d.ts` so test TypeScript compilation can resolve dynamic `.svelte` imports.
 - 2026-05-13 `[TOOL]` VALIDATED: `npm run check` passed with 0 errors/0 warnings; focused surface/process-manager source tests passed after `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/surfaceCodeSplitting.test.mjs tests/processManagerWiring.test.mjs`.

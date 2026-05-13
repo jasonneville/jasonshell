@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const appSource = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
 const topBarCss = readFileSync(new URL('../src/components/TopBar.css', import.meta.url), 'utf8');
 const commandPanelSource = readFileSync(new URL('../src/components/CommandPanelSurface.svelte', import.meta.url), 'utf8');
@@ -19,8 +20,8 @@ const contractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs', im
 const capabilitySource = readFileSync(new URL('../src-tauri/capabilities/command-panel.json', import.meta.url), 'utf8');
 
 test('command panel is routed as a dedicated auxiliary shell surface', () => {
-  assert.match(appSource, /import CommandPanelSurface/);
-  assert.match(appSource, /surface === 'command-panel'[\s\S]*<CommandPanelSurface \/>/);
+  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
+  assert.match(surfaceLoaderSource, /'command-panel': \(\) => import\('\.\.\/components\/CommandPanelSurface\.svelte'\)/);
   assert.match(shellSurfaceSource, /\| 'command-panel'/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_LABEL: &str = "command-panel"/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460\.0/);
