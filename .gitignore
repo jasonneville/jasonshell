@@ -1,7 +1,38 @@
+.serena/
+.fusion/
+# Dependencies
 node_modules/
+
+# Frontend build/test output
 dist/
 dist-tests/
 .vite/
+coverage/
+playwright-report/
+test-results/
+
+# Rust/Tauri generated output
 src-tauri/target/
 src-tauri/gen/
+
+# Logs and local command output
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+result.txt
+
+# Local tool/runtime state
+.fusion/
+.worktrees/
+.tmp-*/
+.local/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
