@@ -32,6 +32,8 @@
 
   const surface: ShellSurface = resolveSurfaceFromLabel(label);
   const metadata = shellSurfaceMetadata[surface];
+  let SurfaceComponent: LoadedSurfaceComponent | null = null;
+  let surfaceLoadFailed = false;
 
   function suppressNativeContextMenu(event: MouseEvent) {
     event.preventDefault();
