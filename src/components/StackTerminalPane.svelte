@@ -276,6 +276,8 @@
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') {
+        event.preventDefault();
+        event.stopPropagation();
         void pasteClipboard();
         return false;
       }

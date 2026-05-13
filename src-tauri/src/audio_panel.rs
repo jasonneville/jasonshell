@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-use crate::shell_windows::{AUDIO_PANEL_LABEL, AUDIO_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
+use crate::shell_windows::{ensure_shell_window, AUDIO_PANEL_LABEL, AUDIO_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 pub const AUDIO_PANEL_OPEN_EVENT: &str = "audio-panel:open";
 pub const AUDIO_PANEL_CLOSED_EVENT: &str = "audio-panel:closed";
@@ -20,9 +20,8 @@ pub fn show_audio_panel(
     app_handle: AppHandle,
     request: ShowAudioPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(AUDIO_PANEL_LABEL)
-        .ok_or_else(|| "Audio panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, AUDIO_PANEL_LABEL)
+        .map_err(|error| format!("Audio panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -63,12 +62,11 @@ pub fn show_audio_panel(
 
 #[tauri::command]
 pub fn hide_audio_panel(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(AUDIO_PANEL_LABEL)
-        .ok_or_else(|| "Audio panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the audio panel: {error}"))?;
+    if let Some(panel) = app_handle.get_webview_window(AUDIO_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the audio panel: {error}"))?;
+    }
     emit_audio_panel_closed(&app_handle)
 }
 

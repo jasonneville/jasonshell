@@ -2,33 +2,11 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
-- 2026-05-13 `[USER]` REPORTED: `svelte-check` failed in `src/App.svelte` because `LoadedSurfaceComponent` was referenced without a declaration.
-- 2026-05-13 `[CODE]` FIXED: `src/App.svelte` now imports `SurfaceComponent` from `src/lib/surfaceLoader.ts` as the `LoadedSurfaceComponent` type, lazy-loads the resolved surface on mount, renders `<SurfaceComponent />`, and preserves the unsupported/load-failure fallback; `tsconfig.test.json` now includes `src/vite-env.d.ts` so test TypeScript compilation can resolve dynamic `.svelte` imports.
-- 2026-05-13 `[TOOL]` VALIDATED: `npm run check` passed with 0 errors/0 warnings; focused surface/process-manager source tests passed after `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/surfaceCodeSplitting.test.mjs tests/processManagerWiring.test.mjs`.
+- 2026-05-12 `[CODE]` FIXED: Consumed Ctrl+V keyboard paste events in the persistent terminal primary and split-pane xterm handlers before JasonShell reads the clipboard and writes to the PTY, preventing native/browser paste handling from adding duplicate text; the reachable legacy Stack terminal path now uses the same consumed-event behavior while right-click Paste remains an explicit single paste path.
+- 2026-05-12 `[TOOL]` VALIDATED: Terminal paste fix passed `npm run check`, `npm run test:node`, `npm run cargo:test`, `npm run cargo:check`, and `npm run build`.
 
-- 2026-05-13 `[USER]` REQUESTED: Add a measured delayed/idle/on-first-open prewarm policy for the hidden persistent terminal panel.
-- 2026-05-13 `[CODE]` IMPLEMENTED: `TerminalPanelSurface.svelte` now schedules a 5000 ms hidden idle prewarm instead of eagerly creating xterm/ConPTY on mount; first open/focus cancels the timer and starts immediately through a shared startup promise to avoid duplicate sessions, while tab/split/restart actions still create sessions on explicit user intent.
-- 2026-05-13 `[DOCS]` UPDATED: Added `docs/terminal-panel-prewarm-idle-policy.md` with baseline/after metrics, method limitations, policy details, latency/resource tradeoff, and smoke status; updated `master_spec.md` terminal-panel behavior.
-- 2026-05-13 `[TOOL]` VALIDATED: Source-level terminal-panel tests were updated to assert no eager hidden startup and preserve first-open, resize-before-input, tab, split, and restart semantics.
-
-- 2026-05-11 `[USER]` REQUESTED: Use the old Quick Commands `>_` prompt glyph for the top-bar terminal button, animate it during recent terminal output, and give Quick Commands a different fitting glyph.
-- 2026-05-11 `[CODE]` IMPLEMENTED: TerminalPanelSurface bridges terminal activity to TopBar via `terminal-panel:activity`; TopBar renders `>_` at rest, cycles `>.` / `>..` / `>...` while terminal activity is recent, and Quick Commands now uses `⌘`.
-- 2026-05-11 `[USER]` REPORTED: Terminal glyph animation was too broad because simple output-producing commands such as `ls` and `cat` triggered it; animation should be reserved for Maven builds and AI harness prompts.
-- 2026-05-11 `[CODE]` FIXED: TerminalPanelSurface now gates `terminal-panel:activity` on submitted command text, refreshes activity only for marked important sessions while output continues, and clears marked sessions on shell command end or terminal close.
-- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/persistentTerminalPanel.test.mjs`.
-
-- 2026-05-11 `[USER]` REQUESTED: Notify when important top-bar terminal commands complete, with sound and a persistent terminal icon effect until the terminal is opened again, while keeping simple commands such as `ls`/`cat` quiet.
-- 2026-05-11 `[CODE]` IMPLEMENTED: Important command shell-end events now emit a completion payload to TopBar; TopBar plays a short Web Audio chime, shows a persistent highlighted `>✓` terminal glyph, clears the effect on terminal toggle/open, and preserves the existing Maven/AI harness command gating.
-- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/persistentTerminalPanel.test.mjs`.
-- 2026-05-12 `[CODE]` UPDATED: Expanded `.gitignore` to exclude local dependency/build artifacts, test reports, logs, Fusion runtime state, local worktrees, temporary directories, local SDK/tool state, and editor/OS noise from future PRs.
-- 2026-05-12 `[TOOL]` VALIDATED: Inspected Git status and confirmed the ignore update targets untracked/local generated paths; already-tracked files such as existing `.fusion/*`, `context.md`, and tracked tool directories require separate untracking or revert if they should disappear from the current diff.
-
-- 2026-05-11 `[CODE]` IMPLEMENTED: Frontend surface boot now resolves the Tauri window label first and lazy-loads only the matching Svelte surface component through `src/lib/surfaceLoader.ts`; `src/App.svelte` no longer statically imports all top/bottom/search/stack/process/terminal/auxiliary surfaces, and unsupported labels or lazy import failures show the fallback panel with diagnostics.
-- 2026-05-11 `[CODE]` TESTED: Added source coverage preventing static surface imports from returning to `App.svelte` and requiring a dynamic import mapping for every non-`unknown` `ShellSurface`; existing App-routing source tests now assert the lazy bootstrap/loader contract.
-- 2026-05-11 `[TOOL]` MEASURED: Production JS changed from one `index-A03REyX5.js` chunk at 856.49 kB (gzip 244.28 kB) to a 72.76 kB bootstrap (`index-B5UD5iDL.js`, gzip 25.21 kB) plus lazy surface chunks; the largest remaining chunk is the shared lazy `contextMenuPosition-mZZYrnWJ.js` at 366.15 kB (gzip 94.42 kB), with `TerminalPanelSurface` split to 45.01 kB and `StackPopupSurface` split to 126.75 kB.
-- 2026-05-11 `[TOOL]` VALIDATED: Code-splitting validation passed with `npm run check`, `npm run test:node`, `npm run build`, `npm run cargo:check`, and `npm run cargo:test`; stale top-bar tray/sound ordering assertions were resolved by restoring the documented command → tray → sound markup order.
-
-Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
+- 2026-05-12 `[CODE]` IMPLEMENTED: Added configurable terminal color themes through `src/lib/terminalThemes.ts`, persisted `stackBrowser.terminalTheme` in `jasonshell-settings-v1.json`, exposed a Settings Panel `Terminal color theme` selector, and applied theme updates live to all visible terminal-panel xterm tabs/split panes without restarting backend sessions.
+- 2026-05-12 `[TOOL]` VALIDATED: Terminal theme delivery passed `npm run check`, `npm run test:node`, `cargo test --manifest-path src-tauri/Cargo.toml settings`, `cargo test --manifest-path src-tauri/Cargo.toml terminal`, `npm run cargo:test`, `npm run cargo:check`, and `npm run build`.
 
 - 2026-05-11 `[USER]` REPORTED: Terminal opened showing the startup `Invoke-Expression` command, and PSReadLine suggestion color was no longer the muted gray expected from the previous startup path.
 - 2026-05-11 `[CODE]` FIXED: PowerShell terminal startup now keeps the long setup script in `JASONSHELL_POWERSHELL_STARTUP` but invokes it through a short encoded bootstrap, hiding startup text while preserving the muted PSReadLine inline/list prediction color configuration.

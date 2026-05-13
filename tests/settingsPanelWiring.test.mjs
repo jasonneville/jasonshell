@@ -57,10 +57,15 @@ test('settings panel exposes live theme, font, date, clock, and useful UI prefer
   assert.match(settingsPanelCss, /settings-panel/);
 });
 
-test('settings panel keeps Stack Browser terminal profile inside JSON shell settings section', () => {
+test('settings panel keeps Stack Browser terminal profile and theme inside JSON shell settings section', () => {
   assert.match(settingsPanelSource, /STACK_TERMINAL_PROFILE_OPTIONS/);
+  assert.match(settingsPanelSource, /terminalThemeOptions/);
+  assert.match(settingsPanelSource, /normalizeTerminalThemeId/);
   assert.match(settingsPanelSource, /label="Stack Browser terminal"/);
+  assert.match(settingsPanelSource, /label="Terminal color theme"/);
   assert.match(settingsPanelSource, /terminalProfile: selectedStackTerminalProfile/);
+  assert.match(settingsPanelSource, /terminalTheme: selectedTerminalThemeId/);
+  assert.match(settingsPanelSource, /normalizeStackBrowserSettings\(settings\.stackBrowser\)/);
 
   const terminalProfileIndex = settingsPanelSource.indexOf('label="Stack Browser terminal"');
   assert.notEqual(terminalProfileIndex, -1, 'terminal profile selector must remain in Settings Panel');
@@ -76,9 +81,12 @@ test('settings panel keeps Stack Browser terminal profile inside JSON shell sett
     'terminal profile selector must live in JSON shell settings area, not shell-bar controls'
   );
 
+  const terminalThemeIndex = settingsPanelSource.indexOf('label="Terminal color theme"');
+  assert.ok(terminalThemeIndex > terminalProfileIndex, 'terminal theme selector should be near terminal profile selector');
+
   const nextSectionStart = settingsPanelSource.indexOf('<section', terminalProfileIndex + 1);
   const jsonSectionClose = settingsPanelSource.indexOf('</section>', terminalProfileIndex);
-  assert.ok(jsonSectionClose > terminalProfileIndex, 'JSON shell settings section must close after terminal selector');
+  assert.ok(jsonSectionClose > terminalThemeIndex, 'JSON shell settings section must close after terminal selectors');
   if (nextSectionStart !== -1) {
     assert.ok(
       jsonSectionClose < nextSectionStart,

@@ -12,6 +12,25 @@ use tauri::{AppHandle, Manager};
 const SETTINGS_SCHEMA: &str = "jasonshell.settings";
 const SETTINGS_VERSION: u32 = 1;
 const SETTINGS_FILE: &str = "jasonshell-settings-v1.json";
+const DEFAULT_TERMINAL_THEME: &str = "base-dark";
+const VALID_TERMINAL_THEMES: &[&str] = &[
+    "base-dark",
+    "base-light",
+    "monokai",
+    "atom-one-dark",
+    "atom-one-light",
+    "nord",
+    "dracula",
+    "solarized-dark",
+    "solarized-light",
+    "github-dark",
+    "github-light",
+    "gruvbox-dark",
+    "gruvbox-light",
+    "tokyo-night",
+    "catppuccin-mocha",
+    "ayu-dark",
+];
 static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -59,11 +78,13 @@ pub struct SearchSettings {
     pub everything: EverythingSearchSettings,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StackBrowserSettings {
     #[serde(default)]
     pub terminal_profile: TerminalProfile,
+    #[serde(default = "default_terminal_theme")]
+    pub terminal_theme: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -190,6 +211,15 @@ impl Default for ShellUiSettings {
     }
 }
 
+impl Default for StackBrowserSettings {
+    fn default() -> Self {
+        Self {
+            terminal_profile: TerminalProfile::WindowsTerminal,
+            terminal_theme: default_terminal_theme(),
+        }
+    }
+}
+
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
@@ -218,6 +248,18 @@ impl Default for QuickCommandsSettings {
         Self {
             entries: Vec::new(),
         }
+    }
+}
+
+fn default_terminal_theme() -> String {
+    DEFAULT_TERMINAL_THEME.to_string()
+}
+
+fn normalize_terminal_theme(value: &str) -> String {
+    if VALID_TERMINAL_THEMES.contains(&value) {
+        value.to_string()
+    } else {
+        default_terminal_theme()
     }
 }
 
@@ -425,6 +467,7 @@ fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, Strin
     if settings.search.everything.content_search_enabled {
         settings.search.everything.content_search_enabled = false;
     }
+    settings.stack_browser.terminal_theme = normalize_terminal_theme(&settings.stack_browser.terminal_theme);
 
     let mut workspaces = Vec::with_capacity(settings.workspaces.len());
     for workspace in settings.workspaces {
@@ -902,6 +945,34 @@ mod tests {
         assert_eq!(settings.search.result_limit, 100);
         assert_eq!(settings.search.everything.max_results, 200);
         assert!(!settings.search.everything.content_search_enabled);
+    }
+
+    #[test]
+    fn stack_browser_terminal_theme_defaults_and_normalizes_unknown_ids() {
+        let value = serde_json::to_value(ShellSettings::default()).unwrap();
+        assert_eq!(
+            value
+                .get("stackBrowser")
+                .and_then(|stack_browser| stack_browser.get("terminalTheme"))
+                .and_then(Value::as_str),
+            Some(DEFAULT_TERMINAL_THEME)
+        );
+
+        let missing_theme: ShellSettings = serde_json::from_value(json!({
+            "schema": SETTINGS_SCHEMA,
+            "version": SETTINGS_VERSION,
+            "stackBrowser": { "terminalProfile": "gitBash" }
+        }))
+        .unwrap();
+        assert_eq!(missing_theme.stack_browser.terminal_profile, TerminalProfile::GitBash);
+        assert_eq!(missing_theme.stack_browser.terminal_theme, DEFAULT_TERMINAL_THEME);
+
+        let mut invalid = ShellSettings::default();
+        invalid.stack_browser.terminal_profile = TerminalProfile::PowerShell;
+        invalid.stack_browser.terminal_theme = "unknown-theme".to_string();
+        let validated = validate_settings(invalid).unwrap();
+        assert_eq!(validated.stack_browser.terminal_profile, TerminalProfile::PowerShell);
+        assert_eq!(validated.stack_browser.terminal_theme, DEFAULT_TERMINAL_THEME);
     }
 
     #[test]

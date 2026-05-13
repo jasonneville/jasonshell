@@ -5,37 +5,6 @@ export type TopBarIdentityState = {
   workspaceLabel: string;
 };
 
-export const TERMINAL_ACTIVITY_RECENT_MS = 2_400;
-export const TERMINAL_ACTIVITY_FRAME_MS = 450;
-
-export function terminalActivityGlyph(nowMs: number, lastActivityMs: number | null): string {
-  if (lastActivityMs === null || nowMs - lastActivityMs > TERMINAL_ACTIVITY_RECENT_MS) {
-    return '>_';
-  }
-
-  const frame = Math.floor(nowMs / TERMINAL_ACTIVITY_FRAME_MS) % 3;
-  return `>${'.'.repeat(frame + 1)}`;
-}
-
-export function terminalCompletionGlyph(): string {
-  return '>✓';
-}
-
-export function shouldAnimateTerminalCommand(commandText: string): boolean {
-  const command = commandText.trim().toLocaleLowerCase();
-  if (!command) return false;
-
-  const firstCommand = command.split(/\s*(?:&&|\|\||;)\s*/)[0] ?? command;
-  const executable = firstCommand.match(/^(?:\w+=\S+\s+)*(?:bunx|npx|pnpm|yarn|npm\s+exec|uvx|cargo\s+run\s+--)?\s*([.\w:/\\-]+)/)?.[1] ?? firstCommand;
-  const basename = executable.replace(/\\/g, '/').split('/').pop() ?? executable;
-
-  return (
-    /^(?:mvn|mvnw)$/.test(basename) ||
-    /^(?:pi|codex|claude|gemini|aider|opencode)$/.test(basename) ||
-    /\b(?:mvn|mvnw)\s+(?:clean\s+)?(?:install|package|verify|test|deploy)\b/.test(command)
-  );
-}
-
 export type CalendarDayCell = {
   key: string;
   day: number;

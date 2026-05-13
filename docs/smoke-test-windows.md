@@ -1,6 +1,6 @@
 # Windows Live Smoke Test Checklist
 
-Status: current live-smoke checklist for JasonShell tray-and-command phases 0-5 validation.
+Status: current live-smoke checklist for JasonShell lazy auxiliary-window validation and tray/command/process surfaces.
 
 Use this after the static validation gates pass. These checks require a Windows desktop session, WebView2, and `npm run tauri dev`; they are not replaced by Node or Rust unit tests.
 
@@ -15,8 +15,28 @@ Use this after the static validation gates pass. These checks require a Windows 
 
 - Top bar appears on the primary monitor top edge and reserves work area.
 - Bottom bar appears on the primary monitor bottom edge and reserves work area.
+- Top and bottom bars remain topmost over ordinary windows.
+- Top and bottom bars are excluded from Alt+Tab and task switching.
 - Explorer taskbar is hidden only while JasonShell is active and is restored after exit.
-- `task-preview`, `search-panel`, `stack-popup`, and `process-manager` open from their owning surfaces and close or hide without terminating the shell.
+- Cold startup creates only `top-bar` and `bottom-bar`; auxiliary windows are created on first use.
+
+## Lazy Auxiliary Window Lifecycle Matrix
+
+Record a PASS/FAIL/NOT RUN result for every cell during the release smoke. `first open` means the window did not exist before the action; `second open` means the existing hidden/shown Tauri window is reused without duplicate labels or missing events. Do not pre-fill PASS results without a live desktop run; for FN-002's automated worktree run, these cells were recorded as NOT RUN in the task document and covered by source-contract tests instead.
+
+| Surface | First open | Second open | Hide/close | Focus-loss cycle | Required event/session notes |
+| --- | --- | --- | --- | --- | --- |
+| `search-panel` | NOT RUN: verify top-bar search/Ctrl+K creates and displays current query/results | NOT RUN: verify reopen without stale payload loss | NOT RUN: verify explicit close resets top-bar search state | NOT RUN: verify native blur emits `search-panel:closed` to `top-bar` only | Close uses shared reset path |
+| `stack-popup` | NOT RUN: verify pinned folder creates and emits `stack-popup:open` | NOT RUN: verify same folder/history without duplicate window | NOT RUN: verify hide is idempotent before creation | NOT RUN: verify top-bar pinned-folder focus hold suppresses accidental close | Geometry persists across resize |
+| `process-manager` | NOT RUN: verify bottom-bar process button creates and emits `process-manager:open` | NOT RUN: verify rows refresh on reopen | NOT RUN: verify close stops polling/invalidates in-flight refreshes | NOT RUN: verify focus loss hides existing panel without creating a missing one | Kill guardrails remain unchanged |
+| `settings-panel` | NOT RUN: verify JasonShell button creates anchored panel | NOT RUN: verify persisted settings on reopen | NOT RUN: verify hide before first open is a no-op | NOT RUN: verify focus loss clears top-bar expanded state | No label/capability rename |
+| `tray-panel` | NOT RUN: verify tray button creates and emits `tray-panel:open` | NOT RUN: verify icons reload on every show | NOT RUN: verify hide before first open is a no-op and emits top-bar close | NOT RUN: verify tray invoke suppresses exactly one focus-loss close | Native tray relay keeps panel open |
+| `command-panel` | NOT RUN: verify `>_` button creates panel | NOT RUN: verify saved command list on reopen | NOT RUN: verify close emits `command-panel:closed` to top bar | NOT RUN: verify focus loss clears top-bar expanded state | Safe command validation unchanged |
+| `audio-panel` | NOT RUN: verify sound control creates panel and emits `audio-panel:open` | NOT RUN: verify reopen without hidden polling | NOT RUN: verify close emits to top bar and existing audio-panel owner | NOT RUN: verify focus loss stops visible polling state | Own close listener stops refresh polling |
+| `calendar-panel` | NOT RUN: verify clock/time pill creates panel | NOT RUN: verify current month state on reopen | NOT RUN: verify close emits to top bar and existing calendar owner | NOT RUN: verify focus loss clears top-bar expanded state | Date/time updates continue |
+| `terminal-panel` | NOT RUN: verify terminal button creates/focuses panel and emits `terminal-panel:open` | NOT RUN: verify existing panel and tabs reopen | NOT RUN: verify hide/show does not stop live backend sessions | NOT RUN: verify focus loss hides panel without terminating sessions | Sessions start/attach according to `TerminalPanelSurface.svelte` and retained output replays |
+| `control-plane` | NOT RUN: verify centered/clamped creation | NOT RUN: verify existing dashboard/settings surface reopens | NOT RUN: verify hide before first open is a no-op | NOT RUN: verify focus loss leaves shell stable | Capability remains `control-plane` only |
+| `task-preview` | NOT RUN: verify first hover creates preview and publishes payload | NOT RUN: verify later hover reuses preview window | NOT RUN: verify hide before creation is a no-op and stale hides are ignored | NOT RUN: verify pointer leave/focus transitions respect generation guards | Native/GDI preview state clears without mutex-held window ops |
 
 ## Top Bar And Search
 

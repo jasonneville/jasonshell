@@ -1,7 +1,7 @@
 <script lang="ts">
   import './TerminalPanelSurface.css';
   import '@xterm/xterm/css/xterm.css';
-  import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { FitAddon } from '@xterm/addon-fit';
   import { SearchAddon } from '@xterm/addon-search';
   import { Terminal } from '@xterm/xterm';
@@ -18,7 +18,6 @@
     type StackTerminalOutputChunk,
     type StackTerminalSession
   } from '../lib/persistentTerminal';
-  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import { hideTerminalPanel } from '../lib/terminalPanel';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
   import { openStackFolderInVscode, openStackItem, openStackTerminalHere, revealStackItem } from '../lib/stackPopup';
@@ -33,10 +32,10 @@
   import { getTerminalAction, terminalActions, type TerminalActionId, type TerminalActionState } from '../features/terminal/terminalActions';
   import { detectTerminalQuickSelectTargets, type TerminalQuickSelectTarget } from '../features/terminal/terminalQuickSelect';
   import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
-  import { shouldAnimateTerminalCommand } from '../features/top-bar/topBarUxState';
+  import { addShellSettingsChangeListener, loadShellSettings, type ShellSettings } from '../lib/settings';
+  import { terminalThemeById, type TerminalTheme } from '../lib/terminalThemes.js';
 
-  type TerminalLifecycleState = 'not-started' | 'scheduled' | 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
-  type TerminalStartupIntent = 'idle-prewarm' | 'first-open' | 'user-action';
+  type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalSplitOrientation = 'single' | 'vertical' | 'horizontal';
   type TerminalPaneModel = { paneId: string; sessionId: string; title: string; focused: boolean };
   type TerminalPaneRuntime = {
@@ -81,15 +80,11 @@
   };
 
   const TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open';
-  const TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity';
-  const TOP_BAR_EVENT_TARGET = topBarWebviewWindowEventTarget();
-  const importantTerminalActivitySessions = new Set<string>();
 
   const TERMINAL_PANEL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SFMono-Regular", monospace';
   const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13;
   const TERMINAL_PANEL_MIN_FONT_SIZE = 9;
   const TERMINAL_PANEL_MAX_FONT_SIZE = 28;
-  const TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000;
 
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
@@ -104,8 +99,8 @@
   let terminalFontSize = TERMINAL_PANEL_DEFAULT_FONT_SIZE;
   let activePaneId = 'terminal-pane-primary';
   let splitOrientation: TerminalSplitOrientation = 'single';
-  let status = 'Terminal will start when opened.';
-  let lifecycle: TerminalLifecycleState = 'not-started';
+  let status = 'Starting terminal...';
+  let lifecycle: TerminalLifecycleState = 'starting';
   let outputReceived = false;
   let startupTimer: number | null = null;
   let pollTimer: number | null = null;
@@ -127,8 +122,7 @@
   let recentOutputText = '';
   let sessionReplayBuffers = new Map<string, string>();
   let renderedSequenceKeysBySession = new Map<string, Set<string>>();
-  let idlePrewarmTimer: number | null = null;
-  let terminalStartPromise: Promise<void> | null = null;
+  let currentTerminalTheme: TerminalTheme = terminalThemeById('base-dark');
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -185,14 +179,15 @@
     listenersDisposed = false;
     document.addEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
     window.addEventListener('focus', handlePanelOpen);
+    const disposeSettingsListener = addShellSettingsChangeListener(applyShellSettingsToTerminalTheme);
+    unlisteners.push(disposeSettingsListener);
+    void loadTerminalThemeSetting();
     void initializeTerminalListeners();
-    scheduleIdlePrewarm();
+    void startTerminal();
     return () => {
       listenersDisposed = true;
       document.removeEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
       window.removeEventListener('focus', handlePanelOpen);
-      cancelIdlePrewarm();
-      terminalStartPromise = null;
       for (const runtime of paneRuntimes.values()) {
         stopPollingForRuntime(runtime);
         clearStartupTimerForRuntime(runtime);
@@ -205,6 +200,32 @@
       }
     };
   });
+
+  async function loadTerminalThemeSetting() {
+    try {
+      applyShellSettingsToTerminalTheme(await loadShellSettings());
+    } catch (error) {
+      console.error('Failed to load terminal theme setting', error);
+      applyTerminalTheme(terminalThemeById(currentTerminalTheme.id));
+    }
+  }
+
+  function applyShellSettingsToTerminalTheme(settings: ShellSettings) {
+    applyTerminalTheme(terminalThemeById(settings.stackBrowser?.terminalTheme));
+  }
+
+  function applyTerminalTheme(nextTheme: TerminalTheme) {
+    currentTerminalTheme = nextTheme;
+    const xtermTheme = { ...nextTheme.theme };
+    if (terminal) {
+      terminal.options.theme = { ...xtermTheme };
+    }
+    for (const runtime of paneRuntimes.values()) {
+      if (runtime.terminal) {
+        runtime.terminal.options.theme = { ...xtermTheme };
+      }
+    }
+  }
 
   async function initializeTerminalListeners() {
     const register = (promise: Promise<UnlistenFn>) => {
@@ -223,13 +244,12 @@
 
     register(
       listen(TERMINAL_PANEL_OPEN_EVENT, () => {
-        void handlePanelOpen();
+        handlePanelOpen();
       })
     );
 
     register(
       listen<TerminalOutputPayload>('stack-terminal:output', (event) => {
-        notifyTopBarForImportantTerminalOutput(event.payload.sessionId);
         const runtime = runtimeForSession(event.payload.sessionId);
         if (!runtime) {
           rememberTerminalChunkForSession(event.payload);
@@ -241,7 +261,6 @@
 
     register(
       listen<TerminalClosedPayload>('stack-terminal:closed', (event) => {
-        clearImportantTerminalActivity(event.payload.sessionId);
         const runtime = runtimeForSession(event.payload.sessionId);
         terminalSessions = terminalSessions.map((item) => item.sessionId === event.payload.sessionId ? { ...item, running: false } : item);
         if (!runtime) {
@@ -266,60 +285,28 @@
     );
   }
 
-  function scheduleIdlePrewarm() {
-    if (listenersDisposed || idlePrewarmTimer !== null || terminalStartPromise || session || terminalSessions.length) return;
-    lifecycle = 'scheduled';
-    status = 'Terminal idle prewarm scheduled.';
-    idlePrewarmTimer = window.setTimeout(() => {
-      idlePrewarmTimer = null;
-      if (listenersDisposed || session || terminalStartPromise) return;
-      void startTerminal('idle-prewarm');
-    }, TERMINAL_IDLE_PREWARM_DELAY_MS);
-  }
-
-  function cancelIdlePrewarm() {
-    if (idlePrewarmTimer !== null) {
-      window.clearTimeout(idlePrewarmTimer);
-      idlePrewarmTimer = null;
-    }
-  }
-
-  async function startTerminal(intent: TerminalStartupIntent = 'user-action') {
-    cancelIdlePrewarm();
-    if (terminalStartPromise) {
-      await terminalStartPromise;
-      if (intent !== 'idle-prewarm') handlePanelOpen();
-      return;
-    }
-    terminalStartPromise = startTerminalOnce(intent).finally(() => {
-      terminalStartPromise = null;
-    });
-    await terminalStartPromise;
-  }
-
-  async function startTerminalOnce(intent: TerminalStartupIntent) {
-    status = intent === 'idle-prewarm' ? 'Prewarming terminal in the background...' : 'Starting terminal...';
+  async function startTerminal() {
+    status = 'Starting terminal...';
     lifecycle = 'starting';
     outputReceived = false;
     renderedSequences = new Set<string>();
-    if (intent !== 'idle-prewarm') ensureTerminalView();
+    ensureTerminalView();
     startStartupTimer();
     try {
       await refreshTerminalSessionList();
       session = terminalSessions.find((candidate) => candidate.running) ?? terminalSessions[0] ?? await startPersistentTerminal();
       await refreshTerminalSessionList();
       const runtime = ensurePrimaryPaneForSession(session);
-      if (intent !== 'idle-prewarm') ensureTerminalViewForPane(runtime);
       startStartupTimerForRuntime(runtime);
       commandState = runtime.commandState;
       selectedCommandIndex = -1;
       shellCwdMarkerSeen = false;
       lifecycle = 'waiting';
       status = 'Waiting for terminal output...';
-      if (intent !== 'idle-prewarm') handlePanelOpen();
+      handlePanelOpen();
       startPollingForRuntime(runtime);
       void pollTerminalOutputForRuntime(runtime);
-      if (intent !== 'idle-prewarm') focusTerminal();
+      focusTerminal();
     } catch (error) {
       clearStartupTimer();
       lifecycle = 'failed';
@@ -529,6 +516,7 @@
       scrollback: 8000,
       letterSpacing: 0,
       screenReaderMode: false,
+      theme: { ...currentTerminalTheme.theme },
       windowsPty: { backend: 'conpty' }
     });
     fitAddon = new FitAddon();
@@ -601,6 +589,8 @@
         return false;
       }
       if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') {
+        event.preventDefault();
+        event.stopPropagation();
         void pasteClipboard();
         return false;
       }
@@ -629,6 +619,7 @@
       scrollback: 8000,
       letterSpacing: 0,
       screenReaderMode: false,
+      theme: { ...currentTerminalTheme.theme },
       windowsPty: { backend: 'conpty' }
     });
     runtime.terminal = paneTerminal;
@@ -683,7 +674,7 @@
       if (event.type === 'keydown' && event.altKey && event.key === 'ArrowUp') { jumpToCommandForRuntime(runtime, -1); return false; }
       if (event.type === 'keydown' && event.altKey && event.key === 'ArrowDown') { jumpToCommandForRuntime(runtime, 1); return false; }
       if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') { void copySelectedCommandOutput(); return false; }
-      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') { void pasteClipboard(); return false; }
+      if (event.type === 'keydown' && event.ctrlKey && event.key.toLowerCase() === 'v') { event.preventDefault(); event.stopPropagation(); void pasteClipboard(); return false; }
       return true;
     })() : true;
   }
@@ -727,9 +718,6 @@
       runtime.shellCwdMarkerSeen = true;
       applyAuthoritativeTerminalCwdForRuntime(runtime, marker.cwd);
     }
-    if (marker.kind === 'end') {
-      clearImportantTerminalActivity(runtime.session.sessionId, true);
-    }
     commitRuntime(runtime);
     return true;
   }
@@ -748,9 +736,6 @@
     if (marker.kind === 'cwd' && marker.cwd) {
       shellCwdMarkerSeen = true;
       applyAuthoritativeTerminalCwd(marker.cwd);
-    }
-    if (marker.kind === 'end' && session?.sessionId) {
-      clearImportantTerminalActivity(session.sessionId, true);
     }
     return true;
   }
@@ -773,37 +758,14 @@
     }
   }
 
-  function emitTopBarTerminalActivity(sessionId: string, active: boolean, completed = false) {
-    void emitTo(TOP_BAR_EVENT_TARGET, TOP_BAR_TERMINAL_ACTIVITY_EVENT, { sessionId, active, completed });
-  }
-
-  function clearImportantTerminalActivity(sessionId: string | undefined, completed = false) {
-    if (!sessionId || !importantTerminalActivitySessions.delete(sessionId)) return;
-    emitTopBarTerminalActivity(sessionId, false, completed);
-  }
-
-  function notifyTopBarForSubmittedCommand(sessionId: string | undefined, commandText: string) {
-    if (!sessionId || !shouldAnimateTerminalCommand(commandText)) return;
-    importantTerminalActivitySessions.add(sessionId);
-    emitTopBarTerminalActivity(sessionId, true);
-  }
-
-  function notifyTopBarForImportantTerminalOutput(sessionId: string | undefined) {
-    if (!sessionId || !importantTerminalActivitySessions.has(sessionId)) return;
-    emitTopBarTerminalActivity(sessionId, true);
-  }
-
   function trackTerminalInputForRuntime(runtime: TerminalPaneRuntime, data: string) {
     runtime.currentInputSelectionActive = false;
     for (const ch of data) {
       if (ch === '\r' || ch === '\n' || ch === '\u0003') {
-        if ((ch === '\r' || ch === '\n') && runtime.currentInputText.trim()) {
-          notifyTopBarForSubmittedCommand(runtime.session.sessionId, runtime.currentInputText);
-          if (runtime.commandState) {
-            const line = runtime.terminal ? runtime.terminal.buffer.active.baseY + runtime.terminal.buffer.active.cursorY : undefined;
-            runtime.commandState = beginTerminalCommandRecord(runtime.commandState, runtime.currentInputText.trim(), line);
-            runtime.selectedCommandIndex = runtime.commandState.records.length - 1;
-          }
+        if ((ch === '\r' || ch === '\n') && runtime.commandState && runtime.currentInputText.trim()) {
+          const line = runtime.terminal ? runtime.terminal.buffer.active.baseY + runtime.terminal.buffer.active.cursorY : undefined;
+          runtime.commandState = beginTerminalCommandRecord(runtime.commandState, runtime.currentInputText.trim(), line);
+          runtime.selectedCommandIndex = runtime.commandState.records.length - 1;
         }
         runtime.currentInputText = '';
       } else if (ch === '\b' || ch === '\u007f') {
@@ -819,13 +781,10 @@
     currentInputSelectionActive = false;
     for (const ch of data) {
       if (ch === '\r' || ch === '\n' || ch === '\u0003') {
-        if ((ch === '\r' || ch === '\n') && currentInputText.trim()) {
-          notifyTopBarForSubmittedCommand(session?.sessionId, currentInputText);
-          if (commandState) {
-            const line = terminal ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY : undefined;
-            commandState = beginTerminalCommandRecord(commandState, currentInputText.trim(), line);
-            selectedCommandIndex = commandState.records.length - 1;
-          }
+        if ((ch === '\r' || ch === '\n') && commandState && currentInputText.trim()) {
+          const line = terminal ? terminal.buffer.active.baseY + terminal.buffer.active.cursorY : undefined;
+          commandState = beginTerminalCommandRecord(commandState, currentInputText.trim(), line);
+          selectedCommandIndex = commandState.records.length - 1;
         }
         currentInputText = '';
       } else if (ch === '\b' || ch === '\u007f') {
@@ -947,15 +906,10 @@
   }
 
   function handlePanelOpen() {
-    cancelIdlePrewarm();
-    if (!session) {
-      void startTerminal('first-open');
-    }
     visibleResizeSettled = false;
     for (const runtime of paneRuntimes.values()) {
       runtime.visibleResizeSettled = false;
       ensureTerminalViewForPane(runtime);
-      replayTerminalSessionOutput(runtime);
     }
     void scheduleFitAfterPanelOpen();
   }

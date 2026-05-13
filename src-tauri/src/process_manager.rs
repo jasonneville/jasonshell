@@ -5,6 +5,7 @@ use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::shell_windows::{
+    ensure_shell_window,
     BOTTOM_BAR_LABEL, PROCESS_MANAGER_HEIGHT_LOGICAL, PROCESS_MANAGER_LABEL,
     PROCESS_MANAGER_WIDTH_LOGICAL,
 };
@@ -93,9 +94,8 @@ pub fn show_process_manager(
     app_handle: AppHandle,
     request: ShowProcessManagerRequest,
 ) -> Result<(), String> {
-    let popup = app_handle
-        .get_webview_window(PROCESS_MANAGER_LABEL)
-        .ok_or_else(|| "Process manager window is unavailable".to_string())?;
+    let popup = ensure_shell_window(&app_handle, PROCESS_MANAGER_LABEL)
+        .map_err(|error| format!("Process manager window is unavailable: {error}"))?;
     let bottom_bar = app_handle
         .get_webview_window(BOTTOM_BAR_LABEL)
         .ok_or_else(|| "Bottom bar window is unavailable".to_string())?;
@@ -155,15 +155,15 @@ pub fn show_process_manager(
 
 #[tauri::command]
 pub fn hide_process_manager(app_handle: AppHandle) -> Result<(), String> {
-    let popup = app_handle
-        .get_webview_window(PROCESS_MANAGER_LABEL)
-        .ok_or_else(|| "Process manager window is unavailable".to_string())?;
-    popup
-        .emit(PROCESS_MANAGER_CLOSED_EVENT, ())
-        .map_err(|error| format!("Failed to publish process manager closed event: {error}"))?;
-    popup
-        .hide()
-        .map_err(|error| format!("Failed to hide the process manager: {error}"))
+    if let Some(popup) = app_handle.get_webview_window(PROCESS_MANAGER_LABEL) {
+        popup
+            .emit(PROCESS_MANAGER_CLOSED_EVENT, ())
+            .map_err(|error| format!("Failed to publish process manager closed event: {error}"))?;
+        popup
+            .hide()
+            .map_err(|error| format!("Failed to hide the process manager: {error}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

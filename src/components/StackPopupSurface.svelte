@@ -5,6 +5,12 @@
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import StackTerminalPane from './StackTerminalPane.svelte';
+  type StackTerminalPaneHandle = {
+    startTerminal(focusAfterStart?: boolean): Promise<void>;
+    stopTerminal(): Promise<void>;
+    syncFolderToTerminalCwd(): Promise<void>;
+    focusTerminal(): void;
+  };
   import {
     beginStackPopupFocusLossHold,
     copyStackItems,
@@ -235,7 +241,7 @@
     | null = null;
   let stackBrowserViewMode: StackBrowserViewMode = 'files';
   let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
-  let stackTerminalPane: StackTerminalPane | null = null;
+  let stackTerminalPane = null as StackTerminalPaneHandle | null;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
 
@@ -293,8 +299,7 @@
         window.cancelAnimationFrame(resizeFrame);
       }
       stopMarqueeAutoscroll();
-      const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
-      void terminalPaneForCleanup?.stopTerminal();
+      void stackTerminalPane?.stopTerminal();
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
         unlisten();

@@ -2,7 +2,7 @@ use crate::layout::build_shell_preview_rects;
 #[cfg(windows)]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::error::Error;
-use tauri::{App, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Manager, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 #[cfg(windows)]
 use windows::Win32::Foundation::{GetLastError, SetLastError, ERROR_SUCCESS, HWND, WIN32_ERROR};
 #[cfg(windows)]
@@ -25,7 +25,20 @@ pub const TERMINAL_PANEL_LABEL: &str = "terminal-panel";
 pub const COMMAND_PANEL_LABEL: &str = "command-panel";
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
 pub const CALENDAR_PANEL_LABEL: &str = "calendar-panel";
-#[cfg(test)]
+pub const STARTUP_LABELS: &[&str] = &[TOP_BAR_LABEL, BOTTOM_BAR_LABEL];
+pub const AUXILIARY_LABELS: &[&str] = &[
+    TASK_PREVIEW_LABEL,
+    SEARCH_PANEL_LABEL,
+    STACK_POPUP_LABEL,
+    PROCESS_MANAGER_LABEL,
+    CONTROL_PLANE_LABEL,
+    SETTINGS_PANEL_LABEL,
+    TRAY_PANEL_LABEL,
+    TERMINAL_PANEL_LABEL,
+    COMMAND_PANEL_LABEL,
+    AUDIO_PANEL_LABEL,
+    CALENDAR_PANEL_LABEL,
+];
 pub const ALL_LABELS: &[&str] = &[
     TOP_BAR_LABEL,
     BOTTOM_BAR_LABEL,
@@ -109,19 +122,68 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
         f64::from(preview_rects.bottom.height()) / scale_factor,
     )?;
 
-    let _preview = build_preview_window(app)?;
-    let _search = build_search_panel_window(app)?;
-    let _stack = build_stack_popup_window(app)?;
-    let _process_manager = build_process_manager_window(app)?;
-    let _control_plane = build_control_plane_window(app)?;
-    let _settings_panel = build_settings_panel_window(app)?;
-    let _tray_panel = build_tray_panel_window(app)?;
-    let _terminal_panel = build_terminal_panel_window(app)?;
-    let _command_panel = build_command_panel_window(app)?;
-    let _audio_panel = build_audio_panel_window(app)?;
-    let _calendar_panel = build_calendar_panel_window(app)?;
-
     Ok(CreatedShellWindows { top, bottom })
+}
+
+pub fn is_startup_label(label: &str) -> bool {
+    STARTUP_LABELS.contains(&label)
+}
+
+pub fn is_auxiliary_label(label: &str) -> bool {
+    AUXILIARY_LABELS.contains(&label)
+}
+
+pub fn ensure_shell_window(app_handle: &AppHandle, label: &str) -> AppResult<WebviewWindow> {
+    if is_startup_label(label) {
+        return app_handle
+            .get_webview_window(label)
+            .ok_or_else(|| format!("startup shell window {label} has not been created").into());
+    }
+
+    if !is_auxiliary_label(label) {
+        return Err(format!("unknown shell window label: {label}").into());
+    }
+
+    if let Some(window) = app_handle.get_webview_window(label) {
+        return Ok(window);
+    }
+
+    build_auxiliary_window(app_handle, label)
+}
+
+#[cfg(test)]
+fn matches_auxiliary_builder_label(label: &str) -> bool {
+    matches!(
+        label,
+        TASK_PREVIEW_LABEL
+            | SEARCH_PANEL_LABEL
+            | STACK_POPUP_LABEL
+            | PROCESS_MANAGER_LABEL
+            | CONTROL_PLANE_LABEL
+            | SETTINGS_PANEL_LABEL
+            | TRAY_PANEL_LABEL
+            | TERMINAL_PANEL_LABEL
+            | COMMAND_PANEL_LABEL
+            | AUDIO_PANEL_LABEL
+            | CALENDAR_PANEL_LABEL
+    )
+}
+
+fn build_auxiliary_window(app: &AppHandle, label: &str) -> AppResult<WebviewWindow> {
+    match label {
+        TASK_PREVIEW_LABEL => build_preview_window(app),
+        SEARCH_PANEL_LABEL => build_search_panel_window(app),
+        STACK_POPUP_LABEL => build_stack_popup_window(app),
+        PROCESS_MANAGER_LABEL => build_process_manager_window(app),
+        CONTROL_PLANE_LABEL => build_control_plane_window(app),
+        SETTINGS_PANEL_LABEL => build_settings_panel_window(app),
+        TRAY_PANEL_LABEL => build_tray_panel_window(app),
+        TERMINAL_PANEL_LABEL => build_terminal_panel_window(app),
+        COMMAND_PANEL_LABEL => build_command_panel_window(app),
+        AUDIO_PANEL_LABEL => build_audio_panel_window(app),
+        CALENDAR_PANEL_LABEL => build_calendar_panel_window(app),
+        _ => Err(format!("unknown shell window label: {label}").into()),
+    }
 }
 
 fn build_shell_window(
@@ -153,7 +215,7 @@ fn build_shell_window(
     Ok(window)
 }
 
-fn build_preview_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_preview_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         TASK_PREVIEW_LABEL,
@@ -177,7 +239,7 @@ fn build_preview_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_search_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_search_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         SEARCH_PANEL_LABEL,
@@ -200,7 +262,7 @@ fn build_search_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_stack_popup_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_stack_popup_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(
         WebviewWindowBuilder::new(app, STACK_POPUP_LABEL, WebviewUrl::App("index.html".into()))
             .always_on_top(true)
@@ -221,7 +283,7 @@ fn build_stack_popup_window(app: &App) -> AppResult<WebviewWindow> {
     )
 }
 
-fn build_terminal_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_terminal_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         TERMINAL_PANEL_LABEL,
@@ -244,7 +306,7 @@ fn build_terminal_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_process_manager_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_process_manager_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         PROCESS_MANAGER_LABEL,
@@ -270,7 +332,7 @@ fn build_process_manager_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_control_plane_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_control_plane_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         CONTROL_PLANE_LABEL,
@@ -293,7 +355,7 @@ fn build_control_plane_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_settings_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_settings_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         SETTINGS_PANEL_LABEL,
@@ -316,7 +378,7 @@ fn build_settings_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_audio_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_audio_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(
         WebviewWindowBuilder::new(app, AUDIO_PANEL_LABEL, WebviewUrl::App("index.html".into()))
             .always_on_top(true)
@@ -337,7 +399,7 @@ fn build_audio_panel_window(app: &App) -> AppResult<WebviewWindow> {
     )
 }
 
-fn build_calendar_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_calendar_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         CALENDAR_PANEL_LABEL,
@@ -360,7 +422,7 @@ fn build_calendar_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_tray_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_tray_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(
         WebviewWindowBuilder::new(app, TRAY_PANEL_LABEL, WebviewUrl::App("index.html".into()))
             .always_on_top(true)
@@ -381,7 +443,7 @@ fn build_tray_panel_window(app: &App) -> AppResult<WebviewWindow> {
     )
 }
 
-fn build_command_panel_window(app: &App) -> AppResult<WebviewWindow> {
+fn build_command_panel_window(app: &AppHandle) -> AppResult<WebviewWindow> {
     Ok(WebviewWindowBuilder::new(
         app,
         COMMAND_PANEL_LABEL,
@@ -477,10 +539,42 @@ fn shell_ex_style_is_alt_tab_excluded(style: u32) -> bool {
         && (style & WS_EX_NOACTIVATE.0) == 0
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn startup_and_auxiliary_labels_partition_all_shell_surfaces() {
+        assert_eq!(STARTUP_LABELS, &[TOP_BAR_LABEL, BOTTOM_BAR_LABEL]);
+
+        for label in STARTUP_LABELS {
+            assert!(is_startup_label(label));
+            assert!(!is_auxiliary_label(label));
+        }
+
+        for label in AUXILIARY_LABELS {
+            assert!(is_auxiliary_label(label));
+            assert!(!is_startup_label(label));
+        }
+
+        let mut partitioned = Vec::new();
+        partitioned.extend_from_slice(STARTUP_LABELS);
+        partitioned.extend_from_slice(AUXILIARY_LABELS);
+        assert_eq!(partitioned, ALL_LABELS);
+    }
+
+    #[test]
+    fn auxiliary_builder_dispatch_accepts_only_auxiliary_labels() {
+        for label in AUXILIARY_LABELS {
+            assert!(matches_auxiliary_builder_label(label));
+        }
+
+        assert!(!matches_auxiliary_builder_label(TOP_BAR_LABEL));
+        assert!(!matches_auxiliary_builder_label(BOTTOM_BAR_LABEL));
+        assert!(!matches_auxiliary_builder_label("unknown-panel"));
+    }
+
+    #[cfg(windows)]
     #[test]
     fn desired_shell_ex_style_hides_from_alt_tab() {
         let existing = WINDOW_EX_STYLE(WS_EX_APPWINDOW.0);
@@ -490,6 +584,7 @@ mod tests {
         assert!(shell_ex_style_is_alt_tab_excluded(desired));
     }
 
+    #[cfg(windows)]
     #[test]
     fn desired_shell_ex_style_preserves_unrelated_bits() {
         let unrelated_style = 0x0000_0200;
@@ -501,6 +596,7 @@ mod tests {
         assert_eq!(desired & WS_EX_NOACTIVATE.0, 0);
     }
 
+    #[cfg(windows)]
     #[test]
     fn alt_tab_exclusion_rejects_task_switcher_bits() {
         let toolwindow_only = WS_EX_TOOLWINDOW.0;

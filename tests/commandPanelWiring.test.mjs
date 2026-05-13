@@ -54,14 +54,14 @@ test('command panel contracts and wrappers use constant-backed IPC and event nam
 test('top bar command button is left of tray button and enforces popup exclusivity', () => {
   assert.match(topBarSource, /from '\.\.\/lib\/commandPanel'/);
   assert.match(topBarSource, /COMMAND_PANEL_CLOSED_EVENT/);
-  assert.match(topBarSource, /class="command-control"[\s\S]*class="tray-control"/);
+  assert.match(topBarSource, /class="command-control"[\s\S]*class="tray-control"[\s\S]*class="sound-control"/);
   assert.match(topBarSource, /class="command-button"[\s\S]*ariaControls=\{COMMAND_PANEL_ID\}/);
   assert.match(topBarSource, /ariaLabel="Open quick commands"/);
   assert.match(topBarSource, /await closePanel\(\);[\s\S]*await closeAudioPanel\(\);[\s\S]*await closeTrayPanel\(\);[\s\S]*await showCommandPanel\(\{/);
   assert.match(topBarSource, /if \(commandOpen && \(!target \|\| !commandControl\?\.contains\(target\)\)\) \{[\s\S]*void closeCommandPanel\(\);/);
   assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(COMMAND_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*commandOpen = false;/);
   assert.match(topBarCss, /\.top-bar \.command-button \{/);
-  assert.match(topBarSource, /<span class="command-glyph" aria-hidden="true">⌘<\/span>/);
+  assert.match(topBarSource, />_\s*<\/span>/);
 });
 
 test('command panel surface includes list actions, editor fields, and command-block textarea flow', () => {

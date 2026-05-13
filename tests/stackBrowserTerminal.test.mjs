@@ -194,7 +194,7 @@ test('phase 3 terminal output is push-first and batched before xterm writes', ()
 
 test('phase 4 extracts Stack terminal pane and modern xterm addons from parent surface', () => {
   assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
-  assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
+  assert.match(stackPopupSurface, /type StackTerminalPaneHandle/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/xterm'/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/addon-fit'/);
   assert.match(stackTerminalPane, /import \{ WebglAddon \} from '@xterm\/addon-webgl'/);
@@ -307,10 +307,11 @@ test('stack popup API exposes typed terminal profiles and command wrappers', () 
 test('shell settings include stack browser terminal profile defaults', () => {
   assert.match(settingsSource, /export interface StackBrowserSettings \{/);
   assert.match(settingsSource, /terminalProfile: StackTerminalProfile;/);
+  assert.match(settingsSource, /terminalTheme: TerminalThemeId;/);
   assert.match(settingsSource, /stackBrowser: StackBrowserSettings;/);
   assert.match(settingsSource, /export function defaultStackBrowserSettings\(\): StackBrowserSettings/);
   assert.match(settingsSource, /terminalProfile: 'windowsTerminal'/);
-  assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal'\s*\}/);
+  assert.match(contractsSettingsTest, /stackBrowser:\s*\{\s*terminalProfile: 'windowsTerminal',[\s\S]*terminalTheme: defaultTerminalThemeId/);
 });
 
 test('stack browser no longer exposes embedded CLI toggle controls', () => {
@@ -319,7 +320,7 @@ test('stack browser no longer exposes embedded CLI toggle controls', () => {
   assert.doesNotMatch(stackPopupSurface, /Stack Browser embedded terminal lets you|Use this terminal to/);
 });
 
-test('persistent terminal starts on delayed idle or first open, accepts input, and polls output', () => {
+test('persistent terminal starts with app, accepts input, polls output, and stays pinned to bottom', () => {
   const terminalPanelSurface = readRepoFile('src/components/TerminalPanelSurface.svelte');
   assert.match(packageJson, /"@xterm\/xterm"/);
   assert.match(packageJson, /"@xterm\/addon-fit"/);
@@ -327,10 +328,7 @@ test('persistent terminal starts on delayed idle or first open, accepts input, a
   assert.match(terminalPanelSurface, /import \{ Terminal \} from '@xterm\/xterm';/);
   assert.match(terminalPanelSurface, /import \{ FitAddon \} from '@xterm\/addon-fit';/);
   assert.match(terminalPanelSurface, /startPersistentTerminal\(\)/);
-  assert.match(terminalPanelSurface, /scheduleIdlePrewarm\(\)/);
-  assert.match(terminalPanelSurface, /TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000/);
-  assert.match(terminalPanelSurface, /startTerminal\('first-open'\)/);
-  assert.match(terminalPanelSurface, /terminalStartPromise/);
+  assert.match(terminalPanelSurface, /void startTerminal\(\)/);
   assert.match(terminalPanelSurface, /await startTerminal\(\)/);
   assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
@@ -396,6 +394,19 @@ test('stack terminal supports xterm selection and copy', () => {
   assert.match(terminalPanelCss, /opacity: 0 !important;/);
   assert.match(terminalPanelCss, /caret-color: transparent !important;/);
   assert.match(terminalPanelCss, /height: 1px !important;/);
+});
+
+test('legacy stack terminal keyboard paste is consumed before clipboard write', () => {
+  assert.match(
+    stackTerminalPane,
+    /if \(event\.type === 'keydown' && event\.ctrlKey && event\.key\.toLowerCase\(\) === 'v'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void pasteClipboard\(\);\s*return false;\s*\}/,
+    'Stack terminal Ctrl+V path must consume the event before the explicit clipboard paste'
+  );
+  assert.match(
+    stackTerminalPane,
+    /async function pasteClipboardFromContextMenu\(\) \{\s*closeTerminalContextMenu\(\);\s*await pasteClipboard\(\);\s*\}/,
+    'context-menu Paste should remain a single explicit paste path without keyboard event handling'
+  );
 });
 
 test('terminal removes xterm assistive mirrors from visible layout', () => {
@@ -480,7 +491,7 @@ test('stack terminal profile uses JSON shell settings from settings panel, not S
   assert.match(settingsPanelSurface, /STACK_TERMINAL_PROFILE_OPTIONS/);
   assert.match(settingsPanelSurface, /loadShellSettings/);
   assert.match(settingsPanelSurface, /saveShellSettings/);
-  assert.match(settingsPanelSurface, /normalizeStackTerminalProfile\(settings\.stackBrowser\?\.terminalProfile\)/);
+  assert.match(settingsPanelSurface, /normalizeStackTerminalProfile\(stackBrowser\.terminalProfile\)/);
   assert.match(settingsPanelSurface, /label="Stack Browser terminal"/);
   assert.match(settingsPanelSurface, /terminalProfile: selectedStackTerminalProfile/);
 });

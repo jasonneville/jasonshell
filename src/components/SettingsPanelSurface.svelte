@@ -28,6 +28,7 @@
   import {
     defaultShellSettings,
     loadShellSettings,
+    normalizeStackBrowserSettings,
     saveShellBarLock,
     saveShellSettings,
     type ShellSettings
@@ -39,6 +40,11 @@
     shellThemeOptions,
     type ShellThemeId
   } from '../lib/themes';
+  import {
+    normalizeTerminalThemeId,
+    terminalThemeOptions,
+    type TerminalThemeId
+  } from '../lib/terminalThemes.js';
 
   const themeOptions = shellThemeOptions();
   const fontOptions = shellFontOptions();
@@ -47,6 +53,10 @@
   const stackTerminalProfileOptions = STACK_TERMINAL_PROFILE_OPTIONS.map((option) => ({
     value: option.value,
     label: option.label
+  }));
+  const terminalThemeSelectOptions = terminalThemeOptions().map((theme) => ({
+    value: theme.id,
+    label: theme.label
   }));
   const dateFormatExamples = [
     'EEE, MMM d',
@@ -63,6 +73,7 @@
   let powerError = '';
   let powerBusy = false;
   let selectedStackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
+  let selectedTerminalThemeId: TerminalThemeId = 'base-dark';
   let settingsError = '';
 
   const powerActionLabels: Record<SystemPowerAction, string> = {
@@ -118,12 +129,15 @@
   async function loadJsonShellSettings() {
     try {
       const settings = await loadShellSettings();
-      shellSettings = settings;
-      selectedStackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
+      const stackBrowser = normalizeStackBrowserSettings(settings.stackBrowser);
+      shellSettings = { ...settings, stackBrowser };
+      selectedStackTerminalProfile = normalizeStackTerminalProfile(stackBrowser.terminalProfile);
+      selectedTerminalThemeId = normalizeTerminalThemeId(stackBrowser.terminalTheme);
       settingsError = '';
     } catch (error) {
       console.error('Failed to load shell settings', error);
       selectedStackTerminalProfile = 'windowsTerminal';
+      selectedTerminalThemeId = 'base-dark';
       settingsError = error instanceof Error ? error.message : 'Shell settings unavailable.';
     }
   }
@@ -135,7 +149,7 @@
       shellSettings = await saveShellSettings({
         ...settings,
         stackBrowser: {
-          ...(settings.stackBrowser ?? { terminalProfile: 'windowsTerminal' }),
+          ...normalizeStackBrowserSettings(settings.stackBrowser),
           terminalProfile: selectedStackTerminalProfile
         }
       });
@@ -143,6 +157,26 @@
     } catch (error) {
       console.error('Failed to save Stack Browser terminal profile', error);
       settingsError = error instanceof Error ? error.message : 'Terminal profile unavailable.';
+    }
+  }
+
+  async function handleTerminalThemeChange(value: string) {
+    selectedTerminalThemeId = normalizeTerminalThemeId(value);
+    try {
+      const settings = shellSettings ?? await loadShellSettings();
+      shellSettings = await saveShellSettings({
+        ...settings,
+        stackBrowser: {
+          ...normalizeStackBrowserSettings(settings.stackBrowser),
+          terminalTheme: selectedTerminalThemeId
+        }
+      });
+      selectedTerminalThemeId = normalizeTerminalThemeId(shellSettings.stackBrowser.terminalTheme);
+      settingsError = '';
+    } catch (error) {
+      console.error('Failed to save terminal theme', error);
+      selectedTerminalThemeId = normalizeTerminalThemeId(selectedTerminalThemeId);
+      settingsError = error instanceof Error ? error.message : 'Terminal theme unavailable.';
     }
   }
 
@@ -308,6 +342,12 @@
       value={selectedStackTerminalProfile}
       options={stackTerminalProfileOptions}
       onChange={handleStackTerminalProfileChange}
+    />
+    <MeltSelect
+      label="Terminal color theme"
+      value={selectedTerminalThemeId}
+      options={terminalThemeSelectOptions}
+      onChange={handleTerminalThemeChange}
     />
     {#if settingsError}
       <p class="settings-error" role="alert">{settingsError}</p>

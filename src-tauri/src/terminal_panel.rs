@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 
-use crate::shell_windows::{TERMINAL_PANEL_LABEL, TERMINAL_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
+use crate::shell_windows::{ensure_shell_window, TERMINAL_PANEL_LABEL, TERMINAL_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL};
 
 pub const TERMINAL_PANEL_OPEN_EVENT: &str = "terminal-panel:open";
 pub const TERMINAL_PANEL_CLOSED_EVENT: &str = "terminal-panel:closed";
@@ -20,9 +20,8 @@ pub fn show_terminal_panel(
     app_handle: AppHandle,
     request: ShowTerminalPanelRequest,
 ) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(TERMINAL_PANEL_LABEL)
-        .ok_or_else(|| "Terminal panel window is unavailable".to_string())?;
+    let panel = ensure_shell_window(&app_handle, TERMINAL_PANEL_LABEL)
+        .map_err(|error| format!("Terminal panel window is unavailable: {error}"))?;
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -74,12 +73,11 @@ pub fn show_terminal_panel(
 
 #[tauri::command]
 pub fn hide_terminal_panel(app_handle: AppHandle) -> Result<(), String> {
-    let panel = app_handle
-        .get_webview_window(TERMINAL_PANEL_LABEL)
-        .ok_or_else(|| "Terminal panel window is unavailable".to_string())?;
-    panel
-        .hide()
-        .map_err(|error| format!("Failed to hide the terminal panel: {error}"))?;
+    if let Some(panel) = app_handle.get_webview_window(TERMINAL_PANEL_LABEL) {
+        panel
+            .hide()
+            .map_err(|error| format!("Failed to hide the terminal panel: {error}"))?;
+    }
     app_handle
         .emit_to(TOP_BAR_LABEL, TERMINAL_PANEL_CLOSED_EVENT, ())
         .map_err(|error| format!("Failed to publish terminal panel closed event: {error}"))
