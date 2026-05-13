@@ -1,6 +1,5 @@
 .serena/
-
-
+.fusion/
 # Dependencies
 node_modules/
 
