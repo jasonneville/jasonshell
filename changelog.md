@@ -2,6 +2,11 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-13 `[USER]` REQUESTED: Add a measured delayed/idle/on-first-open prewarm policy for the hidden persistent terminal panel.
+- 2026-05-13 `[CODE]` IMPLEMENTED: `TerminalPanelSurface.svelte` now schedules a 5000 ms hidden idle prewarm instead of eagerly creating xterm/ConPTY on mount; first open/focus cancels the timer and starts immediately through a shared startup promise to avoid duplicate sessions, while tab/split/restart actions still create sessions on explicit user intent.
+- 2026-05-13 `[DOCS]` UPDATED: Added `docs/terminal-panel-prewarm-idle-policy.md` with baseline/after metrics, method limitations, policy details, latency/resource tradeoff, and smoke status; updated `master_spec.md` terminal-panel behavior.
+- 2026-05-13 `[TOOL]` VALIDATED: Source-level terminal-panel tests were updated to assert no eager hidden startup and preserve first-open, resize-before-input, tab, split, and restart semantics.
+
 - 2026-05-11 `[USER]` REQUESTED: Use the old Quick Commands `>_` prompt glyph for the top-bar terminal button, animate it during recent terminal output, and give Quick Commands a different fitting glyph.
 - 2026-05-11 `[CODE]` IMPLEMENTED: TerminalPanelSurface bridges terminal activity to TopBar via `terminal-panel:activity`; TopBar renders `>_` at rest, cycles `>.` / `>..` / `>...` while terminal activity is recent, and Quick Commands now uses `⌘`.
 - 2026-05-11 `[USER]` REPORTED: Terminal glyph animation was too broad because simple output-producing commands such as `ls` and `cat` triggered it; animation should be reserved for Maven builds and AI harness prompts.

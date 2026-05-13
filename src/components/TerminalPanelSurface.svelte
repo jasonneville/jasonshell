@@ -35,7 +35,8 @@
   import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
   import { shouldAnimateTerminalCommand } from '../features/top-bar/topBarUxState';
 
-  type TerminalLifecycleState = 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
+  type TerminalLifecycleState = 'not-started' | 'scheduled' | 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
+  type TerminalStartupIntent = 'idle-prewarm' | 'first-open' | 'user-action';
   type TerminalSplitOrientation = 'single' | 'vertical' | 'horizontal';
   type TerminalPaneModel = { paneId: string; sessionId: string; title: string; focused: boolean };
   type TerminalPaneRuntime = {
@@ -88,6 +89,7 @@
   const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13;
   const TERMINAL_PANEL_MIN_FONT_SIZE = 9;
   const TERMINAL_PANEL_MAX_FONT_SIZE = 28;
+  const TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000;
 
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
@@ -102,8 +104,8 @@
   let terminalFontSize = TERMINAL_PANEL_DEFAULT_FONT_SIZE;
   let activePaneId = 'terminal-pane-primary';
   let splitOrientation: TerminalSplitOrientation = 'single';
-  let status = 'Starting terminal...';
-  let lifecycle: TerminalLifecycleState = 'starting';
+  let status = 'Terminal will start when opened.';
+  let lifecycle: TerminalLifecycleState = 'not-started';
   let outputReceived = false;
   let startupTimer: number | null = null;
   let pollTimer: number | null = null;
@@ -125,6 +127,8 @@
   let recentOutputText = '';
   let sessionReplayBuffers = new Map<string, string>();
   let renderedSequenceKeysBySession = new Map<string, Set<string>>();
+  let idlePrewarmTimer: number | null = null;
+  let terminalStartPromise: Promise<void> | null = null;
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -182,11 +186,13 @@
     document.addEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
     window.addEventListener('focus', handlePanelOpen);
     void initializeTerminalListeners();
-    void startTerminal();
+    scheduleIdlePrewarm();
     return () => {
       listenersDisposed = true;
       document.removeEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
       window.removeEventListener('focus', handlePanelOpen);
+      cancelIdlePrewarm();
+      terminalStartPromise = null;
       for (const runtime of paneRuntimes.values()) {
         stopPollingForRuntime(runtime);
         clearStartupTimerForRuntime(runtime);
@@ -217,7 +223,7 @@
 
     register(
       listen(TERMINAL_PANEL_OPEN_EVENT, () => {
-        handlePanelOpen();
+        void handlePanelOpen();
       })
     );
 
@@ -260,28 +266,60 @@
     );
   }
 
-  async function startTerminal() {
-    status = 'Starting terminal...';
+  function scheduleIdlePrewarm() {
+    if (listenersDisposed || idlePrewarmTimer !== null || terminalStartPromise || session || terminalSessions.length) return;
+    lifecycle = 'scheduled';
+    status = 'Terminal idle prewarm scheduled.';
+    idlePrewarmTimer = window.setTimeout(() => {
+      idlePrewarmTimer = null;
+      if (listenersDisposed || session || terminalStartPromise) return;
+      void startTerminal('idle-prewarm');
+    }, TERMINAL_IDLE_PREWARM_DELAY_MS);
+  }
+
+  function cancelIdlePrewarm() {
+    if (idlePrewarmTimer !== null) {
+      window.clearTimeout(idlePrewarmTimer);
+      idlePrewarmTimer = null;
+    }
+  }
+
+  async function startTerminal(intent: TerminalStartupIntent = 'user-action') {
+    cancelIdlePrewarm();
+    if (terminalStartPromise) {
+      await terminalStartPromise;
+      if (intent !== 'idle-prewarm') handlePanelOpen();
+      return;
+    }
+    terminalStartPromise = startTerminalOnce(intent).finally(() => {
+      terminalStartPromise = null;
+    });
+    await terminalStartPromise;
+  }
+
+  async function startTerminalOnce(intent: TerminalStartupIntent) {
+    status = intent === 'idle-prewarm' ? 'Prewarming terminal in the background...' : 'Starting terminal...';
     lifecycle = 'starting';
     outputReceived = false;
     renderedSequences = new Set<string>();
-    ensureTerminalView();
+    if (intent !== 'idle-prewarm') ensureTerminalView();
     startStartupTimer();
     try {
       await refreshTerminalSessionList();
       session = terminalSessions.find((candidate) => candidate.running) ?? terminalSessions[0] ?? await startPersistentTerminal();
       await refreshTerminalSessionList();
       const runtime = ensurePrimaryPaneForSession(session);
+      if (intent !== 'idle-prewarm') ensureTerminalViewForPane(runtime);
       startStartupTimerForRuntime(runtime);
       commandState = runtime.commandState;
       selectedCommandIndex = -1;
       shellCwdMarkerSeen = false;
       lifecycle = 'waiting';
       status = 'Waiting for terminal output...';
-      handlePanelOpen();
+      if (intent !== 'idle-prewarm') handlePanelOpen();
       startPollingForRuntime(runtime);
       void pollTerminalOutputForRuntime(runtime);
-      focusTerminal();
+      if (intent !== 'idle-prewarm') focusTerminal();
     } catch (error) {
       clearStartupTimer();
       lifecycle = 'failed';
@@ -909,10 +947,15 @@
   }
 
   function handlePanelOpen() {
+    cancelIdlePrewarm();
+    if (!session) {
+      void startTerminal('first-open');
+    }
     visibleResizeSettled = false;
     for (const runtime of paneRuntimes.values()) {
       runtime.visibleResizeSettled = false;
       ensureTerminalViewForPane(runtime);
+      replayTerminalSessionOutput(runtime);
     }
     void scheduleFitAfterPanelOpen();
   }

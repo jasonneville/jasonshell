@@ -293,7 +293,8 @@
         window.cancelAnimationFrame(resizeFrame);
       }
       stopMarqueeAutoscroll();
-      void stackTerminalPane?.stopTerminal();
+      const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
+      void terminalPaneForCleanup?.stopTerminal();
       window.clearInterval(latestRequestTimer);
       for (const unlisten of unlisteners) {
         unlisten();

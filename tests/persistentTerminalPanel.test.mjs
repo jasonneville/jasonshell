@@ -22,7 +22,7 @@ const main = read('src-tauri/src/main.rs');
 const contracts = read('src-tauri/src/contracts.rs');
 const capability = read('src-tauri/capabilities/terminal-panel.json');
 
-test('persistent terminal is its own shell surface and starts at app startup', () => {
+test('persistent terminal is its own shell surface and uses delayed first-open startup', () => {
   assert.match(app, /import TerminalPanelSurface/);
   assert.match(app, /surface === 'terminal-panel'[\s\S]*<TerminalPanelSurface \/>/);
   assert.match(shellSurface, /\| 'terminal-panel'/);
@@ -101,12 +101,16 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /import \{ Terminal \} from '@xterm\/xterm'/);
   assert.match(terminalPanel, /import \{ FitAddon \} from '@xterm\/addon-fit'/);
   assert.match(terminalPanel, /onMount\(\(\) => \{/);
-  assert.match(terminalPanel, /void startTerminal\(\)/);
+  assert.doesNotMatch(terminalPanel, /void startTerminal\(\)/);
+  assert.match(terminalPanel, /scheduleIdlePrewarm\(\)/);
+  assert.match(terminalPanel, /TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000/);
+  assert.match(terminalPanel, /terminalStartPromise/);
   assert.match(terminalPanel, /startPersistentTerminal\(\)/);
   assert.match(terminalPanel, /TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open'/);
   assert.match(terminalPanel, /listen\(TERMINAL_PANEL_OPEN_EVENT/);
   assert.match(terminalPanel, /window\.addEventListener\('focus', handlePanelOpen\)/);
-  assert.match(terminalPanel, /function handlePanelOpen/);
+  assert.match(terminalPanel, /function handlePanelOpen[\s\S]*startTerminal\('first-open'\)/);
+  assert.match(terminalPanel, /function startTerminalOnce\(intent: TerminalStartupIntent\)[\s\S]*if \(intent !== 'idle-prewarm'\) ensureTerminalView\(\)/);
   assert.match(terminalPanel, /function scheduleFitAfterPanelOpen/);
   assert.match(terminalPanel, /visibleResizePromise = resizeAllVisiblePanes\(\)/);
   assert.match(terminalPanel, /window\.setTimeout\(\(\) => scheduleFit\(\), 60\)/);
