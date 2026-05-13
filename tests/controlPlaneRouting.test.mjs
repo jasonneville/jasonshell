@@ -14,8 +14,8 @@ test('control-plane is routed as a hidden persistent shell surface with safe IPC
   const contracts = readFileSync('src-tauri/src/contracts.rs', 'utf8');
   const capability = JSON.parse(readFileSync('src-tauri/capabilities/control-plane.json', 'utf8'));
 
-  assert.match(app, /loadSurfaceComponent\(surface\)/);
-  assert.match(app, /<SurfaceComponent \/>/);
+  assert.match(app, /ControlPlaneSurface/);
+  assert.match(app, /surface === 'control-plane'/);
   assert.match(shellSurface, /'control-plane'/);
   assert.match(ipcSurfaces, /controlPlane: 'control-plane'/);
   assert.match(ipcCommands, /showControlPlane: 'show_control_plane'/);

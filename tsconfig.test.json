@@ -7,7 +7,7 @@
     "outDir": "dist-tests"
   },
   "include": [
-    "src/**/*.d.ts",
+    "src/vite-env.d.ts",
     "src/lib/*.ts",
     "src/features/**/*.ts",
     "src/ipc/**/*.ts"

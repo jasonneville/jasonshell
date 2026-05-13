@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { shouldAnimateTerminalCommand, terminalActivityGlyph, terminalCompletionGlyph } from '../dist-tests/features/top-bar/topBarUxState.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -21,9 +22,9 @@ const main = read('src-tauri/src/main.rs');
 const contracts = read('src-tauri/src/contracts.rs');
 const capability = read('src-tauri/capabilities/terminal-panel.json');
 
-test('persistent terminal is its own shell surface and starts at app startup', () => {
-  assert.match(app, /loadSurfaceComponent\(surface\)/);
-  assert.match(app, /<SurfaceComponent \/>/);
+test('persistent terminal is its own shell surface and uses delayed first-open startup', () => {
+  assert.match(app, /import TerminalPanelSurface/);
+  assert.match(app, /surface === 'terminal-panel'[\s\S]*<TerminalPanelSurface \/>/);
   assert.match(shellSurface, /\| 'terminal-panel'/);
   assert.match(ipcSurfaces, /terminalPanel: 'terminal-panel'/);
   assert.match(shellWindows, /TERMINAL_PANEL_LABEL: &str = "terminal-panel"/);
@@ -44,12 +45,49 @@ test('top bar terminal button sits before quick commands and toggles terminal pa
   assert.match(terminalPanelApi, /showTerminalPanel/);
   assert.match(terminalPanelApi, /hideTerminalPanel/);
   assert.match(topBar, /TERMINAL_PANEL_ID = 'terminal-panel'/);
-  assert.match(topBar, /class="terminal-button"/);
+  assert.match(topBar, /class=\{`terminal-button\$\{terminalCompletionPending \? ' terminal-complete' : ''\}`/);
   assert.match(topBar, /toggleTerminalPanel\(event\.currentTarget\)/);
   assert.match(topBar, /class="terminal-control"[\s\S]*class="command-control"/);
+  assert.match(topBar, /terminalActivityGlyph\(terminalActivityNowMs, lastTerminalActivityMs\)/);
+  assert.match(topBar, /TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity'/);
+  assert.match(topBar, /listen<TopBarTerminalActivityPayload>\(TOP_BAR_TERMINAL_ACTIVITY_EVENT[\s\S]*activeTerminalActivitySessions\.delete\(sessionId\)[\s\S]*lastTerminalActivityMs = null/);
+  assert.match(topBar, /listen<TopBarTerminalActivityPayload>\(TOP_BAR_TERMINAL_ACTIVITY_EVENT[\s\S]*event\.payload\?\.completed[\s\S]*terminalCompletionPending = true[\s\S]*playTerminalCompletionSound\(\)/);
+  assert.match(topBar, /listen<TopBarTerminalActivityPayload>\(TOP_BAR_TERMINAL_ACTIVITY_EVENT[\s\S]*activeTerminalActivitySessions\.add\(sessionId\)[\s\S]*terminalCompletionPending = false[\s\S]*lastTerminalActivityMs = Date\.now\(\)/);
+  assert.match(topBar, /<span class="terminal-glyph" aria-hidden="true">\{terminalGlyph\}<\/span>/);
+  assert.match(topBar, /<span class="command-glyph" aria-hidden="true">⌘<\/span>/);
   assert.match(topBarCss, /\.top-bar \.terminal-button/);
+  assert.match(topBarCss, /\.top-bar \.terminal-button\.terminal-complete/);
+  assert.match(terminalPanel, /notifyTopBarForSubmittedCommand/);
+  assert.match(terminalPanel, /shouldAnimateTerminalCommand\(commandText\)/);
+  assert.match(terminalPanel, /importantTerminalActivitySessions\.add\(sessionId\)/);
+  assert.match(terminalPanel, /emitTopBarTerminalActivity\(sessionId, true\)/);
+  assert.match(terminalPanel, /emitTopBarTerminalActivity\(sessionId, false, completed\)/);
+  assert.match(terminalPanel, /listen<TerminalOutputPayload>\('stack-terminal:output'[\s\S]{0,120}notifyTopBarForImportantTerminalOutput\(event\.payload\.sessionId\)/);
+  assert.match(terminalPanel, /marker\.kind === 'end'[\s\S]{0,180}clearImportantTerminalActivity\([^\n]+, true\)/);
+  assert.doesNotMatch(terminalPanel, /listen<TerminalOutputPayload>\('stack-terminal:output'[\s\S]{0,180}emitTo\(TOP_BAR_EVENT_TARGET, TOP_BAR_TERMINAL_ACTIVITY_EVENT/);
   assert.match(terminalPanelBackend, /TERMINAL_PANEL_OPEN_EVENT: &str = "terminal-panel:open"/);
   assert.match(terminalPanelBackend, /emit_to\(TERMINAL_PANEL_LABEL, TERMINAL_PANEL_OPEN_EVENT/);
+});
+
+test('terminal top bar glyph cycles while important command activity is recent', () => {
+  assert.equal(terminalActivityGlyph(10_000, null), '>_');
+  assert.equal(terminalActivityGlyph(10_000, 7_000), '>_');
+  assert.equal(terminalActivityGlyph(0, 0), '>.');
+  assert.equal(terminalActivityGlyph(450, 0), '>..');
+  assert.equal(terminalActivityGlyph(900, 0), '>...');
+  assert.equal(terminalActivityGlyph(1_350, 0), '>.');
+  assert.equal(terminalCompletionGlyph(), '>✓');
+});
+
+test('terminal top bar animation is reserved for important submitted commands', () => {
+  assert.equal(shouldAnimateTerminalCommand('ls'), false);
+  assert.equal(shouldAnimateTerminalCommand('cat package.json'), false);
+  assert.equal(shouldAnimateTerminalCommand('echo codex'), false);
+  assert.equal(shouldAnimateTerminalCommand('mvn test'), true);
+  assert.equal(shouldAnimateTerminalCommand('./mvnw clean install'), true);
+  assert.equal(shouldAnimateTerminalCommand('codex'), true);
+  assert.equal(shouldAnimateTerminalCommand('npx codex --prompt "review"'), true);
+  assert.equal(shouldAnimateTerminalCommand('pi ask'), true);
 });
 
 test('Stack Browser no longer owns the visible terminal panel xterm internals', () => {
@@ -63,12 +101,16 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /import \{ Terminal \} from '@xterm\/xterm'/);
   assert.match(terminalPanel, /import \{ FitAddon \} from '@xterm\/addon-fit'/);
   assert.match(terminalPanel, /onMount\(\(\) => \{/);
-  assert.match(terminalPanel, /void startTerminal\(\)/);
+  assert.doesNotMatch(terminalPanel, /void startTerminal\(\)/);
+  assert.match(terminalPanel, /scheduleIdlePrewarm\(\)/);
+  assert.match(terminalPanel, /TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000/);
+  assert.match(terminalPanel, /terminalStartPromise/);
   assert.match(terminalPanel, /startPersistentTerminal\(\)/);
   assert.match(terminalPanel, /TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open'/);
   assert.match(terminalPanel, /listen\(TERMINAL_PANEL_OPEN_EVENT/);
   assert.match(terminalPanel, /window\.addEventListener\('focus', handlePanelOpen\)/);
-  assert.match(terminalPanel, /function handlePanelOpen/);
+  assert.match(terminalPanel, /function handlePanelOpen[\s\S]*startTerminal\('first-open'\)/);
+  assert.match(terminalPanel, /function startTerminalOnce\(intent: TerminalStartupIntent\)[\s\S]*if \(intent !== 'idle-prewarm'\) ensureTerminalView\(\)/);
   assert.match(terminalPanel, /function scheduleFitAfterPanelOpen/);
   assert.match(terminalPanel, /visibleResizePromise = resizeAllVisiblePanes\(\)/);
   assert.match(terminalPanel, /window\.setTimeout\(\(\) => scheduleFit\(\), 60\)/);

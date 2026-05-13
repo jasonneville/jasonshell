@@ -1,5 +1,25 @@
 ## Change Ledger
 
+Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
+
+- 2026-05-13 `[USER]` REPORTED: `svelte-check` failed in `src/App.svelte` because `LoadedSurfaceComponent` was referenced without a declaration.
+- 2026-05-13 `[CODE]` FIXED: `src/App.svelte` now imports `SurfaceComponent` from `src/lib/surfaceLoader.ts` as the `LoadedSurfaceComponent` type, lazy-loads the resolved surface on mount, renders `<SurfaceComponent />`, and preserves the unsupported/load-failure fallback; `tsconfig.test.json` now includes `src/vite-env.d.ts` so test TypeScript compilation can resolve dynamic `.svelte` imports.
+- 2026-05-13 `[TOOL]` VALIDATED: `npm run check` passed with 0 errors/0 warnings; focused surface/process-manager source tests passed after `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/surfaceCodeSplitting.test.mjs tests/processManagerWiring.test.mjs`.
+
+- 2026-05-13 `[USER]` REQUESTED: Add a measured delayed/idle/on-first-open prewarm policy for the hidden persistent terminal panel.
+- 2026-05-13 `[CODE]` IMPLEMENTED: `TerminalPanelSurface.svelte` now schedules a 5000 ms hidden idle prewarm instead of eagerly creating xterm/ConPTY on mount; first open/focus cancels the timer and starts immediately through a shared startup promise to avoid duplicate sessions, while tab/split/restart actions still create sessions on explicit user intent.
+- 2026-05-13 `[DOCS]` UPDATED: Added `docs/terminal-panel-prewarm-idle-policy.md` with baseline/after metrics, method limitations, policy details, latency/resource tradeoff, and smoke status; updated `master_spec.md` terminal-panel behavior.
+- 2026-05-13 `[TOOL]` VALIDATED: Source-level terminal-panel tests were updated to assert no eager hidden startup and preserve first-open, resize-before-input, tab, split, and restart semantics.
+
+- 2026-05-11 `[USER]` REQUESTED: Use the old Quick Commands `>_` prompt glyph for the top-bar terminal button, animate it during recent terminal output, and give Quick Commands a different fitting glyph.
+- 2026-05-11 `[CODE]` IMPLEMENTED: TerminalPanelSurface bridges terminal activity to TopBar via `terminal-panel:activity`; TopBar renders `>_` at rest, cycles `>.` / `>..` / `>...` while terminal activity is recent, and Quick Commands now uses `⌘`.
+- 2026-05-11 `[USER]` REPORTED: Terminal glyph animation was too broad because simple output-producing commands such as `ls` and `cat` triggered it; animation should be reserved for Maven builds and AI harness prompts.
+- 2026-05-11 `[CODE]` FIXED: TerminalPanelSurface now gates `terminal-panel:activity` on submitted command text, refreshes activity only for marked important sessions while output continues, and clears marked sessions on shell command end or terminal close.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/persistentTerminalPanel.test.mjs`.
+
+- 2026-05-11 `[USER]` REQUESTED: Notify when important top-bar terminal commands complete, with sound and a persistent terminal icon effect until the terminal is opened again, while keeping simple commands such as `ls`/`cat` quiet.
+- 2026-05-11 `[CODE]` IMPLEMENTED: Important command shell-end events now emit a completion payload to TopBar; TopBar plays a short Web Audio chime, shows a persistent highlighted `>✓` terminal glyph, clears the effect on terminal toggle/open, and preserves the existing Maven/AI harness command gating.
+- 2026-05-11 `[TOOL]` VALIDATED: Focused validation passed with `node scripts/clean-dist-tests.mjs && npx tsc -p tsconfig.test.json && node --test tests/persistentTerminalPanel.test.mjs`.
 - 2026-05-12 `[CODE]` UPDATED: Expanded `.gitignore` to exclude local dependency/build artifacts, test reports, logs, Fusion runtime state, local worktrees, temporary directories, local SDK/tool state, and editor/OS noise from future PRs.
 - 2026-05-12 `[TOOL]` VALIDATED: Inspected Git status and confirmed the ignore update targets untracked/local generated paths; already-tracked files such as existing `.fusion/*`, `context.md`, and tracked tool directories require separate untracking or revert if they should disappear from the current diff.
 

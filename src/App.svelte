@@ -1,13 +1,13 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
+  import { loadSurfaceComponent, type SurfaceComponent as LoadedSurfaceComponent } from './lib/surfaceLoader';
   import { installShellPreferencesSync } from './lib/shellPreferences';
   import {
     resolveSurfaceFromLabel,
     shellSurfaceMetadata,
     type ShellSurface
   } from './lib/shellSurface';
-  import { loadSurfaceComponent, type SurfaceComponent as LoadedSurfaceComponent } from './lib/surfaceLoader';
   import { installShellThemeSync } from './lib/themes';
 
   let label = 'bottom-bar';
@@ -28,28 +28,21 @@
   }
 
   onMount(() => {
-    let mounted = true;
     const uninstallThemeSync = installShellThemeSync();
     const uninstallPreferencesSync = installShellPreferencesSync();
-    const loadableSurface = loadSurfaceComponent(surface);
 
-    if (loadableSurface) {
-      void loadableSurface
-        .then((module) => {
-          if (mounted) {
-            SurfaceComponent = module.default;
-          }
+    if (surface !== 'unknown') {
+      loadSurfaceComponent(surface)
+        ?.then((module) => {
+          SurfaceComponent = module.default;
         })
         .catch((error) => {
+          surfaceLoadFailed = true;
           console.error(`JasonShell failed to load surface component for ${surface}`, error);
-          if (mounted) {
-            surfaceLoadFailed = true;
-          }
         });
     }
 
     return () => {
-      mounted = false;
       uninstallThemeSync();
       uninstallPreferencesSync();
     };
@@ -64,21 +57,11 @@
 
 {#if SurfaceComponent}
   <SurfaceComponent />
-{:else if surfaceLoadFailed || surface === 'unknown'}
-  <main class="unsupported-surface" data-surface={surface} data-label={label}>
+{:else if surface === 'unknown' || surfaceLoadFailed}
+  <main class="unsupported-surface">
     <div class="panel">
       <strong>{metadata.title}</strong>
       <p>{metadata.subtitle}</p>
-      {#if surfaceLoadFailed}
-        <p class="diagnostic">Failed to load the {surface} surface. Check developer console diagnostics.</p>
-      {/if}
-    </div>
-  </main>
-{:else}
-  <main class="unsupported-surface loading-surface" data-surface={surface} data-label={label} aria-busy="true">
-    <div class="panel">
-      <strong>{metadata.title}</strong>
-      <p>Loading {metadata.subtitle.toLowerCase()}…</p>
     </div>
   </main>
 {/if}
@@ -111,10 +94,5 @@
   .panel p {
     color: rgba(229, 234, 250, 0.72);
     margin: 0;
-  }
-
-  .panel .diagnostic {
-    color: rgba(255, 180, 180, 0.82);
-    margin-top: 0.65rem;
   }
 </style>

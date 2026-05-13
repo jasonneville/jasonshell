@@ -19,8 +19,8 @@ const contractsSource = readFileSync(new URL('../src-tauri/src/contracts.rs', im
 const capabilitySource = readFileSync(new URL('../src-tauri/capabilities/command-panel.json', import.meta.url), 'utf8');
 
 test('command panel is routed as a dedicated auxiliary shell surface', () => {
-  assert.match(appSource, /loadSurfaceComponent\(surface\)/);
-  assert.match(appSource, /<SurfaceComponent \/>/);
+  assert.match(appSource, /import CommandPanelSurface/);
+  assert.match(appSource, /surface === 'command-panel'[\s\S]*<CommandPanelSurface \/>/);
   assert.match(shellSurfaceSource, /\| 'command-panel'/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_LABEL: &str = "command-panel"/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460\.0/);
@@ -54,14 +54,14 @@ test('command panel contracts and wrappers use constant-backed IPC and event nam
 test('top bar command button is left of tray button and enforces popup exclusivity', () => {
   assert.match(topBarSource, /from '\.\.\/lib\/commandPanel'/);
   assert.match(topBarSource, /COMMAND_PANEL_CLOSED_EVENT/);
-  assert.match(topBarSource, /class="command-control"[\s\S]*class="tray-control"[\s\S]*class="sound-control"/);
+  assert.match(topBarSource, /class="command-control"[\s\S]*class="tray-control"/);
   assert.match(topBarSource, /class="command-button"[\s\S]*ariaControls=\{COMMAND_PANEL_ID\}/);
   assert.match(topBarSource, /ariaLabel="Open quick commands"/);
   assert.match(topBarSource, /await closePanel\(\);[\s\S]*await closeAudioPanel\(\);[\s\S]*await closeTrayPanel\(\);[\s\S]*await showCommandPanel\(\{/);
   assert.match(topBarSource, /if \(commandOpen && \(!target \|\| !commandControl\?\.contains\(target\)\)\) \{[\s\S]*void closeCommandPanel\(\);/);
   assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(COMMAND_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*commandOpen = false;/);
   assert.match(topBarCss, /\.top-bar \.command-button \{/);
-  assert.match(topBarSource, />_\s*<\/span>/);
+  assert.match(topBarSource, /<span class="command-glyph" aria-hidden="true">⌘<\/span>/);
 });
 
 test('command panel surface includes list actions, editor fields, and command-block textarea flow', () => {

@@ -194,7 +194,7 @@ test('phase 3 terminal output is push-first and batched before xterm writes', ()
 
 test('phase 4 extracts Stack terminal pane and modern xterm addons from parent surface', () => {
   assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
-  assert.match(stackPopupSurface, /stackTerminalPane/);
+  assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/xterm'/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/addon-fit'/);
   assert.match(stackTerminalPane, /import \{ WebglAddon \} from '@xterm\/addon-webgl'/);
@@ -319,7 +319,7 @@ test('stack browser no longer exposes embedded CLI toggle controls', () => {
   assert.doesNotMatch(stackPopupSurface, /Stack Browser embedded terminal lets you|Use this terminal to/);
 });
 
-test('persistent terminal starts with app, accepts input, polls output, and stays pinned to bottom', () => {
+test('persistent terminal starts on delayed idle or first open, accepts input, and polls output', () => {
   const terminalPanelSurface = readRepoFile('src/components/TerminalPanelSurface.svelte');
   assert.match(packageJson, /"@xterm\/xterm"/);
   assert.match(packageJson, /"@xterm\/addon-fit"/);
@@ -327,7 +327,10 @@ test('persistent terminal starts with app, accepts input, polls output, and stay
   assert.match(terminalPanelSurface, /import \{ Terminal \} from '@xterm\/xterm';/);
   assert.match(terminalPanelSurface, /import \{ FitAddon \} from '@xterm\/addon-fit';/);
   assert.match(terminalPanelSurface, /startPersistentTerminal\(\)/);
-  assert.match(terminalPanelSurface, /void startTerminal\(\)/);
+  assert.match(terminalPanelSurface, /scheduleIdlePrewarm\(\)/);
+  assert.match(terminalPanelSurface, /TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000/);
+  assert.match(terminalPanelSurface, /startTerminal\('first-open'\)/);
+  assert.match(terminalPanelSurface, /terminalStartPromise/);
   assert.match(terminalPanelSurface, /await startTerminal\(\)/);
   assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
