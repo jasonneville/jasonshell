@@ -2,6 +2,9 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-13 `[CODE]` IMPLEMENTED: Persistent terminal tabs and pane chrome now use concise Windows Terminal-like frontend labels from manual rename, normalized idle cwd path, running command/process plus cwd basename, or compact special cases such as `pi - jasonshell`, `codex - jasonshell`, `maven install`, and `npm test`; recent output text is intentionally excluded from labels. Added focused helper coverage and updated terminal behavior docs.
+- 2026-05-13 `[TOOL]` VALIDATED: Focused TypeScript/source tests passed for terminal tab titles and persistent terminal panel contracts; `npm run check` passed with 0 Svelte diagnostics.
+
 - 2026-05-13 `[CODE]` FIXED: Persistent and legacy xterm Ctrl+V handlers now prevent default behavior and stop propagation before JasonShell reads `navigator.clipboard` and writes to the PTY; split-pane paste uses the focused pane runtime path so the active session receives one paste.
 - 2026-05-13 `[CODE]` TESTED: Added source-contract coverage for Ctrl+V native paste suppression, split-pane runtime paste routing, and legacy Stack terminal parity; refreshed lazy-surface routing source tests to assert the current `surfaceLoader` dynamic import contract.
 - 2026-05-13 `[TOOL]` VALIDATED: `npm run test:node` passed with 603 tests, 0 failures after installing local npm dependencies.

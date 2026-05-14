@@ -33,6 +33,7 @@
   import { getTerminalAction, terminalActions, type TerminalActionId, type TerminalActionState } from '../features/terminal/terminalActions';
   import { detectTerminalQuickSelectTargets, type TerminalQuickSelectTarget } from '../features/terminal/terminalQuickSelect';
   import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
+  import { buildTerminalTabTitle } from '../features/terminal/terminalTabTitle';
   import { shouldAnimateTerminalCommand } from '../features/top-bar/topBarUxState';
 
   type TerminalLifecycleState = 'not-started' | 'scheduled' | 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
@@ -79,11 +80,18 @@
     sessionId: string;
     cwd: string;
   };
+  type TerminalTitleState = {
+    cwd?: string;
+    currentInputText?: string;
+    recentOutputText?: string;
+    commandState?: TerminalCommandState | null;
+  };
 
   const TERMINAL_PANEL_OPEN_EVENT = 'terminal-panel:open';
   const TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity';
   const TOP_BAR_EVENT_TARGET = topBarWebviewWindowEventTarget();
   const importantTerminalActivitySessions = new Set<string>();
+  const manuallyRenamedTerminalSessions = new Set<string>();
 
   const TERMINAL_PANEL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SFMono-Regular", monospace';
   const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13;
@@ -126,6 +134,7 @@
   let quickSelectTargets: TerminalQuickSelectTarget[] = [];
   let recentOutputText = '';
   let sessionReplayBuffers = new Map<string, string>();
+  let terminalTitleStates = new Map<string, TerminalTitleState>();
   let renderedSequenceKeysBySession = new Map<string, Set<string>>();
   let idlePrewarmTimer: number | null = null;
   let terminalStartPromise: Promise<void> | null = null;
@@ -175,10 +184,29 @@
   }
 
   function commitRuntime(runtime: TerminalPaneRuntime) {
+    rememberTerminalTitleStateForRuntime(runtime);
     paneRuntimes = new Map(paneRuntimes).set(runtime.paneId, runtime);
     if (runtime.paneId === activePaneId) {
       setActiveRuntime(runtime);
     }
+  }
+
+  function rememberTerminalTitleStateForRuntime(runtime: TerminalPaneRuntime) {
+    terminalTitleStates = new Map(terminalTitleStates).set(runtime.session.sessionId, {
+      cwd: runtime.session.cwd,
+      currentInputText: runtime.currentInputText,
+      recentOutputText: runtime.recentOutputText,
+      commandState: runtime.commandState
+    });
+  }
+
+  function rememberTerminalTitleOutput(sessionId: string, output: string) {
+    if (!output) return;
+    const previous = terminalTitleStates.get(sessionId) ?? {};
+    terminalTitleStates = new Map(terminalTitleStates).set(sessionId, {
+      ...previous,
+      recentOutputText: `${previous.recentOutputText ?? ''}${stripTerminalAnsiControls(output)}`.slice(-20000)
+    });
   }
 
   onMount(() => {
@@ -233,6 +261,7 @@
         const runtime = runtimeForSession(event.payload.sessionId);
         if (!runtime) {
           rememberTerminalChunkForSession(event.payload);
+          rememberTerminalTitleOutput(event.payload.sessionId, event.payload.text);
           return;
         }
         writeTerminalChunkForRuntime(runtime, event.payload);
@@ -436,9 +465,10 @@
 
   async function renameActiveSession() {
     if (!session) return;
-    const title = window.prompt('Rename terminal session', session.title || 'Terminal');
+    const title = window.prompt('Rename terminal session', terminalDisplayTitle(session));
     if (!title) return;
     const renamed = await renameStackTerminal(session.sessionId, title);
+    manuallyRenamedTerminalSessions.add(renamed.sessionId);
     session = renamed;
     terminalSessions = terminalSessions.map((item) => item.sessionId === renamed.sessionId ? renamed : item);
     terminalPanes = terminalPanes.map((pane) => pane.sessionId === renamed.sessionId ? { ...pane, title: renamed.title || title } : pane);
@@ -1826,6 +1856,44 @@
     void pollTerminalOutputForRuntime(nextRuntime);
   }
 
+  function terminalDisplayTitle(terminalSession: StackTerminalSession) {
+    const runtime = runtimeForSession(terminalSession.sessionId);
+    const titleState = terminalTitleStates.get(terminalSession.sessionId);
+    return buildTerminalTabTitle({
+      profileTitle: terminalSession.title,
+      manualTitle: terminalManualTitle(terminalSession.sessionId, terminalSession.title),
+      cwd: runtime?.session.cwd || titleState?.cwd || terminalSession.cwd,
+      currentInputText: runtime?.currentInputText ?? titleState?.currentInputText,
+      recentOutputText: runtime?.recentOutputText ?? titleState?.recentOutputText,
+      commandState: runtime?.commandState ?? titleState?.commandState ?? null
+    });
+  }
+
+  function paneDisplayTitle(pane: TerminalPaneModel) {
+    const terminalSession = terminalSessions.find((item) => item.sessionId === pane.sessionId);
+    if (terminalSession) return terminalDisplayTitle(terminalSession);
+    const runtime = paneRuntimes.get(pane.paneId);
+    const titleState = terminalTitleStates.get(pane.sessionId);
+    return buildTerminalTabTitle({
+      profileTitle: pane.title,
+      manualTitle: terminalManualTitle(pane.sessionId, pane.title),
+      cwd: runtime?.session.cwd || titleState?.cwd,
+      currentInputText: runtime?.currentInputText ?? titleState?.currentInputText,
+      recentOutputText: runtime?.recentOutputText ?? titleState?.recentOutputText,
+      commandState: runtime?.commandState ?? titleState?.commandState ?? null
+    });
+  }
+
+  function terminalManualTitle(sessionId: string, title?: string) {
+    if (!title) return undefined;
+    if (manuallyRenamedTerminalSessions.has(sessionId)) return title;
+    return isDefaultTerminalProfileTitle(title) ? undefined : title;
+  }
+
+  function isDefaultTerminalProfileTitle(title: string) {
+    return /^(Terminal|Windows Terminal|PowerShell|Git Bash)$/i.test(title.trim());
+  }
+
   function errorMessage(error: unknown, fallback: string) {
     if (error instanceof Error && error.message) {
       return error.message;
@@ -1848,23 +1916,24 @@
   <header class="terminal-panel-header">
     <div class="terminal-session-tabs" role="tablist" aria-label="Terminal sessions">
       {#each terminalSessions as terminalSession, index}
+        {@const displayTitle = terminalDisplayTitle(terminalSession) || `Session ${index + 1}`}
         <div class="terminal-tab-shell" class:active={terminalSession.sessionId === session?.sessionId} role="presentation">
           <button
             type="button"
             class="terminal-tab-button"
             role="tab"
             aria-selected={terminalSession.sessionId === session?.sessionId}
-            aria-label={`Switch to terminal session ${terminalSession.title || index + 1}`}
+            aria-label={`Switch to terminal session ${displayTitle}`}
             on:click={() => activateTerminalSession(terminalSession)}
-            title={terminalSession.cwd}
+            title={displayTitle}
           >
-            <span>{terminalSession.title || `Session ${index + 1}`}</span>
+            <span>{displayTitle}</span>
           </button>
           <small class="terminal-tab-status" aria-hidden="true">{terminalSession.running ? '●' : '○'}</small>
           <button
             type="button"
             class="terminal-tab-close"
-            aria-label={`Close terminal session ${terminalSession.title || index + 1}`}
+            aria-label={`Close terminal session ${displayTitle}`}
             title="Close terminal tab"
             on:click|stopPropagation={() => void closeTerminalSessionTab(terminalSession.sessionId)}
           >×</button>
@@ -1917,9 +1986,10 @@
     <div class="terminal-pane-grid" data-split-orientation={splitOrientation}>
       {#each terminalPanes as pane (pane.sessionId)}
         {@const paneRuntime = paneRuntimes.get(pane.paneId)}
-        <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${pane.title}`}>
-          <div class="terminal-pane-chrome">
-            <span>{pane.title}</span>
+        {@const displayTitle = paneDisplayTitle(pane)}
+        <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${displayTitle}`}>
+          <div class="terminal-pane-chrome" title={displayTitle}>
+            <span>{displayTitle}</span>
           </div>
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
           <div
