@@ -2,6 +2,9 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-05-18 `[CODE]` IMPLEMENTED: Task Preview close button styling is now visibly rectangular while preserving `MeltActionButton` usage, close wiring, accessible label, hover-retention source contracts, and master-spec documentation; source tests now guard the rectangular close-button shape.
+- 2026-05-18 `[TOOL]` VALIDATED: Focused RED validation failed only on the new rectangular close-button assertions before the CSS change; focused task-preview/Melt contract tests and `pnpm build` passed after the change.
+
 - 2026-05-13 `[CODE]` IMPLEMENTED: Persistent terminal tabs and pane chrome now use concise Windows Terminal-like frontend labels from manual rename, normalized idle cwd path, running command/process plus cwd basename, or compact special cases such as `pi - jasonshell`, `codex - jasonshell`, `maven install`, and `npm test`; recent output text is intentionally excluded from labels. Added focused helper coverage and updated terminal behavior docs.
 - 2026-05-13 `[TOOL]` VALIDATED: Focused TypeScript/source tests passed for terminal tab titles and persistent terminal panel contracts; `npm run check` passed with 0 Svelte diagnostics.
 

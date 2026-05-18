@@ -438,7 +438,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 ### Task preview renderer notes
 
 - `src/components/TaskPreviewSurface.svelte` now computes `previewPrimaryTitle` from `title || processName` and shows `previewSecondaryText` only when the process name is distinct, avoiding duplicate copy lines for the common same-title case.
-- `TaskPreviewSurface.css` keeps `.preview-close-button` absolutely positioned with header `padding-right` reserve space so long titles cannot overlap the close control.
+- `TaskPreviewSurface.css` keeps `.preview-close-button` absolutely positioned with header `padding-right` reserve space so long titles cannot overlap the close control; the close control is rectangular with a small radius and wider-than-tall proportions.
 - `.preview-frame-native` remains transparent and borderless only for native DWM live-thumbnail mode, while captured-image previews use `object-fit: contain` so the preview frame stays dominant without cropping.
 - `process-manager:open`: emitted by Rust directly on the `process-manager` webview after `show_process_manager` sizes, positions, shows, and focuses it; `ProcessManagerSurface.svelte` starts polling and refreshes immediately.
 - `process-manager:closed`: emitted by Rust on explicit hide or focus loss; `ProcessManagerSurface.svelte` stops its refresh interval and marks the popup closed.

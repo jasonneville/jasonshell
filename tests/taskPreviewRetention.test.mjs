@@ -24,6 +24,13 @@ function functionBody(source, name) {
   assert.fail(`${name} body closes`);
 }
 
+function cssRule(source, selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\n\\}`));
+  assert.ok(match, `${selector} rule exists`);
+  return match[1];
+}
+
 test('preview outer root owns full-bounds hover retention handlers', () => {
   assert.match(previewSource, /function handlePreviewPointerEnter\(/);
   assert.match(previewSource, /function handlePreviewPointerLeave\(/);
@@ -44,6 +51,7 @@ test('preview pointer leave ignores top-half/internal transitions and hides only
 
 test('preview close button is accessible red X and does not activate preview', () => {
   const closeBody = functionBody(previewSource, 'handlePreviewClose');
+  const closeButtonRule = cssRule(previewCss, '.preview-close-button');
   assert.match(previewSource, /ariaLabel="Close previewed window"/);
   assert.match(previewSource, /class="preview-close-button"/);
   assert.match(previewSource, />×<|>✕</);
@@ -51,10 +59,13 @@ test('preview close button is accessible red X and does not activate preview', (
   assert.match(closeBody, /event\.stopPropagation\(\)/);
   assert.match(closeBody, /await closePreviewedTaskWindow\(preview\.hwnd\)/);
   assert.match(closeBody, /await hidePreviewSurface\(\)/);
-  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*position:\s*absolute/);
-  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*top:/);
-  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*right:/);
-  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*(red|danger|#dc2626|#ef4444|--js-color-danger)/);
+  assert.match(closeButtonRule, /position:\s*absolute/);
+  assert.match(closeButtonRule, /top:/);
+  assert.match(closeButtonRule, /right:/);
+  assert.match(closeButtonRule, /(red|danger|#dc2626|#ef4444|--js-color-danger)/);
+  assert.match(closeButtonRule, /border-radius:\s*(?:0|[234]px|var\(--js-radius-xs\)|var\(--js-radius-sm\))/);
+  assert.doesNotMatch(closeButtonRule, /border-radius:\s*999px/);
+  assert.match(closeButtonRule, /(?:min-width:\s*(?:2\.[0-9]+|[3-9])rem|padding:\s*0\s+(?:0\.[1-9]|[1-9])\d*rem)/);
 });
 
 test('close previewed task window wrapper validates external hwnd and command wiring', () => {

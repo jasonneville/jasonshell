@@ -5,6 +5,13 @@ import test from 'node:test';
 const previewSource = readFileSync(new URL('../src/components/TaskPreviewSurface.svelte', import.meta.url), 'utf8');
 const previewCss = readFileSync(new URL('../src/components/TaskPreviewSurface.css', import.meta.url), 'utf8');
 
+function cssRule(source, selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\n\\}`));
+  assert.ok(match, `${selector} rule exists`);
+  return match[1];
+}
+
 test('preview header separates primary title from secondary process text', () => {
   assert.match(previewSource, /previewPrimaryTitle = preview \? \(preview\.title \|\| preview\.processName\) : ''/);
   assert.match(previewSource, /previewSecondaryText = preview && preview\.processName !== previewPrimaryTitle \? preview\.processName : ''/);
@@ -14,11 +21,15 @@ test('preview header separates primary title from secondary process text', () =>
 });
 
 test('preview close button stays out of text flow with reserved header space', () => {
+  const closeButtonRule = cssRule(previewCss, '.preview-close-button');
   assert.match(previewSource, /class="preview-header"/);
   assert.match(previewCss, /\.preview-header\s*\{[\s\S]*padding-right:\s*2\.1rem/);
   assert.match(previewCss, /\.preview-copy\s*\{[\s\S]*min-width:\s*0/);
-  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*position:\s*absolute/);
-  assert.match(previewCss, /\.preview-close-button\s*\{[\s\S]*z-index:\s*4/);
+  assert.match(closeButtonRule, /position:\s*absolute/);
+  assert.match(closeButtonRule, /z-index:\s*4/);
+  assert.match(closeButtonRule, /height:\s*1\.35rem/);
+  assert.match(closeButtonRule, /(?:min-width:\s*2\.1rem|padding:\s*0\s+0\.42rem)/);
+  assert.doesNotMatch(closeButtonRule, /width:\s*1\.35rem/);
 });
 
 test('preview text truncates long title and process labels without stealing frame space', () => {

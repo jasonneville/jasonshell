@@ -122,7 +122,7 @@
   align-items: center;
   background: #dc2626;
   border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 999px;
+  border-radius: var(--js-radius-xs);
   color: #fff;
   display: inline-flex;
   font-size: 0.75rem;
@@ -130,10 +130,11 @@
   height: 1.35rem;
   justify-content: center;
   line-height: 1;
+  min-width: 2.1rem;
+  padding: 0 0.42rem;
   position: absolute;
   right: 0.42rem;
   top: 0.42rem;
-  width: 1.35rem;
   z-index: 4;
 }
 
