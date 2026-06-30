@@ -296,11 +296,15 @@
           on:input={() => { armedKillPid = null; }}
         />
       </label>
-      <MeltActionButton onClick={() => void refreshProcesses({ preserveVolatileOrder: false })} disabled={isLoading}>
+      <MeltActionButton onClick={() => void refreshProcesses({ preserveVolatileOrder: false })}>
         Refresh
       </MeltActionButton>
-      <MeltActionButton onClick={() => void requestClose()}>Close</MeltActionButton>
     </div>
+    <MeltActionButton
+      class="process-manager-close-button"
+      ariaLabel="Close process manager"
+      onClick={() => void requestClose()}
+    >×</MeltActionButton>
   </header>
 
   <div class="process-table">

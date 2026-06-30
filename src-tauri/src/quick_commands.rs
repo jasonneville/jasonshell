@@ -1,6 +1,6 @@
 use crate::settings::{
-    self, validate_quick_command_args, validate_quick_command_commands, validate_quick_command_entry,
-    QuickCommandEntry, QuickCommandMode,
+    self, validate_quick_command_args, validate_quick_command_commands,
+    validate_quick_command_entry, QuickCommandEntry, QuickCommandMode,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;

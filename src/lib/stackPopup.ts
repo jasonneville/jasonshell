@@ -589,9 +589,9 @@ export function stackGitCreateBranch(folderPath: string, branchName: string, che
   });
 }
 
-export function startStackTerminal(folderPath: string, profile: StackTerminalProfile): Promise<StackTerminalSession> {
+export function startStackTerminal(folderPath: string, profile: StackTerminalProfile, targetLabel?: string): Promise<StackTerminalSession> {
   return invoke<StackTerminalSession>(IPC_COMMANDS.startStackTerminal, {
-    request: { folderPath, profile }
+    request: { folderPath, profile, targetLabel }
   });
 }
 

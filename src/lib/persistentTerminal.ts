@@ -3,6 +3,7 @@ import {
   readStackTerminal,
   renameStackTerminal,
   resizeStackTerminal,
+  startStackTerminal,
   stopStackTerminal,
   stopTerminalPanelSessions,
   writeStackTerminal,
@@ -28,6 +29,7 @@ export {
   readStackTerminal,
   renameStackTerminal,
   resizeStackTerminal,
+  startStackTerminal,
   stopStackTerminal,
   stopTerminalPanelSessions,
   writeStackTerminal

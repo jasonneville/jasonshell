@@ -30,6 +30,8 @@ test('process manager surface and commands are routed through app and Rust comma
   assert.match(processSurface, /buildProcessGroups/);
   assert.match(processSurface, /orderProcessRefresh/);
   assert.match(processSurface, /preserveVolatileOrder/);
+  assert.match(processSurface, /if \(isLoading\) \{\r?\n\s+return;/);
+  assert.doesNotMatch(processSurface, /<MeltActionButton onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false \}\)\} disabled=\{isLoading\}>\r?\n\s+Refresh/);
   assert.match(processSurface, /processGroups/);
   assert.match(processSurface, /metricAggregates = aggregateProcessMetrics\(visibleProcesses\)/);
   assert.match(processSurface, /formatProcessThreadCount\(metricAggregates\.threadCount\)/);

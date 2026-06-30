@@ -146,6 +146,9 @@ mod tests {
     fn expired_tray_focus_loss_suppression_does_not_hide_future_focus_loss() {
         SUPPRESS_TRAY_PANEL_FOCUS_LOSS_UNTIL_MS.store(1, Ordering::SeqCst);
         assert!(!take_tray_panel_focus_loss_suppression());
-        assert_eq!(SUPPRESS_TRAY_PANEL_FOCUS_LOSS_UNTIL_MS.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            SUPPRESS_TRAY_PANEL_FOCUS_LOSS_UNTIL_MS.load(Ordering::SeqCst),
+            0
+        );
     }
 }

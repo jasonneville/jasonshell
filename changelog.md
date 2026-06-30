@@ -2,6 +2,57 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-06-30 `[CODE]` FIXED: Stack Browser Properties now uses `ShellExecuteExW` with `SEE_MASK_INVOKEIDLIST` and the `properties` verb so files such as `pnpm-lock.yaml` open the same native Explorer Properties dialog instead of failing with ShellExecuteW code 31.
+- 2026-06-30 `[CODE]` TESTED: Updated the Stack item properties plan coverage to assert that the native invocation uses the ID-list shell path.
+- 2026-06-30 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml stack_item_properties_plan_validates_existing_paths` and `cargo check --manifest-path src-tauri/Cargo.toml` passed.
+
+- 2026-06-30 `[CODE]` FIXED: Stack Browser Properties now validates the selected item and opens the native Explorer properties dialog with ShellExecute's `properties` verb instead of a PowerShell Shell.Application `InvokeVerb('properties')` shim.
+- 2026-06-30 `[CODE]` TESTED: Updated the Stack item properties plan unit coverage to assert the native verb/path plan.
+- 2026-06-30 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml stack_item_properties_plan_validates_existing_paths` passed, and reviewer QA found stale master spec PowerShell properties text which was corrected.
+
+- 2026-06-30 `[CODE]` FIXED: Process Manager automatic polling no longer disables/dims the Refresh button on each background refresh; the shared in-flight guard still prevents overlapping refresh IPC, and the button only visually presses from user activation.
+- 2026-06-30 `[CODE]` TESTED: Added source-contract coverage that the refresh in-flight guard remains while the Refresh button is not bound to `disabled={isLoading}`.
+- 2026-06-30 `[TOOL]` VALIDATED: `node --test tests/processManagerWiring.test.mjs tests/meltMigrationWiring.test.mjs` passed.
+
+- 2026-06-29 `[CODE]` FIXED: Process Manager now uses a top-right red rectangular `×` close button styled like the task-preview close button while preserving the existing `requestClose()` / `hideProcessManager()` path.
+- 2026-06-29 `[CODE]` TESTED: Added source-regression coverage for the process-manager red X close button styling, accessibility label, and close-path wiring; updated Melt wiring coverage for the new close control.
+- 2026-06-29 `[TOOL]` VALIDATED: `node --test tests/meltMigrationWiring.test.mjs tests/processManagerCloseButton.test.mjs tests/taskPreviewRetention.test.mjs` passed. `npm test -- tests/meltMigrationWiring.test.mjs tests/processManagerCloseButton.test.mjs tests/taskPreviewRetention.test.mjs` could not run because the package has no `test` script.
+
+- 2026-06-28 `[CODE]` FIXED: Process Manager table columns now use a compact responsive grid with reduced spacing and full-width content so CPU/memory/GPU/start/status/action columns, including red kill buttons, fit the default 720px popup without requiring the bottom horizontal scrollbar.
+- 2026-06-28 `[CODE]` TESTED: Updated the process popup layout source contract to require zero content min-width, 100% table content width, and compact process-grid columns while preserving the shared sticky header/body scroller contract.
+- 2026-06-28 `[TOOL]` VALIDATED: `node --test tests/shellPopupLayoutScrollPhase1.test.mjs` and `node --test tests/processManagerWiring.test.mjs tests/meltMigrationWiring.test.mjs` passed.
+
+- 2026-06-08 `[CODE]` FIXED: Closing an active terminal tab with multiple split panes now switches/removes the tab UI immediately, restores the neighbor tab's workbench before any backend terminal stop awaits, and stops/forgets the closed tab's primary and pane-only sessions in background so slow teardown cannot black out panes or freeze tab/toolbar controls.
+- 2026-06-08 `[CODE]` TESTED: Added tab-workbench behavior coverage for closing the active split tab into its neighbor and source-contract coverage that `closeTerminalSessionTab(...)` restores the visible workbench before background `stopStackTerminal(...)` cleanup.
+- 2026-06-08 `[TOOL]` VALIDATED: `node --test tests/terminalWorkbenchState.test.mjs tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs`, `npm run check`, `npm run build`, and `npm run test:node` passed. Live Tauri/WebView smoke passed the exact close-freeze scenario: tab1 single pane, tab2 split left/right, close tab2, verify tab1 remains visible/usable and `＋` creates another tab afterward.
+
+- 2026-06-08 `[CODE]` FIXED: Terminal header tabs now own persistent pane-tree workbenches. Clicking `＋` from a split tab saves and view-detaches the current tab without stopping/clearing its pane-only split sessions, inserts the new tab next to the current tab, switches to the new single-pane workbench, and switching back restores the original split panes/runtimes/output instead of collapsing or bricking the terminal.
+- 2026-06-08 `[CODE]` TESTED: Replaced the wrong split-to-new-tab reducer test with RED-first tab-workbench behavior coverage for create/switch/close: new tab from split stops no existing panes, switching back restores the exact split tree, and closing a hidden split tab stops only that tab's owned sessions. Updated persistent-terminal source-contract coverage for explicit `terminalTabWorkbenches`, hidden-tab view-detach, and create/switch/close reducers.
+- 2026-06-08 `[TOOL]` VALIDATED: RED test initially failed on missing tab-workbench reducer exports; after implementation `node --test tests/terminalWorkbenchState.test.mjs tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs`, `npm run check`, `npm run build`, and `npm run test:node` passed. Live Tauri/WebView smoke via WebView2 CDP passed the exact flow: split current terminal tab, click `＋`, verify new tab/one pane appears while old split tab remains switchable, switch back and see both original panes restored, click `＋` again from the restored split tab, and verify tabs/toolbar remain interactive.
+
+- 2026-06-08 `[CODE]` FIXED: Terminal split follow-up resets retained-output replay after current xterm remounts, no-ops/focuses already-active header-tab clicks so split panes survive, and routes explicit stop/close/restart cleanup through stopped-session state clearing without clearing preserved header tabs.
+- 2026-06-08 `[CODE]` TESTED: Added persistent-terminal source-contract assertions for xterm remount replay reset, active-tab no-op activation, and explicit stopped-session cleanup paths.
+- 2026-06-08 `[TOOL]` VALIDATED: `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs`, `npm run check`, and `npm run build` passed after the reviewer follow-up fixes.
+
+- 2026-06-08 `[CODE]` FIXED: Terminal split/tab lifecycle now guards pane runtimes with frontend runtime ids and disposed state, aborts stale split starts by workbench generation/tab/target pane and stops their newly-created backend session, keys header tabs/split nodes/leaf hosts by stable identity, and keeps pre-attach output/status from blanking panes before xterm attaches.
+- 2026-06-08 `[CODE]` TESTED: Added persistent-terminal source-contract regressions for keyed tabs/panes, runtime disposed guards, stale split cleanup, no stale runtime commits, attached-terminal replay, and pane+session+runtime host binding.
+- 2026-06-08 `[TOOL]` VALIDATED: RED source-contract assertions failed before the lifecycle fix; after implementation `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs` and `npm run check` passed.
+
+- 2026-06-08 `[CODE]` FIXED: Switching the terminal workbench to a header/root tab now stops outgoing pane-only split sessions and clears their ownership, replay, sequence, title, activity, and manual-title state while preserving real header tab sessions.
+- 2026-06-08 `[CODE]` TESTED: Added persistent-terminal source-contract coverage for pane-only cleanup on tab switches and stopped-session state cleanup.
+- 2026-06-08 `[TOOL]` VALIDATED: `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs` and `npm run check` passed after the pane-only tab-switch cleanup fix.
+
+- 2026-06-08 `[CODE]` FIXED: Terminal Split right and Split down toolbar buttons no longer render a `disabled` attribute at all, so they are never greyed out in the terminal toolbar; if clicked before pane state is ready, split startup first creates/attaches the primary terminal and then creates the requested split.
+- 2026-06-08 `[CODE]` TESTED: Added source-contract coverage that split toolbar buttons have no disabled binding and that split actions bootstrap terminal startup before creating the split when no visible pane exists yet.
+
+- 2026-06-08 `[CODE]` FIXED: Terminal Split right and Split down toolbar buttons now derive enablement from the active visible pane/runtime or terminal-panel backend session list, so they become pressable during startup/waiting states as soon as a tab/session exists instead of staying disabled behind stale global session state.
+- 2026-06-08 `[CODE]` TESTED: Added source-contract coverage that terminal action state reacts to session, pane, runtime, and backend-session changes and gates split actions with `hasActiveSession` rather than a stale one-time action-state snapshot.
+- 2026-06-08 `[TOOL]` VALIDATED: `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs` and `npm run check` passed after the split-button enablement fix.
+
+- 2026-06-08 `[CODE]` IMPLEMENTED: Persistent terminal split panes now use a recursive pane tree with Split right and Split down controls; each split starts a new terminal-panel backend session immediately, opens/fits its xterm runtime when the pane host binds, removes the old two-pane cap, and keeps pane focus navigation from collapsing the split layout.
+- 2026-06-08 `[CODE]` TESTED: Added persistent-terminal source-contract coverage for recursive split tree rendering, repeated split wiring without the old two-pane cap, split-right/split-down action labels and gating, split-session startup/open/fit call paths, and focus-next/previous pane behavior that does not activate whole-page tabs.
+- 2026-06-08 `[TOOL]` VALIDATED: `node --test tests/persistentTerminalPanel.test.mjs tests/terminalActions.test.mjs` and `npm run check` passed.
+
 - 2026-05-18 `[CODE]` IMPLEMENTED: Task Preview close button styling is now visibly rectangular while preserving `MeltActionButton` usage, close wiring, accessible label, hover-retention source contracts, and master-spec documentation; source tests now guard the rectangular close-button shape.
 - 2026-05-18 `[TOOL]` VALIDATED: Focused RED validation failed only on the new rectangular close-button assertions before the CSS change; focused task-preview/Melt contract tests and `pnpm build` passed after the change.
 

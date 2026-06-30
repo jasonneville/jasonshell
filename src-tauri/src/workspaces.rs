@@ -254,11 +254,9 @@ pub fn update_workspace(
 ) -> Result<WorkspaceProfile, String> {
     let workspace = normalize_workspace(workspace)?;
     let mut settings = settings::load_shell_settings_for_app(&app_handle)?;
-    if settings
-        .workspaces
-        .iter()
-        .any(|existing| existing.id != workspace.id && existing.name.eq_ignore_ascii_case(&workspace.name))
-    {
+    if settings.workspaces.iter().any(|existing| {
+        existing.id != workspace.id && existing.name.eq_ignore_ascii_case(&workspace.name)
+    }) {
         return Err(format!("context name must be unique: {}", workspace.name));
     }
     let Some(existing) = settings

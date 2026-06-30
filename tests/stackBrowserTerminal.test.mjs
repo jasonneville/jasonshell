@@ -297,8 +297,8 @@ test('stack popup API exposes typed terminal profiles and command wrappers', () 
   assert.match(stackPopupApi, /profile: StackTerminalProfile;/);
   assert.match(stackPopupApi, /export type StackTerminalReadResult = \{/);
   assert.match(stackPopupApi, /exited: boolean;/);
-  assert.match(stackPopupApi, /export function startStackTerminal\(folderPath: string, profile: StackTerminalProfile\): Promise<StackTerminalSession>/);
-  assert.match(stackPopupApi, /request: \{ folderPath, profile \}/);
+  assert.match(stackPopupApi, /export function startStackTerminal\(folderPath: string, profile: StackTerminalProfile, targetLabel\?: string\): Promise<StackTerminalSession>/);
+  assert.match(stackPopupApi, /request: \{ folderPath, profile, targetLabel \}/);
   assert.match(stackPopupApi, /export function readStackTerminal\(sessionId: string\): Promise<StackTerminalReadResult>/);
   assert.match(stackPopupApi, /export function writeStackTerminal\(sessionId: string, input: string\): Promise<void>/);
   assert.match(stackPopupApi, /export function stopStackTerminal\(sessionId: string\): Promise<void>/);

@@ -65,8 +65,8 @@ export const terminalActions: TerminalAction[] = [
   { id: 'openGitWorkbench', label: 'Open Git workbench', isEnabled: (state) => Boolean(state.hasRepo || state.hasCwd) },
   { id: 'newSession', label: 'New session', isEnabled: (state) => state.canCreateSession !== false },
   { id: 'renameSession', label: 'Rename session', isEnabled: (state) => Boolean(state.hasSession) },
-  { id: 'splitHorizontal', label: 'Split horizontal', isEnabled: (state) => state.canSplit !== false && Boolean(state.hasSession) },
-  { id: 'splitVertical', label: 'Split vertical', isEnabled: (state) => state.canSplit !== false && Boolean(state.hasSession) },
+  { id: 'splitHorizontal', label: 'Split down', isEnabled: () => true },
+  { id: 'splitVertical', label: 'Split right', isEnabled: () => true },
   { id: 'closePane', label: 'Close pane', destructive: true, isEnabled: (state) => Boolean(state.hasSession) },
   { id: 'focusNextPane', label: 'Focus next pane', isEnabled: (state) => Boolean(state.hasMultiplePanes) },
   { id: 'focusPreviousPane', label: 'Focus previous pane', isEnabled: (state) => Boolean(state.hasMultiplePanes) }

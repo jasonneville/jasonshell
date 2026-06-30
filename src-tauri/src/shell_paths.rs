@@ -56,7 +56,10 @@ fn classify_shell_open_target(path: &str) -> Result<ShellOpenTarget<'_>, String>
 }
 
 fn classify_app_launch_target(path: &str) -> Result<&str, String> {
-    if path.contains("://") || path.to_ascii_lowercase().starts_with("file:") || looks_like_protocol(path) {
+    if path.contains("://")
+        || path.to_ascii_lowercase().starts_with("file:")
+        || looks_like_protocol(path)
+    {
         return Err("Application path protocol is not allowed".to_string());
     }
 

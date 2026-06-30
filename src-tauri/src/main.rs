@@ -23,10 +23,10 @@ mod shell_paths;
 mod shell_windows;
 mod stack_popup;
 mod system_power;
-mod terminal_panel;
 mod task_preview;
 mod task_windows;
 mod taskbar_menu;
+mod terminal_panel;
 mod tray_panel;
 mod windows_key_hook;
 mod workspaces;
@@ -354,7 +354,9 @@ fn main() {
         #[cfg(target_os = "windows")]
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
             windows_key_hook::uninstall_windows_key_hook();
-            if let Some(state) = app_handle.try_state::<Mutex<stack_popup::StackPopupRuntimeState>>() {
+            if let Some(state) =
+                app_handle.try_state::<Mutex<stack_popup::StackPopupRuntimeState>>()
+            {
                 if let Err(error) = stack_popup::terminal::stop_terminal_sessions_for_target(
                     app_handle,
                     &state,

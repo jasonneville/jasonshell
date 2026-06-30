@@ -118,8 +118,8 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.match(processManagerSource, /processMetricPercent\(process\.gpuPercent, 100\)/);
   assert.match(processManagerSource, /formatProcessMemoryPercent\(process\.memoryPercent\)/);
   assert.match(processManagerSource, /formatProcessGpu\(process\.gpuPercent\)/);
-  assert.match(processManagerSource, /<MeltActionButton onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false \}\)\} disabled=\{isLoading\}>/);
-  assert.match(processManagerSource, /<MeltActionButton onClick=\{\(\) => void requestClose\(\)\}>Close<\/MeltActionButton>/);
+  assert.match(processManagerSource, /<MeltActionButton onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false \}\)\}>/);
+  assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="process-manager-close-button"[\s\S]*ariaLabel="Close process manager"[\s\S]*onClick=\{\(\) => void requestClose\(\)\}[\s\S]*>×<\/MeltActionButton>/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('name'\)\} onClick=\{\(\) => sortBy\('name'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('startTimeMs'\)\} onClick=\{\(\) => sortBy\('startTimeMs'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="kill-button"[\s\S]*ariaLabel=\{killState\.ariaLabel\}[\s\S]*disabled=\{killState\.disabled\}[\s\S]*onClick=\{\(\) => void killRow\(process\)\}/);

@@ -18,6 +18,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'meltMigrationWiring.test.mjs',
     'overlayDismissalWiring.test.mjs',
     'persistentSurfaceLifecycle.test.mjs',
+    'processManagerCloseButton.test.mjs',
     'processManagerWiring.test.mjs',
     'quickCommands.test.mjs',
     'quickIcons.test.mjs',

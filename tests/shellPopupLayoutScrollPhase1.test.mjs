@@ -111,8 +111,19 @@ test('process manager keeps header and body in one horizontal scroll context', (
   assertCssDeclaration(
     contentRule,
     'min-width',
-    '(?:4[5-9]|[5-9][0-9])(?:rem|px)',
-    'Process table content must be wider than the default 720px popup so rightmost status/action columns are reachable by horizontal scroll.'
+    '0',
+    'Process table content must allow the compact columns to fit the default 720px popup without horizontal scrolling.'
+  );
+  assertCssDeclaration(
+    contentRule,
+    'width',
+    '100%',
+    'Process table content must fill the visible popup so compact columns reach the action column without a bottom scrollbar.'
+  );
+  assert.match(
+    cssRule(processCss, '.process-row'),
+    /grid-template-columns\s*:[^;]*minmax\(7\.6rem,\s*1\.25fr\)[^;]*4\.2rem\s*;/,
+    'Process grid columns must stay compact enough to keep the status/action columns visible at default width.'
   );
   assert.doesNotMatch(bodyRule, /overflow(?:-x)?\s*:\s*auto\s*;/, 'Process table body must not own an independent horizontal scroller.');
 });

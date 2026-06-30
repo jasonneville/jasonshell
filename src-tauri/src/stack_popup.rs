@@ -87,8 +87,9 @@ pub(crate) struct ArchiveExtractionPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StackItemPropertiesPlan {
-    pub executable: PathBuf,
-    pub args: Vec<String>,
+    pub path: PathBuf,
+    pub verb: &'static str,
+    pub invoke_id_list: bool,
 }
 
 pub(crate) fn build_stack_item_properties_plan(
@@ -98,13 +99,9 @@ pub(crate) fn build_stack_item_properties_plan(
         return Err("Path unavailable".to_string());
     }
     Ok(StackItemPropertiesPlan {
-        executable: PathBuf::from("powershell.exe"),
-        args: vec![
-            "-NoProfile".to_string(),
-            "-Command".to_string(),
-            "$item = Get-Item -LiteralPath $args[0]; $shell = New-Object -ComObject Shell.Application; $folder = $shell.Namespace($item.DirectoryName); $folder.ParseName($item.Name).InvokeVerb('properties')".to_string(),
-            path.to_string_lossy().to_string(),
-        ],
+        path: path.to_path_buf(),
+        verb: "properties",
+        invoke_id_list: true,
     })
 }
 
@@ -716,11 +713,49 @@ fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String
 pub fn show_stack_item_properties(path: String) -> Result<(), String> {
     let path = PathBuf::from(paths::normalize_existing_path(&path)?);
     let plan = build_stack_item_properties_plan(&path)?;
-    Command::new(&plan.executable)
-        .args(&plan.args)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Failed to show properties: {error}"))
+    show_stack_item_properties_native(&plan)
+}
+
+#[cfg(target_os = "windows")]
+fn show_stack_item_properties_native(plan: &StackItemPropertiesPlan) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn to_wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let path_wide = to_wide(plan.path.as_os_str());
+    let verb_wide = to_wide(OsStr::new(plan.verb));
+    let mut execute_info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: if plan.invoke_id_list {
+            SEE_MASK_INVOKEIDLIST
+        } else {
+            0
+        },
+        hwnd: HWND::default(),
+        lpVerb: PCWSTR(verb_wide.as_ptr()),
+        lpFile: PCWSTR(path_wide.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+
+    unsafe { ShellExecuteExW(&mut execute_info) }.map_err(|error| {
+        format!(
+            "ShellExecuteExW failed to show properties for {}: {error}",
+            plan.path.display()
+        )
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_stack_item_properties_native(_plan: &StackItemPropertiesPlan) -> Result<(), String> {
+    Err("Stack item properties are only supported on Windows".to_string())
 }
 
 #[cfg(test)]
@@ -1664,16 +1699,9 @@ mod tests {
         fs::write(&file, b"ts").unwrap();
 
         let plan = super::build_stack_item_properties_plan(&file).unwrap();
-        assert_eq!(plan.executable, Path::new("powershell.exe"));
-        assert!(plan
-            .args
-            .iter()
-            .any(|arg| arg.contains("InvokeVerb('properties')")));
-        assert!(plan
-            .args
-            .iter()
-            .any(|arg| arg == &file.to_string_lossy().to_string()));
-        assert!(!plan.args.join(" ").contains('"'));
+        assert_eq!(plan.path, file);
+        assert_eq!(plan.verb, "properties");
+        assert!(plan.invoke_id_list);
 
         assert!(super::build_stack_item_properties_plan(&root.join("missing.ts")).is_err());
         fs::remove_dir_all(root).ok();

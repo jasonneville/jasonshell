@@ -12,6 +12,7 @@
     renameStackTerminal,
     resizeStackTerminal,
     startPersistentTerminal,
+    startStackTerminal,
     stopStackTerminal,
     stopTerminalPanelSessions,
     writeStackTerminal,
@@ -34,14 +35,27 @@
   import { detectTerminalQuickSelectTargets, type TerminalQuickSelectTarget } from '../features/terminal/terminalQuickSelect';
   import { recentTerminalCommands, recentTerminalDirectories } from '../features/terminal/terminalHistory';
   import { buildTerminalTabTitle } from '../features/terminal/terminalTabTitle';
+  import {
+    flattenTerminalWorkbenchSessionIds,
+    planActivateTerminalTabWorkbench,
+    planCloseTerminalTabWorkbench,
+    planCreateTerminalTabWorkbench,
+    type TerminalTabWorkbenchSummary
+  } from '../features/terminal/terminalWorkbenchState';
   import { shouldAnimateTerminalCommand } from '../features/top-bar/topBarUxState';
 
   type TerminalLifecycleState = 'not-started' | 'scheduled' | 'starting' | 'waiting' | 'running' | 'failed' | 'exited';
   type TerminalStartupIntent = 'idle-prewarm' | 'first-open' | 'user-action';
-  type TerminalSplitOrientation = 'single' | 'vertical' | 'horizontal';
+  type TerminalSplitDirection = 'right' | 'down';
+  type TerminalSplitOrientation = 'single' | 'vertical' | 'horizontal' | 'mixed';
   type TerminalPaneModel = { paneId: string; sessionId: string; title: string; focused: boolean };
+  type TerminalPaneTreeNode =
+    | { kind: 'leaf'; pane: TerminalPaneModel }
+    | { kind: 'split'; splitId: string; direction: TerminalSplitDirection; first: TerminalPaneTreeNode; second: TerminalPaneTreeNode };
   type TerminalPaneRuntime = {
     paneId: string;
+    runtimeId: string;
+    disposed: boolean;
     host: HTMLDivElement | null;
     terminal: Terminal | null;
     fitAddon: FitAddon | null;
@@ -108,7 +122,15 @@
   let session: StackTerminalSession | null = null;
   let paneRuntimes = new Map<string, TerminalPaneRuntime>();
   let terminalSessions: StackTerminalSession[] = [];
+  let terminalTabSessionIds = new Set<string>();
+  let paneOnlyTerminalSessionIds = new Set<string>();
+  let terminalTabWorkbenches = new Map<string, TerminalTabWorkbenchSummary>();
+  let visibleTerminalTabs: StackTerminalSession[] = [];
+  let terminalPaneTree: TerminalPaneTreeNode | null = null;
   let terminalPanes: TerminalPaneModel[] = [];
+  let terminalWorkbenchGeneration = 0;
+  let terminalRuntimeCounter = 0;
+  let activeTerminalTabSessionId: string | null = null;
   let terminalFontSize = TERMINAL_PANEL_DEFAULT_FONT_SIZE;
   let activePaneId = 'terminal-pane-primary';
   let splitOrientation: TerminalSplitOrientation = 'single';
@@ -138,6 +160,7 @@
   let renderedSequenceKeysBySession = new Map<string, Set<string>>();
   let idlePrewarmTimer: number | null = null;
   let terminalStartPromise: Promise<void> | null = null;
+  let terminalSessionCreationInFlight = false;
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -148,47 +171,255 @@
   let shellCwdMarkerSeen = false;
   let shellParserDisposers: Array<() => void> = [];
 
-  $: terminalActionState = buildTerminalActionState();
+  $: terminalActionState = buildTerminalActionState(
+    session,
+    terminal,
+    terminalPanes,
+    terminalSessions,
+    activePaneId,
+    paneRuntimes,
+    quickSelectTargets,
+    commandState,
+    selectedCommandIndex,
+    terminalSessionCreationInFlight
+  );
+  $: visibleTerminalTabs = terminalSessions.filter((item) => terminalTabSessionIds.has(item.sessionId) && !paneOnlyTerminalSessionIds.has(item.sessionId));
   $: visibleRecentCommands = recentTerminalCommands(activeRuntime()?.commandState ?? commandState);
   $: visibleRecentDirectories = recentTerminalDirectories(activeRuntime()?.commandState ?? commandState);
   $: toolbarActions = terminalActions.filter((action) => ['search', 'newSession', 'renameSession', 'splitHorizontal', 'splitVertical', 'openCwdInFiles', 'openExternalTerminalHere', 'restartTerminal', 'stopTerminal'].includes(action.id));
 
+  function nextTerminalPaneId() {
+    if (!terminalPanes.length && !terminalPaneTree) return 'terminal-pane-primary';
+    return `terminal-pane-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function nextTerminalSplitId() {
+    return `terminal-split-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function nextTerminalRuntimeId() {
+    terminalRuntimeCounter += 1;
+    return `terminal-runtime-${terminalRuntimeCounter.toString(36)}`;
+  }
+
+  function paneDomKey(pane: TerminalPaneModel) {
+    return `${pane.paneId}:${pane.sessionId}`;
+  }
+
+  function flattenPaneTree(node: TerminalPaneTreeNode | null = terminalPaneTree): TerminalPaneModel[] {
+    if (!node) return [];
+    if (node.kind === 'leaf') return [node.pane];
+    return [...flattenPaneTree(node.first), ...flattenPaneTree(node.second)];
+  }
+
+  function syncTerminalPaneList() {
+    terminalPanes = flattenPaneTree(terminalPaneTree);
+    splitOrientation = terminalPanes.length > 1 ? 'mixed' : 'single';
+  }
+
+  function terminalTabWorkbenchesList() {
+    return [...terminalTabWorkbenches.values()];
+  }
+
+  function replaceTerminalTabWorkbenches(workbenches: TerminalTabWorkbenchSummary[]) {
+    terminalTabWorkbenches = new Map(workbenches.map((workbench) => [workbench.tabSessionId, workbench]));
+  }
+
+  function saveCurrentTerminalWorkbench(tabSessionId = activeTerminalTabSessionId) {
+    if (!tabSessionId || !terminalPaneTree) return;
+    terminalTabWorkbenches = new Map(terminalTabWorkbenches).set(tabSessionId, {
+      tabSessionId,
+      tree: terminalPaneTree,
+      activePaneId
+    });
+  }
+
+  function setTerminalPaneTree(nextTree: TerminalPaneTreeNode | null, bumpWorkbenchGeneration = true, saveWorkbench = true) {
+    terminalPaneTree = nextTree;
+    syncTerminalPaneList();
+    if (bumpWorkbenchGeneration) terminalWorkbenchGeneration += 1;
+    if (saveWorkbench) saveCurrentTerminalWorkbench();
+  }
+
+  function markTerminalSessionAsTab(sessionId: string) {
+    paneOnlyTerminalSessionIds.delete(sessionId);
+    terminalTabSessionIds.add(sessionId);
+    paneOnlyTerminalSessionIds = new Set(paneOnlyTerminalSessionIds);
+    terminalTabSessionIds = new Set(terminalTabSessionIds);
+  }
+
+  function markTerminalSessionAsPaneOnly(sessionId: string) {
+    terminalTabSessionIds.delete(sessionId);
+    paneOnlyTerminalSessionIds.add(sessionId);
+    terminalTabSessionIds = new Set(terminalTabSessionIds);
+    paneOnlyTerminalSessionIds = new Set(paneOnlyTerminalSessionIds);
+  }
+
+  function forgetTerminalSessionOwnership(sessionId: string) {
+    terminalTabSessionIds.delete(sessionId);
+    paneOnlyTerminalSessionIds.delete(sessionId);
+    terminalTabSessionIds = new Set(terminalTabSessionIds);
+    paneOnlyTerminalSessionIds = new Set(paneOnlyTerminalSessionIds);
+  }
+
+  function clearStoppedTerminalSessionState(sessionId: string) {
+    forgetTerminalSessionOwnership(sessionId);
+    sessionReplayBuffers.delete(sessionId);
+    renderedSequenceKeysBySession.delete(sessionId);
+    terminalTitleStates.delete(sessionId);
+    importantTerminalActivitySessions.delete(sessionId);
+    manuallyRenamedTerminalSessions.delete(sessionId);
+    sessionReplayBuffers = new Map(sessionReplayBuffers);
+    renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession);
+    terminalTitleStates = new Map(terminalTitleStates);
+  }
+
+  function currentVisibleTerminalTabs() {
+    return terminalSessions.filter((item) => terminalTabSessionIds.has(item.sessionId) && !paneOnlyTerminalSessionIds.has(item.sessionId));
+  }
+
+  function orderTerminalSessionsByTabIds(tabSessionIds: string[]) {
+    const order = new Map(tabSessionIds.map((sessionId, index) => [sessionId, index]));
+    terminalSessions = [...terminalSessions].sort((left, right) => {
+      const leftOrder = order.get(left.sessionId);
+      const rightOrder = order.get(right.sessionId);
+      if (leftOrder !== undefined && rightOrder !== undefined) return leftOrder - rightOrder;
+      if (leftOrder !== undefined) return -1;
+      if (rightOrder !== undefined) return 1;
+      return 0;
+    });
+  }
+
+  function mapTerminalPaneTree(
+    node: TerminalPaneTreeNode | null,
+    mapper: (pane: TerminalPaneModel) => TerminalPaneModel
+  ): TerminalPaneTreeNode | null {
+    if (!node) return null;
+    if (node.kind === 'leaf') return { ...node, pane: mapper(node.pane) };
+    return {
+      ...node,
+      first: mapTerminalPaneTree(node.first, mapper) ?? node.first,
+      second: mapTerminalPaneTree(node.second, mapper) ?? node.second
+    };
+  }
+
+  function removePaneFromTree(node: TerminalPaneTreeNode | null, paneId: string): TerminalPaneTreeNode | null {
+    if (!node) return null;
+    if (node.kind === 'leaf') return node.pane.paneId === paneId ? null : node;
+    const first = removePaneFromTree(node.first, paneId);
+    const second = removePaneFromTree(node.second, paneId);
+    if (!first) return second;
+    if (!second) return first;
+    if (first === node.first && second === node.second) return node;
+    return { ...node, first, second };
+  }
+
+  function splitPaneTreeAtLeaf(
+    node: TerminalPaneTreeNode | null,
+    targetPaneId: string,
+    nextPane: TerminalPaneModel,
+    direction: TerminalSplitDirection
+  ): TerminalPaneTreeNode {
+    if (!node) return { kind: 'leaf', pane: nextPane };
+    if (node.kind === 'leaf') {
+      if (node.pane.paneId !== targetPaneId) return node;
+      return {
+        kind: 'split',
+        splitId: nextTerminalSplitId(),
+        direction,
+        first: { kind: 'leaf', pane: { ...node.pane, focused: false } },
+        second: { kind: 'leaf', pane: nextPane }
+      };
+    }
+    return {
+      ...node,
+      first: splitPaneTreeAtLeaf(node.first, targetPaneId, nextPane, direction),
+      second: splitPaneTreeAtLeaf(node.second, targetPaneId, nextPane, direction)
+    };
+  }
+
+  function replacePaneSessionInTree(
+    node: TerminalPaneTreeNode | null,
+    paneId: string,
+    nextSession: StackTerminalSession,
+    title: string
+  ): TerminalPaneTreeNode | null {
+    return mapTerminalPaneTree(node, (pane) => pane.paneId === paneId ? { ...pane, sessionId: nextSession.sessionId, title } : pane);
+  }
+
+  function currentWorkbenchTabSessionId() {
+    if (activeTerminalTabSessionId && terminalTabSessionIds.has(activeTerminalTabSessionId) && !paneOnlyTerminalSessionIds.has(activeTerminalTabSessionId)) {
+      return activeTerminalTabSessionId;
+    }
+    if (session && terminalTabSessionIds.has(session.sessionId) && !paneOnlyTerminalSessionIds.has(session.sessionId)) return session.sessionId;
+    return currentVisibleTerminalTabs().find((item) => item.running)?.sessionId ?? currentVisibleTerminalTabs()[0]?.sessionId ?? null;
+  }
+
+  function runtimeMatchesCurrentPane(runtime: TerminalPaneRuntime) {
+    return terminalPanes.some((pane) => pane.paneId === runtime.paneId && pane.sessionId === runtime.session.sessionId);
+  }
+
+  function isRuntimeCurrent(runtime: TerminalPaneRuntime) {
+    if (runtime.disposed || !runtimeMatchesCurrentPane(runtime)) return false;
+    const currentRuntime = paneRuntimes.get(runtime.paneId);
+    return !currentRuntime || currentRuntime.runtimeId === runtime.runtimeId || currentRuntime.disposed;
+  }
+
   function activeRuntime() {
-    return paneRuntimes.get(activePaneId) ?? null;
+    const runtime = paneRuntimes.get(activePaneId) ?? null;
+    return runtime && isRuntimeCurrent(runtime) ? runtime : null;
   }
 
   function runtimeForSession(sessionId: string) {
     for (const runtime of paneRuntimes.values()) {
-      if (runtime.session.sessionId === sessionId) {
+      if (runtime.session.sessionId === sessionId && isRuntimeCurrent(runtime)) {
         return runtime;
       }
     }
     return null;
   }
 
+  function runtimeForPane(pane: TerminalPaneModel) {
+    const runtime = paneRuntimes.get(pane.paneId);
+    return runtime && runtime.session.sessionId === pane.sessionId && isRuntimeCurrent(runtime) ? runtime : null;
+  }
+
   function setActiveRuntime(runtime: TerminalPaneRuntime | null) {
-    session = runtime?.session ?? null;
-    terminal = runtime?.terminal ?? null;
-    fitAddon = runtime?.fitAddon ?? null;
-    searchAddon = runtime?.searchAddon ?? null;
-    host = runtime?.host ?? null;
-    lifecycle = runtime?.lifecycle ?? 'starting';
-    status = runtime?.status ?? 'Starting terminal...';
-    outputReceived = Boolean(runtime?.outputReceived);
-    commandState = runtime?.commandState ?? null;
-    selectedCommandIndex = runtime?.selectedCommandIndex ?? -1;
-    shellCwdMarkerSeen = Boolean(runtime?.shellCwdMarkerSeen);
-    currentInputText = runtime?.currentInputText ?? '';
-    currentInputSelectionActive = Boolean(runtime?.currentInputSelectionActive);
-    recentOutputText = runtime?.recentOutputText ?? '';
+    const currentRuntime = runtime && isRuntimeCurrent(runtime) ? runtime : null;
+    session = currentRuntime?.session ?? null;
+    terminal = currentRuntime?.terminal ?? null;
+    fitAddon = currentRuntime?.fitAddon ?? null;
+    searchAddon = currentRuntime?.searchAddon ?? null;
+    host = currentRuntime?.host ?? null;
+    lifecycle = currentRuntime?.lifecycle ?? 'starting';
+    status = currentRuntime?.status ?? 'Starting terminal...';
+    outputReceived = Boolean(currentRuntime?.outputReceived);
+    commandState = currentRuntime?.commandState ?? null;
+    selectedCommandIndex = currentRuntime?.selectedCommandIndex ?? -1;
+    shellCwdMarkerSeen = Boolean(currentRuntime?.shellCwdMarkerSeen);
+    currentInputText = currentRuntime?.currentInputText ?? '';
+    currentInputSelectionActive = Boolean(currentRuntime?.currentInputSelectionActive);
+    recentOutputText = currentRuntime?.recentOutputText ?? '';
   }
 
   function commitRuntime(runtime: TerminalPaneRuntime) {
+    if (!isRuntimeCurrent(runtime)) return false;
     rememberTerminalTitleStateForRuntime(runtime);
     paneRuntimes = new Map(paneRuntimes).set(runtime.paneId, runtime);
     if (runtime.paneId === activePaneId) {
       setActiveRuntime(runtime);
     }
+    return true;
+  }
+
+  function markPaneRuntimeDisposed(runtime: TerminalPaneRuntime) {
+    if (runtime.disposed) return;
+    rememberTerminalTitleStateForRuntime(runtime);
+    runtime.disposed = true;
+    runtime.host = null;
+    runtime.visibleResizeSettled = false;
+    runtime.visibleResizePromise = null;
+    runtime.pollQueued = false;
   }
 
   function rememberTerminalTitleStateForRuntime(runtime: TerminalPaneRuntime) {
@@ -222,9 +453,12 @@
       cancelIdlePrewarm();
       terminalStartPromise = null;
       for (const runtime of paneRuntimes.values()) {
+        markPaneRuntimeDisposed(runtime);
         stopPollingForRuntime(runtime);
         clearStartupTimerForRuntime(runtime);
+        disposePaneRuntime(runtime);
       }
+      paneRuntimes = new Map();
       stopPolling();
       clearStartupTimer();
       disposeTerminalView();
@@ -335,7 +569,10 @@
     startStartupTimer();
     try {
       await refreshTerminalSessionList();
-      session = terminalSessions.find((candidate) => candidate.running) ?? terminalSessions[0] ?? await startPersistentTerminal();
+      const tabs = currentVisibleTerminalTabs();
+      session = tabs.find((candidate) => candidate.running) ?? tabs[0] ?? await startPersistentTerminal();
+      markTerminalSessionAsTab(session.sessionId);
+      activeTerminalTabSessionId = session.sessionId;
       await refreshTerminalSessionList();
       const runtime = ensurePrimaryPaneForSession(session);
       if (intent !== 'idle-prewarm') ensureTerminalViewForPane(runtime);
@@ -360,8 +597,25 @@
   async function refreshTerminalSessionList() {
     const backendSessions = await listStackTerminals('terminal-panel').catch(() => session ? [session] : []);
     const backendSessionIds = new Set(backendSessions.map((item) => item.sessionId));
+    const knownOwnedSessionIds = new Set([...terminalTabSessionIds, ...paneOnlyTerminalSessionIds]);
+    const nextTabSessionIds = new Set(terminalTabSessionIds);
+    for (const backendSession of backendSessions) {
+      if (!knownOwnedSessionIds.has(backendSession.sessionId) && !paneOnlyTerminalSessionIds.has(backendSession.sessionId)) {
+        nextTabSessionIds.add(backendSession.sessionId);
+      }
+    }
+    terminalTabSessionIds = new Set([...nextTabSessionIds].filter((sessionId) => backendSessionIds.has(sessionId)));
+    paneOnlyTerminalSessionIds = new Set([...paneOnlyTerminalSessionIds].filter((sessionId) => backendSessionIds.has(sessionId)));
+    terminalTabWorkbenches = new Map([...terminalTabWorkbenches.entries()].filter(([tabSessionId, workbench]) => {
+      if (!backendSessionIds.has(tabSessionId)) return false;
+      return flattenTerminalWorkbenchSessionIds(workbench.tree).every((sessionId) => backendSessionIds.has(sessionId));
+    }));
+    if (activeTerminalTabSessionId && !terminalTabSessionIds.has(activeTerminalTabSessionId)) {
+      activeTerminalTabSessionId = null;
+    }
     terminalSessions = backendSessions;
-    for (const runtime of paneRuntimes.values()) {
+    for (const runtime of [...paneRuntimes.values()]) {
+      if (!isRuntimeCurrent(runtime)) continue;
       const backendSession = backendSessions.find((item) => item.sessionId === runtime.session.sessionId);
       if (backendSession) {
         runtime.session = backendSession;
@@ -374,93 +628,264 @@
     }
     if (session && backendSessionIds.has(session.sessionId)) {
       session = backendSessions.find((item) => item.sessionId === session?.sessionId) ?? session;
-    } else if (!session && backendSessions.length) {
-      session = backendSessions[0];
+    } else if (!session && currentVisibleTerminalTabs().length) {
+      session = currentVisibleTerminalTabs()[0];
     }
   }
 
   function ensurePrimaryPaneForSession(nextSession: StackTerminalSession): TerminalPaneRuntime {
+    if (!activeTerminalTabSessionId) activeTerminalTabSessionId = nextSession.sessionId;
     const existing = terminalPanes.find((pane) => pane.sessionId === nextSession.sessionId);
     if (existing) {
-      activePaneId = existing.paneId;
+      activatePane(existing.paneId);
       const existingRuntime = paneRuntimes.get(existing.paneId);
-      if (existingRuntime) {
-        setActiveRuntime(existingRuntime);
-        return existingRuntime;
-      }
+      if (existingRuntime && isRuntimeCurrent(existingRuntime)) return existingRuntime;
     }
-    if (terminalPanes.length >= 2) {
-      const [removedPane] = terminalPanes;
-      if (removedPane) {
-        removePaneRuntime(removedPane.paneId, false, true);
-      }
-    }
-    const paneCount = Math.min(terminalPanes.length + 1, 2);
     const pane: TerminalPaneModel = {
-      paneId: terminalPanes.length ? `terminal-pane-${Date.now().toString(36)}` : 'terminal-pane-primary',
+      paneId: terminalPaneTree ? nextTerminalPaneId() : 'terminal-pane-primary',
       sessionId: nextSession.sessionId,
-      title: nextSession.title || `Session ${paneCount}`,
+      title: nextSession.title || `Session ${terminalPanes.length + 1}`,
       focused: true
     };
-    terminalPanes = [...terminalPanes.map((item) => ({ ...item, focused: false })), pane];
+    const previousActivePaneId = activePaneId;
     activePaneId = pane.paneId;
+    if (!terminalPaneTree) {
+      setTerminalPaneTree({ kind: 'leaf', pane });
+    } else {
+      const targetPaneId = terminalPanes.some((item) => item.paneId === previousActivePaneId)
+        ? previousActivePaneId
+        : terminalPanes[0]?.paneId;
+      setTerminalPaneTree(splitPaneTreeAtLeaf(terminalPaneTree, targetPaneId ?? pane.paneId, pane, 'right'));
+    }
     const runtime = createPaneRuntime(nextSession, pane.paneId);
     commitRuntime(runtime);
+    saveCurrentTerminalWorkbench();
     setActiveRuntime(runtime);
     return runtime;
   }
 
   function activatePane(paneId: string) {
     activePaneId = paneId;
-    terminalPanes = terminalPanes.map((pane) => ({ ...pane, focused: pane.paneId === activePaneId }));
+    setTerminalPaneTree(mapTerminalPaneTree(terminalPaneTree, (pane) => ({ ...pane, focused: pane.paneId === activePaneId })), false);
     setActiveRuntime(activeRuntime());
   }
 
   function activateTerminalSession(nextSession: StackTerminalSession) {
-    openSessionAsTab(nextSession);
-    focusTerminal();
+    activateTerminalTabWorkbench(nextSession);
   }
 
-  function openSessionAsTab(nextSession: StackTerminalSession): TerminalPaneRuntime {
-    for (const pane of terminalPanes) {
-      removePaneRuntime(pane.paneId, false, true);
+  function terminalPanelStartupCwd() {
+    const runtime = activeRuntime();
+    return runtime?.session.cwd || session?.cwd || commandState?.cwd || selectedCommand()?.cwd || '';
+  }
+
+  function terminalPanelStartupProfile() {
+    return activeRuntime()?.session.profile ?? session?.profile ?? 'windowsTerminal';
+  }
+
+  async function startTerminalPanelSessionInActiveCwd() {
+    const cwd = terminalPanelStartupCwd();
+    if (!cwd) return startPersistentTerminal();
+    return startStackTerminal(cwd, terminalPanelStartupProfile(), 'terminal-panel');
+  }
+
+  function isSplitStartStale(
+    splitStartGeneration: number,
+    splitStartTabSessionId: string | null,
+    targetPaneId: string,
+    targetSessionId: string
+  ) {
+    if (listenersDisposed) return true;
+    if (splitStartGeneration !== terminalWorkbenchGeneration) return true;
+    if (currentWorkbenchTabSessionId() !== splitStartTabSessionId) return true;
+    return !terminalPanes.some((pane) => pane.paneId === targetPaneId && pane.sessionId === targetSessionId);
+  }
+
+  function detachPaneRuntimeViewForHiddenTab(runtime: TerminalPaneRuntime) {
+    rememberTerminalTitleStateForRuntime(runtime);
+    stopPollingForRuntime(runtime);
+    clearStartupTimerForRuntime(runtime);
+    disposePaneRuntime(runtime);
+    runtime.host = null;
+    runtime.visibleResizeSettled = false;
+    runtime.visibleResizePromise = null;
+    runtime.pollQueued = false;
+    runtime.replayedSessionOutput = false;
+  }
+
+  function detachVisibleTerminalWorkbenchViewsForHiddenTab() {
+    saveCurrentTerminalWorkbench();
+    const visiblePaneIds = new Set(terminalPanes.map((pane) => pane.paneId));
+    for (const runtime of paneRuntimes.values()) {
+      if (!visiblePaneIds.has(runtime.paneId) || runtime.disposed) continue;
+      detachPaneRuntimeViewForHiddenTab(runtime);
     }
-    splitOrientation = 'single';
-    activePaneId = 'terminal-pane-primary';
+    paneRuntimes = new Map(paneRuntimes);
+  }
+
+  function sessionForPane(pane: TerminalPaneModel) {
+    return terminalSessions.find((item) => item.sessionId === pane.sessionId) ?? paneRuntimes.get(pane.paneId)?.session ?? null;
+  }
+
+  function ensureRuntimeForVisiblePane(pane: TerminalPaneModel) {
+    const existing = paneRuntimes.get(pane.paneId);
+    if (existing && !existing.disposed && existing.session.sessionId === pane.sessionId) {
+      commitRuntime(existing);
+      return existing;
+    }
+    const paneSession = sessionForPane(pane);
+    if (!paneSession) return null;
+    const runtime = createPaneRuntime({ ...paneSession, title: pane.title || paneSession.title }, pane.paneId);
+    paneRuntimes = new Map(paneRuntimes).set(pane.paneId, runtime);
+    commitRuntime(runtime);
+    return runtime;
+  }
+
+  function restoreVisibleTerminalWorkbenchRuntimes() {
+    let nextActiveRuntime: TerminalPaneRuntime | null = null;
+    for (const pane of terminalPanes) {
+      const runtime = ensureRuntimeForVisiblePane(pane);
+      if (!runtime) continue;
+      if (pane.paneId === activePaneId) nextActiveRuntime = runtime;
+      ensureTerminalViewForPane(runtime);
+      replayTerminalSessionOutput(runtime);
+      startPollingForRuntime(runtime);
+      void pollTerminalOutputForRuntime(runtime);
+    }
+    setActiveRuntime(nextActiveRuntime ?? activeRuntime() ?? (terminalPanes[0] ? ensureRuntimeForVisiblePane(terminalPanes[0]) : null));
+  }
+
+  function ensureWorkbenchForTabSession(nextSession: StackTerminalSession) {
+    const existing = terminalTabWorkbenches.get(nextSession.sessionId);
+    if (existing) return existing;
+    const paneId = nextTerminalPaneId();
+    const tree: TerminalPaneTreeNode = {
+      kind: 'leaf',
+      pane: {
+        paneId,
+        sessionId: nextSession.sessionId,
+        title: nextSession.title || 'Terminal',
+        focused: true
+      }
+    };
+    const workbench = { tabSessionId: nextSession.sessionId, tree, activePaneId: paneId };
+    terminalTabWorkbenches = new Map(terminalTabWorkbenches).set(nextSession.sessionId, workbench);
+    return workbench;
+  }
+
+  function activateTerminalTabWorkbench(nextSession: StackTerminalSession) {
+    if (activeTerminalTabSessionId === nextSession.sessionId) {
+      focusTerminal();
+      return activeRuntime();
+    }
+    saveCurrentTerminalWorkbench();
+    ensureWorkbenchForTabSession(nextSession);
+    const plan = planActivateTerminalTabWorkbench({
+      activeTabSessionId: activeTerminalTabSessionId,
+      targetTabSessionId: nextSession.sessionId,
+      workbenches: terminalTabWorkbenchesList()
+    });
+    if (!plan.visibleTree || !plan.activeTabSessionId) return null;
+    detachVisibleTerminalWorkbenchViewsForHiddenTab();
+    activeTerminalTabSessionId = plan.activeTabSessionId;
+    activePaneId = plan.activePaneId;
+    setTerminalPaneTree(plan.visibleTree);
+    restoreVisibleTerminalWorkbenchRuntimes();
+    focusTerminal();
+    return activeRuntime();
+  }
+
+  async function createTerminalSession() {
+    if (terminalSessionCreationInFlight) return;
+    terminalSessionCreationInFlight = true;
+    const tabCreationWorkbenchSessionId = currentWorkbenchTabSessionId();
+    saveCurrentTerminalWorkbench(tabCreationWorkbenchSessionId);
+    try {
+      const nextSession = await startTerminalPanelSessionInActiveCwd();
+      markTerminalSessionAsTab(nextSession.sessionId);
+      terminalSessions = [...terminalSessions.filter((item) => item.sessionId !== nextSession.sessionId), nextSession];
+      if (listenersDisposed) {
+        await stopStackTerminal(nextSession.sessionId).catch((error) => console.debug('Persistent terminal stale tab cleanup unavailable', error));
+        clearStoppedTerminalSessionState(nextSession.sessionId);
+        terminalSessions = terminalSessions.filter((item) => item.sessionId !== nextSession.sessionId);
+        return;
+      }
+      const plan = planCreateTerminalTabWorkbench({
+        activeTabSessionId: tabCreationWorkbenchSessionId,
+        tabSessionIds: terminalTabSessionIds,
+        paneOnlySessionIds: paneOnlyTerminalSessionIds,
+        workbenches: terminalTabWorkbenchesList(),
+        nextSession,
+        nextPaneId: nextTerminalPaneId()
+      });
+      terminalTabSessionIds = new Set(plan.nextTabSessionIds);
+      paneOnlyTerminalSessionIds = new Set(plan.nextPaneOnlySessionIds);
+      replaceTerminalTabWorkbenches(plan.workbenches);
+      orderTerminalSessionsByTabIds(plan.nextTabSessionIds);
+      detachVisibleTerminalWorkbenchViewsForHiddenTab();
+      activeTerminalTabSessionId = plan.activeTabSessionId;
+      activePaneId = plan.activePaneId;
+      setTerminalPaneTree(plan.visibleTree);
+      const pane = terminalPanes.find((item) => item.paneId === plan.activePaneId && item.sessionId === nextSession.sessionId);
+      const runtime = pane ? ensureRuntimeForVisiblePane(pane) : null;
+      await tick();
+      restoreVisibleTerminalWorkbenchRuntimes();
+      if (runtime && isRuntimeCurrent(runtime)) {
+        ensureTerminalViewForPane(runtime);
+        replayTerminalSessionOutput(runtime);
+        scheduleFitForRuntime(runtime);
+        startStartupTimerForRuntime(runtime);
+      }
+      focusTerminal();
+    } catch (error) {
+      status = errorMessage(error, 'Terminal tab failed to start');
+      console.error('Failed to create persistent terminal tab', error);
+    } finally {
+      terminalSessionCreationInFlight = false;
+    }
+  }
+
+  async function createSplitPaneSession(direction: TerminalSplitDirection) {
+    const targetPane = terminalPanes.find((pane) => pane.paneId === activePaneId) ?? terminalPanes[0] ?? null;
+    if (!targetPane) return;
+    const targetPaneId = targetPane.paneId;
+    const targetSessionId = targetPane.sessionId;
+    const splitStartGeneration = terminalWorkbenchGeneration;
+    const splitStartTabSessionId = currentWorkbenchTabSessionId();
+    const nextSession = await startTerminalPanelSessionInActiveCwd();
+    if (isSplitStartStale(splitStartGeneration, splitStartTabSessionId, targetPaneId, targetSessionId)) {
+      await stopStackTerminal(nextSession.sessionId).catch((error) => console.debug('Persistent terminal stale split cleanup unavailable', error));
+      clearStoppedTerminalSessionState(nextSession.sessionId);
+      terminalSessions = terminalSessions.filter((item) => item.sessionId !== nextSession.sessionId);
+      return;
+    }
+    markTerminalSessionAsPaneOnly(nextSession.sessionId);
+    terminalSessions = [...terminalSessions.filter((item) => item.sessionId !== nextSession.sessionId), nextSession];
     const pane: TerminalPaneModel = {
-      paneId: activePaneId,
+      paneId: nextTerminalPaneId(),
       sessionId: nextSession.sessionId,
-      title: nextSession.title || 'Terminal',
+      title: nextSession.title || `Session ${terminalPanes.length + 1}`,
       focused: true
     };
-    terminalPanes = [pane];
+    activePaneId = pane.paneId;
+    if (!terminalPaneTree || !targetPaneId) {
+      setTerminalPaneTree({ kind: 'leaf', pane });
+    } else {
+      setTerminalPaneTree(splitPaneTreeAtLeaf(terminalPaneTree, targetPaneId, pane, direction));
+    }
     const runtime = createPaneRuntime(nextSession, pane.paneId);
     commitRuntime(runtime);
     setActiveRuntime(runtime);
     ensureTerminalViewForPane(runtime);
-    replayTerminalSessionOutput(runtime);
-    startPollingForRuntime(runtime);
-    void pollTerminalOutputForRuntime(runtime);
-    return runtime;
-  }
-
-  async function createTerminalSession() {
-    const nextSession = await startPersistentTerminal();
-    terminalSessions = [...terminalSessions, nextSession];
-    const runtime = openSessionAsTab(nextSession);
-    startStartupTimerForRuntime(runtime);
-    focusTerminal();
-  }
-
-  async function createSplitPaneSession(orientation: Exclude<TerminalSplitOrientation, 'single'>) {
-    const nextSession = await startPersistentTerminal();
-    terminalSessions = [...terminalSessions, nextSession];
-    const runtime = ensurePrimaryPaneForSession(nextSession);
+    await tick();
+    if (!isRuntimeCurrent(runtime)) return;
     ensureTerminalViewForPane(runtime);
+    replayTerminalSessionOutput(runtime);
+    scheduleFitForRuntime(runtime);
     startStartupTimerForRuntime(runtime);
     startPollingForRuntime(runtime);
     void pollTerminalOutputForRuntime(runtime);
-    splitOrientation = orientation;
+    focusTerminal();
   }
 
   async function renameActiveSession() {
@@ -471,14 +896,16 @@
     manuallyRenamedTerminalSessions.add(renamed.sessionId);
     session = renamed;
     terminalSessions = terminalSessions.map((item) => item.sessionId === renamed.sessionId ? renamed : item);
-    terminalPanes = terminalPanes.map((pane) => pane.sessionId === renamed.sessionId ? { ...pane, title: renamed.title || title } : pane);
+    setTerminalPaneTree(mapTerminalPaneTree(terminalPaneTree, (pane) => pane.sessionId === renamed.sessionId ? { ...pane, title: renamed.title || title } : pane), false);
   }
 
-  async function splitTerminal(orientation: Exclude<TerminalSplitOrientation, 'single'>) {
+  async function splitTerminal(orientation: Exclude<TerminalSplitOrientation, 'single' | 'mixed'>) {
+    const direction: TerminalSplitDirection = orientation === 'vertical' ? 'right' : 'down';
     splitOrientation = orientation;
-    if (terminalPanes.length < 2) {
-      await createSplitPaneSession(orientation);
+    if (!terminalPanes.length) {
+      await startTerminal('user-action');
     }
+    await createSplitPaneSession(direction);
   }
 
   function focusNextPane(direction = 1) {
@@ -486,8 +913,10 @@
     const currentIndex = terminalPanes.findIndex((pane) => pane.paneId === activePaneId);
     const nextIndex = (Math.max(0, currentIndex) + direction + terminalPanes.length) % terminalPanes.length;
     const pane = terminalPanes[nextIndex];
-    const nextSession = terminalSessions.find((item) => item.sessionId === pane.sessionId);
-    if (nextSession) activateTerminalSession(nextSession);
+    if (pane) {
+      activatePane(pane.paneId);
+      focusTerminal();
+    }
   }
 
   function isAltBackquoteHotkey(event: KeyboardEvent) {
@@ -505,6 +934,8 @@
   function createPaneRuntime(nextSession: StackTerminalSession, paneId: string): TerminalPaneRuntime {
     return {
       paneId,
+      runtimeId: nextTerminalRuntimeId(),
+      disposed: false,
       host: null,
       terminal: null,
       fitAddon: null,
@@ -648,7 +1079,7 @@
   }
 
   function ensureTerminalViewForPane(runtime: TerminalPaneRuntime) {
-    if (!runtime.host) return;
+    if (!isRuntimeCurrent(runtime) || !runtime.host) return;
     if (runtime.terminal?.element && runtime.host.contains(runtime.terminal.element)) return;
     disposePaneRuntime(runtime);
     const paneTerminal = new Terminal({
@@ -669,6 +1100,7 @@
     paneTerminal.loadAddon(runtime.fitAddon);
     paneTerminal.loadAddon(runtime.searchAddon);
     paneTerminal.onData((data) => {
+      if (!isRuntimeCurrent(runtime)) return;
       trackTerminalInputForRuntime(runtime, data);
       void writeTerminalDataForRuntime(runtime, data);
     });
@@ -679,12 +1111,15 @@
     runtime.resizeObserver.observe(runtime.host);
     commitRuntime(runtime);
     void tick().then(() => {
+      if (!isRuntimeCurrent(runtime)) return;
       void resizeTerminalToFitForRuntime(runtime);
       scheduleFitForRuntime(runtime);
+      replayTerminalSessionOutput(runtime);
     });
   }
 
   function handleTerminalKeyForRuntime(runtime: TerminalPaneRuntime, event: KeyboardEvent) {
+    if (!isRuntimeCurrent(runtime)) return false;
     if (event.type === 'keydown' && isAltBackquoteHotkey(event)) {
       closeFromTerminalHotkey(event);
       return false;
@@ -695,9 +1130,7 @@
     if (event.type === 'keydown' && event.altKey && event.key === 'ArrowRight') { focusNextPane(1); return false; }
     if (event.type === 'keydown' && event.altKey && event.key === 'ArrowLeft') { focusNextPane(-1); return false; }
     if (runtime.paneId !== activePaneId) {
-      activePaneId = runtime.paneId;
-      terminalPanes = terminalPanes.map((pane) => ({ ...pane, focused: pane.paneId === activePaneId }));
-      setActiveRuntime(runtime);
+      activatePane(runtime.paneId);
     }
     return terminal?.attachCustomKeyEventHandler ? (() => {
       // Mirror the active-pane handler logic without recursively installing a handler.
@@ -749,7 +1182,7 @@
   }
 
   function handleShellIntegrationSequenceForRuntime(runtime: TerminalPaneRuntime, data: string) {
-    if (!runtime.commandState) return false;
+    if (!isRuntimeCurrent(runtime) || !runtime.commandState) return false;
     const marker = parseTerminalShellSequence(data);
     if (!marker) return false;
     const line = runtime.terminal ? runtime.terminal.buffer.active.baseY + runtime.terminal.buffer.active.cursorY : undefined;
@@ -788,7 +1221,7 @@
   }
 
   function applyAuthoritativeTerminalCwdForRuntime(runtime: TerminalPaneRuntime, cwd: string) {
-    if (!cwd) return;
+    if (!isRuntimeCurrent(runtime) || !cwd) return;
     runtime.session = { ...runtime.session, cwd };
     if (runtime.commandState) runtime.commandState = { ...runtime.commandState, cwd };
     terminalSessions = terminalSessions.map((item) => item.sessionId === runtime.session.sessionId ? runtime.session : item);
@@ -826,6 +1259,7 @@
   }
 
   function trackTerminalInputForRuntime(runtime: TerminalPaneRuntime, data: string) {
+    if (!isRuntimeCurrent(runtime)) return;
     runtime.currentInputSelectionActive = false;
     for (const ch of data) {
       if (ch === '\r' || ch === '\n' || ch === '\u0003') {
@@ -869,7 +1303,7 @@
   }
 
   function selectCurrentInputTextForRuntime(runtime: TerminalPaneRuntime) {
-    if (!runtime.terminal || runtime.currentInputText.length === 0) return;
+    if (!isRuntimeCurrent(runtime) || !runtime.terminal || runtime.currentInputText.length === 0) return;
     const buffer = runtime.terminal.buffer.active;
     const row = buffer.baseY + buffer.cursorY;
     const startColumn = Math.max(0, buffer.cursorX - runtime.currentInputText.length);
@@ -890,6 +1324,7 @@
   }
 
   async function deleteSelectedCurrentInputForRuntime(runtime: TerminalPaneRuntime) {
+    if (!isRuntimeCurrent(runtime)) return;
     const length = runtime.currentInputText.length;
     if (length <= 0) { runtime.currentInputSelectionActive = false; commitRuntime(runtime); return; }
     const eraseInput = '\u007f'.repeat(length);
@@ -924,15 +1359,30 @@
 
   function removePaneRuntime(paneId: string, stopBackendSession: boolean, keepSessionTab = false) {
     const runtime = paneRuntimes.get(paneId);
-    if (!runtime) return;
+    const paneSessionId = runtime?.session.sessionId ?? terminalPanes.find((pane) => pane.paneId === paneId)?.sessionId;
+    if (!runtime) {
+      setTerminalPaneTree(removePaneFromTree(terminalPaneTree, paneId));
+      if (paneSessionId && !keepSessionTab) {
+        terminalSessions = terminalSessions.filter((item) => item.sessionId !== paneSessionId);
+        clearStoppedTerminalSessionState(paneSessionId);
+      }
+      if (paneSessionId && stopBackendSession) {
+        void stopStackTerminal(paneSessionId).catch((error) => console.debug('Persistent terminal orphan cleanup unavailable', error));
+      }
+      return;
+    }
+    markPaneRuntimeDisposed(runtime);
     stopPollingForRuntime(runtime);
     clearStartupTimerForRuntime(runtime);
     disposePaneRuntime(runtime);
-    paneRuntimes.delete(paneId);
+    if (paneRuntimes.get(paneId)?.runtimeId === runtime.runtimeId) {
+      paneRuntimes.delete(paneId);
+    }
     paneRuntimes = new Map(paneRuntimes);
-    terminalPanes = terminalPanes.filter((pane) => pane.paneId !== paneId);
+    setTerminalPaneTree(removePaneFromTree(terminalPaneTree, paneId));
     if (!keepSessionTab) {
       terminalSessions = terminalSessions.filter((item) => item.sessionId !== runtime.session.sessionId);
+      clearStoppedTerminalSessionState(runtime.session.sessionId);
     }
     if (stopBackendSession) {
       void stopStackTerminal(runtime.session.sessionId).catch((error) => console.debug('Persistent terminal orphan cleanup unavailable', error));
@@ -940,6 +1390,7 @@
   }
 
   function disposePaneRuntime(runtime: TerminalPaneRuntime) {
+    const shouldReplayRetainedOutputOnReattach = !runtime.disposed && Boolean(runtime.terminal);
     if (runtime.resizeFrame !== null) {
       window.cancelAnimationFrame(runtime.resizeFrame);
       runtime.resizeFrame = null;
@@ -953,6 +1404,7 @@
     runtime.searchAddon?.dispose();
     runtime.searchAddon = null;
     runtime.terminal?.dispose();
+    if (shouldReplayRetainedOutputOnReattach) runtime.replayedSessionOutput = false;
     runtime.terminal = null;
     runtime.lastResizeKey = '';
   }
@@ -985,6 +1437,7 @@
     }
     visibleResizeSettled = false;
     for (const runtime of paneRuntimes.values()) {
+      if (!isRuntimeCurrent(runtime)) continue;
       runtime.visibleResizeSettled = false;
       ensureTerminalViewForPane(runtime);
       replayTerminalSessionOutput(runtime);
@@ -1009,8 +1462,13 @@
 
   function scheduleFitForRuntime(runtime: TerminalPaneRuntime) {
     if (runtime.resizeFrame !== null) window.cancelAnimationFrame(runtime.resizeFrame);
+    if (!isRuntimeCurrent(runtime)) {
+      runtime.resizeFrame = null;
+      return;
+    }
     runtime.resizeFrame = window.requestAnimationFrame(() => {
       runtime.resizeFrame = null;
+      if (!isRuntimeCurrent(runtime)) return;
       void resizeTerminalToFitForRuntime(runtime);
     });
     commitRuntime(runtime);
@@ -1054,6 +1512,7 @@
     terminalFontSize = clamped;
     if (terminal) applyTerminalFontSizeToXterm(terminal);
     for (const runtime of paneRuntimes.values()) {
+      if (!isRuntimeCurrent(runtime)) continue;
       if (runtime.terminal) applyTerminalFontSizeToXterm(runtime.terminal);
       runtime.lastResizeKey = '';
       runtime.visibleResizeSettled = false;
@@ -1074,11 +1533,11 @@
   }
 
   async function resizeAllVisiblePanes() {
-    await Promise.all(Array.from(paneRuntimes.values()).map((runtime) => resizeTerminalToFitForRuntime(runtime).catch((error) => console.debug('Persistent terminal pane resize unavailable', error))));
+    await Promise.all(Array.from(paneRuntimes.values()).filter((runtime) => isRuntimeCurrent(runtime)).map((runtime) => resizeTerminalToFitForRuntime(runtime).catch((error) => console.debug('Persistent terminal pane resize unavailable', error))));
   }
 
   async function resizeTerminalToFitForRuntime(runtime: TerminalPaneRuntime) {
-    if (!runtime.terminal || !runtime.fitAddon || !runtime.session) return;
+    if (!isRuntimeCurrent(runtime) || !runtime.terminal || !runtime.fitAddon || !runtime.session) return;
     try {
       runtime.fitAddon.fit();
       const width = runtime.host?.clientWidth ?? 0;
@@ -1094,9 +1553,11 @@
       }
       runtime.lastResizeKey = resizeKey;
       await enqueueTerminalOperationForRuntime(runtime, () => resizeStackTerminal(sessionId, cols, rows, width, height));
+      if (!isRuntimeCurrent(runtime)) return;
       runtime.visibleResizeSettled = true;
       commitRuntime(runtime);
     } catch (error) {
+      if (!isRuntimeCurrent(runtime)) return;
       runtime.visibleResizeSettled = false;
       runtime.lastResizeKey = '';
       commitRuntime(runtime);
@@ -1133,11 +1594,12 @@
   }
 
   async function ensureVisibleResizeBeforeInputForRuntime(runtime: TerminalPaneRuntime) {
+    if (!isRuntimeCurrent(runtime)) return;
     if (runtime.visibleResizeSettled) return;
     if (runtime.visibleResizePromise) { await runtime.visibleResizePromise; return; }
     runtime.visibleResizePromise = resizeTerminalToFitForRuntime(runtime)
       .catch((error) => console.debug('Persistent terminal pane input proceeding without visible resize', error))
-      .finally(() => { runtime.visibleResizePromise = null; commitRuntime(runtime); });
+      .finally(() => { if (isRuntimeCurrent(runtime)) { runtime.visibleResizePromise = null; commitRuntime(runtime); } });
     commitRuntime(runtime);
     await runtime.visibleResizePromise;
   }
@@ -1156,9 +1618,10 @@
   }
 
   async function writeTerminalDataForRuntime(runtime: TerminalPaneRuntime, data: string) {
-    if (!runtime.session || !data) return;
+    if (!isRuntimeCurrent(runtime) || !runtime.session || !data) return;
     const sessionId = runtime.session.sessionId;
     await ensureVisibleResizeBeforeInputForRuntime(runtime);
+    if (!isRuntimeCurrent(runtime)) return;
     await enqueueTerminalWriteForRuntime(runtime, () => writeStackTerminal(sessionId, data));
   }
 
@@ -1172,7 +1635,8 @@
   }
 
   function enqueueTerminalWriteForRuntime<T>(runtime: TerminalPaneRuntime, operation: () => Promise<T>): Promise<T> {
-    const queued = runtime.writeQueue.then(operation, operation);
+    const runOperation = () => isRuntimeCurrent(runtime) ? operation() : Promise.resolve(undefined as T);
+    const queued = runtime.writeQueue.then(runOperation, runOperation);
     runtime.writeQueue = queued.then(() => undefined, () => undefined);
     commitRuntime(runtime);
     return queued;
@@ -1188,7 +1652,8 @@
   }
 
   function enqueueTerminalOperationForRuntime<T>(runtime: TerminalPaneRuntime, operation: () => Promise<T>): Promise<T> {
-    const queued = runtime.operationQueue.then(operation, operation);
+    const runOperation = () => isRuntimeCurrent(runtime) ? operation() : Promise.resolve(undefined as T);
+    const queued = runtime.operationQueue.then(runOperation, runOperation);
     runtime.operationQueue = queued.then(() => undefined, () => undefined);
     commitRuntime(runtime);
     return queued;
@@ -1204,6 +1669,7 @@
   }
 
   async function copySelectionForRuntime(runtime: TerminalPaneRuntime) {
+    if (!isRuntimeCurrent(runtime)) return;
     const selection = runtime.terminal?.getSelection() ?? '';
     if (selection) await navigator.clipboard?.writeText(selection).catch((error) => console.debug('Persistent terminal selection copy unavailable', error));
   }
@@ -1229,6 +1695,7 @@
   }
 
   async function pasteClipboardForRuntime(runtime: TerminalPaneRuntime) {
+    if (!isRuntimeCurrent(runtime)) return;
     const text = await navigator.clipboard?.readText().catch((error) => {
       console.debug('Persistent terminal clipboard paste unavailable', error);
       return '';
@@ -1256,6 +1723,7 @@
   }
 
   function jumpToCommandForRuntime(runtime: TerminalPaneRuntime, direction: -1 | 1) {
+    if (!isRuntimeCurrent(runtime)) return;
     const records = commandRecordsForRuntime(runtime);
     if (!runtime.terminal || !records.length) return;
     const current = runtime.selectedCommandIndex >= 0 ? runtime.selectedCommandIndex : records.length - 1;
@@ -1368,24 +1836,50 @@
   }
 
   function effectiveTerminalCwd() {
-    return session?.cwd || commandState?.cwd || selectedCommand()?.cwd || '';
+    const runtime = activeRuntime();
+    return runtime?.session.cwd || session?.cwd || runtime?.commandState?.cwd || commandState?.cwd || selectedCommand()?.cwd || '';
   }
 
-  function buildTerminalActionState(): TerminalActionState {
-    const record = selectedCommand();
-    const cwd = effectiveTerminalCwd();
+  function selectedCommandFromState(state: TerminalCommandState | null, index: number): TerminalCommandRecord | null {
+    const records = state?.records ?? [];
+    if (!records.length) {
+      return null;
+    }
+    const selectedIndex = index >= 0 ? index : records.length - 1;
+    return records[Math.max(0, Math.min(records.length - 1, selectedIndex))] ?? null;
+  }
+
+  function buildTerminalActionState(
+    currentSession: StackTerminalSession | null,
+    currentTerminal: Terminal | null,
+    panes: TerminalPaneModel[],
+    backendSessions: StackTerminalSession[],
+    currentActivePaneId: string,
+    runtimes: Map<string, TerminalPaneRuntime>,
+    detectedTargets: TerminalQuickSelectTarget[],
+    currentCommandState: TerminalCommandState | null,
+    currentSelectedCommandIndex: number,
+    sessionCreationInFlight: boolean
+  ): TerminalActionState {
+    const candidateActivePaneRuntime = runtimes.get(currentActivePaneId) ?? null;
+    const activePaneRuntime = candidateActivePaneRuntime && !candidateActivePaneRuntime.disposed ? candidateActivePaneRuntime : null;
+    const record = selectedCommandFromState(currentCommandState, currentSelectedCommandIndex);
+    const cwd = currentSession?.cwd || currentCommandState?.cwd || record?.cwd || '';
+    const hasVisiblePaneSession = panes.some((pane) => Boolean(pane.sessionId));
+    const hasActiveSession = Boolean(currentSession || activePaneRuntime?.session || hasVisiblePaneSession || backendSessions.length > 0);
+    const selectedTerminal = currentTerminal ?? activePaneRuntime?.terminal ?? null;
     return {
-      hasTerminal: Boolean(terminal),
-      hasSession: Boolean(session),
-      hasSelection: Boolean(terminal?.hasSelection()),
+      hasTerminal: Boolean(selectedTerminal || hasActiveSession),
+      hasSession: hasActiveSession,
+      hasSelection: Boolean(selectedTerminal?.hasSelection()),
       hasCommand: Boolean(record?.commandText),
       hasCommandOutput: Boolean(record && commandRecordHasOutput(record)),
       hasCwd: Boolean(cwd),
-      hasDetectedTarget: quickSelectTargets.length > 0,
+      hasDetectedTarget: detectedTargets.length > 0,
       hasRepo: Boolean(cwd),
-      canCreateSession: true,
-      canSplit: terminalPanes.length < 2 || splitOrientation !== 'single',
-      hasMultiplePanes: terminalPanes.length > 1
+      canCreateSession: !sessionCreationInFlight,
+      canSplit: hasActiveSession,
+      hasMultiplePanes: panes.length > 1
     };
   }
 
@@ -1501,40 +1995,84 @@
     if (cwd) await openStackFolderInVscode(cwd).catch((error) => console.debug('Persistent terminal VS Code open unavailable', error));
   }
 
-  async function closeTerminalSessionTab(sessionId: string) {
-    const runtime = runtimeForSession(sessionId);
-    if (runtime) {
-      activatePane(runtime.paneId);
-      await stopTerminal();
-      return;
+  function stopAndForgetTerminalSessionsInBackground(sessionIds: Iterable<string>) {
+    const stoppedSessionIds = new Set(sessionIds);
+    if (!stoppedSessionIds.size) return;
+    for (const runtime of [...paneRuntimes.values()]) {
+      if (!stoppedSessionIds.has(runtime.session.sessionId)) continue;
+      markPaneRuntimeDisposed(runtime);
+      stopPollingForRuntime(runtime);
+      clearStartupTimerForRuntime(runtime);
+      disposePaneRuntime(runtime);
+      if (paneRuntimes.get(runtime.paneId)?.runtimeId === runtime.runtimeId) {
+        paneRuntimes.delete(runtime.paneId);
+      }
     }
-    await stopStackTerminal(sessionId).catch((error) => console.debug('Persistent terminal tab close unavailable', error));
-    terminalSessions = terminalSessions.filter((item) => item.sessionId !== sessionId);
-    sessionReplayBuffers.delete(sessionId);
-    sessionReplayBuffers = new Map(sessionReplayBuffers);
-    renderedSequenceKeysBySession.delete(sessionId);
-    renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession);
+    paneRuntimes = new Map(paneRuntimes);
+    terminalSessions = terminalSessions.filter((item) => !stoppedSessionIds.has(item.sessionId));
+    for (const stoppedSessionId of stoppedSessionIds) {
+      clearStoppedTerminalSessionState(stoppedSessionId);
+    }
+    void Promise.all([...stoppedSessionIds].map((stoppedSessionId) => stopStackTerminal(stoppedSessionId).catch((error) => console.debug('Persistent terminal tab close unavailable', error))));
+  }
+
+  async function closeTerminalSessionTab(sessionId: string) {
+    saveCurrentTerminalWorkbench();
+    const plan = planCloseTerminalTabWorkbench({
+      activeTabSessionId: activeTerminalTabSessionId,
+      closeTabSessionId: sessionId,
+      tabSessionIds: terminalTabSessionIds,
+      paneOnlySessionIds: paneOnlyTerminalSessionIds,
+      workbenches: terminalTabWorkbenchesList()
+    });
+    const closingActiveTab = activeTerminalTabSessionId === sessionId;
+    terminalTabSessionIds = new Set(plan.nextTabSessionIds);
+    paneOnlyTerminalSessionIds = new Set(plan.nextPaneOnlySessionIds);
+    replaceTerminalTabWorkbenches(plan.workbenches);
+    if (closingActiveTab) {
+      activeTerminalTabSessionId = plan.activeTabSessionId;
+      activePaneId = plan.activePaneId || 'terminal-pane-primary';
+      setTerminalPaneTree(plan.visibleTree, true, false);
+      if (plan.visibleTree) {
+        restoreVisibleTerminalWorkbenchRuntimes();
+        focusTerminal();
+      } else {
+        session = null;
+        setActiveRuntime(null);
+      }
+    }
+    stopAndForgetTerminalSessionsInBackground(plan.stopBackendSessionIds.length ? plan.stopBackendSessionIds : [sessionId]);
+    orderTerminalSessionsByTabIds(plan.nextTabSessionIds);
   }
 
   async function stopTerminal() {
     const runtime = activeRuntime();
     if (!runtime) return;
     const sessionId = runtime.session.sessionId;
+    if (terminalTabSessionIds.has(sessionId)) {
+      await closeTerminalSessionTab(sessionId);
+      return;
+    }
     stopPollingForRuntime(runtime);
-    await stopStackTerminal(sessionId).catch((error) => console.debug('Persistent terminal stop unavailable', error));
+    clearStartupTimerForRuntime(runtime);
     runtime.lifecycle = 'exited';
     runtime.status = 'Terminal stopped';
     runtime.session = { ...runtime.session, running: false };
+    markPaneRuntimeDisposed(runtime);
+    await stopStackTerminal(sessionId).catch((error) => console.debug('Persistent terminal stop unavailable', error));
     disposePaneRuntime(runtime);
-    paneRuntimes.delete(runtime.paneId);
+    if (paneRuntimes.get(runtime.paneId)?.runtimeId === runtime.runtimeId) {
+      paneRuntimes.delete(runtime.paneId);
+    }
     paneRuntimes = new Map(paneRuntimes);
-    terminalPanes = terminalPanes.filter((pane) => pane.paneId !== runtime.paneId);
+    setTerminalPaneTree(removePaneFromTree(terminalPaneTree, runtime.paneId));
     terminalSessions = terminalSessions.filter((item) => item.sessionId !== sessionId);
+    clearStoppedTerminalSessionState(sessionId);
     if (!terminalPanes.length) {
       splitOrientation = 'single';
-      const nextSession = terminalSessions.find((item) => item.running) ?? terminalSessions[0] ?? null;
+      const nextSession = currentVisibleTerminalTabs().find((item) => item.running) ?? currentVisibleTerminalTabs()[0] ?? null;
       if (nextSession) {
-        openSessionAsTab(nextSession);
+        activateTerminalTabWorkbench(nextSession);
       } else {
         session = null;
         setActiveRuntime(null);
@@ -1542,9 +2080,7 @@
       return;
     }
     activePaneId = terminalPanes[0].paneId;
-    terminalPanes = terminalPanes.map((pane) => ({ ...pane, focused: pane.paneId === activePaneId }));
-    splitOrientation = terminalPanes.length > 1 ? splitOrientation : 'single';
-    setActiveRuntime(activeRuntime());
+    activatePane(activePaneId);
   }
 
   async function copySelectionFromContextMenu() {
@@ -1559,7 +2095,11 @@
 
   function startPollingForRuntime(runtime: TerminalPaneRuntime) {
     stopPollingForRuntime(runtime);
-    runtime.pollTimer = window.setInterval(() => { void pollTerminalOutputForRuntime(runtime); }, 1000);
+    if (!isRuntimeCurrent(runtime)) return;
+    runtime.pollTimer = window.setInterval(() => {
+      if (!isRuntimeCurrent(runtime)) return;
+      void pollTerminalOutputForRuntime(runtime);
+    }, 1000);
     commitRuntime(runtime);
   }
 
@@ -1586,14 +2126,14 @@
   }
 
   async function pollTerminalOutputForRuntime(runtime: TerminalPaneRuntime) {
-    if (!runtime.session) { stopPollingForRuntime(runtime); return; }
+    if (!isRuntimeCurrent(runtime) || !runtime.session) { stopPollingForRuntime(runtime); return; }
     if (runtime.pollInFlight) { runtime.pollQueued = true; commitRuntime(runtime); return; }
     runtime.pollInFlight = true;
     commitRuntime(runtime);
     try {
       const sessionId = runtime.session.sessionId;
       const result = await enqueueTerminalOperationForRuntime(runtime, () => readStackTerminal(sessionId));
-      if (result.sessionId !== runtime.session.sessionId) return;
+      if (!isRuntimeCurrent(runtime) || !result || result.sessionId !== runtime.session.sessionId) return;
       for (const chunk of result.chunks ?? []) writeTerminalChunkForRuntime(runtime, chunk);
       if (result.exited) {
         stopPollingForRuntime(runtime);
@@ -1604,12 +2144,14 @@
         commitRuntime(runtime);
       }
     } catch (error) {
+      if (!isRuntimeCurrent(runtime)) return;
       stopPollingForRuntime(runtime);
       runtime.lifecycle = runtime.outputReceived ? 'exited' : 'failed';
       runtime.status = errorMessage(error, 'Terminal output unavailable');
       commitRuntime(runtime);
       console.error('Failed to poll persistent terminal pane', error);
     } finally {
+      if (!isRuntimeCurrent(runtime)) return;
       runtime.pollInFlight = false;
       if (runtime.pollQueued) { runtime.pollQueued = false; void pollTerminalOutputForRuntime(runtime); }
       commitRuntime(runtime);
@@ -1674,8 +2216,13 @@
     sessionReplayBuffers = new Map(sessionReplayBuffers).set(sessionId, next);
   }
 
+  function runtimeHasAttachedTerminal(runtime: TerminalPaneRuntime) {
+    const element = runtime.terminal?.element;
+    return Boolean(element && runtime.host?.contains(element));
+  }
+
   function replayTerminalSessionOutput(runtime: TerminalPaneRuntime) {
-    if (runtime.replayedSessionOutput || !runtime.terminal) return;
+    if (!isRuntimeCurrent(runtime) || runtime.replayedSessionOutput || !runtimeHasAttachedTerminal(runtime)) return;
     const replay = sessionReplayBuffers.get(runtime.session.sessionId) ?? '';
     if (!replay) return;
     runtime.replayedSessionOutput = true;
@@ -1685,11 +2232,12 @@
       runtime.status = '';
       clearStartupTimerForRuntime(runtime);
     }
-    runtime.terminal.write(replay);
+    runtime.terminal?.write(replay);
     commitRuntime(runtime);
   }
 
   function writeTerminalChunkForRuntime(runtime: TerminalPaneRuntime, chunk: StackTerminalOutputChunk) {
+    if (!isRuntimeCurrent(runtime) || chunk.sessionId !== runtime.session.sessionId) return;
     if (typeof chunk.sequence === 'number') {
       const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
       if (runtime.renderedSequences.has(sequenceKey)) return;
@@ -1711,18 +2259,23 @@
   }
 
   function writeTerminalOutputForRuntime(runtime: TerminalPaneRuntime, output: string) {
-    if (output && terminalOutputHasVisibleText(output)) {
+    if (!isRuntimeCurrent(runtime)) return;
+    const hasVisibleOutput = Boolean(output && terminalOutputHasVisibleText(output));
+    const hasAttachedTerminal = runtimeHasAttachedTerminal(runtime);
+    if (hasVisibleOutput && hasAttachedTerminal) {
       runtime.outputReceived = true;
       runtime.lifecycle = 'running';
       runtime.status = '';
       runtime.session = { ...runtime.session, lastOutputAt: Date.now(), running: true };
       clearStartupTimerForRuntime(runtime);
+    } else if (hasVisibleOutput && !hasAttachedTerminal && runtime.lifecycle !== 'failed' && runtime.lifecycle !== 'exited') {
+      runtime.status = 'Attaching terminal view...';
     }
     if (output) {
       appendSessionReplayBuffer(runtime.session.sessionId, output);
       runtime.recentOutputText = `${runtime.recentOutputText}${stripTerminalAnsiControls(output)}`.slice(-20000);
     }
-    runtime.terminal?.write(output);
+    if (hasAttachedTerminal) runtime.terminal?.write(output);
     commitRuntime(runtime);
   }
 
@@ -1753,42 +2306,51 @@
 
   function attachPaneHost(node: HTMLDivElement, pane: TerminalPaneModel) {
     const runtime = paneRuntimes.get(pane.paneId);
-    if (!runtime) return;
+    if (!runtime || runtime.session.sessionId !== pane.sessionId || !isRuntimeCurrent(runtime)) return null;
     runtime.host = node;
     commitRuntime(runtime);
     ensureTerminalViewForPane(runtime);
     replayTerminalSessionOutput(runtime);
     scheduleFitForRuntime(runtime);
+    return runtime;
   }
 
   function bindPaneHost(node: HTMLDivElement, pane: TerminalPaneModel) {
     let boundPane = pane;
-    attachPaneHost(node, boundPane);
+    let boundRuntimeId: string | null = null;
+    const clearBoundHost = () => {
+      if (!boundRuntimeId) return;
+      const previousRuntime = [...paneRuntimes.values()].find((runtime) => runtime.runtimeId === boundRuntimeId);
+      if (previousRuntime?.host === node) {
+        previousRuntime.host = null;
+        commitRuntime(previousRuntime);
+      }
+      boundRuntimeId = null;
+    };
+    boundRuntimeId = attachPaneHost(node, boundPane)?.runtimeId ?? null;
     return {
       update(nextPane: TerminalPaneModel) {
         const previousPane = boundPane;
         boundPane = nextPane;
         if (previousPane.paneId !== nextPane.paneId || previousPane.sessionId !== nextPane.sessionId) {
-          const previousRuntime = paneRuntimes.get(previousPane.paneId);
-          if (previousRuntime?.host === node) {
-            previousRuntime.host = null;
-            commitRuntime(previousRuntime);
-          }
+          clearBoundHost();
         }
-        attachPaneHost(node, boundPane);
+        boundRuntimeId = attachPaneHost(node, boundPane)?.runtimeId ?? null;
       },
       destroy() {
-        const latest = paneRuntimes.get(boundPane.paneId);
-        if (latest?.host === node) {
-          latest.host = null;
-          commitRuntime(latest);
-        }
+        clearBoundHost();
       }
     };
   }
 
   function focusTerminal() {
     void tick().then(() => {
+      const runtime = activeRuntime();
+      if (runtime) {
+        ensureTerminalViewForPane(runtime);
+        runtime.terminal?.focus();
+        return;
+      }
       ensureTerminalView();
       terminal?.focus();
     });
@@ -1796,7 +2358,9 @@
 
   function startStartupTimerForRuntime(runtime: TerminalPaneRuntime) {
     clearStartupTimerForRuntime(runtime);
+    if (!isRuntimeCurrent(runtime)) return;
     runtime.startupTimer = window.setTimeout(() => {
+      if (!isRuntimeCurrent(runtime)) return;
       if (!runtime.outputReceived && (runtime.lifecycle === 'starting' || runtime.lifecycle === 'waiting')) {
         runtime.status = 'Still waiting for terminal output...';
         commitRuntime(runtime);
@@ -1836,18 +2400,50 @@
       return;
     }
     const oldSession = runtime.session.sessionId;
+    const restartWasPaneOnly = paneOnlyTerminalSessionIds.has(oldSession);
     const paneId = runtime.paneId;
     const oldTitle = terminalPanes.find((pane) => pane.paneId === paneId)?.title;
+    const oldHost = runtime.host;
+    const restartGeneration = terminalWorkbenchGeneration;
+    const clearOldStoppedSession = () => {
+      terminalSessions = terminalSessions.filter((item) => item.sessionId !== oldSession);
+      clearStoppedTerminalSessionState(oldSession);
+    };
     stopPollingForRuntime(runtime);
     clearStartupTimerForRuntime(runtime);
+    markPaneRuntimeDisposed(runtime);
     await stopStackTerminal(oldSession).catch(() => undefined);
     disposePaneRuntime(runtime);
-    const nextSession = await startPersistentTerminal();
+    if (paneRuntimes.get(paneId)?.runtimeId === runtime.runtimeId) {
+      paneRuntimes.delete(paneId);
+      paneRuntimes = new Map(paneRuntimes);
+    }
+    if (listenersDisposed || restartGeneration !== terminalWorkbenchGeneration || !terminalPanes.some((pane) => pane.paneId === paneId && pane.sessionId === oldSession)) {
+      clearOldStoppedSession();
+      return;
+    }
+    const nextSession = await startTerminalPanelSessionInActiveCwd();
+    if (listenersDisposed || restartGeneration !== terminalWorkbenchGeneration || !terminalPanes.some((pane) => pane.paneId === paneId && pane.sessionId === oldSession)) {
+      await stopStackTerminal(nextSession.sessionId).catch((error) => console.debug('Persistent terminal stale restart cleanup unavailable', error));
+      clearStoppedTerminalSessionState(nextSession.sessionId);
+      terminalSessions = terminalSessions.filter((item) => item.sessionId !== nextSession.sessionId);
+      clearOldStoppedSession();
+      return;
+    }
+    clearOldStoppedSession();
+    if (restartWasPaneOnly) {
+      markTerminalSessionAsPaneOnly(nextSession.sessionId);
+    } else {
+      markTerminalSessionAsTab(nextSession.sessionId);
+      terminalTabWorkbenches.delete(oldSession);
+      terminalTabWorkbenches = new Map(terminalTabWorkbenches);
+      activeTerminalTabSessionId = nextSession.sessionId;
+    }
     const nextRuntime = createPaneRuntime({ ...nextSession, title: oldTitle || nextSession.title }, paneId);
-    nextRuntime.host = runtime.host;
-    paneRuntimes = new Map(paneRuntimes).set(paneId, nextRuntime);
-    terminalPanes = terminalPanes.map((pane) => pane.paneId === paneId ? { ...pane, sessionId: nextSession.sessionId, title: oldTitle || nextSession.title || pane.title } : pane);
-    terminalSessions = terminalSessions.filter((item) => item.sessionId !== oldSession).concat(nextSession);
+    nextRuntime.host = oldHost;
+    setTerminalPaneTree(replacePaneSessionInTree(terminalPaneTree, paneId, nextSession, oldTitle || nextSession.title || 'Terminal'));
+    commitRuntime(nextRuntime);
+    terminalSessions = terminalSessions.filter((item) => item.sessionId !== nextSession.sessionId).concat(nextSession);
     activePaneId = paneId;
     setActiveRuntime(nextRuntime);
     ensureTerminalViewForPane(nextRuntime);
@@ -1872,7 +2468,8 @@
   function paneDisplayTitle(pane: TerminalPaneModel) {
     const terminalSession = terminalSessions.find((item) => item.sessionId === pane.sessionId);
     if (terminalSession) return terminalDisplayTitle(terminalSession);
-    const runtime = paneRuntimes.get(pane.paneId);
+    const candidateRuntime = paneRuntimes.get(pane.paneId);
+    const runtime = candidateRuntime && isRuntimeCurrent(candidateRuntime) ? candidateRuntime : null;
     const titleState = terminalTitleStates.get(pane.sessionId);
     return buildTerminalTabTitle({
       profileTitle: pane.title,
@@ -1912,17 +2509,60 @@
   }
 }} />
 
+{#snippet renderPaneTree(node: TerminalPaneTreeNode)}
+  {#if node.kind === 'split'}
+    {#key node.splitId}
+      <div class="terminal-pane-split" data-split-direction={node.direction} data-split-id={node.splitId}>
+        {@render renderPaneTree(node.first)}
+        {@render renderPaneTree(node.second)}
+      </div>
+    {/key}
+  {:else}
+    {@const pane = node.pane}
+    {#key paneDomKey(pane)}
+      {@const paneRuntime = runtimeForPane(pane)}
+      {@const displayTitle = paneDisplayTitle(pane)}
+      <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${displayTitle}`}>
+        <div class="terminal-pane-chrome" title={displayTitle}>
+          <span>{displayTitle}</span>
+        </div>
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
+        <div
+          use:bindPaneHost={pane}
+          class="terminal-panel-output"
+          role="log"
+          aria-label="Terminal output"
+          data-pane-id={pane.paneId}
+          on:mousedown|capture={(event) => { activatePane(pane.paneId); handleTerminalMouseDown(event); }}
+          on:wheel|capture|nonpassive={handleTerminalFontZoomWheel}
+          on:contextmenu={(event) => { activatePane(pane.paneId); openTerminalContextMenu(event); }}
+        ></div>
+        {#if paneRuntime && !paneRuntime.outputReceived && paneRuntime.lifecycle !== 'running'}
+          <div class="terminal-panel-status" class:error={paneRuntime.lifecycle === 'failed'} role={paneRuntime.lifecycle === 'failed' ? 'alert' : 'status'} aria-live="polite">
+            <strong>{paneRuntime.status}</strong>
+            {#if paneRuntime.lifecycle === 'failed'}
+              <span>Restart terminal or check PowerShell startup.</span>
+            {:else}
+              <span>JasonShell terminal starts with the app and stays alive while hidden.</span>
+            {/if}
+          </div>
+        {/if}
+      </section>
+    {/key}
+  {/if}
+{/snippet}
+
 <div class="terminal-panel" role="dialog" aria-label="Persistent terminal">
   <header class="terminal-panel-header">
     <div class="terminal-session-tabs" role="tablist" aria-label="Terminal sessions">
-      {#each terminalSessions as terminalSession, index}
+      {#each visibleTerminalTabs as terminalSession, index (terminalSession.sessionId)}
         {@const displayTitle = terminalDisplayTitle(terminalSession) || `Session ${index + 1}`}
-        <div class="terminal-tab-shell" class:active={terminalSession.sessionId === session?.sessionId} role="presentation">
+        <div class="terminal-tab-shell" class:active={terminalSession.sessionId === activeTerminalTabSessionId} role="presentation">
           <button
             type="button"
             class="terminal-tab-button"
             role="tab"
-            aria-selected={terminalSession.sessionId === session?.sessionId}
+            aria-selected={terminalSession.sessionId === activeTerminalTabSessionId}
             aria-label={`Switch to terminal session ${displayTitle}`}
             on:click={() => activateTerminalSession(terminalSession)}
             title={displayTitle}
@@ -1950,7 +2590,8 @@
     </div>
     <nav class="terminal-toolbar" aria-label="Terminal actions">
       <button type="button" title="Search" aria-label="Search terminal" disabled={!actionEnabled('search')} on:click={() => void runTerminalAction('search')}>⌕</button>
-      <button type="button" title="Split terminal pane" aria-label="Split terminal pane" disabled={!actionEnabled('splitVertical')} on:click={() => void runTerminalAction('splitVertical')}>Split</button>
+      <button type="button" title="Split pane right" aria-label="Split terminal pane right" on:click={() => void runTerminalAction('splitVertical')}>Split right</button>
+      <button type="button" title="Split pane down" aria-label="Split terminal pane down" on:click={() => void runTerminalAction('splitHorizontal')}>Split down</button>
       <button type="button" title="Rename session" aria-label="Rename terminal session" disabled={!actionEnabled('renameSession')} on:click={() => void runTerminalAction('renameSession')}>Rename</button>
       <button type="button" title="Quick Select" aria-label="Open terminal Quick Select" on:click={toggleQuickSelect}>QS</button>
       <button type="button" title="Recent commands" aria-label="Open recent terminal commands" on:click={() => { recentMenuOpen = !recentMenuOpen; actionMenuOpen = false; }}>⌘</button>
@@ -1983,37 +2624,10 @@
     </nav>
   </header>
   <section class="terminal-panel-body" class:split-vertical={splitOrientation === 'vertical'} class:split-horizontal={splitOrientation === 'horizontal'}>
-    <div class="terminal-pane-grid" data-split-orientation={splitOrientation}>
-      {#each terminalPanes as pane (pane.sessionId)}
-        {@const paneRuntime = paneRuntimes.get(pane.paneId)}
-        {@const displayTitle = paneDisplayTitle(pane)}
-        <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${displayTitle}`}>
-          <div class="terminal-pane-chrome" title={displayTitle}>
-            <span>{displayTitle}</span>
-          </div>
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
-          <div
-            use:bindPaneHost={pane}
-            class="terminal-panel-output"
-            role="log"
-            aria-label="Terminal output"
-            data-pane-id={pane.paneId}
-            on:mousedown|capture={(event) => { activatePane(pane.paneId); handleTerminalMouseDown(event); }}
-            on:wheel|capture|nonpassive={handleTerminalFontZoomWheel}
-            on:contextmenu={(event) => { activatePane(pane.paneId); openTerminalContextMenu(event); }}
-          ></div>
-          {#if paneRuntime && !paneRuntime.outputReceived && paneRuntime.lifecycle !== 'running'}
-            <div class="terminal-panel-status" class:error={paneRuntime.lifecycle === 'failed'} role={paneRuntime.lifecycle === 'failed' ? 'alert' : 'status'} aria-live="polite">
-              <strong>{paneRuntime.status}</strong>
-              {#if paneRuntime.lifecycle === 'failed'}
-                <span>Restart terminal or check PowerShell startup.</span>
-              {:else}
-                <span>JasonShell terminal starts with the app and stays alive while hidden.</span>
-              {/if}
-            </div>
-          {/if}
-        </section>
-      {/each}
+    <div class="terminal-pane-tree" data-split-orientation={splitOrientation}>
+      {#if terminalPaneTree}
+        {@render renderPaneTree(terminalPaneTree)}
+      {/if}
     </div>
     {#if searchOpen}
       <form class="terminal-search" on:pointerdown|stopPropagation on:submit|preventDefault={searchNext}>

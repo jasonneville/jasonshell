@@ -222,25 +222,60 @@ test('terminal tabs are backend-session authoritative and are not capped at four
   const terminalBackend = read('src-tauri/src/stack_popup/terminal.rs');
   assert.doesNotMatch(terminalBackend, /MAX_STACK_TERMINAL_SESSIONS\b|limited to \{MAX_STACK_TERMINAL_SESSIONS\}|can_start_session/);
   assert.doesNotMatch(terminalPanel, /terminalSessions\.length < 4/);
-  assert.match(terminalPanel, /canCreateSession:\s*true/);
-  assert.match(terminalPanel, /await refreshTerminalSessionList\(\);[\s\S]*terminalSessions\.find\(\(candidate\) => candidate\.running\)[\s\S]*startPersistentTerminal\(\)/);
+  assert.match(terminalPanel, /canCreateSession:\s*!sessionCreationInFlight/);
+  assert.match(terminalPanel, /let terminalSessionCreationInFlight = false/);
+  assert.match(terminalPanel, /await refreshTerminalSessionList\(\);[\s\S]*currentVisibleTerminalTabs\(\)[\s\S]*startPersistentTerminal\(\)/);
+  assert.match(terminalPanel, /let terminalTabSessionIds = new Set<string>\(\)/);
+  assert.match(terminalPanel, /let paneOnlyTerminalSessionIds = new Set<string>\(\)/);
+  assert.match(terminalPanel, /\$: visibleTerminalTabs = terminalSessions\.filter\(\(item\) => terminalTabSessionIds\.has\(item\.sessionId\) && !paneOnlyTerminalSessionIds\.has\(item\.sessionId\)\)/);
   assert.match(terminalPanel, /const backendSessions = await listStackTerminals\('terminal-panel'\)/);
   assert.match(terminalPanel, /const backendSessionIds = new Set\(backendSessions\.map\(\(item\) => item\.sessionId\)\)/);
-  assert.match(terminalPanel, /removePaneRuntime\(removedPane\.paneId, false, true\)/);
-  assert.doesNotMatch(terminalPanel, /removePaneRuntime\(removedPane\.paneId, true\)/);
+  assert.doesNotMatch(terminalPanel, /terminalPanes\.length >= 2|terminalPanes\.length < 2|Math\.min\(terminalPanes\.length \+ 1, 2\)/);
+  assert.doesNotMatch(terminalPanel, /removePaneRuntime\(removedPane\.paneId/);
 });
 
-test('terminal tab plus creates whole-page tabs while split is a separate toolbar button', () => {
+test('terminal tab plus creates whole-page tabs while split right and down are separate toolbar buttons', () => {
   assert.match(terminalPanel, /class="terminal-tab-new"[\s\S]*aria-label="New terminal tab"[\s\S]*runTerminalAction\('newSession'\)/);
-  assert.match(terminalPanel, /title="Split terminal pane"[\s\S]*aria-label="Split terminal pane"[\s\S]*runTerminalAction\('splitVertical'\)/);
-  assert.match(terminalPanel, /function openSessionAsTab\(nextSession: StackTerminalSession\): TerminalPaneRuntime[\s\S]*removePaneRuntime\(pane\.paneId, false, true\)[\s\S]*splitOrientation = 'single'/);
-  assert.match(terminalPanel, /function openSessionAsTab\(nextSession: StackTerminalSession\): TerminalPaneRuntime[\s\S]*replayTerminalSessionOutput\(runtime\)[\s\S]*startPollingForRuntime\(runtime\)[\s\S]*pollTerminalOutputForRuntime\(runtime\)/);
-  assert.match(terminalPanel, /async function createTerminalSession\(\)[\s\S]*openSessionAsTab\(nextSession\)/);
-  assert.match(terminalPanel, /async function createSplitPaneSession\(orientation: Exclude<TerminalSplitOrientation, 'single'>\)[\s\S]*ensurePrimaryPaneForSession\(nextSession\)/);
-  assert.match(terminalPanel, /async function splitTerminal[\s\S]*createSplitPaneSession\(orientation\)/);
-  assert.doesNotMatch(terminalPanel, /async function splitTerminal[\s\S]{0,180}createTerminalSession\(\)/);
+  assert.match(terminalPanel, /title="Split pane right"[\s\S]*aria-label="Split terminal pane right"[\s\S]*runTerminalAction\('splitVertical'\)/);
+  assert.match(terminalPanel, /title="Split pane down"[\s\S]*aria-label="Split terminal pane down"[\s\S]*runTerminalAction\('splitHorizontal'\)/);
+  assert.match(terminalPanel, /import \{[\s\S]*planActivateTerminalTabWorkbench[\s\S]*planCloseTerminalTabWorkbench[\s\S]*planCreateTerminalTabWorkbench[\s\S]*TerminalTabWorkbenchSummary[\s\S]*\} from '\.\.\/features\/terminal\/terminalWorkbenchState'/);
+  assert.match(terminalPanel, /let terminalTabWorkbenches = new Map<string, TerminalTabWorkbenchSummary>\(\)/);
+  assert.doesNotMatch(terminalPanel, /\$: activeTerminalTabSessionId = currentWorkbenchTabSessionId\(\)/);
+  assert.match(terminalPanel, /function activateTerminalSession\(nextSession: StackTerminalSession\)[\s\S]*activateTerminalTabWorkbench\(nextSession\)/);
+  assert.match(terminalPanel, /function detachPaneRuntimeViewForHiddenTab\(runtime: TerminalPaneRuntime\)[\s\S]*disposePaneRuntime\(runtime\)[\s\S]*runtime\.host = null[\s\S]*runtime\.replayedSessionOutput = false/);
+  assert.doesNotMatch(terminalPanel, /function detachPaneRuntimeViewForHiddenTab[\s\S]{0,700}markPaneRuntimeDisposed/);
+  assert.doesNotMatch(terminalPanel, /function detachPaneRuntimeViewForHiddenTab[\s\S]{0,700}stopStackTerminal/);
+  assert.match(terminalPanel, /function activateTerminalTabWorkbench\(nextSession: StackTerminalSession\)[\s\S]*saveCurrentTerminalWorkbench\(\)[\s\S]*planActivateTerminalTabWorkbench\([\s\S]*detachVisibleTerminalWorkbenchViewsForHiddenTab\(\)[\s\S]*setTerminalPaneTree\(plan\.visibleTree\)[\s\S]*restoreVisibleTerminalWorkbenchRuntimes\(\)/);
+  assert.doesNotMatch(terminalPanel, /function openSessionAsTab\(/);
+  assert.match(terminalPanel, /function clearStoppedTerminalSessionState\(sessionId: string\)[\s\S]*forgetTerminalSessionOwnership\(sessionId\)[\s\S]*sessionReplayBuffers\.delete\(sessionId\)[\s\S]*renderedSequenceKeysBySession\.delete\(sessionId\)[\s\S]*terminalTitleStates\.delete\(sessionId\)/);
+  assert.match(terminalPanel, /async function createTerminalSession\(\)[\s\S]*if \(terminalSessionCreationInFlight\) return;[\s\S]*terminalSessionCreationInFlight = true;[\s\S]*saveCurrentTerminalWorkbench\(tabCreationWorkbenchSessionId\)[\s\S]*startTerminalPanelSessionInActiveCwd\(\)[\s\S]*planCreateTerminalTabWorkbench\([\s\S]*replaceTerminalTabWorkbenches\(plan\.workbenches\)[\s\S]*detachVisibleTerminalWorkbenchViewsForHiddenTab\(\)[\s\S]*setTerminalPaneTree\(plan\.visibleTree\)[\s\S]*restoreVisibleTerminalWorkbenchRuntimes\(\)[\s\S]*terminalSessionCreationInFlight = false/);
+  assert.doesNotMatch(terminalPanel, /async function createTerminalSession\(\)[\s\S]*shouldActivateNewTab/);
+  assert.match(terminalPanel, /async function createSplitPaneSession\(direction: TerminalSplitDirection\)[\s\S]*const splitStartGeneration = terminalWorkbenchGeneration[\s\S]*startTerminalPanelSessionInActiveCwd\(\)[\s\S]*isSplitStartStale\([\s\S]*await stopStackTerminal\(nextSession\.sessionId\)[\s\S]*markTerminalSessionAsPaneOnly\(nextSession\.sessionId\)[\s\S]*setTerminalPaneTree\(splitPaneTreeAtLeaf\(terminalPaneTree, targetPaneId, pane, direction\)\)[\s\S]*ensureTerminalViewForPane\(runtime\)[\s\S]*await tick\(\)[\s\S]*ensureTerminalViewForPane\(runtime\)/);
+  assert.match(terminalPanel, /\{#each visibleTerminalTabs as terminalSession, index \(terminalSession\.sessionId\)\}/);
+  assert.match(terminalPanel, /function startTerminalPanelSessionInActiveCwd\(\)[\s\S]*startStackTerminal\(cwd, terminalPanelStartupProfile\(\), 'terminal-panel'\)/);
+  assert.match(terminalPanel, /async function splitTerminal[\s\S]*orientation === 'vertical' \? 'right' : 'down'[\s\S]*createSplitPaneSession\(direction\)/);
+  assert.doesNotMatch(terminalPanel, /async function splitTerminal[\s\S]{0,220}terminalPanes\.length < 2/);
   assert.doesNotMatch(terminalPanel, /<button type="button" title="New terminal session"/);
   assert.match(terminalPanelCss, /\.terminal-session-tabs \.terminal-tab-new/);
+});
+
+test('terminal recursive split panes keep a source-contract tree and pane focus does not collapse layout', () => {
+  assert.match(terminalPanel, /type TerminalPaneTreeNode =/);
+  assert.match(terminalPanel, /let terminalPaneTree: TerminalPaneTreeNode \| null = null/);
+  assert.match(terminalPanel, /function flattenPaneTree\(node: TerminalPaneTreeNode \| null = terminalPaneTree\): TerminalPaneModel\[\]/);
+  assert.match(terminalPanel, /function splitPaneTreeAtLeaf\([\s\S]*direction: TerminalSplitDirection[\s\S]*kind: 'split'[\s\S]*first:[\s\S]*second:/);
+  assert.match(terminalPanel, /return \{\s*\.\.\.node,[\s\S]*first: splitPaneTreeAtLeaf\(node\.first, targetPaneId, nextPane, direction\),[\s\S]*second: splitPaneTreeAtLeaf\(node\.second, targetPaneId, nextPane, direction\)[\s\S]*\};/);
+  assert.match(terminalPanel, /setTerminalPaneTree\(splitPaneTreeAtLeaf\(terminalPaneTree, targetPaneId, pane, direction\)\)/);
+  assert.match(terminalPanel, /async function splitTerminal[\s\S]*await createSplitPaneSession\(direction\)/);
+  assert.doesNotMatch(terminalPanel, /async function splitTerminal[\s\S]{0,260}terminalPanes\.length < 2/);
+  assert.doesNotMatch(terminalPanel, /async function createSplitPaneSession[\s\S]{0,520}ensurePrimaryPaneForSession\(/);
+  assert.match(terminalPanel, /\{#snippet renderPaneTree\(node: TerminalPaneTreeNode\)\}[\s\S]*class="terminal-pane-split"[\s\S]*data-split-direction=\{node\.direction\}[\s\S]*@render renderPaneTree\(node\.first\)[\s\S]*@render renderPaneTree\(node\.second\)/);
+  const focusNextPaneBody = terminalPanel.match(/function focusNextPane\(direction = 1\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(focusNextPaneBody, /activatePane\(pane\.paneId\)[\s\S]*focusTerminal\(\)/);
+  assert.doesNotMatch(focusNextPaneBody, /activateTerminalSession\(/);
+  assert.match(terminalPanel, /async function splitTerminal[\s\S]*await startTerminal\('user-action'\);[\s\S]*await createSplitPaneSession\(direction\)/);
+  assert.match(terminalPanelCss, /\.terminal-pane-split\[data-split-direction="right"\][\s\S]*flex-direction:\s*row;/);
+  assert.match(terminalPanelCss, /\.terminal-pane-split\[data-split-direction="down"\][\s\S]*flex-direction:\s*column;/);
 });
 
 test('terminal tabs are horizontal rectangular tabs', () => {
@@ -270,8 +305,32 @@ test('terminal tab close lives in the header and replaces the status dot on hove
 });
 
 test('terminal tab close does not recreate a replacement session while other tabs exist', () => {
-  assert.match(terminalPanel, /if \(!terminalPanes\.length\) \{[\s\S]*const nextSession = terminalSessions\.find\(\(item\) => item\.running\) \?\? terminalSessions\[0\] \?\? null;[\s\S]*openSessionAsTab\(nextSession\)/);
+  assert.match(terminalPanel, /if \(!terminalPanes\.length\) \{[\s\S]*const nextSession = currentVisibleTerminalTabs\(\)\.find\(\(item\) => item\.running\) \?\? currentVisibleTerminalTabs\(\)\[0\] \?\? null;[\s\S]*activateTerminalTabWorkbench\(nextSession\)/);
+  assert.doesNotMatch(terminalPanel, /async function closeVisibleTerminalWorkbench\(/);
+  assert.match(terminalPanel, /async function closeTerminalSessionTab\(sessionId: string\)[\s\S]*planCloseTerminalTabWorkbench\([\s\S]*replaceTerminalTabWorkbenches\(plan\.workbenches\)[\s\S]*if \(closingActiveTab\) \{[\s\S]*setTerminalPaneTree\(plan\.visibleTree, true, false\)[\s\S]*restoreVisibleTerminalWorkbenchRuntimes\(\)[\s\S]*stopAndForgetTerminalSessionsInBackground\(plan\.stopBackendSessionIds\.length \? plan\.stopBackendSessionIds : \[sessionId\]\)/);
+  assert.doesNotMatch(terminalPanel, /async function closeTerminalSessionTab\(sessionId: string\)[\s\S]{0,900}await stopStackTerminal/);
+  assert.match(terminalPanel, /function stopAndForgetTerminalSessionsInBackground\(sessionIds: Iterable<string>\)[\s\S]*terminalSessions = terminalSessions\.filter\(\(item\) => !stoppedSessionIds\.has\(item\.sessionId\)\)[\s\S]*clearStoppedTerminalSessionState\(stoppedSessionId\)[\s\S]*void Promise\.all\(\[\.\.\.stoppedSessionIds\]\.map[\s\S]*stopStackTerminal\(stoppedSessionId\)/);
+  assert.match(terminalPanel, /async function stopTerminal\(\)[\s\S]*if \(terminalTabSessionIds\.has\(sessionId\)\) \{[\s\S]*await closeTerminalSessionTab\(sessionId\)/);
+  assert.match(terminalPanel, /async function restartTerminal\(\)[\s\S]*const clearOldStoppedSession = \(\) => \{[\s\S]*clearStoppedTerminalSessionState\(oldSession\)[\s\S]*await stopStackTerminal\(oldSession\)[\s\S]*clearOldStoppedSession\(\)/);
+  assert.match(terminalPanel, /async function restartTerminal\(\)[\s\S]*Persistent terminal stale restart cleanup unavailable[\s\S]*clearStoppedTerminalSessionState\(nextSession\.sessionId\)/);
   assert.doesNotMatch(terminalPanel, /if \(!terminalPanes\.length\) \{[\s\S]{0,160}await createTerminalSession\(\)/);
+});
+
+test('terminal split and tab lifecycle guards stale runtimes and DOM identity', () => {
+  assert.match(terminalPanel, /runtimeId: string/);
+  assert.match(terminalPanel, /disposed: boolean/);
+  assert.match(terminalPanel, /let terminalWorkbenchGeneration = 0/);
+  assert.match(terminalPanel, /function nextTerminalRuntimeId\(\)/);
+  assert.match(terminalPanel, /function isRuntimeCurrent\(runtime: TerminalPaneRuntime\)[\s\S]*runtime\.disposed[\s\S]*runtimeMatchesCurrentPane\(runtime\)/);
+  assert.match(terminalPanel, /function commitRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*if \(!isRuntimeCurrent\(runtime\)\) return false/);
+  assert.match(terminalPanel, /function markPaneRuntimeDisposed\(runtime: TerminalPaneRuntime\)[\s\S]*runtime\.disposed = true/);
+  assert.match(terminalPanel, /async function createSplitPaneSession\(direction: TerminalSplitDirection\)[\s\S]*const splitStartGeneration = terminalWorkbenchGeneration[\s\S]*if \(isSplitStartStale\([\s\S]*await stopStackTerminal\(nextSession\.sessionId\)/);
+  assert.match(terminalPanel, /function isSplitStartStale\([\s\S]*splitStartGeneration !== terminalWorkbenchGeneration[\s\S]*currentWorkbenchTabSessionId\(\) !== splitStartTabSessionId/);
+  assert.match(terminalPanel, /function attachPaneHost\(node: HTMLDivElement, pane: TerminalPaneModel\)[\s\S]*runtime\.session\.sessionId !== pane\.sessionId/);
+  assert.match(terminalPanel, /function bindPaneHost\(node: HTMLDivElement, pane: TerminalPaneModel\)[\s\S]*let boundRuntimeId: string \| null = null[\s\S]*runtime\.runtimeId === boundRuntimeId/);
+  assert.match(terminalPanel, /function writeTerminalOutputForRuntime\(runtime: TerminalPaneRuntime, output: string\)[\s\S]*const hasAttachedTerminal = runtimeHasAttachedTerminal\(runtime\)[\s\S]*hasVisibleOutput && hasAttachedTerminal[\s\S]*hasVisibleOutput && !hasAttachedTerminal[\s\S]*Attaching terminal view/);
+  assert.match(terminalPanel, /\{#key node\.splitId\}[\s\S]*class="terminal-pane-split"/);
+  assert.match(terminalPanel, /\{#key paneDomKey\(pane\)\}[\s\S]*use:bindPaneHost=\{pane\}/);
 });
 
 test('terminal tabs replay retained output and remember hidden-tab chunks', () => {
@@ -282,10 +341,14 @@ test('terminal tabs replay retained output and remember hidden-tab chunks', () =
   assert.match(terminalPanel, /function appendSessionReplayBuffer\(sessionId: string, output: string\)[\s\S]*\.slice\(-262144\)/);
   assert.match(terminalPanel, /replayedSessionOutput: boolean/);
   assert.match(terminalPanel, /replayedSessionOutput: false/);
-  assert.match(terminalPanel, /function replayTerminalSessionOutput\(runtime: TerminalPaneRuntime\)[\s\S]*if \(runtime\.replayedSessionOutput \|\| !runtime\.terminal\) return;[\s\S]*runtime\.terminal\.write\(replay\)/);
+  assert.match(terminalPanel, /function runtimeHasAttachedTerminal\(runtime: TerminalPaneRuntime\)[\s\S]*runtime\.host\?\.contains\(element\)/);
+  assert.match(terminalPanel, /function replayTerminalSessionOutput\(runtime: TerminalPaneRuntime\)[\s\S]*!runtimeHasAttachedTerminal\(runtime\)[\s\S]*runtime\.terminal\?\.write\(replay\)/);
+  assert.match(terminalPanel, /function ensureTerminalViewForPane\(runtime: TerminalPaneRuntime\)[\s\S]*runtime\.terminal\?\.element && runtime\.host\.contains\(runtime\.terminal\.element\)[\s\S]*return;[\s\S]*disposePaneRuntime\(runtime\)/);
+  assert.match(terminalPanel, /function disposePaneRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*const shouldReplayRetainedOutputOnReattach = !runtime\.disposed && Boolean\(runtime\.terminal\);[\s\S]*runtime\.terminal\?\.dispose\(\);[\s\S]*if \(shouldReplayRetainedOutputOnReattach\) runtime\.replayedSessionOutput = false;/);
+  assert.doesNotMatch(terminalPanel, /function disposePaneRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*renderedSequences\s*=\s*new Set/);
   assert.match(terminalPanel, /function attachPaneHost\(node: HTMLDivElement, pane: TerminalPaneModel\)[\s\S]*ensureTerminalViewForPane\(runtime\);[\s\S]*replayTerminalSessionOutput\(runtime\);[\s\S]*scheduleFitForRuntime\(runtime\)/);
   assert.match(terminalPanel, /update\(nextPane: TerminalPaneModel\)[\s\S]*previousPane\.sessionId !== nextPane\.sessionId[\s\S]*attachPaneHost\(node, boundPane\)/);
-  assert.match(terminalPanel, /\{#each terminalPanes as pane \(pane\.sessionId\)\}/);
+  assert.match(terminalPanel, /\{#snippet renderPaneTree\(node: TerminalPaneTreeNode\)\}/);
   assert.match(terminalPanel, /renderedSequences: new Set<string>\(renderedSequenceKeysBySession\.get\(nextSession\.sessionId\) \?\? \[\]\)/);
 });
 
@@ -308,14 +371,14 @@ test('phase 7 terminal panel owns real per-pane xterm runtimes and split resize'
   assert.match(terminalPanel, /runtime\.resizeObserver = new ResizeObserver\(\(\) => scheduleFitForRuntime\(runtime\)\)/);
   assert.match(terminalPanel, /function resizeAllVisiblePanes\(\)[\s\S]*paneRuntimes\.values\(\)[\s\S]*resizeTerminalToFitForRuntime/);
   assert.match(terminalPanel, /resizeStackTerminal\(sessionId, cols, rows, width, height\)/);
-  assert.match(terminalPanel, /function splitTerminal\(orientation: Exclude<TerminalSplitOrientation, 'single'>\)/);
+  assert.match(terminalPanel, /function splitTerminal\(orientation: Exclude<TerminalSplitOrientation, 'single' \| 'mixed'>\)/);
   assert.match(terminalPanel, /use:bindPaneHost=\{pane\}/);
-  assert.match(terminalPanel, /class="terminal-pane-grid"/);
+  assert.match(terminalPanel, /class="terminal-pane-tree"/);
   assert.match(terminalPanel, /function closeTerminalSessionTab\(sessionId: string\)/);
   assert.doesNotMatch(terminalPanel, /class="terminal-split-grid"/);
   assert.doesNotMatch(terminalPanel, /class="terminal-pane-title"/);
-  assert.match(terminalPanelCss, /\.terminal-pane-grid\[data-split-orientation="vertical"\]/);
-  assert.match(terminalPanelCss, /\.terminal-pane-grid\[data-split-orientation="horizontal"\]/);
+  assert.match(terminalPanelCss, /\.terminal-pane-tree,/);
+  assert.match(terminalPanelCss, /\.terminal-pane-split/);
   assert.match(terminalPanelCss, /\.terminal-pane\.focused/);
   assert.match(terminalPanelCss, /box-sizing:\s*border-box;/);
   assert.match(terminalPanelCss, /overflow:\s*hidden;/);

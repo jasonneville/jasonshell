@@ -32,7 +32,7 @@ test('terminal action gating avoids scanning xterm buffer during reactive state 
 
 test('terminal cwd actions use effective cwd fallback instead of session-only state', () => {
   assert.match(panel, /function effectiveTerminalCwd\(\)/);
-  assert.match(panel, /session\?\.cwd \|\| commandState\?\.cwd \|\| selectedCommand\(\)\?\.cwd/);
+  assert.match(panel, /runtime\?\.session\.cwd \|\| session\?\.cwd \|\| runtime\?\.commandState\?\.cwd \|\| commandState\?\.cwd \|\| selectedCommand\(\)\?\.cwd/);
   assert.match(panel, /hasCwd: Boolean\(cwd\)/);
   assert.match(panel, /openStackTerminalHere\(cwd\)/);
   assert.match(panel, /openStackFolderInVscode\(cwd\)/);
@@ -61,6 +61,18 @@ test('terminal action registry defines state-gated Phase 6 actions', () => {
   assert.match(actions, /hasDetectedTarget/);
   assert.match(panel, /getTerminalAction/);
   assert.match(panel, /runTerminalAction/);
+});
+
+test('terminal split actions are always available from the toolbar and bootstrap startup if needed', () => {
+  assert.match(actions, /\| 'splitHorizontal'\s*\| 'splitVertical'/);
+  assert.match(actions, /id: 'splitHorizontal', label: 'Split down', isEnabled: \(\) => true/);
+  assert.match(actions, /id: 'splitVertical', label: 'Split right', isEnabled: \(\) => true/);
+  assert.match(panel, /title="Split pane right"[\s\S]*aria-label="Split terminal pane right"(?![\s\S]{0,160}disabled=)[\s\S]*runTerminalAction\('splitVertical'\)/);
+  assert.match(panel, /title="Split pane down"[\s\S]*aria-label="Split terminal pane down"(?![\s\S]{0,160}disabled=)[\s\S]*runTerminalAction\('splitHorizontal'\)/);
+  assert.match(panel, /async function splitTerminal[\s\S]*if \(!terminalPanes\.length\) \{[\s\S]*await startTerminal\('user-action'\);[\s\S]*await createSplitPaneSession\(direction\)/);
+  assert.match(panel, /function startTerminalPanelSessionInActiveCwd\(\)[\s\S]*startStackTerminal\(cwd, terminalPanelStartupProfile\(\), 'terminal-panel'\)/);
+  assert.match(panel, /async function createSplitPaneSession\(direction: TerminalSplitDirection\)[\s\S]*startTerminalPanelSessionInActiveCwd\(\)[\s\S]*markTerminalSessionAsPaneOnly\(nextSession\.sessionId\)/);
+  assert.doesNotMatch(actions, /terminalPanes\.length|MAX|limit/i);
 });
 
 test('recent terminal history is bounded in memory and not persisted', () => {

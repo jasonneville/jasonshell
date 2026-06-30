@@ -188,9 +188,14 @@ impl StackTerminalRegistry {
     }
 
     fn list_by_target(&self, target_label: Option<&str>) -> Vec<StackTerminalSessionSnapshot> {
-        let mut sessions = self.sessions
+        let mut sessions = self
+            .sessions
             .values()
-            .filter(|session| target_label.map(|label| session.target_label == label).unwrap_or(true))
+            .filter(|session| {
+                target_label
+                    .map(|label| session.target_label == label)
+                    .unwrap_or(true)
+            })
             .map(StackTerminalSession::snapshot)
             .collect::<Vec<_>>();
         sessions.sort_by_key(|session| session.created_at);
@@ -198,7 +203,11 @@ impl StackTerminalRegistry {
     }
 
     #[cfg(test)]
-    fn rename(&mut self, session_id: &str, title: String) -> Result<StackTerminalSessionSnapshot, String> {
+    fn rename(
+        &mut self,
+        session_id: &str,
+        title: String,
+    ) -> Result<StackTerminalSessionSnapshot, String> {
         let title = sanitize_stack_terminal_title(&title)?;
         let session = self.session_mut(session_id)?;
         session.title = title;
@@ -206,7 +215,8 @@ impl StackTerminalRegistry {
     }
 
     fn request_stop_by_target(&mut self, target_label: &str) -> Vec<StackTerminalSession> {
-        let ids = self.sessions
+        let ids = self
+            .sessions
             .values()
             .filter(|session| session.target_label == target_label)
             .map(|session| session.id.clone())
@@ -227,7 +237,12 @@ impl StackTerminalRegistry {
     }
 
     #[cfg(test)]
-    pub(crate) fn insert_test_session_for_target(&mut self, id: String, cwd: PathBuf, target_label: String) {
+    pub(crate) fn insert_test_session_for_target(
+        &mut self,
+        id: String,
+        cwd: PathBuf,
+        target_label: String,
+    ) {
         self.sessions.insert(
             id.clone(),
             StackTerminalSession {
@@ -572,7 +587,9 @@ pub(crate) fn list_stack_terminals(
     let runtime = state
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    Ok(runtime.terminal_sessions.list_by_target(target_label.as_deref()))
+    Ok(runtime
+        .terminal_sessions
+        .list_by_target(target_label.as_deref()))
 }
 
 pub(crate) fn rename_stack_terminal(
@@ -598,7 +615,9 @@ pub(crate) fn stop_terminal_sessions_for_target(
         let mut runtime = state
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-        runtime.terminal_sessions.request_stop_by_target(target_label)
+        runtime
+            .terminal_sessions
+            .request_stop_by_target(target_label)
     };
     for session in sessions.iter_mut() {
         let _ = session.child.kill();
@@ -975,7 +994,8 @@ pub(crate) fn terminal_process_plan(
 fn powershell_cmd_launch_line(powershell: PathBuf) -> String {
     let trusted_path =
         short_windows_path(&powershell).unwrap_or_else(|| powershell.to_string_lossy().to_string());
-    let encoded_bootstrap = powershell_encoded_command("Invoke-Expression $env:JASONSHELL_POWERSHELL_STARTUP");
+    let encoded_bootstrap =
+        powershell_encoded_command("Invoke-Expression $env:JASONSHELL_POWERSHELL_STARTUP");
     format!(
         "{} {}",
         trusted_path,
@@ -1402,12 +1422,19 @@ mod tests {
             .contains("Set-PSReadLineKeyHandler -Key RightArrow -Function AcceptSuggestion"));
         assert!(startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -ScriptBlock"));
         assert!(startup_script.contains("$linePrefix = $beforeLine.Substring(0, $beforeCursor)"));
-        assert!(startup_script.contains("$currentToken = ($linePrefix -split '\\s+')[-1].Trim([char]34, [char]39)"));
+        assert!(startup_script
+            .contains("$currentToken = ($linePrefix -split '\\s+')[-1].Trim([char]34, [char]39)"));
         assert!(startup_script.contains("Test-Path -LiteralPath $currentToken -PathType Container"));
-        assert!(startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::AcceptSuggestion()"));
-        assert!(startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext()"));
-        assert!(startup_script.contains("if ($beforeLine -eq $afterLine -and $beforeCursor -eq $afterCursor)"));
-        assert!(!startup_script.contains("Set-PSReadLineKeyHandler -Key Tab -Function AcceptSuggestion"));
+        assert!(
+            startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::AcceptSuggestion()")
+        );
+        assert!(
+            startup_script.contains("[Microsoft.PowerShell.PSConsoleReadLine]::TabCompleteNext()")
+        );
+        assert!(startup_script
+            .contains("if ($beforeLine -eq $afterLine -and $beforeCursor -eq $afterCursor)"));
+        assert!(!startup_script
+            .contains("Set-PSReadLineKeyHandler -Key Tab -Function AcceptSuggestion"));
         assert!(startup_script
             .contains("Set-PSReadLineKeyHandler -Key Shift+Tab -Function TabCompletePrevious"));
         assert!(startup_script
@@ -1531,12 +1558,21 @@ mod tests {
     #[test]
     fn terminal_output_decoder_preserves_split_utf8_sequences() {
         let mut pending = Vec::new();
-        assert_eq!(decode_terminal_output_chunk(&mut pending, &[0xE2, 0x94]), "");
-        assert_eq!(decode_terminal_output_chunk(&mut pending, &[0x80, b' ', b'O', b'K']), "─ OK");
+        assert_eq!(
+            decode_terminal_output_chunk(&mut pending, &[0xE2, 0x94]),
+            ""
+        );
+        assert_eq!(
+            decode_terminal_output_chunk(&mut pending, &[0x80, b' ', b'O', b'K']),
+            "─ OK"
+        );
         assert!(pending.is_empty());
 
         assert_eq!(decode_terminal_output_chunk(&mut pending, b"bad"), "bad");
-        assert_eq!(decode_terminal_output_chunk(&mut pending, &[0xF0, 0x9F]), "");
+        assert_eq!(
+            decode_terminal_output_chunk(&mut pending, &[0xF0, 0x9F]),
+            ""
+        );
         assert_eq!(flush_terminal_output_decoder(&mut pending), "�");
         assert!(pending.is_empty());
     }
@@ -1629,9 +1665,14 @@ mod tests {
         assert_eq!(panel_sessions[0].title, "PowerShell");
         assert!(panel_sessions[0].created_at > 0);
 
-        let renamed = registry.rename("stack-term-panel", "API server".to_string()).unwrap();
+        let renamed = registry
+            .rename("stack-term-panel", "API server".to_string())
+            .unwrap();
         assert_eq!(renamed.title, "API server");
-        assert_eq!(registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL))[0].title, "API server");
+        assert_eq!(
+            registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL))[0].title,
+            "API server"
+        );
     }
 
     #[test]
@@ -1655,8 +1696,15 @@ mod tests {
 
         let stopped = registry.request_stop_by_target(shell_windows::TERMINAL_PANEL_LABEL);
         assert_eq!(stopped.len(), 2);
-        assert!(registry.list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL)).is_empty());
-        assert_eq!(registry.list_by_target(Some(shell_windows::STACK_POPUP_LABEL)).len(), 1);
+        assert!(registry
+            .list_by_target(Some(shell_windows::TERMINAL_PANEL_LABEL))
+            .is_empty());
+        assert_eq!(
+            registry
+                .list_by_target(Some(shell_windows::STACK_POPUP_LABEL))
+                .len(),
+            1
+        );
         assert!(registry.should_drop_for_stop("stack-term-panel-a"));
         assert!(registry.should_drop_for_stop("stack-term-panel-b"));
         assert!(!registry.should_drop_for_stop("stack-term-popup"));

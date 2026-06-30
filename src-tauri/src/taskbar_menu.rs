@@ -107,7 +107,13 @@ pub fn show_task_window_context_menu(
     .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
     let menu = Menu::with_items(
         &app_handle,
-        &[&focus_item, &minimize_item, &process_item, &pin_item, &close_item],
+        &[
+            &focus_item,
+            &minimize_item,
+            &process_item,
+            &pin_item,
+            &close_item,
+        ],
     )
     .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
 

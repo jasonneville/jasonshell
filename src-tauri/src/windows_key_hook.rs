@@ -9,8 +9,8 @@ use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_MENU, VK_OEM_3, VK_RCONTROL,
-    VK_RMENU, VK_SPACE,
+    GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_MENU, VK_OEM_3, VK_RCONTROL, VK_RMENU,
+    VK_SPACE,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -550,7 +550,8 @@ mod tests {
         let mut classifier = SearchHotkeyClassifier::default();
 
         assert_eq!(
-            classifier.handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(true)),
+            classifier
+                .handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(true)),
             SearchHotkeyDecision::ToggleSearch
         );
         assert_eq!(
@@ -568,7 +569,8 @@ mod tests {
             SearchHotkeyDecision::PassThrough
         );
         assert_eq!(
-            classifier.handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(false)),
+            classifier
+                .handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(false)),
             SearchHotkeyDecision::PassThrough
         );
     }
@@ -608,7 +610,10 @@ mod tests {
     #[test]
     fn emitted_event_targets_top_bar_existing_open_path() {
         assert_eq!(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, "search:toggle-centered");
-        assert_eq!(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, "terminal:toggle-panel");
+        assert_eq!(
+            TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
+            "terminal:toggle-panel"
+        );
         assert_eq!(
             toggle_search_event_target_label(),
             crate::shell_windows::TOP_BAR_LABEL
