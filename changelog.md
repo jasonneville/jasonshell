@@ -1,5 +1,15 @@
 ## Change Ledger
 
+- 2026-08-12 `[CODE]` FIXED: Windows bootstrap now does per-prerequisite detection, requests admin only immediately before missing package installs, uses a single quoted VS Build Tools override string, and gates WebView2/Rust/Node installs on detected absence.
+- 2026-08-12 `[CODE]` TESTED: Updated bootstrap source-contract coverage for conditional prerequisite checks, quoted Build Tools override wiring, WebView2 registry detection, and README/spec/changelog wording.
+
+- 2026-08-12 `[CODE]` FIXED: Windows bootstrap now imports MSVC dev env before npm/Tauri, prefers robust VsDevCmd discovery, enforces stable MSVC Rust toolchain/host verification, and emits actionable admin/reboot guidance for endpoint failures.
+- 2026-08-12 `[CODE]` TESTED: Expanded bootstrap source contracts for idempotent prerequisite installs, wait/no-restart VS Build Tools handling, WebView2, MSVC env import, and first-run README bootstrap wording.
+
+- 2026-08-12 `[CODE]` FIXED: Added workplace-friendly Windows bootstrap script `scripts/bootstrap-windows.ps1` that uses winget for Rust, Node.js/npm, MSVC Build Tools, and WebView2, refreshes PATH in-session, runs lockfile-safe `npm ci`, and launches `npm run tauri dev` with actionable failures.
+- 2026-08-12 `[CODE]` TESTED: Added source-contract coverage for bootstrap prerequisites, lockfile-safe install, dev launch, and README setup/run wiring.
+- 2026-08-12 `[CODE]` DOCS: README now points first-run Windows setup at the bootstrap script and documents the direct dev command.
+
  - 2026-08-12 `[CODE]` FIXED: Taskbar window activation now rejects invalid HWNDs before target resolution, retries focus through AttachThreadInput plus SwitchToThisWindow, verifies foreground ownership against target/root owner, and relabels taskbar activation affordance as Focus.
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 

@@ -12,6 +12,7 @@ This document is deliberately more granular than a continuity note. Keep impleme
 - Treat this file as a living specification, not a changelog-only artifact.
 - Update the relevant functional section when behavior, APIs, commands, events, persistence, tests, or known risks change.
 - Use `CHANGELOG_POLICY.md` for changelog rules. Write per-change progress/history to `changelog.md`, not to this file.
+- Windows bootstrap behavior: `scripts/bootstrap-windows.ps1` is the canonical first-run setup path on workplace-managed Windows machines. It must detect each prerequisite before installation, require admin only immediately before a missing prerequisite install, refresh the current session PATH after installs, use Rust stable MSVC as the default toolchain and verify the host, install VS Build Tools with a single quoted `--override` installer string using wait/quiet/no-restart semantics and stop with a controlled reboot-required message, import the MSVC developer environment before any npm or Tauri work, locate `VsDevCmd.bat` via `vswhere` when available with standard Build Tools fallbacks, detect WebView2 from supported registry state before install, use lockfile-safe repo dependency installation, and launch JasonShell with `npm run tauri dev`.
 - Do not store secrets, credentials, private tokens, or sensitive machine-specific content beyond already-known repo/config paths necessary for operation.
 - Preserve unrelated worktree changes; this repository commonly has in-progress files and untracked validation artifacts.
 

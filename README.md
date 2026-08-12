@@ -30,15 +30,21 @@ The top and bottom bars reserve primary-monitor edge space through the Windows A
 
 ## Install
 
+First run: bootstrap rather than `npm install`.
+
 ```powershell
-npm install
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
 ```
+
+That script installs missing Rust, Node.js/npm, MSVC build tools, and WebView2 with winget when needed, imports MSVC dev env, then runs the lockfile-safe repo install step (`npm ci`) before launching JasonShell.
 
 ## Run
 
 ```powershell
 npm run tauri dev
 ```
+
+If prerequisites are already installed and repo deps are present, you can also run the app directly with the dev command above.
 
 During `npm run tauri dev`, the primary shell surfaces report live runtime metrics to the terminal. Use those metrics to catch zero-height WebView/native-window regressions.
 
