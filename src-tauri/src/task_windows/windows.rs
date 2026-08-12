@@ -17,9 +17,10 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
+    EnumWindows, GetAncestor, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    GWL_EXSTYLE, GW_OWNER, WINDOW_EX_STYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GA_ROOTOWNER, GWL_EXSTYLE, GW_OWNER, WINDOW_EX_STYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW,
 };
 
 const EXCLUDED_CLASSES: &[&str] = &[
@@ -208,7 +209,9 @@ fn build_window_candidate(
         process_name,
         process_path,
         hwnd,
-        is_active: hwnd == foreground,
+        is_active: hwnd == foreground
+            || unsafe { GetAncestor(hwnd, GA_ROOTOWNER) }
+                == unsafe { GetAncestor(foreground, GA_ROOTOWNER) },
         is_minimized: unsafe { IsIconic(hwnd).as_bool() },
         has_owner: !owner.0.is_null(),
         is_cloaked: is_window_cloaked(hwnd),

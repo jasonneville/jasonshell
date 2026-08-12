@@ -106,7 +106,7 @@ test('phase 6 activation preserves window focus and control panel action contrac
 
   assert.match(activateResult, /result\.actionId === 'runControlPanel'[\s\S]*runControlPanel\(result\.actionArgs\)/);
   assert.match(activateResult, /result\.kind === 'window'[\s\S]*openWindows\.find\(\(item\) => result\.id === `window:\$\{item\.hwnd\}`\)/);
-  assert.match(activateResult, /activateTaskWindow\(taskWindow\.hwnd, taskWindow\.isActive\)/);
+  assert.match(activateResult, /activateTaskWindow\(taskWindow\.hwnd\)/);
 });
 
 test('phase 6 top-bar hot path imports new search engine and no legacy catalog ranking or system-search wrappers', () => {

@@ -1467,7 +1467,7 @@
     } else if (result.kind === 'window') {
       const taskWindow = openWindows.find((item) => result.id === `window:${item.hwnd}`);
       if (taskWindow) {
-        await activateTaskWindow(taskWindow.hwnd, taskWindow.isActive);
+        await activateTaskWindow(taskWindow.hwnd);
       }
     } else if (result.kind === 'folder' || result.kind === 'file') {
       await openShellPath(result.path ?? result.id.replace('folder:', ''));

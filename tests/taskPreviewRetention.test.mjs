@@ -8,6 +8,7 @@ const previewWrapper = readFileSync(new URL('../src/lib/taskbarPreview.ts', impo
 const taskbarWindowsWrapper = readFileSync(new URL('../src/lib/taskbarWindows.ts', import.meta.url), 'utf8');
 const ipcCommands = readFileSync(new URL('../src/ipc/commands.ts', import.meta.url), 'utf8');
 const taskWindowsRs = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', import.meta.url), 'utf8');
+const taskWindowActionsRs = readFileSync(new URL('../src-tauri/src/task_windows/actions.rs', import.meta.url), 'utf8');
 const mainRs = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
 
 function functionBody(source, name) {
@@ -77,4 +78,12 @@ test('close previewed task window wrapper validates external hwnd and command wi
   assert.match(taskWindowsRs, /pub fn close_task_window\(hwnd: String\) -> Result<\(\), String>/);
   assert.match(taskWindowsRs, /reject_internal_shell_hwnd|is_jasonshell_window/);
   assert.match(mainRs, /task_windows::close_task_window/);
+});
+
+test('task window close falls back to terminating the owning process', () => {
+  assert.match(taskWindowActionsRs, /SendMessageTimeoutW/);
+  assert.match(taskWindowActionsRs, /PostMessageW/);
+  assert.match(taskWindowActionsRs, /GetWindowThreadProcessId/);
+  assert.match(taskWindowActionsRs, /OpenProcess\(PROCESS_TERMINATE, false, process_id\)/);
+  assert.match(taskWindowActionsRs, /TerminateProcess\(process_handle, 1\)/);
 });

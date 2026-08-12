@@ -11,5 +11,5 @@ export function taskWindowLabel(taskWindow: TaskbarWindow) {
 }
 
 export function taskWindowActionLabel(taskWindow: TaskbarWindow) {
-  return `Focus ${taskWindowLabel(taskWindow)}`;
+  return `${taskWindow.isActive ? 'Minimize' : 'Focus'} ${taskWindowLabel(taskWindow)}`;
 }

@@ -57,8 +57,8 @@ export async function listTaskbarProcessWindows(): Promise<TaskbarProcessWindow[
   }));
 }
 
-export function activateTaskWindow(hwnd: string, wasActive: boolean): Promise<void> {
-  return invoke(IPC_COMMANDS.activateTaskWindow, { hwnd, wasActive });
+export function activateTaskWindow(hwnd: string, minimizeIfActive = false): Promise<void> {
+  return invoke(IPC_COMMANDS.activateTaskWindow, { hwnd, minimizeIfActive });
 }
 
 export function maximizeTaskWindow(hwnd: string): Promise<void> {

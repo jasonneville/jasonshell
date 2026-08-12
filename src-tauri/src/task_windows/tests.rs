@@ -1,6 +1,6 @@
-use super::{actions::should_fallback_post_close, TaskbarWindow, TaskbarWindowActivityState};
+use super::{actions::resolve_activation_target, TaskbarWindow, TaskbarWindowActivityState};
 use super::{
-    actions::should_minimize_window,
+    actions::{should_fallback_post_close, should_minimize_window, should_use_foreground_handoff},
     windows::{
         infer_activity_state, is_activity_indicator_eligible, is_internal_notification_window,
         is_taskbar_candidate, sort_windows_stably, ActivitySnapshot, WindowCandidate,
@@ -149,13 +149,15 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
 }
 
 #[test]
-fn minimizes_rendered_active_window_even_after_shell_focuses() {
-    assert!(should_minimize_window(true, false, false));
+fn minimizes_only_from_live_foreground_state() {
+    assert!(should_minimize_window(false, true, false, false));
+    assert!(should_minimize_window(true, false, false, true));
+    assert!(!should_minimize_window(true, false, false, false));
 }
 
 #[test]
 fn does_not_minimize_already_minimized_window() {
-    assert!(!should_minimize_window(true, false, true));
+    assert!(!should_minimize_window(true, false, true, true));
 }
 
 #[test]
@@ -163,6 +165,23 @@ fn retries_close_with_post_message_when_window_remains() {
     assert!(should_fallback_post_close(false, true));
     assert!(should_fallback_post_close(true, true));
     assert!(!should_fallback_post_close(false, false));
+}
+
+#[test]
+fn uses_foreground_handoff_when_set_foreground_is_denied_for_non_minimized_windows() {
+    assert!(should_use_foreground_handoff(false));
+}
+
+#[test]
+fn skips_foreground_handoff_when_set_foreground_succeeds_or_window_is_minimized() {
+    assert!(!should_use_foreground_handoff(true));
+}
+
+#[test]
+fn resolves_activation_target_to_visible_last_active_popup_or_root_owner() {
+    let hwnd = HWND(0x1234 as *mut _);
+    let target = resolve_activation_target(hwnd);
+    assert_eq!(target, hwnd);
 }
 
 #[test]

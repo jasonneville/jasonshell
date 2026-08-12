@@ -17,6 +17,7 @@ const taskPreviewCssSource = readFileSync(
 );
 const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
 const taskPreviewRustSource = readFileSync(new URL('../src-tauri/src/task_preview.rs', import.meta.url), 'utf8');
+const taskWindowsRustSource = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', import.meta.url), 'utf8');
 
 const basePayload = {
   hwnd: '1234',
@@ -159,4 +160,10 @@ test('task preview publish path does not hold runtime mutex across Tauri window 
     /let mut state = state[\s\S]*?begin_task_preview_hide\(&mut state, request_id\);\s*\}\s*let preview_window = app_handle/,
     'hide_task_window_preview should close the runtime state lock scope before reading/using the preview window'
   );
+});
+
+test('task window close path skips preview validator while preview capture still uses it', () => {
+  const closeFunction = extractRustFunction(taskWindowsRustSource, 'close_task_window');
+  assert.doesNotMatch(closeFunction, /validate_task_window_preview_source/);
+  assert.match(taskPreviewRustSource, /validate_task_window_preview_source\(source_hwnd\)\?/);
 });

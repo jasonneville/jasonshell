@@ -491,13 +491,11 @@
 
     try {
       await activateTaskWindow(taskWindow.hwnd, taskWindow.isActive);
-      taskbarMessage = taskWindow.isActive && !taskWindow.isMinimized
-        ? `Minimized ${taskWindowLabel(taskWindow)}`
-        : `Focused ${taskWindowLabel(taskWindow)}`;
+      taskbarMessage = 'Window toggled';
       await refreshTaskbarWindows();
     } catch (error) {
-      console.error(`Failed to toggle task window ${taskWindow.hwnd}`, error);
-      taskbarMessage = `Window toggle unavailable for ${taskWindowLabel(taskWindow)}`;
+      console.error(`Failed to focus task window ${taskWindow.hwnd}`, error);
+      taskbarMessage = `Window focus unavailable for ${taskWindowLabel(taskWindow)}`;
       await refreshTaskbarWindows();
     } finally {
       activatingHwnd = null;

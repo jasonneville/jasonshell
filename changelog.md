@@ -3,6 +3,22 @@
  - 2026-08-12 `[CODE]` FIXED: Taskbar window activation now rejects invalid HWNDs before target resolution, retries focus through AttachThreadInput plus SwitchToThisWindow, verifies foreground ownership against target/root owner, and relabels taskbar activation affordance as Focus.
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-08-12 `[CODE]` FIXED: Taskbar clicks now carry pre-click active intent across the shell-foreground transfer; backend accepts it only when JasonShell owns foreground and sends `WM_SYSCOMMAND` / `SC_MINIMIZE` to the target root owner. Background/minimized tasks retain restore/focus behavior.
+- 2026-08-12 `[CODE]` TESTED: Added shell-foreground guarded minimize, already-minimized, root-owner active-state, and action-label regressions.
+
+- 2026-08-12 `[CODE]` FIXED: Taskbar activation now posts `WM_SYSCOMMAND` / `SC_RESTORE` to minimized target/root/raw HWNDs, waits boundedly for `IsIconic(false)` before foreground/raise attempts, and keeps non-minimized windows on the existing `SW_SHOW` path so taskbar clicks behave like Windows restore.\r\n- 2026-08-12 `[CODE]` TESTED: Added source-contract coverage for SC_RESTORE activation wiring and hwnd-only frontend invoke contract.\r\n- 2026-08-12 `[TOOL]` VALIDATED: `cargo fmt --manifest-path src-tauri/Cargo.toml` and `cargo test --manifest-path src-tauri/Cargo.toml task_windows` passed.\r\n\r\n- 2026-08-11 `[CODE]` FIXED: Bottom-bar and task-preview close now fall back from polite `WM_CLOSE` to owning-process termination when the target HWND remains, so hidden/unpreviewable apps that veto close are still closed when Windows grants termination rights.
+- 2026-08-11 `[CODE]` TESTED: Added task-preview source coverage for the forced-close ladder and documented current bottom-bar close behavior.
+- 2026-08-11 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml task_windows` and `node --test tests/taskPreviewRetention.test.mjs` passed.
+
+- 2026-08-11 `[CODE]` FIXED: Taskbar activation now retries denied foreground switches with supported Win32 foreground handoff (`AttachThreadInput` + `BringWindowToTop` + `SetForegroundWindow`) after restoring minimized windows, so Alt-Tab-activatable apps can surface even when the first `SetForegroundWindow` call is refused.
+- 2026-08-11 `[CODE]` TESTED: Added source-contract coverage for the foreground-handoff decision helper used when `SetForegroundWindow` is denied.
+- 2026-08-11 `[CODE]` FIXED: `focus_window` now falls back only on direct `SetForegroundWindow` failure, skips redundant minimized gating for the fallback path, attaches only distinct nonzero thread ids, detaches only successfully attached links, and no longer calls `SetFocus`.
+- 2026-08-11 `[CODE]` TESTED: Updated task-window regression coverage for the simplified foreground-handoff helper signature.
+
+- 2026-08-11 `[CODE]` FIXED: `close_task_window` no longer routes through preview-source validation, so close keeps the normal action path for hidden windows while still rejecting internal JasonShell HWNDs; preview capture keeps using the preview validator.
+- 2026-08-11 `[CODE]` TESTED: Added Rust and Node regressions proving close path avoids preview validation and preview capture still calls it.
+- 2026-08-11 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml task_windows` and compiled `tests/taskbarPreviewContract.test.mjs` passed.
+
 - 2026-08-11 `[CODE]` CHANGED: Quick Commands now has compact sharp-edged icon tiles, native menu resizing, draggable saved-command pane sizing, right-click-only Edit/History, live running indicators, and click-expandable current/retained output history.
 - 2026-08-11 `[CODE]` FIXED: Quick-command backend now drains streams in bounded chunks, exposes partial in-progress stdout/stderr, and removes a completed run from live state before safely persisting history.
 - 2026-08-11 `[CODE]` FIXED: Quick-command saves now merge entries under backend settings lock, preserving concurrent retained-command history; context menu now supports Menu/Shift+F10, focus, Escape, and outside-click dismissal.

@@ -82,14 +82,15 @@ pub fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, Strin
 }
 
 #[tauri::command]
-pub fn activate_task_window(hwnd: String, was_active: bool) -> Result<(), String> {
+pub fn activate_task_window(hwnd: String, minimize_if_active: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        actions::activate_task_window(hwnd, was_active)
+        actions::activate_task_window(hwnd, minimize_if_active)
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (hwnd, was_active);
+        let _ = hwnd;
+        let _ = minimize_if_active;
         Err("Taskbar window integration is only supported on Windows".to_string())
     }
 }
@@ -112,7 +113,6 @@ pub fn close_task_window(hwnd: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         reject_internal_shell_hwnd(&hwnd)?;
-        validate_task_window_preview_source(&hwnd)?;
         actions::perform_task_window_action(hwnd, TaskWindowAction::Close)
     }
     #[cfg(not(target_os = "windows"))]

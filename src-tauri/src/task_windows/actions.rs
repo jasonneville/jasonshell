@@ -1,27 +1,57 @@
 use super::{parse_hwnd, TaskWindowAction};
 use std::thread;
 use std::time::Duration;
-use windows::Win32::Foundation::{LPARAM, WPARAM};
-use windows::Win32::System::Threading::AttachThreadInput;
+use windows::Win32::Foundation::{CloseHandle, LPARAM, WPARAM};
+use windows::Win32::System::Threading::{
+    AttachThreadInput, GetCurrentThreadId, OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, PostMessageW,
+    BringWindowToTop, GetAncestor, GetForegroundWindow, GetLastActivePopup,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
     SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, SwitchToThisWindow, GA_ROOTOWNER,
-    SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
+    SC_MINIMIZE, SC_RESTORE, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_MAXIMIZE, SW_MINIMIZE, SW_SHOW,
+    WM_CLOSE, WM_SYSCOMMAND,
 };
 
 const CLOSE_TIMEOUT_MS: u32 = 750;
 const CLOSE_VERIFY_ATTEMPTS: usize = 10;
 const CLOSE_VERIFY_DELAY_MS: u64 = 50;
+const ACTIVATE_RESTORE_ATTEMPTS: usize = 10;
+const ACTIVATE_RESTORE_DELAY_MS: u64 = 50;
 
-pub(super) fn activate_task_window(hwnd: String, was_active: bool) -> Result<(), String> {
+pub(super) fn activate_task_window(hwnd: String, minimize_if_active: bool) -> Result<(), String> {
     let hwnd = parse_hwnd(&hwnd)?;
-    if !window_exists(hwnd) {
-        return Err("Task window handle is no longer valid".to_string());
+    let target = resolve_activation_target(hwnd);
+    if !window_exists(target) || !window_exists(hwnd) {
+        return Err("Task window is no longer available".to_string());
     }
 
-    let _ = was_active;
-    let _ = focus_window(hwnd)?;
-    Ok(())
+    let foreground = unsafe { GetForegroundWindow() };
+    let target_root = resolve_activation_root(target);
+    let foreground_root = resolve_activation_root(foreground);
+    let mut foreground_process_id = 0;
+    unsafe {
+        let _ = GetWindowThreadProcessId(foreground, Some(&mut foreground_process_id));
+    }
+    if should_minimize_window(
+        minimize_if_active,
+        foreground == target || foreground_root == target_root,
+        unsafe { IsIconic(target_root).as_bool() },
+        foreground_process_id == std::process::id(),
+    ) {
+        unsafe {
+            PostMessageW(
+                Some(target_root),
+                WM_SYSCOMMAND,
+                WPARAM(SC_MINIMIZE as usize),
+                LPARAM(0),
+            )
+            .map_err(|error| format!("Failed to minimize task window: {error}"))?;
+        }
+        return Ok(());
+    }
+
+    activate_window(target, hwnd)
 }
 
 pub(crate) fn perform_task_window_action(
@@ -51,48 +81,147 @@ pub(crate) fn maximize_task_window(hwnd: String) -> Result<(), String> {
 
 fn focus_task_window(hwnd: String) -> Result<(), String> {
     let hwnd = parse_hwnd(&hwnd)?;
-    focus_window(hwnd)
+    activate_window(resolve_activation_target(hwnd), hwnd)
 }
 
-fn focus_window(hwnd: windows::Win32::Foundation::HWND) -> Result<(), String> {
-    if unsafe { IsIconic(hwnd).as_bool() } {
+fn activate_window(
+    target: windows::Win32::Foundation::HWND,
+    raw_hwnd: windows::Win32::Foundation::HWND,
+) -> Result<(), String> {
+    if !window_exists(target) || !window_exists(raw_hwnd) {
+        return Err("Task window is no longer available".to_string());
+    }
+
+    let restore_targets = activation_restore_targets(target, raw_hwnd);
+    if !restore_targets.is_empty() {
+        for restore_target in &restore_targets {
+            unsafe {
+                let _ = PostMessageW(
+                    Some(*restore_target),
+                    WM_SYSCOMMAND,
+                    WPARAM(SC_RESTORE as usize),
+                    LPARAM(0),
+                );
+            }
+        }
+        wait_for_windows_restore(&restore_targets);
+    } else {
         unsafe {
-            let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+            let _ = ShowWindowAsync(target, SW_SHOW);
         }
     }
 
-    let target_root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
-    let foreground = unsafe { GetForegroundWindow() };
-    if foreground != hwnd && foreground != target_root {
-        let target_thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
-        let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, None) };
-        if target_thread != 0 && foreground_thread != 0 {
-            unsafe {
-                let _ = AttachThreadInput(foreground_thread, target_thread, true);
-            }
-        }
+    unsafe {
+        let _ = BringWindowToTop(target);
+        let _ = SetForegroundWindow(target);
+    }
+
+    let set_foreground_succeeded = unsafe { SetForegroundWindow(target).as_bool() };
+    let foreground_window = unsafe { GetForegroundWindow() };
+    let target_root_owner = unsafe { GetAncestor(target, GA_ROOTOWNER) };
+    let foreground_thread = unsafe { GetWindowThreadProcessId(foreground_window, None) };
+    let target_thread = unsafe { GetWindowThreadProcessId(target, None) };
+
+    if should_use_foreground_handoff(set_foreground_succeeded)
+        && foreground_window != target
+        && foreground_window != target_root_owner
+        && foreground_thread != 0
+        && target_thread != 0
+        && foreground_thread != target_thread
+    {
         unsafe {
-            SwitchToThisWindow(hwnd, true);
-        }
-        if target_thread != 0 && foreground_thread != 0 {
-            unsafe {
-                let _ = AttachThreadInput(foreground_thread, target_thread, false);
+            let current_thread = GetCurrentThreadId();
+            let mut foreground_attached = false;
+            let mut target_attached = false;
+
+            if AttachThreadInput(current_thread, foreground_thread, true).as_bool() {
+                foreground_attached = true;
             }
-        }
-    } else {
-        unsafe {
-            let _ = SetForegroundWindow(hwnd);
+            if AttachThreadInput(current_thread, target_thread, true).as_bool() {
+                target_attached = true;
+            }
+            let _ = BringWindowToTop(target);
+            let _ = SetForegroundWindow(target);
+
+            if target_attached {
+                let _ = AttachThreadInput(current_thread, target_thread, false);
+            }
+            if foreground_attached {
+                let _ = AttachThreadInput(current_thread, foreground_thread, false);
+            }
         }
     }
 
-    let final_foreground = unsafe { GetForegroundWindow() };
-    if final_foreground == hwnd || final_foreground == target_root {
-        Ok(())
+    let foreground_window = unsafe { GetForegroundWindow() };
+    if foreground_window != target && foreground_window != target_root_owner {
+        unsafe {
+            let _ = BringWindowToTop(target);
+            let _ = SetForegroundWindow(target);
+            SwitchToThisWindow(target, true);
+        }
+    }
+
+    let verified_foreground = unsafe { GetForegroundWindow() };
+    if verified_foreground == target || verified_foreground == target_root_owner {
+        return Ok(());
+    }
+
+    Err("Failed to focus task window".to_string())
+}
+
+fn activation_restore_targets(
+    target: windows::Win32::Foundation::HWND,
+    raw_hwnd: windows::Win32::Foundation::HWND,
+) -> Vec<windows::Win32::Foundation::HWND> {
+    let mut targets = Vec::new();
+    for hwnd in [target, resolve_activation_root(raw_hwnd), raw_hwnd] {
+        if unsafe { IsIconic(hwnd).as_bool() } && !targets.contains(&hwnd) {
+            targets.push(hwnd);
+        }
+    }
+    targets
+}
+
+fn resolve_activation_root(
+    hwnd: windows::Win32::Foundation::HWND,
+) -> windows::Win32::Foundation::HWND {
+    let root_owner = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+    if root_owner.0.is_null() {
+        hwnd
     } else {
-        Err(
-            "Failed to activate task window: foreground did not switch to target or root owner"
-                .to_string(),
-        )
+        root_owner
+    }
+}
+
+fn wait_for_windows_restore(targets: &[windows::Win32::Foundation::HWND]) {
+    for _ in 0..ACTIVATE_RESTORE_ATTEMPTS {
+        if targets
+            .iter()
+            .all(|hwnd| !unsafe { IsIconic(*hwnd).as_bool() })
+        {
+            return;
+        }
+        thread::sleep(Duration::from_millis(ACTIVATE_RESTORE_DELAY_MS));
+    }
+}
+
+pub(super) fn resolve_activation_target(
+    hwnd: windows::Win32::Foundation::HWND,
+) -> windows::Win32::Foundation::HWND {
+    let root_owner = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+    if root_owner.0.is_null() {
+        return hwnd;
+    }
+
+    let popup = unsafe { GetLastActivePopup(root_owner) };
+    if popup.0.is_null() {
+        return root_owner;
+    }
+
+    if unsafe { IsWindowVisible(popup).as_bool() } {
+        popup
+    } else {
+        root_owner
     }
 }
 
@@ -142,18 +271,55 @@ fn close_window(hwnd: windows::Win32::Foundation::HWND) -> Result<(), String> {
         }
     }
 
-    Err(
-        "Task window did not close after WM_CLOSE; it may be elevated, protected, or vetoing close"
-            .to_string(),
-    )
+    terminate_window_process(hwnd)
+}
+
+fn terminate_window_process(hwnd: windows::Win32::Foundation::HWND) -> Result<(), String> {
+    if !window_exists(hwnd) {
+        return Ok(());
+    }
+
+    let mut process_id = 0_u32;
+    unsafe {
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+    }
+    if process_id == 0 {
+        return Err(
+            "Task window did not close and its owning process could not be identified".to_string(),
+        );
+    }
+
+    let process_handle =
+        unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) }.map_err(|error| {
+            format!("Failed to open task window process {process_id} for termination: {error}")
+        })?;
+    let result = unsafe { TerminateProcess(process_handle, 1) }
+        .map_err(|error| format!("Failed to terminate task window process {process_id}: {error}"));
+    unsafe {
+        let _ = CloseHandle(process_handle);
+    }
+    result?;
+
+    if wait_for_window_close(hwnd) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Task window process {process_id} was terminated but the window still exists"
+    ))
 }
 
 pub(super) fn should_minimize_window(
-    was_active: bool,
+    minimize_if_active: bool,
     is_foreground: bool,
     is_minimized: bool,
+    shell_is_foreground: bool,
 ) -> bool {
-    !is_minimized && (was_active || is_foreground)
+    !is_minimized && (is_foreground || (minimize_if_active && shell_is_foreground))
+}
+
+pub(super) fn should_use_foreground_handoff(set_foreground_succeeded: bool) -> bool {
+    !set_foreground_succeeded
 }
 
 pub(super) fn should_fallback_post_close(
