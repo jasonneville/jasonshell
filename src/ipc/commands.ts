@@ -49,6 +49,8 @@ export const IPC_COMMANDS = {
   launchAppPath: 'launch_app_path',
   runControlPanel: 'run_control_panel',
   runQuickCommand: 'run_quick_command',
+  listQuickCommandHistory: 'list_quick_command_history',
+  saveQuickCommandsSettings: 'save_quick_commands_settings',
   listPinnedStackFolders: 'list_pinned_stack_folders',
   pinStackFolder: 'pin_stack_folder',
   unpinStackFolder: 'unpin_stack_folder',

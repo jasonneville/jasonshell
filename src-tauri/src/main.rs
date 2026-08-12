@@ -127,6 +127,8 @@ fn main() {
             shell_paths::launch_app_path,
             shell_paths::run_control_panel,
             quick_commands::run_quick_command,
+            quick_commands::list_quick_command_history,
+            quick_commands::save_quick_commands_settings,
             stack_popup::list_pinned_stack_folders,
             stack_popup::pin_stack_folder,
             stack_popup::unpin_stack_folder,

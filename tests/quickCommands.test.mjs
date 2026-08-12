@@ -9,7 +9,9 @@ import {
   formatQuickCommandCommandsTextarea,
   parseQuickCommandArgsTextarea,
   parseQuickCommandCommandsTextarea,
-  quickCommandRunRequest
+  quickCommandRunRequest,
+  listQuickCommandHistory,
+  saveQuickCommandsSettings
 } from '../dist-tests/lib/quickCommands.js';
 
 const source = readFileSync(new URL('../src/lib/quickCommands.ts', import.meta.url), 'utf8');
@@ -125,5 +127,9 @@ test('quick command run request validates id and wrapper uses IPC constants', ()
   assert.deepEqual(quickCommandRunRequest('  git-status  '), { id: 'git-status' });
   assert.throws(() => quickCommandRunRequest('   '), /must not be empty/);
   assert.match(source, /IPC_COMMANDS\.runQuickCommand/);
+  assert.match(source, /IPC_COMMANDS\.listQuickCommandHistory/);
+  assert.match(source, /IPC_COMMANDS\.saveQuickCommandsSettings/);
+  assert.equal(typeof listQuickCommandHistory, 'function');
+  assert.equal(typeof saveQuickCommandsSettings, 'function');
   assert.doesNotMatch(source, /invoke\('run_quick_command'/);
 });

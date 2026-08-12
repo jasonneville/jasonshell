@@ -88,6 +88,8 @@ pub mod commands {
     pub const LAUNCH_APP_PATH: &str = "launch_app_path";
     pub const RUN_CONTROL_PANEL: &str = "run_control_panel";
     pub const RUN_QUICK_COMMAND: &str = "run_quick_command";
+    pub const LIST_QUICK_COMMAND_HISTORY: &str = "list_quick_command_history";
+    pub const SAVE_QUICK_COMMANDS_SETTINGS: &str = "save_quick_commands_settings";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
     pub const PIN_STACK_FOLDER: &str = "pin_stack_folder";
     pub const UNPIN_STACK_FOLDER: &str = "unpin_stack_folder";
@@ -221,6 +223,8 @@ pub mod commands {
         LAUNCH_APP_PATH,
         RUN_CONTROL_PANEL,
         RUN_QUICK_COMMAND,
+        LIST_QUICK_COMMAND_HISTORY,
+        SAVE_QUICK_COMMANDS_SETTINGS,
         LIST_PINNED_STACK_FOLDERS,
         PIN_STACK_FOLDER,
         UNPIN_STACK_FOLDER,
@@ -496,6 +500,8 @@ mod tests {
         assert!(unique.contains("get_search_provider_health"));
         assert!(unique.contains("request_everything_setup"));
         assert!(unique.contains("run_quick_command"));
+        assert!(unique.contains("list_quick_command_history"));
+        assert!(unique.contains("save_quick_commands_settings"));
     }
 
     #[test]

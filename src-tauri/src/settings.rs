@@ -100,6 +100,24 @@ pub struct EverythingSearchSettings {
 pub struct QuickCommandsSettings {
     #[serde(default)]
     pub entries: Vec<QuickCommandEntry>,
+    #[serde(default)]
+    pub history: Vec<QuickCommandRunHistoryEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickCommandRunHistoryEntry {
+    pub command_id: String,
+    pub started_at_epoch_ms: u64,
+    pub finished_at_epoch_ms: u64,
+    pub process_id: u32,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    #[serde(default)]
+    pub running: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -217,6 +235,7 @@ impl Default for QuickCommandsSettings {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
+            history: Vec::new(),
         }
     }
 }
@@ -297,6 +316,19 @@ pub(crate) fn save_shell_settings_for_app(
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|_| "settings write lock is poisoned".to_string())?;
+    save_settings_to_path(&path, settings)
+}
+
+pub(crate) fn update_shell_settings_for_app(
+    app_handle: &AppHandle,
+    update: impl FnOnce(&mut ShellSettings),
+) -> Result<ShellSettings, String> {
+    let path = settings_path(app_handle)?;
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|_| "settings write lock is poisoned".to_string())?;
+    let mut settings = load_settings_from_path(&path)?;
+    update(&mut settings);
     save_settings_to_path(&path, settings)
 }
 

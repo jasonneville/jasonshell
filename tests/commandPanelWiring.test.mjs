@@ -27,6 +27,7 @@ test('command panel is routed as a dedicated auxiliary shell surface', () => {
   assert.match(shellWindowsSource, /COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460\.0/);
   assert.match(shellWindowsSource, /COMMAND_PANEL_HEIGHT_LOGICAL: f64 = 420\.0/);
   assert.match(shellWindowsSource, /build_command_panel_window\(app\)/);
+  assert.match(shellWindowsSource, /fn build_command_panel_window\(app: &App\)[\s\S]*?\.resizable\(true\)/);
   assert.match(mainSource, /mod command_panel;/);
   assert.match(mainSource, /command_panel::show_command_panel/);
   assert.match(mainSource, /command_panel::hide_command_panel/);
@@ -65,11 +66,11 @@ test('top bar command button is left of tray button and enforces popup exclusivi
   assert.match(topBarSource, /<span class="command-glyph" aria-hidden="true">⌘<\/span>/);
 });
 
-test('command panel surface includes list actions, editor fields, and command-block textarea flow', () => {
-  assert.match(commandPanelSource, /id="command-panel" role="dialog"/);
-  assert.match(commandPanelSource, /Run/);
+test('command panel surface includes compact list actions, resize controls, and command-block editor flow', () => {
+  assert.match(commandPanelSource, /id="command-panel"[\s\S]*role="dialog"/);
+  assert.match(commandPanelSource, /command-run-button/);
   assert.match(commandPanelSource, /Edit/);
-  assert.match(commandPanelSource, /Delete/);
+  assert.match(commandPanelSource, /command-delete-button/);
   assert.match(commandPanelSource, /Label/);
   assert.match(commandPanelSource, /Mode/);
   assert.match(commandPanelSource, /Program/);
@@ -82,6 +83,17 @@ test('command panel surface includes list actions, editor fields, and command-bl
   assert.match(commandPanelSource, /formatQuickCommandCommandsTextarea/);
   assert.match(commandPanelSource, /saveQuickCommandsSettings/);
   assert.match(commandPanelSource, /runQuickCommand/);
+  assert.match(commandPanelSource, /listQuickCommandHistory/);
+  assert.match(commandPanelSource, /on:contextmenu/);
+  assert.match(commandPanelSource, /openKeyboardContextMenu/);
+  assert.match(commandPanelSource, /on:keydown=\{dismissContextMenuOnEscape\}/);
+  assert.match(commandPanelSource, /View output history/);
+  assert.match(commandPanelSource, /Output stays local in settings/);
+  assert.match(commandPanelSource, /command-list-resize-grip/);
+  assert.match(commandPanelSource, /loadHistory/);
+  assert.match(commandPanelSource, /run\.running \? 'Running'/);
+  assert.match(commandPanelSource, /command-history-run/);
+  assert.match(commandPanelCss, /grid-template-columns: minmax\(8rem, var\(--command-list-width\)\)/);
   assert.match(commandPanelSource, /hideCommandPanel/);
   assert.match(commandPanelCss, /\.command-panel \{/);
 });

@@ -2,6 +2,15 @@
 
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
+- 2026-08-11 `[CODE]` CHANGED: Quick Commands now has compact sharp-edged icon tiles, native menu resizing, draggable saved-command pane sizing, right-click-only Edit/History, live running indicators, and click-expandable current/retained output history.
+- 2026-08-11 `[CODE]` FIXED: Quick-command backend now drains streams in bounded chunks, exposes partial in-progress stdout/stderr, and removes a completed run from live state before safely persisting history.
+- 2026-08-11 `[CODE]` FIXED: Quick-command saves now merge entries under backend settings lock, preserving concurrent retained-command history; context menu now supports Menu/Shift+F10, focus, Escape, and outside-click dismissal.
+- 2026-08-11 `[TOOL]` VALIDATED: `npm run check`; command-panel Node wiring/theme tests; compiled quick-command Node tests; and focused Rust `quick_commands`, `contracts`, and `settings` tests passed.
+
+- 2026-08-11 `[CODE]` CHANGED: Quick Commands now uses IDE-style saved-command cards with keyboard-reachable Run/History/Edit/Delete controls, a right-click output-history menu, and retained launch visibility. Completed runs locally persist bounded stdout/stderr history.
+- 2026-08-11 `[CODE]` TESTED: Added IPC/history source coverage and Rust bounded-stream capture coverage; registered `list_quick_command_history` in backend contracts.
+- 2026-08-11 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml quick_commands` passed.
+
 - 2026-06-30 `[CODE]` FIXED: Stack Browser Properties now uses `ShellExecuteExW` with `SEE_MASK_INVOKEIDLIST` and the `properties` verb so files such as `pnpm-lock.yaml` open the same native Explorer Properties dialog instead of failing with ShellExecuteW code 31.
 - 2026-06-30 `[CODE]` TESTED: Updated the Stack item properties plan coverage to assert that the native invocation uses the ID-list shell path.
 - 2026-06-30 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml stack_item_properties_plan_validates_existing_paths` and `cargo check --manifest-path src-tauri/Cargo.toml` passed.

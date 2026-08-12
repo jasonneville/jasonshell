@@ -26,6 +26,19 @@ export interface QuickCommandSpawnResult {
   processId: number;
 }
 
+export interface QuickCommandRunHistoryEntry {
+  commandId: string;
+  startedAtEpochMs: number;
+  finishedAtEpochMs: number;
+  processId: number;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  running: boolean;
+}
+
 type ShellSettingsRecord = Record<string, unknown> & {
   quickCommands?: unknown;
 };
@@ -91,16 +104,10 @@ export async function saveQuickCommandsSettings(
   quickCommands: QuickCommandsSettings
 ): Promise<QuickCommandsSettings> {
   const normalized = coerceQuickCommandsSettings(quickCommands);
-  const current = await invoke<ShellSettingsRecord>(IPC_COMMANDS.loadShellSettings);
-  const currentRecord = asRecord(current) ?? {};
-  const nextSettings: ShellSettingsRecord = {
-    ...currentRecord,
+  const saved = await invoke<QuickCommandsSettings>(IPC_COMMANDS.saveQuickCommandsSettings, {
     quickCommands: normalized
-  };
-  const saved = await invoke<ShellSettingsRecord>(IPC_COMMANDS.saveShellSettings, {
-    settings: nextSettings
   });
-  return coerceQuickCommandsSettings(saved.quickCommands ?? DEFAULT_QUICK_COMMANDS_SETTINGS);
+  return coerceQuickCommandsSettings(saved);
 }
 
 export function quickCommandRunRequest(id: string): RunQuickCommandRequest {
@@ -114,6 +121,15 @@ export function quickCommandRunRequest(id: string): RunQuickCommandRequest {
 export function runQuickCommand(request: RunQuickCommandRequest): Promise<QuickCommandSpawnResult> {
   const normalized = quickCommandRunRequest(request.id);
   return invoke<QuickCommandSpawnResult>(IPC_COMMANDS.runQuickCommand, { request: normalized });
+}
+
+export function listQuickCommandHistory(
+  request: RunQuickCommandRequest
+): Promise<QuickCommandRunHistoryEntry[]> {
+  const normalized = quickCommandRunRequest(request.id);
+  return invoke<QuickCommandRunHistoryEntry[]>(IPC_COMMANDS.listQuickCommandHistory, {
+    request: normalized
+  });
 }
 
 function coerceQuickCommandEntry(value: unknown, index: number): QuickCommandEntry | null {

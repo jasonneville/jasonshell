@@ -15,29 +15,26 @@ test('quick commands surface uses shared shell theme tokens for primary surfaces
     '--js-color-text-muted',
     '--js-color-accent-border',
     '--js-shadow-raised',
-    '--js-radius-md'
+    '--js-color-success-border'
   ]) {
     assert.match(commandPanelCss, new RegExp(`var\\(${token}(?:\\)|,)`), `missing ${token}`);
   }
 
-  const primarySurfaceBlocks = commandPanelCss.match(
-    /\.(?:command-panel|command-list|command-editor|command-list li|command-editor input,\n\.command-editor select,\n\.command-editor textarea) \{[\s\S]*?\n\}/g
-  ) ?? [];
-
-  assert.ok(primarySurfaceBlocks.length >= 4, 'expected command panel primary surface blocks');
-  for (const block of primarySurfaceBlocks) {
-    assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b/i, `raw hex in primary themed surface:\n${block}`);
-  }
+  assert.doesNotMatch(commandPanelCss, /#[0-9a-f]{3,8}\b/i, 'raw hex in themed surface');
+  assert.match(commandPanelCss, /border-radius: 0/);
 });
 
-test('quick commands controls keep button semantics and existing action labels', () => {
+test('quick commands keep compact icon controls and context-only history/edit actions', () => {
   assert.match(commandPanelSource, /import MeltActionButton/);
-  assert.match(commandPanelSource, /ariaLabel=\{`Run \$\{entry\.label\}`\}[\s\S]*>\s*\{runningId === entry\.id \? 'Running…' : 'Run'\}/);
-  assert.match(commandPanelSource, /ariaLabel=\{`Edit \$\{entry\.label\}`\}[\s\S]*>\s*Edit\s*</);
-  assert.match(commandPanelSource, /ariaLabel=\{`Delete \$\{entry\.label\}`\}[\s\S]*>\s*Delete\s*</);
+  assert.match(commandPanelSource, /class="command-icon-button command-run-button"/);
+  assert.match(commandPanelSource, /class="command-icon-button command-delete-button"/);
+  assert.match(commandPanelSource, /ariaLabel=\{`Run \$\{entry\.label\}`\}/);
+  assert.match(commandPanelSource, /ariaLabel=\{`Delete \$\{entry\.label\}`\}/);
+  assert.match(commandPanelSource, /View output history/);
+  assert.match(commandPanelSource, /Edit command/);
+  assert.match(commandPanelSource, /command-spinner/);
   assert.match(commandPanelSource, /ariaLabel="Save command"[\s\S]*>\s*\{saving \? 'Saving…' : 'Save'\}/);
   assert.match(commandPanelSource, /ariaLabel="Cancel command editing"[\s\S]*>\s*Clear\s*</);
   assert.match(commandPanelSource, /onClick=\{\(\) => void runEntry\(entry\.id\)\}/);
-  assert.match(commandPanelSource, /onClick=\{\(\) => startEditEntry\(entry\)\}/);
   assert.match(commandPanelSource, /onClick=\{\(\) => void deleteEntry\(entry\.id\)\}/);
 });

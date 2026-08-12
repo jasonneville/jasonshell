@@ -1,17 +1,19 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import './CommandPanelSurface.css';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     QUICK_COMMAND_MODES,
     formatQuickCommandArgsTextarea,
     formatQuickCommandCommandsTextarea,
+    listQuickCommandHistory,
     loadQuickCommandsSettings,
     parseQuickCommandArgsTextarea,
     parseQuickCommandCommandsTextarea,
     runQuickCommand,
     saveQuickCommandsSettings,
     type QuickCommandEntry,
+    type QuickCommandRunHistoryEntry,
     type QuickCommandMode
   } from '../lib/quickCommands';
   import { hideCommandPanel } from '../lib/commandPanel';
@@ -38,6 +40,18 @@
   let formErrors: string[] = [];
   let panelError = '';
   let editor: CommandEditorModel = blankEditor();
+  let historyCommand: QuickCommandEntry | null = null;
+  let history: QuickCommandRunHistoryEntry[] = [];
+  let historyLoading = false;
+  let contextEntry: QuickCommandEntry | null = null;
+  let contextMenuPosition = { x: 16, y: 112 };
+  let activeRunIds = new Set<string>();
+  let expandedRunIds = new Set<string>();
+  let listWidth = 180;
+  let panelElement: HTMLDivElement;
+  let contextMenuElement: HTMLDivElement;
+  let contextMenuFirstAction: HTMLButtonElement;
+  let resizePointerId: number | null = null;
 
   function blankEditor(): CommandEditorModel {
     return {
@@ -49,6 +63,22 @@
       argsText: '',
       commandsText: ''
     };
+  }
+
+  function inputValue(event: Event): string {
+    return (event.currentTarget as HTMLInputElement).value;
+  }
+
+  function selectValue(event: Event): string {
+    return (event.currentTarget as HTMLSelectElement).value;
+  }
+
+  function selectedMode(event: Event): QuickCommandMode {
+    return selectValue(event) as QuickCommandMode;
+  }
+
+  function textareaValue(event: Event): string {
+    return (event.currentTarget as HTMLTextAreaElement).value;
   }
 
   function startNewEntry() {
@@ -188,11 +218,110 @@
     formErrors = [];
     try {
       await runQuickCommand({ id });
-      await hideCommandPanel();
+      activeRunIds = new Set([...activeRunIds, id]);
     } catch (error) {
       panelError = error instanceof Error ? error.message : String(error);
     } finally {
       runningId = null;
+    }
+  }
+
+  async function showHistory(entry: QuickCommandEntry) {
+    contextEntry = null;
+    historyCommand = entry;
+    historyLoading = true;
+    try {
+      history = await loadHistory(entry.id);
+    } catch (error) {
+      panelError = error instanceof Error ? error.message : String(error);
+      history = [];
+    } finally {
+      historyLoading = false;
+    }
+  }
+
+  function formatRunTime(epochMs: number): string {
+    return new Date(epochMs).toLocaleString();
+  }
+
+  async function loadHistory(id: string): Promise<QuickCommandRunHistoryEntry[]> {
+    const runs = await listQuickCommandHistory({ id });
+    const nextExpandedIds = new Set(expandedRunIds);
+    for (const run of runs) {
+      if (run.running) {
+        nextExpandedIds.add(historyRunId(run));
+      }
+    }
+    expandedRunIds = nextExpandedIds;
+    if (runs.some((run) => run.running)) {
+      activeRunIds = new Set([...activeRunIds, id]);
+    } else if (activeRunIds.has(id)) {
+      const nextIds = new Set(activeRunIds);
+      nextIds.delete(id);
+      activeRunIds = nextIds;
+    }
+    return runs;
+  }
+
+  async function refreshActiveRuns() {
+    const ids = [...activeRunIds];
+    if (!ids.length) {
+      return;
+    }
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return { id, running: (await listQuickCommandHistory({ id })).some((run) => run.running) };
+        } catch {
+          return null;
+        }
+      })
+    );
+    const nextIds = new Set(activeRunIds);
+    for (const result of results) {
+      if (result && !result.running) {
+        nextIds.delete(result.id);
+      }
+    }
+    activeRunIds = nextIds;
+  }
+
+  function historyRunId(run: QuickCommandRunHistoryEntry): string {
+    return `${run.processId}:${run.startedAtEpochMs}`;
+  }
+
+  function isRunExpanded(run: QuickCommandRunHistoryEntry): boolean {
+    return expandedRunIds.has(historyRunId(run));
+  }
+
+  function toggleRunOutput(run: QuickCommandRunHistoryEntry) {
+    const id = historyRunId(run);
+    const next = new Set(expandedRunIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    expandedRunIds = next;
+  }
+
+  function startListResize(event: PointerEvent) {
+    event.preventDefault();
+    resizePointerId = event.pointerId;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function resizeList(event: PointerEvent) {
+    if (resizePointerId !== event.pointerId || !panelElement) {
+      return;
+    }
+    const panelLeft = panelElement.getBoundingClientRect().left;
+    listWidth = Math.round(Math.min(Math.max(event.clientX - panelLeft - 16, 128), 420));
+  }
+
+  function stopListResize(event: PointerEvent) {
+    if (resizePointerId === event.pointerId) {
+      resizePointerId = null;
     }
   }
 
@@ -202,12 +331,96 @@
     });
   }
 
+  function showContextHistory() {
+    if (contextEntry) {
+      void showHistory(contextEntry);
+    }
+  }
+
+  function editContextEntry() {
+    if (contextEntry) {
+      startEditEntry(contextEntry);
+      contextEntry = null;
+    }
+  }
+
+  function openContextMenu(event: MouseEvent, entry: QuickCommandEntry) {
+    event.preventDefault();
+    const panelBounds = panelElement.getBoundingClientRect();
+    contextMenuPosition = {
+      x: Math.max(8, Math.min(event.clientX - panelBounds.left, panelBounds.width - 172)),
+      y: Math.max(8, Math.min(event.clientY - panelBounds.top, panelBounds.height - 92))
+    };
+    contextEntry = entry;
+    void focusContextMenu();
+  }
+
+  function openKeyboardContextMenu(event: KeyboardEvent, entry: QuickCommandEntry) {
+    if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) {
+      return;
+    }
+    event.preventDefault();
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const panelBounds = panelElement.getBoundingClientRect();
+    contextMenuPosition = {
+      x: Math.max(8, Math.min(bounds.left - panelBounds.left, panelBounds.width - 172)),
+      y: Math.max(8, Math.min(bounds.bottom - panelBounds.top, panelBounds.height - 92))
+    };
+    contextEntry = entry;
+    void focusContextMenu();
+  }
+
+  async function focusContextMenu() {
+    await tick();
+    contextMenuFirstAction?.focus();
+  }
+
+  function dismissContextMenu(event: MouseEvent) {
+    if (contextMenuElement?.contains(event.target as Node)) {
+      return;
+    }
+    contextEntry = null;
+  }
+
+  function dismissContextMenuOnEscape(event: KeyboardEvent) {
+    if (event.key === 'Escape' && contextEntry) {
+      event.preventDefault();
+      contextEntry = null;
+    }
+  }
+
   onMount(() => {
     void refreshEntries();
+    const interval = window.setInterval(() => {
+      void refreshActiveRuns();
+      const commandId = historyCommand?.id;
+      if (!commandId) {
+        return;
+      }
+      void loadHistory(commandId).then((runs) => {
+        if (historyCommand?.id === commandId) {
+          history = runs;
+        }
+      });
+    }, 750);
+    return () => window.clearInterval(interval);
   });
 </script>
 
-<div class="command-panel" id="command-panel" role="dialog" aria-labelledby="command-panel-title">
+<svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
+
+<div
+  bind:this={panelElement}
+  class="command-panel"
+  id="command-panel"
+  role="dialog"
+  tabindex="-1"
+  aria-labelledby="command-panel-title"
+  style={`--command-list-width: ${listWidth}px`}
+  on:pointermove={resizeList}
+  on:pointerup={stopListResize}
+  on:pointercancel={stopListResize}
+>
   <header class="command-panel-header">
     <div>
       <p>JasonShell</p>
@@ -233,39 +446,51 @@
       {:else}
         <ul>
           {#each entries as entry (entry.id)}
-            <li>
+            <li
+              on:contextmenu={(event) => openContextMenu(event, entry)}
+            >
               <div class="command-row">
                 <strong>{entry.label}</strong>
-                <span>{modeLabels[entry.mode]}</span>
-              </div>
-              <div class="command-row-actions">
-                <MeltActionButton
-                  ariaLabel={`Run ${entry.label}`}
-                  disabled={Boolean(runningId || saving)}
-                  onClick={() => void runEntry(entry.id)}
-                >
-                  {runningId === entry.id ? 'Running…' : 'Run'}
-                </MeltActionButton>
-                <MeltActionButton
-                  ariaLabel={`Edit ${entry.label}`}
-                  disabled={Boolean(runningId || saving)}
-                  onClick={() => startEditEntry(entry)}
-                >
-                  Edit
-                </MeltActionButton>
-                <MeltActionButton
-                  ariaLabel={`Delete ${entry.label}`}
-                  disabled={Boolean(runningId || saving)}
-                  onClick={() => void deleteEntry(entry.id)}
-                >
-                  Delete
-                </MeltActionButton>
+                <button
+                  class="command-context-trigger"
+                  type="button"
+                  aria-label={`More options for ${entry.label}`}
+                  aria-haspopup="menu"
+                  on:keydown={(event) => openKeyboardContextMenu(event, entry)}
+                ></button>
+                <div class="command-row-actions">
+                  {#if runningId === entry.id || activeRunIds.has(entry.id)}
+                    <span class="command-spinner" aria-label={`${entry.label} is running`}></span>
+                  {/if}
+                  <MeltActionButton
+                    class="command-icon-button command-run-button"
+                    ariaLabel={`Run ${entry.label}`}
+                    disabled={Boolean(runningId || saving || activeRunIds.has(entry.id))}
+                    onClick={() => void runEntry(entry.id)}
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>
+                  </MeltActionButton>
+                  <MeltActionButton
+                    class="command-icon-button command-delete-button"
+                    ariaLabel={`Delete ${entry.label}`}
+                    disabled={Boolean(runningId || saving || activeRunIds.has(entry.id))}
+                    onClick={() => void deleteEntry(entry.id)}
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5h6v8H5V5Zm1-2h4l1 1h3v1H2V4h3l1-1Z" /></svg>
+                  </MeltActionButton>
+                </div>
               </div>
             </li>
           {/each}
         </ul>
       {/if}
     </aside>
+    <button
+      class="command-list-resize-grip"
+      type="button"
+      aria-label="Resize saved commands pane"
+      on:pointerdown={startListResize}
+    ></button>
 
     <section class="command-editor" aria-label="Command editor">
       <h2>{editor.id ? 'Edit command' : 'New command'}</h2>
@@ -285,7 +510,7 @@
           maxlength="96"
           spellcheck="false"
           on:input={(event) => {
-            editor = { ...editor, label: (event.currentTarget as HTMLInputElement).value };
+            editor = { ...editor, label: inputValue(event) };
           }}
         />
       </label>
@@ -295,7 +520,7 @@
         <select
           value={editor.mode}
           on:change={(event) => {
-            editor = { ...editor, mode: (event.currentTarget as HTMLSelectElement).value as QuickCommandMode };
+            editor = { ...editor, mode: selectedMode(event) };
           }}
         >
           {#each QUICK_COMMAND_MODES as mode}
@@ -312,7 +537,7 @@
             spellcheck="false"
             placeholder="git.exe"
             on:input={(event) => {
-              editor = { ...editor, targetPath: (event.currentTarget as HTMLInputElement).value };
+              editor = { ...editor, targetPath: inputValue(event) };
             }}
           />
         </label>
@@ -325,7 +550,7 @@
           spellcheck="false"
           placeholder="Optional absolute path"
           on:input={(event) => {
-            editor = { ...editor, cwd: (event.currentTarget as HTMLInputElement).value };
+            editor = { ...editor, cwd: inputValue(event) };
           }}
         />
       </label>
@@ -338,7 +563,7 @@
             spellcheck="false"
             value={editor.argsText}
             on:input={(event) => {
-              editor = { ...editor, argsText: (event.currentTarget as HTMLTextAreaElement).value };
+              editor = { ...editor, argsText: textareaValue(event) };
             }}
           ></textarea>
         </label>
@@ -351,7 +576,7 @@
             value={editor.commandsText}
             placeholder={'cd C:\\dev\\my-app\npython app.py'}
             on:input={(event) => {
-              editor = { ...editor, commandsText: (event.currentTarget as HTMLTextAreaElement).value };
+              editor = { ...editor, commandsText: textareaValue(event) };
             }}
           ></textarea>
         </label>
@@ -375,4 +600,22 @@
       </div>
     </section>
   </section>
+  {#if contextEntry}
+    <div
+      bind:this={contextMenuElement}
+      class="command-context-menu"
+      role="menu"
+      style={`left: ${contextMenuPosition.x}px; top: ${contextMenuPosition.y}px`}
+    >
+      <button bind:this={contextMenuFirstAction} type="button" role="menuitem" on:click={showContextHistory}>View output history</button>
+      <button type="button" role="menuitem" on:click={editContextEntry}>Edit command</button>
+    </div>
+  {/if}
+  {#if historyCommand}
+    <section class="command-history" aria-label={`${historyCommand.label} output history`}>
+      <header><div><p>RUN HISTORY</p><h2>{historyCommand.label}</h2></div><MeltActionButton ariaLabel="Close output history" onClick={() => (historyCommand = null)}>Close</MeltActionButton></header>
+      <p class="command-history-notice">Output stays local in settings. Up to 20 runs, 16 KiB per stream.</p>
+      {#if historyLoading}<p class="command-list-state">Loading output…</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{:else}<div class="command-history-list">{#each history as run (historyRunId(run))}<div class="command-history-run" class:running={run.running} role="button" tabindex="0" aria-expanded={isRunExpanded(run)} on:click={() => toggleRunOutput(run)} on:keydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRunOutput(run); } }}><div class="command-history-meta"><strong>{run.running ? 'Running' : run.exitCode === 0 ? 'Completed' : run.exitCode === null ? 'Ended' : `Exit ${run.exitCode}`}</strong><span>{formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if isRunExpanded(run)}{#if run.stdout}<pre class="command-output">{run.stdout}{run.stdoutTruncated ? '\n[stdout truncated]' : ''}</pre>{/if}{#if run.stderr}<pre class="command-output command-output-error">{run.stderr}{run.stderrTruncated ? '\n[stderr truncated]' : ''}</pre>{/if}{#if run.running && !run.stdout && !run.stderr}<p class="command-list-state">Waiting for output…</p>{/if}{/if}</div>{/each}</div>{/if}
+    </section>
+  {/if}
 </div>

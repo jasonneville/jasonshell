@@ -395,7 +395,7 @@ fn build_command_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .inner_size(COMMAND_PANEL_WIDTH_LOGICAL, COMMAND_PANEL_HEIGHT_LOGICAL)
     .maximizable(false)
     .minimizable(false)
-    .resizable(false)
+    .resizable(true)
     .shadow(true)
     .skip_taskbar(true)
     .theme(Some(Theme::Dark))
