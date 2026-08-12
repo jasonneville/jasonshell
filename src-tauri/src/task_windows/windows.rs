@@ -7,11 +7,8 @@ use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM, POINT};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
-use windows::Win32::Graphics::Gdi::{
-    MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY,
-};
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -54,7 +51,6 @@ pub(super) struct WindowCandidate {
     pub(super) is_minimized: bool,
     pub(super) has_owner: bool,
     pub(super) is_cloaked: bool,
-    pub(super) is_primary_monitor: bool,
     pub(super) is_shell_process: bool,
     pub(super) is_visible: bool,
     pub(super) ex_style: WINDOW_EX_STYLE,
@@ -64,8 +60,6 @@ pub(super) struct WindowCandidate {
 pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
     let current_process_id = std::process::id();
     let foreground = unsafe { GetForegroundWindow() };
-    let primary_monitor =
-        unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
     let mut handles = Vec::new();
 
     unsafe {
@@ -79,7 +73,7 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
     let mut windows = Vec::new();
     for hwnd in handles {
         let Some(candidate) =
-            build_window_candidate(hwnd, foreground, primary_monitor, current_process_id)?
+            build_window_candidate(hwnd, foreground, current_process_id)?
         else {
             continue;
         };
@@ -119,8 +113,6 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
 pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {
     let current_process_id = std::process::id();
     let foreground = unsafe { GetForegroundWindow() };
-    let primary_monitor =
-        unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
     let mut handles = Vec::new();
 
     unsafe {
@@ -134,7 +126,7 @@ pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>
     let mut windows = Vec::new();
     for hwnd in handles {
         let Some(candidate) =
-            build_window_candidate(hwnd, foreground, primary_monitor, current_process_id)?
+            build_window_candidate(hwnd, foreground, current_process_id)?
         else {
             continue;
         };
@@ -183,7 +175,6 @@ impl WindowCandidate {
 fn build_window_candidate(
     hwnd: HWND,
     foreground: HWND,
-    primary_monitor: HMONITOR,
     current_process_id: u32,
 ) -> Result<Option<WindowCandidate>, String> {
     let mut process_id = 0;
@@ -201,7 +192,6 @@ fn build_window_candidate(
     let process_name = resolve_process_name(process_path.as_deref());
     let owner = unsafe { GetWindow(hwnd, GW_OWNER).unwrap_or_default() };
     let ex_style = WINDOW_EX_STYLE(unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 });
-    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) };
 
     Ok(Some(WindowCandidate {
         class_name,
@@ -215,7 +205,6 @@ fn build_window_candidate(
         is_minimized: unsafe { IsIconic(hwnd).as_bool() },
         has_owner: !owner.0.is_null(),
         is_cloaked: is_window_cloaked(hwnd),
-        is_primary_monitor: monitor == primary_monitor,
         is_shell_process: process_id == current_process_id,
         is_visible: unsafe { IsWindowVisible(hwnd).as_bool() },
         ex_style,
@@ -232,7 +221,6 @@ pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_
         || (forces_taskbar && !candidate.process_name.is_empty());
 
     (candidate.is_visible || candidate.is_minimized)
-        && candidate.is_primary_monitor
         && !candidate.is_shell_process
         && candidate.process_id != current_process_id
         && !candidate.has_owner

@@ -5,6 +5,7 @@ import { test } from 'node:test';
 const actionsSource = readFileSync(new URL('../src-tauri/src/task_windows/actions.rs', import.meta.url), 'utf8');
 const modSource = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', import.meta.url), 'utf8');
 const taskbarWindowsSource = readFileSync(new URL('../src/lib/taskbarWindows.ts', import.meta.url), 'utf8');
+const taskWindowsSource = readFileSync(new URL('../src-tauri/src/task_windows/windows.rs', import.meta.url), 'utf8');
 const taskbarUiSource = readFileSync(new URL('../src/lib/taskbarUi.ts', import.meta.url), 'utf8');
 
 test('task window activation validates live hwnds and verifies focus outcome', () => {
@@ -28,4 +29,10 @@ test('task window command carries guarded active-click intent', () => {
 
 test('taskbar labels expose active-window minimize toggle', () => {
   assert.match(taskbarUiSource, /taskWindow\.isActive \? 'Minimize' : 'Focus'/);
+});
+
+test('task window source no longer uses monitor-specific gating', () => {
+  assert.doesNotMatch(taskWindowsSource, /\bmonitor\b/i);
+  assert.doesNotMatch(taskWindowsSource, /\bprimary\s+monitor\b/i);
+  assert.doesNotMatch(taskWindowsSource, /is_primary_monitor|primary_monitor|monitor_index|monitor_handle|MonitorFrom/i);
 });

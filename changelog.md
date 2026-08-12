@@ -11,6 +11,8 @@
 - 2026-08-12 `[CODE]` DOCS: README now points first-run Windows setup at the bootstrap script and documents the direct dev command.
 
  - 2026-08-12 `[CODE]` FIXED: Taskbar window activation now rejects invalid HWNDs before target resolution, retries focus through AttachThreadInput plus SwitchToThisWindow, verifies foreground ownership against target/root owner, and relabels taskbar activation affordance as Focus.
+- 2026-08-12 `[CODE]` FIXED: Taskbar window enumeration now keeps eligible visible/minimized windows from every monitor/virtual-desktop context instead of filtering to the primary monitor, so off-screen task windows stay listed and clickable.
+- 2026-08-12 `[CODE]` TESTED: Added Rust and Node regressions for non-primary visible taskbar eligibility and the primary-monitor source-contract removal, then ran focused `cargo test --manifest-path src-tauri/Cargo.toml task_windows` and `node --test tests/taskbarWindows.test.mjs`.
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
 - 2026-08-12 `[CODE]` FIXED: Taskbar clicks now carry pre-click active intent across the shell-foreground transfer; backend accepts it only when JasonShell owns foreground and sends `WM_SYSCOMMAND` / `SC_MINIMIZE` to the target root owner. Background/minimized tasks retain restore/focus behavior.

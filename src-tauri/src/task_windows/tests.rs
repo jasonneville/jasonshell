@@ -22,7 +22,6 @@ fn candidate() -> WindowCandidate {
         is_minimized: false,
         has_owner: false,
         is_cloaked: false,
-        is_primary_monitor: true,
         is_shell_process: false,
         is_visible: true,
         ex_style: WINDOW_EX_STYLE(0),
@@ -79,6 +78,13 @@ fn includes_minimized_windows_with_identity() {
     let mut window = candidate();
     window.is_visible = false;
     window.is_minimized = true;
+
+    assert!(is_taskbar_candidate(&window, 999));
+}
+
+#[test]
+fn includes_non_primary_visible_windows_with_identity() {
+    let window = candidate();
 
     assert!(is_taskbar_candidate(&window, 999));
 }
