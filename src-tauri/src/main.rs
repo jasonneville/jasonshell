@@ -40,6 +40,7 @@ mod appbar;
 mod explorer;
 
 use std::sync::Mutex;
+use std::time::Duration;
 #[cfg(target_os = "windows")]
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
@@ -100,6 +101,7 @@ fn main() {
             terminal_panel::hide_terminal_panel,
             command_panel::show_command_panel,
             command_panel::hide_command_panel,
+            command_panel::save_command_panel_size,
             audio_panel::show_audio_panel,
             audio_panel::hide_audio_panel,
             calendar_panel::show_calendar_panel,
@@ -127,6 +129,7 @@ fn main() {
             shell_paths::launch_app_path,
             shell_paths::run_control_panel,
             quick_commands::run_quick_command,
+            quick_commands::stop_quick_command,
             quick_commands::list_quick_command_history,
             quick_commands::save_quick_commands_settings,
             stack_popup::list_pinned_stack_folders,
@@ -311,13 +314,49 @@ fn main() {
             if window.label() == shell_windows::COMMAND_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
-                let _ = window.app_handle().emit_to(
-                    shell_windows::TOP_BAR_LABEL,
-                    command_panel::COMMAND_PANEL_CLOSED_EVENT,
-                    (),
-                );
-                let _ = window.hide();
+                let focus_loss_nonce = command_panel::invalidate_command_panel_focus_loss_nonce();
+                let app_handle = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        std::thread::sleep(Duration::from_millis(150));
+                    })
+                    .await;
+                    if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
+                        return;
+                    }
+                    let Some(panel) =
+                        app_handle.get_webview_window(shell_windows::COMMAND_PANEL_LABEL)
+                    else {
+                        return;
+                    };
+                    if !panel.is_visible().ok().unwrap_or(false)
+                        || panel.is_focused().ok().unwrap_or(false)
+                        || panel.is_maximized().ok().unwrap_or(false)
+                        || panel.is_minimized().ok().unwrap_or(false)
+                    {
+                        return;
+                    }
+                    if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
+                        return;
+                    }
+                    let _ = app_handle.emit_to(
+                        shell_windows::TOP_BAR_LABEL,
+                        command_panel::COMMAND_PANEL_CLOSED_EVENT,
+                        (),
+                    );
+                    let _ = panel.hide();
+                });
                 return;
+            }
+
+            if window.label() == shell_windows::COMMAND_PANEL_LABEL {
+                if let WindowEvent::Resized(size) = event {
+                    let _ = command_panel::save_command_panel_size_for_app(
+                        &window.app_handle().clone(),
+                        size.width,
+                        size.height,
+                    );
+                }
             }
 
             if matches!(

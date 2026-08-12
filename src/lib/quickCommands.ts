@@ -22,7 +22,14 @@ export interface RunQuickCommandRequest {
   id: string;
 }
 
+export type ListQuickCommandHistoryRequest = Partial<RunQuickCommandRequest>;
+
 export interface QuickCommandSpawnResult {
+  processId: number;
+}
+
+export interface StopQuickCommandRequest {
+  id: string;
   processId: number;
 }
 
@@ -95,6 +102,33 @@ export function formatQuickCommandCommandsTextarea(commands: readonly string[]):
   return commands.map((value) => value.trim()).filter(Boolean).join('\n');
 }
 
+export function nextDuplicateQuickCommandLabel(label: string, existingLabels: readonly string[]): string {
+  const base = label.trim();
+  const normalized = new Set(existingLabels.map((value) => value.trim().toLowerCase()));
+  let suffix = 1;
+  let candidate = `${base} (${suffix})`;
+  while (normalized.has(candidate.trim().toLowerCase())) {
+    suffix += 1;
+    candidate = `${base} (${suffix})`;
+  }
+  return candidate;
+}
+
+export function nextUniqueQuickCommandId(label: string, existingIds: readonly string[]): string {
+  const base = asSlug(label);
+  if (!base) {
+    return '';
+  }
+  const ids = new Set(existingIds.map((value) => value.trim().toLowerCase()));
+  let suffix = 0;
+  let candidate = base;
+  while (ids.has(candidate.toLowerCase())) {
+    suffix += 1;
+    candidate = `${base}-${suffix}`;
+  }
+  return candidate;
+}
+
 export async function loadQuickCommandsSettings(): Promise<QuickCommandsSettings> {
   const settings = await invoke<ShellSettingsRecord>(IPC_COMMANDS.loadShellSettings);
   return coerceQuickCommandsSettings(settings.quickCommands ?? DEFAULT_QUICK_COMMANDS_SETTINGS);
@@ -124,9 +158,9 @@ export function runQuickCommand(request: RunQuickCommandRequest): Promise<QuickC
 }
 
 export function listQuickCommandHistory(
-  request: RunQuickCommandRequest
+  request: ListQuickCommandHistoryRequest = {}
 ): Promise<QuickCommandRunHistoryEntry[]> {
-  const normalized = quickCommandRunRequest(request.id);
+  const normalized = request.id === undefined ? undefined : quickCommandRunRequest(request.id);
   return invoke<QuickCommandRunHistoryEntry[]>(IPC_COMMANDS.listQuickCommandHistory, {
     request: normalized
   });
@@ -246,6 +280,24 @@ function asOptionalString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+export function stopQuickCommand(request: StopQuickCommandRequest): Promise<void> {
+  const normalized = quickCommandRunRequest(request.id);
+  if (!Number.isInteger(request.processId) || request.processId <= 0) {
+    throw new Error('Quick command process id must be positive.');
+  }
+  return invoke<void>(IPC_COMMANDS.stopQuickCommand, {
+    request: { ...normalized, processId: request.processId }
+  });
+}
+
+function asSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function asMode(value: unknown): QuickCommandMode {

@@ -15,3 +15,7 @@ export function showCommandPanel(request: ShowCommandPanelRequest): Promise<void
 export function hideCommandPanel(): Promise<void> {
   return invoke(IPC_COMMANDS.hideCommandPanel);
 }
+
+export function saveCommandPanelSize(widthPhysical: number, heightPhysical: number): Promise<unknown> {
+  return invoke(IPC_COMMANDS.saveCommandPanelSize, { widthPhysical, heightPhysical });
+}

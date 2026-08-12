@@ -35,12 +35,14 @@ test('command panel is routed as a dedicated auxiliary shell surface', () => {
   assert.match(mainSource, /emit_to\(\s*shell_windows::TOP_BAR_LABEL,\s*command_panel::COMMAND_PANEL_CLOSED_EVENT/);
   assert.match(commandPanelRs, /pub fn show_command_panel/);
   assert.match(commandPanelRs, /pub fn hide_command_panel/);
+  assert.match(commandPanelRs, /pub fn save_command_panel_size/);
   assert.match(capabilitySource, /"command-panel"/);
 });
 
 test('command panel contracts and wrappers use constant-backed IPC and event names', () => {
   assert.match(ipcCommandsSource, /showCommandPanel: 'show_command_panel'/);
   assert.match(ipcCommandsSource, /hideCommandPanel: 'hide_command_panel'/);
+  assert.match(ipcCommandsSource, /saveCommandPanelSize: 'save_command_panel_size'/);
   assert.match(ipcEventsSource, /commandPanelClosed: 'command-panel:closed'/);
   assert.match(ipcSurfacesSource, /commandPanel: 'command-panel'/);
   assert.match(contractsSource, /COMMAND_PANEL/);
@@ -49,6 +51,7 @@ test('command panel contracts and wrappers use constant-backed IPC and event nam
   assert.match(contractsSource, /COMMAND_PANEL_CLOSED/);
   assert.match(commandPanelWrapper, /invoke\(IPC_COMMANDS\.showCommandPanel/);
   assert.match(commandPanelWrapper, /invoke\(IPC_COMMANDS\.hideCommandPanel/);
+  assert.match(commandPanelWrapper, /invoke\(IPC_COMMANDS\.saveCommandPanelSize/);
   assert.doesNotMatch(commandPanelWrapper, /invoke\('show_command_panel'/);
   assert.doesNotMatch(commandPanelWrapper, /invoke\('hide_command_panel'/);
 });
@@ -68,6 +71,9 @@ test('top bar command button is left of tray button and enforces popup exclusivi
 
 test('command panel surface includes compact list actions, resize controls, and command-block editor flow', () => {
   assert.match(commandPanelSource, /id="command-panel"[\s\S]*role="dialog"/);
+  assert.match(commandPanelSource, /function selectCommand\(entry: QuickCommandEntry\) \{[\s\S]*startEditEntry\(entry\);[\s\S]*contextEntry = null;[\s\S]*\}/);
+  assert.match(commandPanelSource, /on:click=\{\(\) => selectCommand\(entry\)\}/);
+  assert.match(commandPanelSource, /on:keydown=\{\(event\) => commandRowKeydown\(event, entry\)\}/);
   assert.match(commandPanelSource, /command-run-button/);
   assert.match(commandPanelSource, /Edit/);
   assert.match(commandPanelSource, /command-delete-button/);
@@ -83,25 +89,54 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /formatQuickCommandCommandsTextarea/);
   assert.match(commandPanelSource, /saveQuickCommandsSettings/);
   assert.match(commandPanelSource, /runQuickCommand/);
+  assert.match(commandPanelSource, /stopQuickCommand/);
   assert.match(commandPanelSource, /listQuickCommandHistory/);
+  assert.match(commandPanelSource, /listQuickCommandHistory\(\)/);
+  assert.match(commandPanelSource, /Configuration/);
+  assert.match(commandPanelSource, /Previous runs/);
+  assert.match(commandPanelSource, /\{#each history as run \(historyRunKey\(run\)\)\}/);
+  assert.doesNotMatch(commandPanelSource, /history\.slice\(0, 12\)/);
+  assert.match(commandPanelSource, /historyRunStatus/);
+  assert.match(commandPanelSource, /if \(saving\) return;/);
   assert.match(commandPanelSource, /on:contextmenu/);
   assert.match(commandPanelSource, /openKeyboardContextMenu/);
   assert.match(commandPanelSource, /on:keydown=\{dismissContextMenuOnEscape\}/);
   assert.match(commandPanelSource, /View output history/);
   assert.match(commandPanelSource, /Output stays local in settings/);
   assert.match(commandPanelSource, /command-list-resize-grip/);
-  assert.match(commandPanelSource, /loadHistory/);
-  assert.match(commandPanelSource, /run\.running \? 'Running'/);
+  assert.match(commandPanelSource, /historyRunStatus/);
+  assert.match(commandPanelSource, /activeTab === 'previousRuns'/);
   assert.match(commandPanelSource, /command-history-run/);
+  assert.match(commandPanelSource, /Duplicate command/);
+  assert.match(commandPanelSource, /nextDuplicateQuickCommandLabel/);
+  assert.match(commandPanelSource, /nextUniqueQuickCommandId/);
+  assert.match(commandPanelSource, /\? `Stop \$\{entry\.label\}` : `Run \$\{entry\.label\}`/);
+  assert.match(commandPanelSource, /command-stop-button/);
+  assert.match(commandPanelSource, /function shouldPollHistory\(\): boolean \{[\s\S]*return activeTab === 'previousRuns' \|\| activeRunIds\.size > 0;[\s\S]*\}/);
+  assert.match(commandPanelSource, /window\.setInterval\(\(\) => \{[\s\S]*if \(shouldPollHistory\(\)\) \{[\s\S]*void refreshHistory\(\);/);
   assert.match(commandPanelCss, /grid-template-columns: minmax\(8rem, var\(--command-list-width\)\)/);
+  assert.match(commandPanelCss, /animation: command-spin 1100ms linear infinite/);
   assert.match(commandPanelSource, /hideCommandPanel/);
   assert.match(commandPanelCss, /\.command-panel \{/);
 });
 
-test('command panel Rust placement anchors to right edge and clamps within top bar bounds', () => {
-  assert.match(commandPanelRs, /anchors_command_panel_to_button_right_edge/);
-  assert.match(commandPanelRs, /clamps_command_panel_inside_top_bar_edges/);
-  assert.match(commandPanelRs, /COMMAND_PANEL_EDGE_PADDING_PHYSICAL/);
-  assert.match(commandPanelRs, /COMMAND_PANEL_MARGIN_PHYSICAL/);
+test('command panel Rust placement clamps inside monitor work area and shrinks only when needed', () => {
+  assert.match(commandPanelRs, /places_command_panel_within_work_area_and_keeps_width_when_it_fits/);
+  assert.match(commandPanelRs, /shrinks_command_panel_before_positioning_when_work_area_is_too_narrow/);
+  assert.match(commandPanelRs, /clamps_saved_command_panel_size_to_monitor_work_area/);
+  assert.match(commandPanelRs, /current_monitor\(\)[\s\S]*?work_area\(\)/);
+  assert.match(commandPanelRs, /let target_size = PhysicalSize::new\(panel_width as u32, panel_height as u32\)/);
+  assert.match(commandPanelRs, /set_size\(target_size\)/);
   assert.match(commandPanelRs, /emit_to\(TOP_BAR_LABEL, COMMAND_PANEL_CLOSED_EVENT/);
+});
+
+test('command panel close lifecycle avoids resize and minimize/maximize disappearance', () => {
+  assert.match(mainSource, /COMMAND_PANEL_LABEL[\s\S]*Focused\(false\)/);
+  assert.match(mainSource, /sleep\(Duration::from_millis\(150\)\)/);
+  assert.match(mainSource, /is_focused\(\)/);
+  assert.match(mainSource, /is_maximized\(\)/);
+  assert.match(mainSource, /is_minimized\(\)/);
+  assert.match(mainSource, /COMMAND_PANEL_LABEL[\s\S]*WindowEvent::Resized/);
+  assert.doesNotMatch(mainSource, /COMMAND_PANEL_LABEL[\s\S]*WindowEvent::Maximized/);
+  assert.doesNotMatch(mainSource, /COMMAND_PANEL_LABEL[\s\S]*WindowEvent::Minimized/);
 });

@@ -9,8 +9,11 @@ import {
   formatQuickCommandCommandsTextarea,
   parseQuickCommandArgsTextarea,
   parseQuickCommandCommandsTextarea,
+  nextDuplicateQuickCommandLabel,
+  nextUniqueQuickCommandId,
   quickCommandRunRequest,
   listQuickCommandHistory,
+  stopQuickCommand,
   saveQuickCommandsSettings
 } from '../dist-tests/lib/quickCommands.js';
 
@@ -131,5 +134,12 @@ test('quick command run request validates id and wrapper uses IPC constants', ()
   assert.match(source, /IPC_COMMANDS\.saveQuickCommandsSettings/);
   assert.equal(typeof listQuickCommandHistory, 'function');
   assert.equal(typeof saveQuickCommandsSettings, 'function');
+  assert.equal(typeof stopQuickCommand, 'function');
   assert.doesNotMatch(source, /invoke\('run_quick_command'/);
+  assert.match(source, /IPC_COMMANDS\.stopQuickCommand/);
+});
+
+test('quick command duplicate labels stay unique case-insensitively', () => {
+  assert.equal(nextDuplicateQuickCommandLabel('Build', ['Build', 'build (1)', 'BUILD (2)']), 'Build (3)');
+  assert.equal(nextUniqueQuickCommandId('Build', ['build', 'build-1']), 'build-2');
 });

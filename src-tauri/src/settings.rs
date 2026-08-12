@@ -48,6 +48,10 @@ pub struct ShellUiSettings {
     pub top_bar_height_logical: f64,
     #[serde(default = "default_bottom_bar_height_logical")]
     pub bottom_bar_height_logical: f64,
+    #[serde(default = "default_command_panel_width_logical")]
+    pub command_panel_width_logical: f64,
+    #[serde(default = "default_command_panel_height_logical")]
+    pub command_panel_height_logical: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -109,6 +113,8 @@ pub struct QuickCommandsSettings {
 pub struct QuickCommandRunHistoryEntry {
     pub command_id: String,
     pub started_at_epoch_ms: u64,
+    #[serde(default)]
+    pub started_at_filetime_100ns: u64,
     pub finished_at_epoch_ms: u64,
     pub process_id: u32,
     pub exit_code: Option<i32>,
@@ -204,6 +210,8 @@ impl Default for ShellUiSettings {
             lock_bottom_bar_height: true,
             top_bar_height_logical: default_top_bar_height_logical(),
             bottom_bar_height_logical: default_bottom_bar_height_logical(),
+            command_panel_width_logical: default_command_panel_width_logical(),
+            command_panel_height_logical: default_command_panel_height_logical(),
         }
     }
 }
@@ -258,6 +266,14 @@ fn default_top_bar_height_logical() -> f64 {
 
 fn default_bottom_bar_height_logical() -> f64 {
     crate::shell_windows::BOTTOM_BAR_HEIGHT_LOGICAL
+}
+
+fn default_command_panel_width_logical() -> f64 {
+    crate::shell_windows::COMMAND_PANEL_WIDTH_LOGICAL
+}
+
+fn default_command_panel_height_logical() -> f64 {
+    crate::shell_windows::COMMAND_PANEL_HEIGHT_LOGICAL
 }
 
 #[tauri::command]

@@ -11,6 +11,13 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
+#[cfg(windows)]
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+};
+
 const QUICK_COMMAND_HISTORY_LIMIT: usize = 20;
 const QUICK_COMMAND_CAPTURE_LIMIT: usize = 16 * 1024;
 static RUNNING_QUICK_COMMANDS: OnceLock<
@@ -26,6 +33,13 @@ pub struct RunQuickCommandRequest {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickCommandSpawnResult {
+    pub process_id: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StopQuickCommandRequest {
+    pub id: String,
     pub process_id: u32,
 }
 
@@ -55,27 +69,49 @@ pub fn run_quick_command(
 }
 
 #[tauri::command]
+pub fn stop_quick_command(request: StopQuickCommandRequest) -> Result<(), String> {
+    validate_run_request(&RunQuickCommandRequest {
+        id: request.id.clone(),
+    })?;
+    if request.process_id == 0 {
+        return Err("quick command process id must be positive".to_string());
+    }
+    let running = running_quick_commands()
+        .lock()
+        .map_err(|_| "quick command runtime state is poisoned".to_string())?
+        .get(&request.process_id)
+        .is_some_and(|run| run.command_id == request.id && run.running);
+    if !running {
+        return Err("quick command is no longer running".to_string());
+    }
+
+    stop_running_quick_command(request.process_id, request.id.as_str())
+}
+
+#[tauri::command]
 pub fn list_quick_command_history(
     app_handle: AppHandle,
-    request: RunQuickCommandRequest,
+    request: Option<RunQuickCommandRequest>,
 ) -> Result<Vec<settings::QuickCommandRunHistoryEntry>, String> {
-    validate_run_request(&request)?;
+    let request = request.filter(|request| !request.id.trim().is_empty());
     let settings = settings::load_shell_settings_for_app(&app_handle)?;
     let mut history = running_quick_commands()
         .lock()
         .map_err(|_| "quick command runtime state is poisoned".to_string())?
         .values()
-        .filter(|entry| entry.command_id == request.id)
         .cloned()
         .collect::<Vec<_>>();
-    history.extend(
-        settings
-            .quick_commands
-            .history
-            .into_iter()
-            .filter(|entry| entry.command_id == request.id),
-    );
-    history.sort_by(|left, right| right.started_at_epoch_ms.cmp(&left.started_at_epoch_ms));
+    history.extend(settings.quick_commands.history.into_iter());
+    if let Some(request) = request {
+        history.retain(|entry| entry.command_id == request.id);
+    }
+    history.sort_by(|left, right| {
+        right
+            .started_at_epoch_ms
+            .cmp(&left.started_at_epoch_ms)
+            .then_with(|| right.finished_at_epoch_ms.cmp(&left.finished_at_epoch_ms))
+            .then_with(|| right.process_id.cmp(&left.process_id))
+    });
     history.truncate(QUICK_COMMAND_HISTORY_LIMIT);
     Ok(history)
 }
@@ -196,9 +232,18 @@ pub(crate) fn spawn_quick_command(
         .map_err(|error| format!("failed to run quick command '{}': {error}", plan.executable))?;
     let process_id = child.id();
     let started_at_epoch_ms = current_epoch_ms();
+    let started_at_filetime_100ns = match process_creation_time_for_pid(process_id) {
+        Ok(time) => time,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
     let running = settings::QuickCommandRunHistoryEntry {
         command_id,
         started_at_epoch_ms,
+        started_at_filetime_100ns,
         finished_at_epoch_ms: 0,
         process_id,
         exit_code: None,
@@ -245,6 +290,7 @@ pub(crate) fn spawn_quick_command(
             .unwrap_or(settings::QuickCommandRunHistoryEntry {
                 command_id: String::new(),
                 started_at_epoch_ms,
+                started_at_filetime_100ns,
                 finished_at_epoch_ms,
                 process_id,
                 exit_code,
@@ -271,13 +317,21 @@ fn store_quick_command_history(
     entry: settings::QuickCommandRunHistoryEntry,
 ) -> Result<(), String> {
     settings::update_shell_settings_for_app(app_handle, |settings| {
-        settings.quick_commands.history.insert(0, entry);
-        settings
-            .quick_commands
-            .history
-            .truncate(QUICK_COMMAND_HISTORY_LIMIT);
+        settings.quick_commands.history = append_quick_command_history_bounded(
+            std::mem::take(&mut settings.quick_commands.history),
+            entry,
+        );
     })
     .map(|_| ())
+}
+
+pub(crate) fn append_quick_command_history_bounded(
+    mut history: Vec<settings::QuickCommandRunHistoryEntry>,
+    entry: settings::QuickCommandRunHistoryEntry,
+) -> Vec<settings::QuickCommandRunHistoryEntry> {
+    history.insert(0, entry);
+    history.truncate(QUICK_COMMAND_HISTORY_LIMIT);
+    history
 }
 
 fn replace_quick_command_entries(
@@ -299,6 +353,85 @@ fn current_epoch_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(windows)]
+fn process_creation_time_for_pid(process_id: u32) -> Result<u64, String> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
+        .map_err(|error| format!("failed to inspect quick command process: {error}"))?;
+    let result = process_creation_time(handle);
+    let _ = unsafe { CloseHandle(handle) };
+    result
+}
+
+#[cfg(not(windows))]
+fn process_creation_time_for_pid(_process_id: u32) -> Result<u64, String> {
+    Ok(0)
+}
+
+#[cfg(windows)]
+fn process_creation_time(handle: HANDLE) -> Result<u64, String> {
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) }
+        .map_err(|_| "quick command is no longer running".to_string())?;
+    Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
+}
+
+#[cfg(windows)]
+fn stop_running_quick_command(process_id: u32, command_id: &str) -> Result<(), String> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
+        .map_err(|_| "quick command is no longer running".to_string())?;
+    let result = (|| {
+        if !is_verified_quick_command_process(handle, process_id, command_id)? {
+            return Err("quick command is no longer running".to_string());
+        }
+        let status = Command::new(r"C:\Windows\System32\taskkill.exe")
+            .args(["/PID", &process_id.to_string(), "/T", "/F"])
+            .status()
+            .map_err(|error| format!("failed to stop quick command: {error}"))?;
+        if !status.success() {
+            return Err("failed to stop quick command".to_string());
+        }
+        if let Ok(mut runs) = running_quick_commands().lock() {
+            if let Some(run) = runs.get_mut(&process_id) {
+                run.running = false;
+            }
+        }
+        Ok(())
+    })();
+    let _ = unsafe { CloseHandle(handle) };
+    result
+}
+
+#[cfg(not(windows))]
+fn stop_running_quick_command(_process_id: u32, _command_id: &str) -> Result<(), String> {
+    Err("quick command stop is only supported on Windows".to_string())
+}
+
+#[cfg(windows)]
+fn is_verified_quick_command_process(
+    handle: HANDLE,
+    process_id: u32,
+    command_id: &str,
+) -> Result<bool, String> {
+    let Some(run) = running_quick_commands()
+        .lock()
+        .map_err(|_| "quick command runtime state is poisoned".to_string())?
+        .get(&process_id)
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    if run.command_id != command_id || !run.running {
+        return Ok(false);
+    }
+    if process_creation_time(handle)? != run.started_at_filetime_100ns {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 fn capture_stream(mut stream: impl Read, mut on_chunk: impl FnMut(&[u8])) -> (String, bool) {
@@ -345,6 +478,7 @@ fn append_running_output(process_id: u32, is_stdout: bool, chunk: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::QuickCommandRunHistoryEntry;
 
     fn entry(mode: QuickCommandMode, target_path: String, args: Vec<&str>) -> QuickCommandEntry {
         QuickCommandEntry {
@@ -363,6 +497,16 @@ mod tests {
         let error =
             validate_run_request(&RunQuickCommandRequest { id: "".to_string() }).unwrap_err();
         assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn validates_stop_request_requires_positive_process_id() {
+        let error = stop_quick_command(StopQuickCommandRequest {
+            id: "quick".to_string(),
+            process_id: 0,
+        })
+        .unwrap_err();
+        assert!(error.contains("must be positive"));
     }
 
     #[test]
@@ -415,6 +559,7 @@ mod tests {
         let run = settings::QuickCommandRunHistoryEntry {
             command_id: "quick".to_string(),
             started_at_epoch_ms: 1,
+            started_at_filetime_100ns: 2,
             finished_at_epoch_ms: 2,
             process_id: 1,
             exit_code: Some(0),
@@ -450,5 +595,31 @@ mod tests {
 
         assert_eq!(quick_commands.history.len(), 1);
         assert_eq!(quick_commands.history[0].command_id, "quick");
+    }
+
+    #[test]
+    fn appending_history_keeps_latest_first_and_bounds_length() {
+        let history = vec![history_entry("one", 10, 1), history_entry("two", 9, 2)];
+
+        let bounded = append_quick_command_history_bounded(history, history_entry("new", 11, 3));
+
+        assert_eq!(bounded[0].command_id, "new");
+        assert_eq!(bounded.len(), 3);
+    }
+
+    fn history_entry(command_id: &str, started_at_epoch_ms: u64, process_id: u32) -> QuickCommandRunHistoryEntry {
+        QuickCommandRunHistoryEntry {
+            command_id: command_id.to_string(),
+            started_at_epoch_ms,
+            started_at_filetime_100ns: 0,
+            finished_at_epoch_ms: started_at_epoch_ms,
+            process_id,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            running: false,
+        }
     }
 }

@@ -26,15 +26,20 @@ test('quick commands surface uses shared shell theme tokens for primary surfaces
 
 test('quick commands keep compact icon controls and context-only history/edit actions', () => {
   assert.match(commandPanelSource, /import MeltActionButton/);
-  assert.match(commandPanelSource, /class="command-icon-button command-run-button"/);
+  assert.match(commandPanelSource, /command-run-button/);
+  assert.match(commandPanelSource, /command-stop-button/);
   assert.match(commandPanelSource, /class="command-icon-button command-delete-button"/);
-  assert.match(commandPanelSource, /ariaLabel=\{`Run \$\{entry\.label\}`\}/);
+  assert.match(commandPanelSource, /ariaLabel=\{activeRunIds\.has\(entry\.id\) \? `Stop \$\{entry\.label\}` : `Run \$\{entry\.label\}`\}/);
   assert.match(commandPanelSource, /ariaLabel=\{`Delete \$\{entry\.label\}`\}/);
   assert.match(commandPanelSource, /View output history/);
   assert.match(commandPanelSource, /Edit command/);
   assert.match(commandPanelSource, /command-spinner/);
+  assert.match(commandPanelSource, /Configuration/);
+  assert.match(commandPanelSource, /Previous runs/);
+  assert.match(commandPanelSource, /listQuickCommandHistory\(\)/);
+  assert.match(commandPanelSource, /ariaLabel=\{activeRunIds\.has\(entry\.id\) \? `Stop \$\{entry\.label\}` : `Run \$\{entry\.label\}`\}/);
   assert.match(commandPanelSource, /ariaLabel="Save command"[\s\S]*>\s*\{saving \? 'Saving…' : 'Save'\}/);
   assert.match(commandPanelSource, /ariaLabel="Cancel command editing"[\s\S]*>\s*Clear\s*</);
-  assert.match(commandPanelSource, /onClick=\{\(\) => void runEntry\(entry\.id\)\}/);
+  assert.match(commandPanelSource, /onClick=\{\(\) => void \(activeRunIds\.has\(entry\.id\) \? stopEntry\(entry\.id\) : runEntry\(entry\.id\)\)\}/);
   assert.match(commandPanelSource, /onClick=\{\(\) => void deleteEntry\(entry\.id\)\}/);
 });

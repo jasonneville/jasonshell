@@ -30,6 +30,11 @@ Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is p
 - 2026-08-11 `[CODE]` FIXED: `close_task_window` no longer routes through preview-source validation, so close keeps the normal action path for hidden windows while still rejecting internal JasonShell HWNDs; preview capture keeps using the preview validator.
 - 2026-08-11 `[CODE]` TESTED: Added Rust and Node regressions proving close path avoids preview validation and preview capture still calls it.
 - 2026-08-11 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml task_windows` and compiled `tests/taskbarPreviewContract.test.mjs` passed.
+- 2026-08-12 `[CODE]` CHANGED: Running Quick Commands replace green Run with red square Stop. Stop verifies active command-id/PID ownership then terminates its Windows process tree through `taskkill.exe /T /F`.
+- 2026-08-12 `[CODE]` DOCS: Updated Quick Commands spec for left-click config loading, Configuration/Previous runs tabs, 1100 ms aggregate live-run polling, spinner/stop behavior, and persisted command-panel logical size restoration/clamping/anchoring.
+- 2026-08-12 `[TOOL]` VALIDATED: Factual prior coverage documented in `master_spec.md`: command-panel and quick-command focused gates cover saved logical size persistence/restoration/clamping, 1100 ms live-history polling, spinner/stop ownership flow, and Configuration/Previous runs tab wiring. No tests were run for this docs-only update.
+
+- 2026-08-11 `[CODE]` DOCS: Documented current Quick Commands duplicate naming/id-save behavior, command-panel actual-size/work-area placement, and deferred focus-loss closure recheck in `master_spec.md`.
 
 - 2026-08-11 `[CODE]` CHANGED: Quick Commands now has compact sharp-edged icon tiles, native menu resizing, draggable saved-command pane sizing, right-click-only Edit/History, live running indicators, and click-expandable current/retained output history.
 - 2026-08-11 `[CODE]` FIXED: Quick-command backend now drains streams in bounded chunks, exposes partial in-progress stdout/stderr, and removes a completed run from live state before safely persisting history.
