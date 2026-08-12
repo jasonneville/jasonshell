@@ -22,9 +22,9 @@ const TASK_PREVIEW_UPDATE_EVENT: &str = "task-preview:update";
 const TASK_PREVIEW_HIDE_EVENT: &str = "task-preview:hide";
 const TASK_PREVIEW_MARGIN_PHYSICAL: i32 = 10;
 const TASK_PREVIEW_EDGE_PADDING_PHYSICAL: i32 = 8;
-const LIVE_PREVIEW_FRAME_TOP_LOGICAL: f64 = 54.0;
-const LIVE_PREVIEW_FRAME_SIDE_LOGICAL: f64 = 12.0;
-const LIVE_PREVIEW_FRAME_BOTTOM_LOGICAL: f64 = 12.0;
+const LIVE_PREVIEW_FRAME_TOP_LOGICAL: f64 = 48.0;
+const LIVE_PREVIEW_FRAME_SIDE_LOGICAL: f64 = 4.0;
+const LIVE_PREVIEW_FRAME_BOTTOM_LOGICAL: f64 = 4.0;
 const LIVE_THUMBNAIL_PLACEHOLDER_DATA_URL: &str =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 
@@ -447,10 +447,10 @@ mod tests {
         assert_eq!(
             frame,
             RECT {
-                left: 18,
-                top: 81,
-                right: 480,
-                bottom: 324,
+                left: 6,
+                top: 72,
+                right: 492,
+                bottom: 336,
             }
         );
     }
@@ -458,20 +458,20 @@ mod tests {
     #[test]
     fn live_thumbnail_destination_preserves_source_aspect_ratio() {
         let frame = RECT {
-            left: 12,
-            top: 54,
-            right: 320,
-            bottom: 216,
+            left: 4,
+            top: 48,
+            right: 324,
+            bottom: 224,
         };
         let destination = fit_source_in_destination_frame(frame, SIZE { cx: 1920, cy: 1080 });
 
         assert_eq!(
             destination,
             RECT {
-                left: 22,
-                top: 54,
-                right: 310,
-                bottom: 216,
+                left: 7,
+                top: 48,
+                right: 320,
+                bottom: 224,
             }
         );
     }

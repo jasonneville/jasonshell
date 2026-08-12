@@ -1,5 +1,7 @@
 ## Change Ledger
 
+- 2026-08-12 `[CODE]` IMPLEMENTED: Documented current task-preview native DWM frame behavior: live thumbnails use 48 logical px top inset and 4 logical px side/bottom insets, preserve source aspect ratio inside the renderer frame, and keep header/close/captured fallback behavior unchanged.
+
 - 2026-08-12 `[CODE]` FIXED: Windows bootstrap now does per-prerequisite detection, requests admin only immediately before missing package installs, uses a single quoted VS Build Tools override string, and gates WebView2/Rust/Node installs on detected absence.
 - 2026-08-12 `[CODE]` TESTED: Updated bootstrap source-contract coverage for conditional prerequisite checks, quoted Build Tools override wiring, WebView2 registry detection, and README/spec/changelog wording.
 
