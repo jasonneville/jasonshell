@@ -21,6 +21,38 @@
 .stack-toolbar {
   display: grid;
   gap: var(--js-space-3);
+  padding-right: 3rem;
+}
+
+.stack-browser-close-button {
+  align-items: center;
+  background: #dc2626;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--js-radius-xs);
+  color: #fff;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  height: 1.35rem;
+  justify-content: center;
+  line-height: 1;
+  min-width: 2.1rem;
+  padding: 0 0.42rem;
+  position: absolute;
+  right: 0.42rem;
+  top: 0.42rem;
+  z-index: 4;
+}
+
+.stack-browser-close-button:hover,
+.stack-browser-close-button:focus-visible {
+  background: #ef4444;
+  box-shadow: var(--js-focus-ring);
+}
+
+.stack-browser-close-button:active {
+  background: #b91c1c;
+  transform: translateY(1px);
 }
 
 .stack-path {
@@ -179,6 +211,16 @@
 .stack-git-summary .stack-git-count,
 .stack-git-summary .stack-git-clean {
   background: var(--js-color-surface-overlay);
+}
+
+.stack-git-summary .stack-git-remote-link {
+  align-items: center;
+  background: color-mix(in srgb, var(--js-color-accent) 14%, var(--js-color-surface-overlay));
+  color: var(--js-color-accent-text);
+  display: inline-flex;
+  justify-content: center;
+  min-width: 1.15rem;
+  padding-inline: 0.18rem;
 }
 
 .stack-git-popup {

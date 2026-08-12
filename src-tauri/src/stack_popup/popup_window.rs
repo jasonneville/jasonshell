@@ -8,7 +8,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State};
 
 const STACK_POPUP_WIDTH_LOGICAL: f64 = 980.0;
@@ -19,6 +19,8 @@ const STACK_POPUP_GEOMETRY_SCHEMA: &str = "jasonshell.stackPopupGeometry";
 const STACK_POPUP_GEOMETRY_VERSION: u32 = 1;
 const STACK_POPUP_GEOMETRY_FILE: &str = "stack-popup-geometry-v1.json";
 const EDGE_PADDING_PHYSICAL: i32 = 8;
+const STACK_POPUP_FOCUS_LOSS_SUPPRESSION_TTL_MS: u64 = 1_000;
+const STACK_POPUP_TOPMOST_RESTORE_SUPPRESSION_TTL_MS: u64 = 3_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +90,7 @@ pub(crate) fn show_stack_popup_window(
     popup
         .set_focus()
         .map_err(|error| format!("Failed to focus the stack popup: {error}"))?;
+    restore_stack_popup_topmost_if_allowed(&app_handle, &state);
     popup
         .emit("stack-popup:open", request)
         .map_err(|error| format!("Failed to publish stack popup path: {error}"))
@@ -98,6 +101,8 @@ pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), Strin
     {
         let mut guard = state.lock().expect("stack popup runtime state is poisoned");
         guard.focus_loss_hold_count = 0;
+        guard.focus_loss_suppression_expires_at_ms = None;
+        guard.topmost_restore_suppression_expires_at_ms = None;
         guard.restore_focus_after_hold = false;
     }
 
@@ -120,12 +125,123 @@ pub(crate) fn latest_stack_popup_request(
 
 pub(crate) fn suppress_stack_popup_focus_loss(app_handle: &AppHandle) -> bool {
     let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+    suppress_stack_popup_focus_loss_for_runtime_state(&state)
+}
+
+fn suppress_stack_popup_focus_loss_for_runtime_state(
+    state: &Mutex<StackPopupRuntimeState>,
+) -> bool {
     let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    if let Some(expires_at) = guard.focus_loss_suppression_expires_at_ms.take() {
+        if current_time_millis() <= expires_at {
+            return true;
+        }
+    }
     if guard.focus_loss_hold_count == 0 {
         return false;
     }
     guard.restore_focus_after_hold = true;
     true
+}
+
+pub(crate) fn suppress_next_stack_popup_focus_loss(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+) {
+    suppress_next_stack_popup_focus_loss_for_runtime_state(state);
+}
+
+fn suppress_next_stack_popup_focus_loss_for_runtime_state(state: &Mutex<StackPopupRuntimeState>) {
+    let expires_at =
+        current_time_millis().saturating_add(STACK_POPUP_FOCUS_LOSS_SUPPRESSION_TTL_MS);
+    let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    guard.focus_loss_suppression_expires_at_ms = Some(expires_at);
+}
+
+pub(crate) fn clear_stack_popup_focus_loss_suppression(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+) {
+    clear_stack_popup_focus_loss_suppression_for_runtime_state(state);
+}
+
+fn clear_stack_popup_focus_loss_suppression_for_runtime_state(
+    state: &Mutex<StackPopupRuntimeState>,
+) {
+    let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    guard.focus_loss_suppression_expires_at_ms = None;
+}
+
+pub(crate) fn suppress_next_stack_popup_topmost_restore(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+) {
+    suppress_next_stack_popup_topmost_restore_for_runtime_state(state);
+}
+
+fn suppress_next_stack_popup_topmost_restore_for_runtime_state(
+    state: &Mutex<StackPopupRuntimeState>,
+) {
+    let expires_at =
+        current_time_millis().saturating_add(STACK_POPUP_TOPMOST_RESTORE_SUPPRESSION_TTL_MS);
+    let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    guard.topmost_restore_suppression_expires_at_ms = Some(expires_at);
+}
+
+pub(crate) fn clear_stack_popup_topmost_restore_suppression(
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+) {
+    clear_stack_popup_topmost_restore_suppression_for_runtime_state(state);
+}
+
+fn clear_stack_popup_topmost_restore_suppression_for_runtime_state(
+    state: &Mutex<StackPopupRuntimeState>,
+) {
+    let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    guard.topmost_restore_suppression_expires_at_ms = None;
+}
+
+pub(crate) fn suppress_stack_popup_topmost_restore(app_handle: &AppHandle) -> bool {
+    let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+    suppress_stack_popup_topmost_restore_for_runtime_state(&state)
+}
+
+fn suppress_stack_popup_topmost_restore_for_runtime_state(
+    state: &Mutex<StackPopupRuntimeState>,
+) -> bool {
+    let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    match guard.topmost_restore_suppression_expires_at_ms {
+        Some(expires_at) if current_time_millis() <= expires_at => true,
+        Some(_) => {
+            guard.topmost_restore_suppression_expires_at_ms = None;
+            false
+        }
+        None => false,
+    }
+}
+
+fn current_time_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "windows")]
+fn restore_stack_popup_topmost_if_allowed(
+    app_handle: &AppHandle,
+    state: &State<'_, Mutex<StackPopupRuntimeState>>,
+) {
+    if suppress_stack_popup_topmost_restore_for_runtime_state(state) {
+        return;
+    }
+    if let Ok(hwnd) = super::stack_popup_owner_hwnd(app_handle) {
+        let _ = super::set_stack_popup_topmost(hwnd, true);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn restore_stack_popup_topmost_if_allowed(
+    _app_handle: &AppHandle,
+    _state: &State<'_, Mutex<StackPopupRuntimeState>>,
+) {
 }
 
 pub(crate) fn begin_stack_popup_focus_hold(state: &State<'_, Mutex<StackPopupRuntimeState>>) {
@@ -390,9 +506,16 @@ fn stack_popup_geometry_path(app_handle: &AppHandle) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_stack_popup_size, load_stack_popup_size_from_path, save_stack_popup_size_to_path,
-        StackPopupLogicalSize,
+        clamp_stack_popup_size, clear_stack_popup_focus_loss_suppression_for_runtime_state,
+        clear_stack_popup_topmost_restore_suppression_for_runtime_state,
+        load_stack_popup_size_from_path, save_stack_popup_size_to_path,
+        suppress_next_stack_popup_focus_loss_for_runtime_state,
+        suppress_next_stack_popup_topmost_restore_for_runtime_state,
+        suppress_stack_popup_focus_loss_for_runtime_state,
+        suppress_stack_popup_topmost_restore_for_runtime_state, StackPopupLogicalSize,
+        STACK_POPUP_FOCUS_LOSS_SUPPRESSION_TTL_MS, STACK_POPUP_TOPMOST_RESTORE_SUPPRESSION_TTL_MS,
     };
+    use crate::stack_popup::models::StackPopupRuntimeState;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -451,5 +574,147 @@ mod tests {
 
         assert_eq!(load_stack_popup_size_from_path(&path).unwrap(), size);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn one_shot_focus_loss_suppression_is_consumed_without_focus_restore_hold() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+
+        suppress_next_stack_popup_focus_loss_for_runtime_state(&state);
+
+        assert!(suppress_stack_popup_focus_loss_for_runtime_state(&state));
+        assert!(!suppress_stack_popup_focus_loss_for_runtime_state(&state));
+        let guard = state.lock().unwrap();
+        assert_eq!(guard.focus_loss_suppression_expires_at_ms, None);
+        assert!(!guard.restore_focus_after_hold);
+    }
+
+    #[test]
+    fn cleared_one_shot_focus_loss_suppression_is_not_consumed_later() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+
+        suppress_next_stack_popup_focus_loss_for_runtime_state(&state);
+        clear_stack_popup_focus_loss_suppression_for_runtime_state(&state);
+
+        assert!(!suppress_stack_popup_focus_loss_for_runtime_state(&state));
+        assert_eq!(
+            state.lock().unwrap().focus_loss_suppression_expires_at_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_focus_loss_suppression_calls_do_not_stack() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+
+        suppress_next_stack_popup_focus_loss_for_runtime_state(&state);
+        suppress_next_stack_popup_focus_loss_for_runtime_state(&state);
+
+        assert!(suppress_stack_popup_focus_loss_for_runtime_state(&state));
+        assert!(!suppress_stack_popup_focus_loss_for_runtime_state(&state));
+        assert_eq!(
+            state.lock().unwrap().focus_loss_suppression_expires_at_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn expired_focus_loss_suppression_does_not_hide_future_focus_loss() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+        state.lock().unwrap().focus_loss_suppression_expires_at_ms = Some(1);
+
+        assert!(!suppress_stack_popup_focus_loss_for_runtime_state(&state));
+        assert_eq!(
+            state.lock().unwrap().focus_loss_suppression_expires_at_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn topmost_restore_suppression_ttl_is_longer_than_focus_loss_ttl() {
+        assert_eq!(STACK_POPUP_FOCUS_LOSS_SUPPRESSION_TTL_MS, 1_000);
+        assert_eq!(STACK_POPUP_TOPMOST_RESTORE_SUPPRESSION_TTL_MS, 3_000);
+        assert!(
+            STACK_POPUP_TOPMOST_RESTORE_SUPPRESSION_TTL_MS
+                > STACK_POPUP_FOCUS_LOSS_SUPPRESSION_TTL_MS
+        );
+    }
+
+    #[test]
+    fn active_topmost_restore_suppression_blocks_restore_without_consuming() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+
+        suppress_next_stack_popup_topmost_restore_for_runtime_state(&state);
+
+        assert!(suppress_stack_popup_topmost_restore_for_runtime_state(
+            &state
+        ));
+        assert!(suppress_stack_popup_topmost_restore_for_runtime_state(
+            &state
+        ));
+        assert!(state
+            .lock()
+            .unwrap()
+            .topmost_restore_suppression_expires_at_ms
+            .is_some());
+    }
+
+    #[test]
+    fn expired_topmost_restore_suppression_allows_restore_and_clears() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+        state
+            .lock()
+            .unwrap()
+            .topmost_restore_suppression_expires_at_ms = Some(1);
+
+        assert!(!suppress_stack_popup_topmost_restore_for_runtime_state(
+            &state
+        ));
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .topmost_restore_suppression_expires_at_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn cleared_topmost_restore_suppression_allows_restore() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+
+        suppress_next_stack_popup_topmost_restore_for_runtime_state(&state);
+        clear_stack_popup_topmost_restore_suppression_for_runtime_state(&state);
+
+        assert!(!suppress_stack_popup_topmost_restore_for_runtime_state(
+            &state
+        ));
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .topmost_restore_suppression_expires_at_ms,
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_topmost_restore_suppression_calls_do_not_stack() {
+        let state = std::sync::Mutex::new(StackPopupRuntimeState::default());
+
+        suppress_next_stack_popup_topmost_restore_for_runtime_state(&state);
+        suppress_next_stack_popup_topmost_restore_for_runtime_state(&state);
+        clear_stack_popup_topmost_restore_suppression_for_runtime_state(&state);
+
+        assert!(!suppress_stack_popup_topmost_restore_for_runtime_state(
+            &state
+        ));
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .topmost_restore_suppression_expires_at_ms,
+            None
+        );
     }
 }

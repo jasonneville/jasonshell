@@ -100,6 +100,7 @@ pub mod commands {
     pub const RESIZE_STACK_POPUP: &str = "resize_stack_popup";
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
+    pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
     pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
     pub const STACK_GIT_LOG: &str = "stack_git_log";
@@ -232,6 +233,7 @@ pub mod commands {
         RESIZE_STACK_POPUP,
         READ_STACK_FOLDER,
         GET_STACK_GIT_STATUS,
+        OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
         STACK_GIT_COMMIT,
         STACK_GIT_LOG,

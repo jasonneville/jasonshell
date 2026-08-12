@@ -6,6 +6,8 @@ pub struct StackPopupRuntimeState {
     pub(crate) latest_request: Option<ShowStackPopupRequest>,
     pub(crate) clipboard: Option<StackClipboard>,
     pub(crate) focus_loss_hold_count: usize,
+    pub(crate) focus_loss_suppression_expires_at_ms: Option<u64>,
+    pub(crate) topmost_restore_suppression_expires_at_ms: Option<u64>,
     pub(crate) restore_focus_after_hold: bool,
     pub(crate) terminal_sessions: super::terminal::StackTerminalRegistry,
 }
@@ -99,6 +101,7 @@ pub struct StackGitFileStatus {
 pub struct StackGitStatus {
     pub repository_root: String,
     pub branch: String,
+    pub remote_repository_url: Option<String>,
     pub modified: usize,
     pub added: usize,
     pub deleted: usize,

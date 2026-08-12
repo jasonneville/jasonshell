@@ -90,6 +90,7 @@ pub(crate) struct StackItemPropertiesPlan {
     pub path: PathBuf,
     pub verb: &'static str,
     pub invoke_id_list: bool,
+    pub dialog_title_fragment: String,
 }
 
 pub(crate) fn build_stack_item_properties_plan(
@@ -102,7 +103,16 @@ pub(crate) fn build_stack_item_properties_plan(
         path: path.to_path_buf(),
         verb: "properties",
         invoke_id_list: true,
+        dialog_title_fragment: stack_item_properties_title_fragment(path),
     })
+}
+
+fn stack_item_properties_title_fragment(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| format!("{name} Properties"))
+        .unwrap_or_else(|| "Properties".to_string())
 }
 
 pub(crate) fn seven_zip_discovery_candidates() -> Vec<PathBuf> {
@@ -194,7 +204,9 @@ pub(crate) use clipboard::{clipboard_mode_from_drop_effect, paste_clipboard_item
 #[cfg(test)]
 pub(crate) use file_ops::{
     available_destination_path, copy_dir, copy_path, move_path_with_rename,
-    next_new_text_document_path,
+    next_new_text_document_path, windows_explorer_reveal_launch_plan,
+    windows_explorer_reveal_select_arg, windows_explorer_reveal_show_mode,
+    WindowsExplorerRevealShowMode,
 };
 #[cfg(test)]
 pub(crate) use icons::{
@@ -270,6 +282,18 @@ pub fn hide_stack_popup(app_handle: AppHandle) -> Result<(), String> {
     popup_window::hide_stack_popup_window(app_handle)
 }
 
+pub(crate) fn restore_stack_popup_topmost(app_handle: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        if popup_window::suppress_stack_popup_topmost_restore(app_handle) {
+            return;
+        }
+        if let Ok(hwnd) = stack_popup_owner_hwnd(app_handle) {
+            let _ = set_stack_popup_topmost(hwnd, true);
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_stack_popup_request(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
@@ -328,6 +352,67 @@ pub fn read_stack_folder(
 #[tauri::command]
 pub async fn get_stack_git_status(path: String) -> Result<Option<StackGitStatus>, String> {
     git_status::stack_git_status_for_path_async(path).await
+}
+
+#[tauri::command]
+pub fn open_stack_git_remote_url(url: String) -> Result<(), String> {
+    open_stack_git_remote_url_native(&validate_stack_git_remote_url(&url)?)
+}
+
+fn validate_stack_git_remote_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.contains('\0') || trimmed.chars().any(char::is_whitespace) {
+        return Err("Git remote URL is invalid".to_string());
+    }
+
+    let rest = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .ok_or_else(|| "Git remote URL must use http or https".to_string())?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return Err("Git remote URL must not include credentials".to_string());
+    }
+
+    Ok(trimmed.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn open_stack_git_remote_url_native(url: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn to_wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let url_wide = to_wide(OsStr::new(url));
+    let result = unsafe {
+        ShellExecuteW(
+            Some(HWND::default()),
+            None,
+            PCWSTR(url_wide.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code <= 32 {
+        return Err(format!(
+            "ShellExecuteW failed to open git remote URL with code {code}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_stack_git_remote_url_native(_url: &str) -> Result<(), String> {
+    Err("Opening git remote URLs is only supported on Windows".to_string())
 }
 
 #[tauri::command]
@@ -665,8 +750,42 @@ pub fn open_stack_folder_in_vscode(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn reveal_stack_item(path: String) -> Result<(), String> {
-    file_ops::reveal_stack_item_path(path)
+pub fn reveal_stack_item(
+    app: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    path: String,
+) -> Result<(), String> {
+    let path = paths::normalize_existing_path(&path)?;
+    #[cfg(not(target_os = "windows"))]
+    let _ = (&app, &state);
+    #[cfg(target_os = "windows")]
+    let demoted_hwnd = {
+        popup_window::suppress_next_stack_popup_focus_loss(&state);
+        popup_window::suppress_next_stack_popup_topmost_restore(&state);
+        match demote_stack_popup_for_external_foreground(&app) {
+            Ok(hwnd) => hwnd,
+            Err(error) => {
+                popup_window::clear_stack_popup_focus_loss_suppression(&state);
+                popup_window::clear_stack_popup_topmost_restore_suppression(&state);
+                return Err(error);
+            }
+        }
+    };
+
+    match file_ops::reveal_stack_item_path(path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            #[cfg(target_os = "windows")]
+            {
+                popup_window::clear_stack_popup_focus_loss_suppression(&state);
+                popup_window::clear_stack_popup_topmost_restore_suppression(&state);
+                if let Some(hwnd) = demoted_hwnd {
+                    let _ = set_stack_popup_topmost(hwnd, true);
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -710,18 +829,33 @@ fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn show_stack_item_properties(path: String) -> Result<(), String> {
+pub fn show_stack_item_properties(
+    app: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    path: String,
+) -> Result<(), String> {
     let path = PathBuf::from(paths::normalize_existing_path(&path)?);
     let plan = build_stack_item_properties_plan(&path)?;
-    show_stack_item_properties_native(&plan)
+    popup_window::suppress_next_stack_popup_focus_loss(&state);
+    popup_window::suppress_next_stack_popup_topmost_restore(&state);
+    match show_stack_item_properties_native(&app, &plan) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            popup_window::clear_stack_popup_focus_loss_suppression(&state);
+            popup_window::clear_stack_popup_topmost_restore_suppression(&state);
+            Err(error)
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
-fn show_stack_item_properties_native(plan: &StackItemPropertiesPlan) -> Result<(), String> {
+fn show_stack_item_properties_native(
+    app: &AppHandle,
+    plan: &StackItemPropertiesPlan,
+) -> Result<(), String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_INVOKEIDLIST, SHELLEXECUTEINFOW};
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -729,6 +863,8 @@ fn show_stack_item_properties_native(plan: &StackItemPropertiesPlan) -> Result<(
         value.encode_wide().chain(std::iter::once(0)).collect()
     }
 
+    let owner_hwnd = stack_popup_owner_hwnd(app)?;
+    set_stack_popup_topmost(owner_hwnd, false)?;
     let path_wide = to_wide(plan.path.as_os_str());
     let verb_wide = to_wide(OsStr::new(plan.verb));
     let mut execute_info = SHELLEXECUTEINFOW {
@@ -738,23 +874,94 @@ fn show_stack_item_properties_native(plan: &StackItemPropertiesPlan) -> Result<(
         } else {
             0
         },
-        hwnd: HWND::default(),
+        hwnd: owner_hwnd,
         lpVerb: PCWSTR(verb_wide.as_ptr()),
         lpFile: PCWSTR(path_wide.as_ptr()),
         nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };
 
-    unsafe { ShellExecuteExW(&mut execute_info) }.map_err(|error| {
-        format!(
-            "ShellExecuteExW failed to show properties for {}: {error}",
-            plan.path.display()
+    match unsafe { ShellExecuteExW(&mut execute_info) } {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = set_stack_popup_topmost(owner_hwnd, true);
+            Err(format!(
+                "ShellExecuteExW failed to show properties for {}: {error}",
+                plan.path.display()
+            ))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn demote_stack_popup_for_external_foreground(
+    app: &AppHandle,
+) -> Result<Option<windows::Win32::Foundation::HWND>, String> {
+    use tauri::Manager;
+
+    if app
+        .get_webview_window(crate::shell_windows::STACK_POPUP_LABEL)
+        .is_none()
+    {
+        return Ok(None);
+    }
+
+    let hwnd = stack_popup_owner_hwnd(app)?;
+    set_stack_popup_topmost(hwnd, false)?;
+    Ok(Some(hwnd))
+}
+
+#[cfg(target_os = "windows")]
+fn stack_popup_owner_hwnd(app: &AppHandle) -> Result<windows::Win32::Foundation::HWND, String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use tauri::Manager;
+    use windows::Win32::Foundation::HWND;
+
+    let window = app
+        .get_webview_window(crate::shell_windows::STACK_POPUP_LABEL)
+        .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
+    let handle = window
+        .window_handle()
+        .map_err(|error| format!("Failed to get stack popup window handle: {error}"))?;
+    match handle.as_raw() {
+        RawWindowHandle::Win32(handle) => Ok(HWND(handle.hwnd.get() as *mut _)),
+        other => Err(format!("Unsupported stack popup window handle: {other:?}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_stack_popup_topmost(
+    hwnd: windows::Win32::Foundation::HWND,
+    topmost: bool,
+) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+
+    let insert_after = if topmost {
+        HWND_TOPMOST
+    } else {
+        HWND_NOTOPMOST
+    };
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(insert_after),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )
-    })
+    }
+    .map_err(|error| format!("Failed to update stack popup z-order: {error}"))
 }
 
 #[cfg(not(target_os = "windows"))]
-fn show_stack_item_properties_native(_plan: &StackItemPropertiesPlan) -> Result<(), String> {
+fn show_stack_item_properties_native(
+    _app: &AppHandle,
+    _plan: &StackItemPropertiesPlan,
+) -> Result<(), String> {
     Err("Stack item properties are only supported on Windows".to_string())
 }
 
@@ -768,12 +975,32 @@ mod tests {
         reorder_pins_by_paths, resolve_stack_alias_with_profile, resolve_stack_item_icons_batch,
         resolve_stack_item_icons_for_paths, resolve_stack_item_icons_for_paths_async,
         stack_file_attributes_from_bits, stack_folder_warning, stack_item_from_path,
-        validate_child_name, ClipboardMode, PinnedStackFolder, ShowStackPopupRequest,
-        StackClipboard, StackItem,
+        validate_child_name, validate_stack_git_remote_url, windows_explorer_reveal_launch_plan,
+        windows_explorer_reveal_select_arg, windows_explorer_reveal_show_mode, ClipboardMode,
+        PinnedStackFolder, ShowStackPopupRequest, StackClipboard, StackItem,
+        WindowsExplorerRevealShowMode,
     };
     use std::fs;
     use std::io;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn stack_git_remote_url_validation_allows_only_safe_browser_urls() {
+        assert_eq!(
+            validate_stack_git_remote_url("https://github.com/acme/repo").as_deref(),
+            Ok("https://github.com/acme/repo")
+        );
+        assert_eq!(
+            validate_stack_git_remote_url(" http://gitlab.com/acme/repo ").as_deref(),
+            Ok("http://gitlab.com/acme/repo")
+        );
+        assert!(validate_stack_git_remote_url("git@github.com:acme/repo").is_err());
+        assert!(validate_stack_git_remote_url("file:///C:/repo").is_err());
+        assert!(validate_stack_git_remote_url("javascript:alert(1)").is_err());
+        assert!(validate_stack_git_remote_url("https://user:token@github.com/acme/repo").is_err());
+        assert!(validate_stack_git_remote_url("https://github.com/acme/re po").is_err());
+        assert!(validate_stack_git_remote_url("https://github.com/acme/repo\0bad").is_err());
+    }
 
     #[test]
     fn rejects_invalid_rename_child_names() {
@@ -1442,6 +1669,14 @@ mod tests {
     }
 
     #[test]
+    fn stack_popup_setwindowpos_uses_noactivate_for_z_order_changes() {
+        let stack_source = include_str!("stack_popup.rs");
+
+        assert!(stack_source.contains("SWP_NOACTIVATE"));
+        assert!(stack_source.contains("SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE"));
+    }
+
+    #[test]
     fn stack_icon_resolution_cache_reuses_cached_path_icons() {
         let root = test_dir("icon-cache");
         fs::create_dir_all(&root).unwrap();
@@ -1704,6 +1939,50 @@ mod tests {
         assert!(plan.invoke_id_list);
 
         assert!(super::build_stack_item_properties_plan(&root.join("missing.ts")).is_err());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn windows_explorer_reveal_select_arg_requests_new_window_and_keeps_select_path_together() {
+        let path = PathBuf::from(r"C:\Users\Jason\server file.ts");
+
+        assert_eq!(
+            windows_explorer_reveal_select_arg(&path),
+            r"/n,/select,C:\Users\Jason\server file.ts"
+        );
+    }
+
+    #[test]
+    fn windows_explorer_reveal_show_mode_maximizes_only_hidden_directories() {
+        assert_eq!(
+            windows_explorer_reveal_show_mode(true, true),
+            WindowsExplorerRevealShowMode::Maximized
+        );
+        assert_eq!(
+            windows_explorer_reveal_show_mode(true, false),
+            WindowsExplorerRevealShowMode::Restored
+        );
+        assert_eq!(
+            windows_explorer_reveal_show_mode(false, true),
+            WindowsExplorerRevealShowMode::Restored
+        );
+    }
+
+    #[test]
+    fn windows_explorer_reveal_launch_plan_preserves_fixed_executable_and_single_parameter() {
+        let root = test_dir("reveal-launch-plan");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("server file.ts");
+        fs::write(&file, b"ts").unwrap();
+
+        let plan = windows_explorer_reveal_launch_plan(&file).unwrap();
+
+        assert_eq!(plan.executable, "explorer.exe");
+        assert_eq!(
+            plan.parameters,
+            format!("/n,/select,{}", file.to_string_lossy())
+        );
+        assert_eq!(plan.show_mode, WindowsExplorerRevealShowMode::Restored);
         fs::remove_dir_all(root).ok();
     }
 }

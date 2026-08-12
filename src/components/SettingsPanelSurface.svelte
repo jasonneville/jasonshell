@@ -10,6 +10,7 @@
     formatShellDate,
     formatShellTime,
     getInitialShellPreferences,
+    installGoogleFontPreference,
     patchShellPreferences,
     setShellPreferences,
     shellFontOptions,
@@ -41,9 +42,7 @@
   } from '../lib/themes';
 
   const themeOptions = shellThemeOptions();
-  const fontOptions = shellFontOptions();
   const themeSelectOptions = themeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
-  const fontSelectOptions = fontOptions.map((font) => ({ value: font.id, label: font.label }));
   const stackTerminalProfileOptions = STACK_TERMINAL_PROFILE_OPTIONS.map((option) => ({
     value: option.value,
     label: option.label
@@ -64,6 +63,9 @@
   let powerBusy = false;
   let selectedStackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
   let settingsError = '';
+  let googleFontLink = '';
+  let googleFontStatus = '';
+  let googleFontError = '';
 
   const powerActionLabels: Record<SystemPowerAction, string> = {
     sleep: 'Sleep',
@@ -71,6 +73,7 @@
     shutdown: 'Turn Off'
   };
 
+  $: fontSelectOptions = shellFontOptions(preferences.customFonts).map((font) => ({ value: font.id, label: font.label }));
   $: datePreview = formatShellDate(now, preferences.dateFormat);
   $: timePreview = formatShellTime(now, preferences);
 
@@ -113,6 +116,28 @@
 
   function handleFontChange(value: string) {
     updatePreferences({ fontId: value as ShellPreferences['fontId'] });
+    googleFontStatus = '';
+    googleFontError = '';
+  }
+
+  function handleGoogleFontLinkInput(event: Event) {
+    const target = event.currentTarget instanceof HTMLInputElement ? event.currentTarget : null;
+    googleFontLink = target?.value ?? '';
+    googleFontStatus = '';
+    googleFontError = '';
+  }
+
+  function installGoogleFont() {
+    try {
+      preferences = installGoogleFontPreference(googleFontLink, preferences);
+      const selected = shellFontOptions(preferences.customFonts).find((font) => font.id === preferences.fontId);
+      googleFontStatus = selected ? `Installed and applied ${selected.label}.` : 'Installed and applied font.';
+      googleFontError = '';
+      googleFontLink = '';
+    } catch (error) {
+      googleFontStatus = '';
+      googleFontError = error instanceof Error ? error.message : 'Paste a valid https://fonts.google.com font link.';
+    }
   }
 
   async function loadJsonShellSettings() {
@@ -154,6 +179,7 @@
   function resetPresentation() {
     preferences = setShellPreferences({
       fontId: 'open-sans',
+      customFonts: preferences.customFonts,
       dateFormat: 'EEE, MMM d',
       use24HourTime: false,
       showSeconds: true,
@@ -236,6 +262,29 @@
       options={fontSelectOptions}
       onChange={handleFontChange}
     />
+
+    <div class="google-font-installer">
+      <label>
+        <span>Install Google Font</span>
+        <input
+          type="text"
+          value={googleFontLink}
+          placeholder="https://fonts.google.com/specimen/Roboto"
+          spellcheck="false"
+          aria-describedby="google-font-help google-font-status"
+          on:input={handleGoogleFontLinkInput}
+        />
+      </label>
+      <MeltActionButton onClick={installGoogleFont}>Install font</MeltActionButton>
+    </div>
+    <p id="google-font-help" class="settings-help">
+      Only https://fonts.google.com specimen or family links are accepted.
+    </p>
+    {#if googleFontStatus}
+      <p id="google-font-status" class="settings-success" role="status">{googleFontStatus}</p>
+    {:else if googleFontError}
+      <p id="google-font-status" class="settings-error" role="alert">{googleFontError}</p>
+    {/if}
 
     <div class="settings-toggle-grid">
       <MeltToggle

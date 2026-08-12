@@ -8,22 +8,45 @@ import {
   addShellPreferencesChangeListener,
   applyShellPreferences,
   defaultShellPreferences,
+  injectCustomFontStylesheets,
+  installGoogleFontPreference,
   formatShellDate,
   formatShellTime,
   installShellPreferencesSync,
   normalizeShellPreferences,
-  shellFontById
+  parseGoogleFontLink,
+  shellFontById,
+  shellFontOptions
 } from '../dist-tests/lib/shellPreferences.js';
 
 const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+const googleSansCss = readFileSync(new URL('../src/assets/fonts/google-sans/google-fonts.css', import.meta.url), 'utf8');
+const googleSansManifest = readFileSync(new URL('../src/assets/fonts/google-sans/manifest.json', import.meta.url), 'utf8');
+const googleSansCodeCss = readFileSync(new URL('../src/assets/fonts/google-sans-code/google-fonts.css', import.meta.url), 'utf8');
 const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 
-test('Open Sans is the default shell font and is backed by local downloaded assets', () => {
+test('Open Sans is the default shell font and bundled font options are backed by local downloaded assets', () => {
   assert.equal(defaultShellPreferences.fontId, 'open-sans');
   assert.equal(shellFontById('open-sans').label, 'Open Sans');
-  assert.ok(SHELL_FONT_OPTIONS.length >= 5);
+  assert.equal(shellFontById('google-sans').label, 'Google Sans');
+  assert.equal(shellFontById('google-sans-code').label, 'Google Sans Code');
+  assert.ok(SHELL_FONT_OPTIONS.length >= 7);
   assert.match(appCss, /@font-face\s*{[\s\S]*font-family: 'Open Sans'/);
   assert.match(appCss, /assets\/fonts\/open-sans\/open-sans-10\.woff2/);
+  assert.match(appCss, /@font-face\s*{[\s\S]*font-family: 'Google Sans'[\s\S]*font-weight: 400[\s\S]*assets\/fonts\/google-sans\/google-sans-latin\.woff2/);
+  assert.match(appCss, /@font-face\s*{[\s\S]*font-family: 'Google Sans'[\s\S]*font-weight: 500[\s\S]*assets\/fonts\/google-sans\/google-sans-latin\.woff2/);
+  assert.match(appCss, /@font-face\s*{[\s\S]*font-family: 'Google Sans'[\s\S]*font-weight: 700[\s\S]*assets\/fonts\/google-sans\/google-sans-latin\.woff2/);
+  assert.match(googleSansCss, /font-family: 'Google Sans'/);
+  assert.match(googleSansCss, /font-weight: 400/);
+  assert.match(googleSansCss, /font-weight: 500/);
+  assert.match(googleSansCss, /font-weight: 700/);
+  assert.match(googleSansManifest, /google-sans-latin\.woff2/);
+  assert.match(appCss, /@font-face\s*{[\s\S]*font-family: 'Google Sans Code'[\s\S]*font-weight: 300 800/);
+  assert.match(appCss, /assets\/fonts\/google-sans-code\/google-sans-code-latin-variable\.woff2/);
+  assert.match(googleSansCodeCss, /font-family: 'Google Sans Code'/);
+  assert.match(shellFontById('google-sans').stack, /Google Sans/);
+  assert.match(shellFontById('google-sans').stack, /Open Sans/);
+  assert.match(shellFontById('google-sans-code').stack, /Google Sans Code/);
   assert.match(appCss, /--js-font-sans: 'Open Sans'/);
   assert.ok(mainSource.indexOf('applyShellPreferences(storedShellPreferences(), { storage: null, dispatch: false })') < mainSource.indexOf('mount(App'));
 });
@@ -59,6 +82,7 @@ test('normalizes shell preferences and applies dataset plus CSS font variables',
   );
 
   assert.equal(preferences.fontId, 'aptos');
+  assert.deepEqual(preferences.customFonts, []);
   assert.equal(preferences.dateFormat, 'yyyy-MM-dd');
   assert.equal(preferences.showSeconds, true);
   assert.equal(documentElement.dataset.shellDensity, 'compact');
@@ -68,6 +92,98 @@ test('normalizes shell preferences and applies dataset plus CSS font variables',
   assert.equal(JSON.parse(storage.get(SHELL_PREFERENCES_STORAGE_KEY)).fontId, 'aptos');
 
   assert.deepEqual(normalizeShellPreferences({ fontId: 'missing', dateFormat: '' }), defaultShellPreferences);
+});
+
+test('parses and installs strict https fonts.google.com links as custom CSS2 font preferences', () => {
+  const parsedSpecimen = parseGoogleFontLink('https://fonts.google.com/specimen/Open+Sans?query=open');
+  assert.equal(parsedSpecimen.label, 'Open Sans');
+  assert.equal(parsedSpecimen.cssUrl, 'https://fonts.googleapis.com/css2?family=Open%2BSans&display=swap');
+  assert.match(parsedSpecimen.id, /^google-font:/);
+  assert.match(parsedSpecimen.stack, /'Open Sans'/);
+
+  const parsedFamily = parseGoogleFontLink('https://fonts.google.com/?family=Roboto:wght@400;700&display=swap');
+  assert.equal(parsedFamily.label, 'Roboto');
+  assert.equal(parsedFamily.cssUrl, 'https://fonts.googleapis.com/css2?family=Roboto%3Awght%40400%3B700&display=swap');
+
+  assert.equal(parseGoogleFontLink('http://fonts.google.com/specimen/Roboto'), null);
+  assert.equal(parseGoogleFontLink('https://fonts.googleapis.com/css2?family=Roboto'), null);
+  assert.equal(parseGoogleFontLink('https://example.com/specimen/Roboto'), null);
+  assert.equal(parseGoogleFontLink('https://user@fonts.google.com/specimen/Roboto'), null);
+  assert.equal(parseGoogleFontLink('https://user:pass@fonts.google.com/specimen/Roboto'), null);
+  assert.equal(parseGoogleFontLink('https://fonts.google.com/?query=Roboto'), null);
+
+  const storage = new Map();
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key) => storage.get(key) ?? null,
+        setItem: (key, value) => storage.set(key, value)
+      },
+      dispatchEvent: () => true
+    }
+  });
+  try {
+    const preferences = installGoogleFontPreference('https://fonts.google.com/specimen/Roboto', defaultShellPreferences);
+    assert.equal(preferences.customFonts.length, 1);
+    assert.equal(preferences.fontId, preferences.customFonts[0].id);
+    assert.equal(shellFontById(preferences.fontId, preferences.customFonts).label, 'Roboto');
+    assert.ok(shellFontOptions(preferences.customFonts).some((font) => font.label === 'Roboto'));
+    assert.equal(JSON.parse(storage.get(SHELL_PREFERENCES_STORAGE_KEY)).customFonts[0].label, 'Roboto');
+  } finally {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: originalWindow
+    });
+  }
+});
+
+test('injects one safe stylesheet link per custom Google Fonts CSS URL', () => {
+  const appended = [];
+  const removed = [];
+  const existing = {
+    attributes: { 'data-jasonshell-custom-google-font': 'https://fonts.googleapis.com/css2?family=Old&display=swap' },
+    getAttribute(name) {
+      return this.attributes[name] ?? null;
+    },
+    remove() {
+      removed.push(this);
+    }
+  };
+  const documentLike = {
+    querySelectorAll(selector) {
+      assert.equal(selector, 'link[data-jasonshell-custom-google-font]');
+      return [existing];
+    },
+    createElement(tagName) {
+      assert.equal(tagName, 'link');
+      return {
+        attributes: {},
+        rel: '',
+        href: '',
+        setAttribute(name, value) {
+          this.attributes[name] = value;
+        }
+      };
+    },
+    head: {
+      appendChild(node) {
+        appended.push(node);
+      }
+    }
+  };
+
+  injectCustomFontStylesheets([
+    parseGoogleFontLink('https://fonts.google.com/specimen/Roboto'),
+    { label: 'Bad', cssUrl: 'https://evil.example/font.css', id: 'google-font:bad', stack: 'Bad' }
+  ], documentLike);
+
+  assert.equal(removed.length, 1);
+  assert.equal(appended.length, 1);
+  assert.equal(appended[0].rel, 'stylesheet');
+  assert.equal(appended[0].href, 'https://fonts.googleapis.com/css2?family=Roboto&display=swap');
+  assert.equal(appended[0].attributes['data-jasonshell-custom-google-font'], appended[0].href);
 });
 
 test('formats custom date strings and clock options for the top bar', () => {

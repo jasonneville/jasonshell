@@ -131,9 +131,12 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
         return Ok(None);
     };
 
+    let remote_repository_url = git_remote_repository_url(&folder);
+
     Ok(Some(stack_git_status_from_porcelain(
         &repo_root,
         branch,
+        remote_repository_url,
         &status_output,
     )))
 }
@@ -565,14 +568,61 @@ fn parse_git_branch_output(output: &str) -> Vec<StackGitBranch> {
         .collect()
 }
 
+fn git_remote_repository_url(folder: &Path) -> Option<String> {
+    ["origin", "upstream"].iter().find_map(|remote| {
+        git_stdout(
+            folder,
+            &["config", "--get", &format!("remote.{remote}.url")],
+        )
+        .ok()
+        .flatten()
+        .and_then(|value| normalize_git_remote_url(value.trim()))
+    })
+}
+
+fn normalize_git_remote_url(value: &str) -> Option<String> {
+    let remote = value.trim();
+    if remote.is_empty() || remote.contains('\0') || remote.contains(char::is_whitespace) {
+        return None;
+    }
+    let without_git_suffix = |text: &str| text.strip_suffix(".git").unwrap_or(text).to_string();
+    if let Some(rest) = remote
+        .strip_prefix("https://")
+        .or_else(|| remote.strip_prefix("http://"))
+    {
+        let authority = rest.split('/').next().unwrap_or_default();
+        if authority.is_empty() || authority.contains('@') {
+            return None;
+        }
+        return Some(without_git_suffix(remote));
+    }
+    if let Some(rest) = remote.strip_prefix("git@") {
+        let (host, path) = rest.split_once(':')?;
+        if host.is_empty() || path.is_empty() || path.starts_with('/') || path.contains("://") {
+            return None;
+        }
+        return Some(format!("https://{}/{}", host, without_git_suffix(path)));
+    }
+    if let Some(rest) = remote.strip_prefix("ssh://git@") {
+        let (host, path) = rest.split_once('/')?;
+        if host.is_empty() || path.is_empty() || path.contains("://") {
+            return None;
+        }
+        return Some(format!("https://{}/{}", host, without_git_suffix(path)));
+    }
+    None
+}
+
 fn stack_git_status_from_porcelain(
     repo_root: &Path,
     branch: String,
+    remote_repository_url: Option<String>,
     porcelain: &[u8],
 ) -> StackGitStatus {
     let mut status = StackGitStatus {
         repository_root: repo_root.to_string_lossy().into_owned(),
         branch,
+        remote_repository_url,
         modified: 0,
         added: 0,
         deleted: 0,
@@ -663,8 +713,9 @@ fn git_status_has_staged_change(xy: &str) -> bool {
 mod tests {
     use super::{
         git_pathspecs_for_paths, git_relative_path_for_request, git_status_kind,
-        nul_joined_pathspecs, parse_git_branch_output, parse_git_log_output, parse_git_tree_output,
-        stack_git_status_from_porcelain, validate_git_branch_name, validate_treeish,
+        normalize_git_remote_url, nul_joined_pathspecs, parse_git_branch_output,
+        parse_git_log_output, parse_git_tree_output, stack_git_status_from_porcelain,
+        validate_git_branch_name, validate_treeish,
     };
     use crate::stack_popup::models::StackGitFileStatusKind;
     use std::path::Path;
@@ -689,14 +740,48 @@ mod tests {
     }
 
     #[test]
+    fn git_remote_url_normalizer_handles_common_browser_remotes() {
+        assert_eq!(
+            normalize_git_remote_url("https://github.com/acme/repo.git").as_deref(),
+            Some("https://github.com/acme/repo")
+        );
+        assert_eq!(
+            normalize_git_remote_url("git@github.com:acme/repo.git").as_deref(),
+            Some("https://github.com/acme/repo")
+        );
+        assert_eq!(
+            normalize_git_remote_url("ssh://git@gitlab.com/acme/repo.git").as_deref(),
+            Some("https://gitlab.com/acme/repo")
+        );
+        assert_eq!(normalize_git_remote_url("file:///C:/repo"), None);
+        assert_eq!(
+            normalize_git_remote_url("https://user:token@github.com/acme/repo.git"),
+            None
+        );
+        assert_eq!(
+            normalize_git_remote_url("http://user@github.com/acme/repo.git"),
+            None
+        );
+        assert_eq!(
+            normalize_git_remote_url("ssh://user@example.com/acme/repo.git"),
+            None
+        );
+    }
+
+    #[test]
     fn porcelain_parser_returns_counts_and_absolute_paths() {
         let status = stack_git_status_from_porcelain(
             Path::new(r"C:\repo"),
             "main".to_string(),
+            Some("https://github.com/acme/repo".to_string()),
             b" M src/lib.rs\0A  app/main.rs\0?? notes/todo.md\0D  old.txt\0UU conflict.txt\0",
         );
 
         assert_eq!(status.branch, "main");
+        assert_eq!(
+            status.remote_repository_url.as_deref(),
+            Some("https://github.com/acme/repo")
+        );
         assert_eq!(status.modified, 1);
         assert_eq!(status.added, 1);
         assert_eq!(status.deleted, 1);

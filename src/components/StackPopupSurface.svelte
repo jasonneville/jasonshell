@@ -23,6 +23,7 @@
     openStackItemWithApp,
     openStackItemWithPicker,
     openStackFolderInVscode,
+    openStackGitRemoteUrl,
     openStackTerminalHere,
     pinStackFolder,
     pasteStackItems,
@@ -1549,6 +1550,17 @@
     return '';
   }
 
+  async function openGitRemoteRepository(url: string | null | undefined) {
+    if (!url) return;
+    try {
+      await openStackGitRemoteUrl(url);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to open git remote repository', error);
+      errorMessage = operationErrorMessage(error, 'Git remote unavailable');
+    }
+  }
+
   function stackGitSummaryParts(status: StackGitStatus | null) {
     if (!status) return [];
     const parts: Array<{ status: StackGitFileStatusKind; label: string; title: string }> = [];
@@ -2379,6 +2391,12 @@
   aria-busy={loadingPath ? 'true' : 'false'}
   on:contextmenu={handleBackgroundContextMenu}
 >
+  <MeltActionButton
+    class="stack-browser-close-button"
+    ariaLabel="Close stack browser"
+    onClick={() => void closeStackPopupFromSurface()}
+  >×</MeltActionButton>
+
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>
       <form
@@ -2441,6 +2459,15 @@
               {/each}
             {:else}
               <button type="button" class="stack-git-clean" on:click={() => openGitStatusPopup('all')}>clean</button>
+            {/if}
+            {#if gitStatus.remoteRepositoryUrl}
+              <button
+                type="button"
+                class="stack-git-remote-link"
+                title={`Open remote repository ${gitStatus.remoteRepositoryUrl}`}
+                aria-label="Open remote repository in browser"
+                on:click={() => void openGitRemoteRepository(gitStatus?.remoteRepositoryUrl)}
+              >↗</button>
             {/if}
           </div>
         {/if}

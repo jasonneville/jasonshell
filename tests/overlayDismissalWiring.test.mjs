@@ -15,11 +15,33 @@ test('stack browser delete confirmation stays inside stack popup webview', () =>
   assert.match(stackRust, /end_stack_popup_focus_hold/);
   assert.match(stackRust, /begin_stack_popup_focus_loss_hold/);
   assert.match(stackRust, /end_stack_popup_focus_loss_hold/);
+  assert.match(stackRust, /suppress_next_stack_popup_focus_loss/);
   assert.match(main, /suppress_stack_popup_focus_loss/);
   assert.match(stackSurface, /await beginStackPopupFocusLossHold\(\)/);
   assert.match(stackSurface, /await deleteStackItem\(path\)/);
   assert.match(stackSurface, /applyStackFolderListing\(stackState, pendingDelete\.folderPath, listing\)/);
   assert.match(stackSurface, /await endStackPopupFocusLossHold\(\)/);
+});
+
+test('stack browser properties suppresses one focus-loss without delete focus restore hold', () => {
+  const stackRust = readFileSync('src-tauri/src/stack_popup.rs', 'utf8');
+  const popupWindow = readFileSync('src-tauri/src/stack_popup/popup_window.rs', 'utf8');
+  const models = readFileSync('src-tauri/src/stack_popup/models.rs', 'utf8');
+  const main = readFileSync('src-tauri/src/main.rs', 'utf8');
+
+  assert.match(stackRust, /show_stack_item_properties[\s\S]*normalize_existing_path[\s\S]*build_stack_item_properties_plan[\s\S]*suppress_next_stack_popup_focus_loss[\s\S]*suppress_next_stack_popup_topmost_restore[\s\S]*show_stack_item_properties_native[\s\S]*clear_stack_popup_focus_loss_suppression[\s\S]*clear_stack_popup_topmost_restore_suppression/);
+  assert.match(stackRust, /stack_popup_owner_hwnd[\s\S]*STACK_POPUP_LABEL[\s\S]*RawWindowHandle::Win32/);
+  assert.match(stackRust, /set_stack_popup_topmost\(owner_hwnd, false\)[\s\S]*SHELLEXECUTEINFOW[\s\S]*hwnd: owner_hwnd/);
+  assert.match(stackRust, /SetWindowPos[\s\S]*HWND_NOTOPMOST[\s\S]*HWND_TOPMOST/);
+  assert.match(main, /STACK_POPUP_LABEL[\s\S]*WindowEvent::Focused\(true\)[\s\S]*restore_stack_popup_topmost/);
+  assert.match(models, /focus_loss_suppression_expires_at_ms: Option<u64>/);
+  assert.match(popupWindow, /STACK_POPUP_FOCUS_LOSS_SUPPRESSION_TTL_MS: u64 = 1_000/);
+  assert.match(popupWindow, /STACK_POPUP_TOPMOST_RESTORE_SUPPRESSION_TTL_MS: u64 = 3_000/);
+  assert.match(popupWindow, /show_stack_popup_window[\s\S]*show\(\)[\s\S]*set_focus\(\)[\s\S]*restore_stack_popup_topmost_if_allowed/);
+  assert.match(popupWindow, /restore_stack_popup_topmost_if_allowed[\s\S]*suppress_stack_popup_topmost_restore_for_runtime_state[\s\S]*set_stack_popup_topmost\(hwnd, true\)/);
+  assert.match(popupWindow, /focus_loss_suppression_expires_at_ms\.take\(\)[\s\S]*current_time_millis\(\) <= expires_at[\s\S]*return true;[\s\S]*restore_focus_after_hold = true/);
+  assert.match(popupWindow, /clear_stack_popup_focus_loss_suppression[\s\S]*focus_loss_suppression_expires_at_ms = None/);
+  assert.match(popupWindow, /repeated_focus_loss_suppression_calls_do_not_stack/);
 });
 
 test('stack browser exposes persisted resize grip and resize command wiring', () => {

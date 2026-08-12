@@ -22,6 +22,7 @@ test('stack git status backend is a separate non-listing command using git porce
   assert.match(commandsSource, /stackGitAddPaths:\s*'stack_git_add_paths'/);
   assert.match(commandsSource, /stackGitCommit:\s*'stack_git_commit'/);
   assert.match(rustContracts, /GET_STACK_GIT_STATUS:\s*&str\s*=\s*"get_stack_git_status"/);
+  assert.match(rustContracts, /OPEN_STACK_GIT_REMOTE_URL:\s*&str\s*=\s*"open_stack_git_remote_url"/);
   assert.match(rustContracts, /STACK_GIT_ADD_PATHS:\s*&str\s*=\s*"stack_git_add_paths"/);
   assert.match(rustContracts, /STACK_GIT_COMMIT:\s*&str\s*=\s*"stack_git_commit"/);
   assert.match(rustStackPopup, /mod git_status;/);
@@ -47,6 +48,12 @@ test('stack popup API exposes typed git branch counts and per-path status entrie
   assert.match(stackPopupApi, /export type StackGitFileStatusKind = 'modified' \| 'added' \| 'deleted' \| 'untracked' \| 'conflict';/);
   assert.match(stackPopupApi, /export type StackGitStatus = \{/);
   assert.match(stackPopupApi, /branch: string;/);
+  assert.match(stackPopupApi, /remoteRepositoryUrl\?: string \| null;/);
+  assert.match(commandsSource, /openStackGitRemoteUrl:\s*'open_stack_git_remote_url'/);
+  assert.match(rustStackPopup, /pub fn open_stack_git_remote_url\(/);
+  assert.match(rustMain, /stack_popup::open_stack_git_remote_url/);
+  assert.match(stackPopupApi, /export function openStackGitRemoteUrl\(url: string\): Promise<void> \{/);
+  assert.match(stackPopupApi, /invoke\(IPC_COMMANDS\.openStackGitRemoteUrl, \{ url \}\)/);
   assert.match(stackPopupApi, /conflicts: number;/);
   assert.match(stackPopupApi, /staged: boolean;/);
   assert.match(stackPopupApi, /entries: StackGitFileStatus\[\];/);
@@ -98,6 +105,14 @@ test('stack popup loads git status outside folder listing and guards stale respo
 
 test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackPopupSurface, /stack-git-summary/);
+  assert.match(stackPopupSurface, /openGitRemoteRepository\(url: string \| null \| undefined\)/);
+  assert.match(stackPopupSurface, /await openStackGitRemoteUrl\(url\)/);
+  assert.doesNotMatch(stackPopupSurface, /window\.open/);
+  assert.match(stackPopupSurface, /Git remote unavailable/);
+  assert.match(stackPopupSurface, /gitStatus\.remoteRepositoryUrl/);
+  assert.match(stackPopupSurface, /class="stack-git-remote-link"/);
+  assert.match(stackPopupSurface, /aria-label="Open remote repository in browser"/);
+  assert.match(stackPopupCss, /\.stack-git-summary \.stack-git-remote-link/);
   assert.match(stackPopupSurface, /openGitStatusPopup\('all'\)/);
   assert.match(stackPopupSurface, /openGitStatusPopup\(part\.status\)/);
   assert.match(stackPopupSurface, /class="stack-git-popup"/);

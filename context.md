@@ -1,71 +1,137 @@
 # Code Context
 
 ## Files Retrieved
-1. `src/components/StackPopupSurface.svelte` (lines 260-263, 416-493, 2378-2409) - path input state, key handling, suggestion refresh, Tab cycling, inline accept, and markup.
-2. `src/lib/stackPopupViewModel.ts` (lines 66-174) - autocomplete query parsing, inline completion builder, and Tab cycle index helper.
-3. `tests/stackBrowserPathAutocomplete.test.mjs` (lines 1-133) - current regression coverage/seams for Stack Browser path autocomplete.
-4. `src/lib/stackPopup.ts` (lines 209-218, 632-638) - frontend suggestion request/response types and IPC wrapper.
-5. `src-tauri/src/stack_popup.rs` (lines 395-424) - backend directory suggestion command.
+1. `master_spec.md` (lines 1-43) - canonical project/spec rules and current Stack Browser/control guidance; relevant notes: Stack Browser uses `stack-popup`, direct controls should use `MeltActionButton` when safe, Git dialog is a special raw-button exception.
+2. `src/components/StackPopupSurface.svelte` (lines 1098-1110, 2368-2528) - Stack Browser close handler already exists and root/header markup shows where a new top-right X would be inserted.
+3. `src/components/StackPopupSurface.css` (lines 1-24, 763-890) - root `.stack-popup` is `position: relative`; current toolbar/action layout and button styling.
+4. `src/components/TaskPreviewSurface.svelte` (lines 67-80, 156-162) - task preview red rectangular X pattern with event suppression and `MeltActionButton`.
+5. `src/components/TaskPreviewSurface.css` (lines 37-50, 121-143) - rectangular red X CSS: absolute top/right, danger red, `var(--js-radius-xs)`, min-width, not circular.
+6. `src/components/ProcessManagerSurface.svelte` (lines 162-174, 288-308) - process manager hide/close flow and top-right `MeltActionButton` X.
+7. `src/components/ProcessManagerSurface.css` (lines 15-25, 110-134) - header reserves right padding and close button CSS copied from preview style.
+8. `src/lib/stackPopup.ts` (lines 320-321) - frontend wrapper for `hideStackPopup()`.
+9. `src-tauri/src/stack_popup.rs` (lines 277-281) and `src-tauri/src/stack_popup/popup_window.rs` (lines 96+) - backend hide command path used by existing Stack close handler.
+10. `tests/processManagerCloseButton.test.mjs` (lines 1-58) - source/CSS contract for process-manager rectangular X.
+11. `tests/taskPreviewRetention.test.mjs` (lines 52-73) - source/CSS contract for task-preview X behavior.
+12. `tests/taskPreviewTextPolish.test.mjs` (lines 23-38) - header padding/absolute positioning contract for preview close button.
+13. `package.json` (lines 5-14) - validation scripts.
 
 ## Key Code
 
-`src/components/StackPopupSurface.svelte`:
-```ts
-$: pathInlineCompletion = getStackPathInlineCompletion(
-  pathDraft,
-  pathSuggestions[pathCompletionCycleIndex >= 0 ? pathCompletionCycleIndex : 0]
-);
+Stack Browser already has the behavior needed for an exit control:
 
-function handlePathKeydown(event: KeyboardEvent) {
-  event.stopPropagation();
-  if (pathInlineCompletion && event.key === 'ArrowRight') {
-    event.preventDefault();
-    acceptInlinePathCompletion();
-    return;
-  }
-  if (event.key === 'Tab' && !event.shiftKey && pathSuggestions.length) {
-    event.preventDefault();
-    cyclePathCompletion();
-    return;
-  }
+```ts
+// src/components/StackPopupSurface.svelte:1106-1110
+async function closeStackPopupFromSurface() {
+  await stopCurrentStackTerminal();
+  stackBrowserViewMode = 'files';
+  await hideStackPopup();
+}
+```
+
+Escape already calls it when not closing inline/menu state:
+
+```ts
+// src/components/StackPopupSurface.svelte:2211-2215
+} else if (rowMenu || backgroundMenu) {
+  closeMenus();
+} else {
+  void closeStackPopupFromSurface();
+}
+```
+
+Likely insertion point is inside/near the Stack Browser root header:
+
+```svelte
+// src/components/StackPopupSurface.svelte:2374-2382
+<section ... class="stack-popup" aria-label="Stack browser" ...>
+  <header class="stack-toolbar">
+```
+
+Use the direct-command `MeltActionButton` pattern (not raw `<button>`) because the Stack Browser spec says safe command controls use `MeltActionButton`, while raw buttons are called out as Git-dialog-only exceptions.
+
+Reference markup patterns:
+
+```svelte
+// src/components/TaskPreviewSurface.svelte:156-162
+<MeltActionButton
+  class="preview-close-button"
+  ariaLabel="Close previewed window"
+  onClick={(event) => void handlePreviewClose(event)}
+>×</MeltActionButton>
+```
+
+```svelte
+// src/components/ProcessManagerSurface.svelte:303-307
+<MeltActionButton
+  class="process-manager-close-button"
+  ariaLabel="Close process manager"
+  onClick={() => void requestClose()}
+>×</MeltActionButton>
+```
+
+Reference rectangular X CSS:
+
+```css
+/* src/components/ProcessManagerSurface.css:110-130 and TaskPreviewSurface.css:121-139 */
+...-close-button {
+  align-items: center;
+  background: #dc2626;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--js-radius-xs);
+  color: #fff;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  height: 1.35rem;
+  justify-content: center;
+  line-height: 1;
+  min-width: 2.1rem;
+  padding: 0 0.42rem;
+  position: absolute;
+  right: 0.42rem;
+  top: 0.42rem;
+  z-index: 4;
+}
+```
+
+Stack root CSS already supports absolute positioning:
+
+```css
+/* src/components/StackPopupSurface.css:1-13 */
+.stack-popup {
   ...
+  padding: var(--js-space-4);
+  position: relative;
+  width: 100%;
 }
 ```
-
-`cyclePathCompletion()` prevents default/opening, keeps existing `pathSuggestions`, computes next index with `getNextStackPathCompletionCycleIndex(pathDraft, pathSuggestions, pathCompletionCycleIndex)`, assigns `pathDraft = suggestion.path`, and focuses caret at end. It does **not** refresh suggestions.
-
-`acceptInlinePathCompletion()` sets `pathDraft` to `pathInlineCompletion.commitPath`, clears suggestions, refocuses, then calls `refreshPathSuggestionsForValue(committedPath, committedPath.length)`.
-
-`src/lib/stackPopupViewModel.ts`:
-```ts
-export function getNextStackPathCompletionCycleIndex(input, suggestions, currentIndex) {
-  if (!suggestions.length) return -1;
-  const exactCurrentIndex = suggestions.findIndex(
-    (suggestion) => normalizeStackPathForAutocomplete(suggestion.path) === normalizeStackPathForAutocomplete(input)
-  );
-  const baseIndex = currentIndex >= 0 ? currentIndex : exactCurrentIndex;
-  return (baseIndex + 1) % suggestions.length;
-}
-```
-This already skips an exact typed directory when that exact path is in the current suggestion set.
-
-Backend `suggest_stack_paths(parent_path, segment, limit)` returns sorted child directories under `parent_path` whose names start with `segment`.
 
 ## Architecture
 
-Path input events flow: Svelte input `on:focus`/`on:input` -> `refreshPathSuggestions()` -> `getStackPathAutocompleteQuery(value, caret)` -> IPC `suggestStackPaths()` -> Rust `suggest_stack_paths()` -> `pathSuggestions`. Inline ghost is derived from the first/current suggestion. `ArrowRight` accepts inline completion. `Tab` only cycles if `pathSuggestions.length` is nonzero; `Shift+Tab` is intentionally ignored by this branch.
+`stack-popup` is a hidden persistent Svelte/Tauri webview opened from top-bar pinned folders. `StackPopupSurface.svelte` owns UI state, uses wrappers from `src/lib/stackPopup.ts`, and calls the Tauri command `hide_stack_popup` through `hideStackPopup()`. The existing `closeStackPopupFromSurface()` also stops any legacy/current Stack terminal state and resets view mode before hiding; a new X should call this same function rather than invoking `hideStackPopup()` directly.
 
-Likely current bug/regression: Tab does not have a fallback for the visible/current inline completion when `pathSuggestions` is empty/stale/cleared. The current branch is gated by `pathSuggestions.length`, while RightArrow is gated by `pathInlineCompletion`. After `acceptInlinePathCompletion()` suggestions are explicitly cleared and repopulated async, so immediate Tab after accepting a directory can be dropped until the async refresh returns. Also, cycling sibling directories for an already typed exact directory depends on suggestions for that exact prefix being present; if they are not loaded yet, Tab does nothing.
+Task preview and process manager X buttons are local surface controls styled as absolute, red rectangular buttons at `top/right: 0.42rem`, with `min-width: 2.1rem`, `height: 1.35rem`, `border-radius: var(--js-radius-xs)`, hover `#ef4444`, and `z-index: 4`. Process manager reserves header space via right padding; preview reserves header text space with `padding-right`. Stack Browser currently has `.stack-toolbar` as a grid and `.stack-actions` flex wrapping; adding an absolute X likely requires reserving top/right room so it does not overlap path/action controls. Options: add right padding to `.stack-popup` or `.stack-toolbar`, or add a class like `.stack-browser-close-button` positioned absolute and adjust `.stack-toolbar`/`.stack-actions` for spacing.
 
 ## Start Here
 
-Open `src/components/StackPopupSurface.svelte` at `handlePathKeydown()`/`cyclePathCompletion()` first. Smallest likely implementation: make Tab handle `pathInlineCompletion`/current suggestion robustly instead of requiring only `pathSuggestions.length`; ensure if suggestions are missing after a typed exact directory/prefix, Tab triggers/uses refreshed suggestions for `getStackPathAutocompleteQuery(pathDraft, pathDraft.length)` and then cycles in place without opening. Keep `Shift+Tab` unchanged. Reuse `getNextStackPathCompletionCycleIndex()`; it already implements exact-prefix skip.
+Start with `src/components/StackPopupSurface.svelte`: add a `MeltActionButton` near the top of the `.stack-popup` section that calls `closeStackPopupFromSurface()`, then style it in `src/components/StackPopupSurface.css` by matching `.process-manager-close-button` / `.preview-close-button`.
 
-Regression-test seam: extend `tests/stackBrowserPathAutocomplete.test.mjs` with source-level assertions around the Tab branch plus pure helper tests. Better seam if adding logic: extract a small pure helper in `src/lib/stackPopupViewModel.ts` for resolving Tab behavior/next suggestion from `{input, suggestions, currentIndex, inlineCompletion}` and test it directly. Existing tests import from `../dist-tests/lib/stackPopupViewModel.js` and already cover exact-directory skip; add cases for Tab accepting currently suggested inline completion and Tab on exact typed prefix cycling to sibling when suggestions include exact + siblings.
+Likely test to add: a source/CSS contract test such as `tests/stackBrowserCloseButton.test.mjs`, or extend `tests/stackPopupState.test.mjs` / `tests/meltMigrationWiring.test.mjs`. Assert:
+- `class="stack-browser-close-button"` (or chosen class)
+- `ariaLabel="Close stack browser"` / accessible label
+- content `×`
+- `onClick={() => void closeStackPopupFromSurface()}` (or event form)
+- handler body still calls `stopCurrentStackTerminal()`, resets `stackBrowserViewMode = 'files'`, and awaits `hideStackPopup()`
+- CSS has absolute top/right, red background, rectangular radius, min-width, not `border-radius: 999px`
+- layout reserves room to avoid overlap.
 
-## Constraints/Risks/Open Questions
+Validation commands:
+- Focused: `node --test tests/stackBrowserCloseButton.test.mjs` after compiling dist-tests if needed by the test style.
+- Focused existing contracts: `npm run test:node` (runs `clean-dist-tests`, `tsc -p tsconfig.test.json`, then all `tests/*.test.mjs`).
+- Svelte/type check: `npm run check`.
+- Full frontend build: `npm run build`.
 
-- Do not make Tab submit/open a folder; current tests assert no `openFolder(committedPath)`.
-- Preserve RightArrow behavior and Shift+Tab non-handling.
-- Async refresh race guard (`requestSeq !== pathSuggestionRequestSeq || value !== pathDraft`) may discard responses if Tab mutates `pathDraft`; avoid clearing original suggestion set during cycle.
-- If implementing async Tab fetch, be careful to prevent default immediately and not lose focus/caret.
+Spec/changelog implications:
+- Behavior/UI change: update `master_spec.md` Stack Browser section to mention the top-right rectangular X exit button, its `closeStackPopupFromSurface()` behavior, and that it follows task-preview/process-manager rectangular X styling.
+- Add a `changelog.md` entry per `CHANGELOG_POLICY.md` because visible behavior changed and tests likely changed.
+- No backend/capability change expected; existing `hide_stack_popup` command/wrapper is already present.

@@ -8,6 +8,19 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WindowsExplorerRevealShowMode {
+    Restored,
+    Maximized,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WindowsExplorerRevealLaunchPlan {
+    pub(crate) executable: &'static str,
+    pub(crate) parameters: String,
+    pub(crate) show_mode: WindowsExplorerRevealShowMode,
+}
+
 pub(crate) fn rename_stack_item_path(path: String, new_name: String) -> Result<StackItem, String> {
     let source = PathBuf::from(normalize_existing_path(&path)?);
     let new_name = validate_child_name(&new_name)?;
@@ -117,18 +130,88 @@ pub(crate) fn reveal_stack_item_path(path: String) -> Result<(), String> {
     let path = normalize_existing_path(&path)?;
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        Command::new("explorer.exe")
-            .arg("/select,")
-            .arg(&path)
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| format!("Failed to reveal stack item: {e}"))
+        let path = PathBuf::from(path);
+        let plan = windows_explorer_reveal_launch_plan(&path)?;
+        launch_windows_explorer_reveal(&plan)
     }
     #[cfg(not(target_os = "windows"))]
     {
         crate::shell_paths::open_shell_path(path)
     }
+}
+
+pub(crate) fn windows_explorer_reveal_select_arg(path: &Path) -> String {
+    format!("/n,/select,{}", path.to_string_lossy())
+}
+
+pub(crate) fn windows_explorer_reveal_launch_plan(
+    path: &Path,
+) -> Result<WindowsExplorerRevealLaunchPlan, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Failed to inspect stack item before reveal: {error}"))?;
+    Ok(WindowsExplorerRevealLaunchPlan {
+        executable: "explorer.exe",
+        parameters: windows_explorer_reveal_select_arg(path),
+        show_mode: windows_explorer_reveal_show_mode(
+            metadata.is_dir(),
+            windows_file_metadata_is_hidden(&metadata),
+        ),
+    })
+}
+
+pub(crate) fn windows_explorer_reveal_show_mode(
+    is_directory: bool,
+    is_hidden: bool,
+) -> WindowsExplorerRevealShowMode {
+    if is_directory && is_hidden {
+        WindowsExplorerRevealShowMode::Maximized
+    } else {
+        WindowsExplorerRevealShowMode::Restored
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_file_metadata_is_hidden(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
+
+    metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN.0 != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_file_metadata_is_hidden(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_explorer_reveal(plan: &WindowsExplorerRevealLaunchPlan) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::{SW_RESTORE, SW_SHOWMAXIMIZED};
+
+    fn to_wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let executable_wide = to_wide(OsStr::new(plan.executable));
+    let parameters_wide = to_wide(OsStr::new(&plan.parameters));
+    let mut execute_info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpFile: PCWSTR(executable_wide.as_ptr()),
+        lpParameters: PCWSTR(parameters_wide.as_ptr()),
+        nShow: match plan.show_mode {
+            WindowsExplorerRevealShowMode::Restored => SW_RESTORE.0,
+            WindowsExplorerRevealShowMode::Maximized => SW_SHOWMAXIMIZED.0,
+        },
+        ..Default::default()
+    };
+
+    unsafe { ShellExecuteExW(&mut execute_info) }
+        .map_err(|error| format!("Failed to reveal stack item: {error}"))?;
+
+    Ok(())
 }
 
 pub(crate) fn available_destination_path(

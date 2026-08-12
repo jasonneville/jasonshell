@@ -84,7 +84,8 @@
   margin: 0;
 }
 
-.settings-section > label {
+.settings-section > label,
+.google-font-installer label {
   display: grid;
   gap: 0.26rem;
 }
@@ -109,6 +110,31 @@
 }
 
 .settings-help {
+  margin: -0.2rem 0 0;
+}
+
+.google-font-installer {
+  align-items: end;
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.google-font-installer button {
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  min-height: 1.7rem;
+  padding: 0 0.55rem;
+}
+
+.settings-success {
+  color: var(--js-color-success, #8be38b);
+  font-size: 0.64rem;
+  font-weight: 700;
   margin: -0.2rem 0 0;
 }
 

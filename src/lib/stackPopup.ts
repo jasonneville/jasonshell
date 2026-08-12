@@ -41,6 +41,7 @@ export type StackGitFileStatus = {
 export type StackGitStatus = {
   repositoryRoot: string;
   branch: string;
+  remoteRepositoryUrl?: string | null;
   modified: number;
   added: number;
   deleted: number;
@@ -373,48 +374,48 @@ export async function listStackFolder(
     const folderOpenDurationMs = Math.max(0, performance.now() - folderOpenStartedAt);
     if (!firstPaintDurationMs && entries.length > 0) {
       firstPaintDurationMs = folderOpenDurationMs;
-      emitStackFolderListingDiagnostics({
-        phase: 'first-paint',
-        path: folderPath,
-        pageOffset: page.offset,
-        requestedLimit: limit,
-        pageDurationMs,
-        folderOpenDurationMs,
-        firstPaintDurationMs,
-        metadataListingCompleteDurationMs: 0,
-        iconQueueCompleteDurationMs: 0,
-        pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
-        iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
-        iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
-        iconCacheHits: page.diagnostics?.iconCacheHits ?? 0,
-        iconCacheMisses: page.diagnostics?.iconCacheMisses ?? 0,
-        iconFallbackCount: page.diagnostics?.iconFallbackCount ?? 0,
-        payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
-        totalItems: page.total,
-        hasMore: page.hasMore
-      });
+      // emitStackFolderListingDiagnostics({
+      //   phase: 'first-paint',
+      //   path: folderPath,
+      //   pageOffset: page.offset,
+      //   requestedLimit: limit,
+      //   pageDurationMs,
+      //   folderOpenDurationMs,
+      //   firstPaintDurationMs,
+      //   metadataListingCompleteDurationMs: 0,
+      //   iconQueueCompleteDurationMs: 0,
+      //   pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
+      //   iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
+      //   iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
+      //   iconCacheHits: page.diagnostics?.iconCacheHits ?? 0,
+      //   iconCacheMisses: page.diagnostics?.iconCacheMisses ?? 0,
+      //   iconFallbackCount: page.diagnostics?.iconFallbackCount ?? 0,
+      //   payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
+      //   totalItems: page.total,
+      //   hasMore: page.hasMore
+      // });
     }
 
-    emitStackFolderListingDiagnostics({
-      phase: 'page',
-      path: folderPath,
-      pageOffset: page.offset,
-      requestedLimit: limit,
-      pageDurationMs,
-      folderOpenDurationMs,
-      firstPaintDurationMs,
-      metadataListingCompleteDurationMs: 0,
-      iconQueueCompleteDurationMs: 0,
-      pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
-      iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
-      iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
-      iconCacheHits: page.diagnostics?.iconCacheHits ?? 0,
-      iconCacheMisses: page.diagnostics?.iconCacheMisses ?? 0,
-      iconFallbackCount: page.diagnostics?.iconFallbackCount ?? 0,
-      payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
-      totalItems: page.total,
-      hasMore: page.hasMore
-    });
+    // emitStackFolderListingDiagnostics({
+    //   phase: 'page',
+    //   path: folderPath,
+    //   pageOffset: page.offset,
+    //   requestedLimit: limit,
+    //   pageDurationMs,
+    //   folderOpenDurationMs,
+    //   firstPaintDurationMs,
+    //   metadataListingCompleteDurationMs: 0,
+    //   iconQueueCompleteDurationMs: 0,
+    //   pageItemCount: page.diagnostics?.pageItemCount ?? listingPage.entries.length,
+    //   iconResolutionCount: page.diagnostics?.iconResolutionCount ?? 0,
+    //   iconResolutionDurationMs: page.diagnostics?.iconResolutionDurationMs ?? 0,
+    //   iconCacheHits: page.diagnostics?.iconCacheHits ?? 0,
+    //   iconCacheMisses: page.diagnostics?.iconCacheMisses ?? 0,
+    //   iconFallbackCount: page.diagnostics?.iconFallbackCount ?? 0,
+    //   payloadItemCount: page.diagnostics?.payloadItemCount ?? listingPage.entries.length,
+    //   totalItems: page.total,
+    //   hasMore: page.hasMore
+    // });
     const nextOffset = page.offset + page.limit;
     if (!page.hasMore) {
       break;
@@ -427,26 +428,26 @@ export async function listStackFolder(
   }
 
   const metadataListingCompleteDurationMs = Math.max(0, performance.now() - folderOpenStartedAt);
-  emitStackFolderListingDiagnostics({
-    phase: 'metadata-complete',
-    path: folderPath,
-    pageOffset: offset,
-    requestedLimit: 0,
-    pageDurationMs: 0,
-    folderOpenDurationMs: metadataListingCompleteDurationMs,
-    firstPaintDurationMs,
-    metadataListingCompleteDurationMs,
-    iconQueueCompleteDurationMs: 0,
-    pageItemCount: entries.length,
-    iconResolutionCount: 0,
-    iconResolutionDurationMs: 0,
-    iconCacheHits: 0,
-    iconCacheMisses: 0,
-    iconFallbackCount: 0,
-    payloadItemCount: entries.length,
-    totalItems: total,
-    hasMore: false
-  });
+  // emitStackFolderListingDiagnostics({
+  //   phase: 'metadata-complete',
+  //   path: folderPath,
+  //   pageOffset: offset,
+  //   requestedLimit: 0,
+  //   pageDurationMs: 0,
+  //   folderOpenDurationMs: metadataListingCompleteDurationMs,
+  //   firstPaintDurationMs,
+  //   metadataListingCompleteDurationMs,
+  //   iconQueueCompleteDurationMs: 0,
+  //   pageItemCount: entries.length,
+  //   iconResolutionCount: 0,
+  //   iconResolutionDurationMs: 0,
+  //   iconCacheHits: 0,
+  //   iconCacheMisses: 0,
+  //   iconFallbackCount: 0,
+  //   payloadItemCount: entries.length,
+  //   totalItems: total,
+  //   hasMore: false
+  // });
   return { path: responsePath, entries, total, warnings };
 }
 
@@ -535,6 +536,10 @@ export function resolveStackItemIcons(paths: string[]): Promise<StackItemIconRes
 
 export function getStackGitStatus(folderPath: string): Promise<StackGitStatus | null> {
   return invoke<StackGitStatus | null>(IPC_COMMANDS.getStackGitStatus, { path: folderPath });
+}
+
+export function openStackGitRemoteUrl(url: string): Promise<void> {
+  return invoke(IPC_COMMANDS.openStackGitRemoteUrl, { url });
 }
 
 export function stackGitAddPaths(folderPath: string, paths: string[]): Promise<StackGitOperationResult> {

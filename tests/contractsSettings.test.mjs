@@ -33,6 +33,7 @@ const capabilitySources = Object.fromEntries(
 );
 const capabilitySource = Object.values(capabilitySources).join('\n');
 const tauriConfigSource = readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8');
+const tauriConfig = JSON.parse(tauriConfigSource);
 const wrapperSources = [
   'runtimeMetrics.ts',
   'audio.ts',
@@ -458,4 +459,12 @@ test('backend settings and diagnostics commands are registered with hardened app
   assert.doesNotMatch(tauriConfigSource, /"csp": null/);
   assert.match(tauriConfigSource, /default-src 'self'/);
   assert.match(tauriConfigSource, /"devCsp"/);
+
+  for (const [name, csp] of Object.entries({
+    csp: tauriConfig.app.security.csp,
+    devCsp: tauriConfig.app.security.devCsp
+  })) {
+    assert.match(csp, /style-src[^;]*'self'[^;]*https:\/\/fonts\.googleapis\.com/, `${name} must allow Google Fonts CSS stylesheets`);
+    assert.match(csp, /font-src[^;]*'self'[^;]*https:\/\/fonts\.gstatic\.com/, `${name} must allow Google Fonts font files`);
+  }
 });

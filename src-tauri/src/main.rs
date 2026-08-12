@@ -139,6 +139,7 @@ fn main() {
             stack_popup::resize_stack_popup,
             stack_popup::read_stack_folder,
             stack_popup::get_stack_git_status,
+            stack_popup::open_stack_git_remote_url,
             stack_popup::stack_git_add_paths,
             stack_popup::stack_git_commit,
             stack_popup::stack_git_log,
@@ -205,6 +206,13 @@ fn main() {
             taskbar_menu::handle_taskbar_menu_event(app_handle, event);
         })
         .on_window_event(|window, event| {
+            if window.label() == shell_windows::STACK_POPUP_LABEL
+                && matches!(event, WindowEvent::Focused(true))
+            {
+                stack_popup::restore_stack_popup_topmost(window.app_handle());
+                return;
+            }
+
             if window.label() == shell_windows::STACK_POPUP_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {

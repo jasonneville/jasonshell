@@ -24,11 +24,12 @@ use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    IsIconic, IsWindowVisible, RegisterWindowMessageW, SetWindowPos, SystemParametersInfoW,
-    GWL_STYLE, HWND_TOPMOST, SPIF_SENDCHANGE, SPI_GETWORKAREA, SPI_SETWORKAREA, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOOWNERZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_CAPTION,
-    WS_THICKFRAME,
+    GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, RegisterWindowMessageW, SetWindowPos,
+    SystemParametersInfoW, GWL_STYLE, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPIF_SENDCHANGE, SPI_GETWORKAREA, SPI_SETWORKAREA,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    WS_CAPTION, WS_THICKFRAME,
 };
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -345,6 +346,7 @@ fn resize_shell_bar_runtime(
     let layout = state
         .shell_layout
         .ok_or_else(|| "Shell AppBar layout is not active".to_string())?;
+    ensure_shell_bar_resize_allowed(state.fullscreen_hidden)?;
     let top_hwnd = HWND(layout.top_hwnd as *mut _);
     let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
     let mut top_rect = layout.top_rect;
@@ -375,6 +377,29 @@ fn resize_shell_bar_runtime(
     });
 
     Ok(())
+}
+
+fn ensure_shell_bar_resize_allowed(fullscreen_hidden: bool) -> AppResult<()> {
+    if fullscreen_hidden {
+        return Err(
+            "Shell AppBars are temporarily released while a fullscreen foreground app is active"
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
+fn restored_shell_surface_layout(
+    layout: ShellSurfaceLayout,
+    top_rect: RECT,
+    bottom_rect: RECT,
+) -> ShellSurfaceLayout {
+    ShellSurfaceLayout {
+        top_rect,
+        bottom_rect,
+        ..layout
+    }
 }
 
 fn hwnd_from_tauri_window(window: &tauri::WebviewWindow) -> AppResult<HWND> {
@@ -441,6 +466,42 @@ fn unregister_appbar(hwnd: HWND) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+/// Removes every tracked AppBar that Win32 accepts and retains only failed removals.
+///
+/// Retaining failures prevents a retry from issuing `ABM_NEW` for an HWND whose prior
+/// registration may still be live.
+fn unregister_tracked_appbars_with<UnregisterFn>(
+    registered_appbars: &mut Vec<isize>,
+    mut unregister: UnregisterFn,
+) -> AppResult<()>
+where
+    UnregisterFn: FnMut(HWND) -> AppResult<()>,
+{
+    let tracked = std::mem::take(registered_appbars);
+    let mut remaining = Vec::new();
+    let mut errors = Vec::new();
+
+    for hwnd_value in tracked.into_iter().rev() {
+        if let Err(error) = unregister(HWND(hwnd_value as *mut _)) {
+            remaining.push(hwnd_value);
+            errors.push(error.to_string());
+        }
+    }
+
+    remaining.reverse();
+    *registered_appbars = remaining;
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to remove tracked Shell AppBars: {}",
+            errors.join("; ")
+        )
+        .into())
+    }
 }
 
 fn desired_rect_for_edge(monitor_rect: RECT, edge: AppBarEdge, height: i32) -> RECT {
@@ -611,6 +672,60 @@ fn move_window_to_rect(hwnd: HWND, rect: RECT) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+fn virtual_desktop_rect() -> RECT {
+    unsafe {
+        let left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        RECT {
+            left,
+            top,
+            right: left.saturating_add(GetSystemMetrics(SM_CXVIRTUALSCREEN)),
+            bottom: top.saturating_add(GetSystemMetrics(SM_CYVIRTUALSCREEN)),
+        }
+    }
+}
+
+fn parked_rect_below_virtual_desktop(surface_rect: RECT, virtual_desktop: RECT) -> RECT {
+    let height = (surface_rect.bottom - surface_rect.top).max(1);
+    let top = virtual_desktop.bottom.saturating_add(1);
+
+    RECT {
+        left: surface_rect.left,
+        top,
+        right: surface_rect.right,
+        bottom: top.saturating_add(height),
+    }
+}
+
+/// Keeps persistent WebView2 surfaces alive during fullscreen without letting them overlap any monitor.
+///
+/// Unlike `move_window_to_rect`, this deliberately avoids `SWP_FRAMECHANGED`: frame/visibility churn
+/// after a fullscreen app exits can leave a Tauri WebView visually blank despite correct HWND geometry.
+fn park_window_below_virtual_desktop(hwnd: HWND, surface_rect: RECT) -> AppResult<()> {
+    let parked = parked_rect_below_virtual_desktop(surface_rect, virtual_desktop_rect());
+    let width = parked.right - parked.left;
+    let height = parked.bottom - parked.top;
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            parked.left,
+            parked.top,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn park_shell_surface_windows(layout: ShellSurfaceLayout) -> AppResult<()> {
+    park_window_below_virtual_desktop(HWND(layout.top_hwnd as *mut _), layout.top_rect)?;
+    park_window_below_virtual_desktop(HWND(layout.bottom_hwnd as *mut _), layout.bottom_rect)
 }
 
 fn runtime_window_rect(hwnd: HWND) -> AppResult<WindowRectSnapshot> {
@@ -784,12 +899,11 @@ where
 {
     let mut cleanup_errors = Vec::new();
 
-    for hwnd_value in state.registered_appbars.iter().rev().copied() {
-        if let Err(error) = unregister(HWND(hwnd_value as *mut _)) {
-            cleanup_errors.push(error.to_string());
-        }
+    if let Err(error) =
+        unregister_tracked_appbars_with(&mut state.registered_appbars, &mut unregister)
+    {
+        cleanup_errors.push(error.to_string());
     }
-    state.registered_appbars.clear();
 
     if let Some(taskbar_snapshot) = state.hidden_explorer_taskbar.take() {
         match restore_taskbar(taskbar_snapshot) {
@@ -887,57 +1001,62 @@ fn sync_fullscreen_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
 }
 
 fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
-    let layout = {
-        let state = app_handle.state::<Mutex<ShellRuntimeState>>();
-        let Ok(mut state) = state.try_lock() else {
-            return Ok(());
-        };
-        if state.cleaned_up || state.fullscreen_hidden {
-            return Ok(());
-        }
+    let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+    let Ok(mut state) = state.try_lock() else {
+        return Ok(());
+    };
+    if state.cleaned_up || state.fullscreen_hidden {
+        return Ok(());
+    }
 
-        let Some(layout) = state.shell_layout else {
-            return Ok(());
-        };
+    let Some(layout) = state.shell_layout else {
+        return Ok(());
+    };
 
-        let mut release_errors = Vec::new();
-        for hwnd_value in state.registered_appbars.iter().rev().copied() {
-            if let Err(error) = unregister_appbar(HWND(hwnd_value as *mut _)) {
-                release_errors.push(error.to_string());
-            }
-        }
-        state.registered_appbars.clear();
+    let mut release_errors = Vec::new();
+    if let Err(error) =
+        unregister_tracked_appbars_with(&mut state.registered_appbars, unregister_appbar)
+    {
+        release_errors.push(error.to_string());
+    }
 
+    if state.registered_appbars.is_empty() {
         if let Err(error) = set_work_area_with_retry(
             layout.monitor_rect,
             "primary monitor work area while fullscreen foreground app is active",
         ) {
             release_errors.push(error.to_string());
         }
-
-        if !release_errors.is_empty() {
-            return Err(release_errors.join("; ").into());
-        }
-
-        state.fullscreen_hidden = true;
-        layout
-    };
-
-    if let Some(window) = app_handle.get_webview_window(super::shell_windows::TOP_BAR_LABEL) {
-        let _ = window.hide();
-    }
-    if let Some(window) = app_handle.get_webview_window(super::shell_windows::BOTTOM_BAR_LABEL) {
-        let _ = window.hide();
     }
 
-    // Keep rects warm even if WebView hide/show briefly perturbs HWND placement.
-    move_window_to_rect(HWND(layout.top_hwnd as *mut _), layout.top_rect)?;
-    move_window_to_rect(HWND(layout.bottom_hwnd as *mut _), layout.bottom_rect)?;
+    if !release_errors.is_empty() {
+        return Err(release_errors.join("; ").into());
+    }
+
+    // Keep persistent WebView2 surfaces alive. Tauri hide/show can leave a surface blank
+    // after fullscreen exits even when its HWND geometry is correct.
+    park_shell_surface_windows(layout)?;
+    state.fullscreen_hidden = true;
     Ok(())
 }
 
+fn prepare_fullscreen_restore_retry_with<UnregisterFn>(
+    registered_appbars: &mut Vec<isize>,
+    unregister: UnregisterFn,
+) -> AppResult<()>
+where
+    UnregisterFn: FnMut(HWND) -> AppResult<()>,
+{
+    unregister_tracked_appbars_with(registered_appbars, unregister).map_err(|error| {
+        format!(
+            "cannot retry fullscreen shell restore until prior AppBar registrations are released: {error}"
+        )
+        .into()
+    })
+}
+
 fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
-    let layout = {
+    let restored_layout = {
         let state = app_handle.state::<Mutex<ShellRuntimeState>>();
         let Ok(mut state) = state.try_lock() else {
             return Ok(());
@@ -950,11 +1069,23 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
             return Ok(());
         };
 
+        // A failed restore can leave registrations tracked. They must be removed
+        // successfully before a retry can issue a new ABM_NEW for either HWND.
+        if !state.registered_appbars.is_empty() {
+            prepare_fullscreen_restore_retry_with(
+                &mut state.registered_appbars,
+                unregister_appbar,
+            )?;
+            set_work_area_with_retry(
+                layout.monitor_rect,
+                "full-monitor work area before retrying fullscreen shell restore",
+            )?;
+        }
+
         let top_hwnd = HWND(layout.top_hwnd as *mut _);
         let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
-        state.registered_appbars.clear();
 
-        let restore_result = (|| -> AppResult<()> {
+        let restore_result = (|| -> AppResult<ShellSurfaceLayout> {
             let top_rect =
                 register_tracked_appbar(&mut state, top_hwnd, register_appbar, |hwnd| {
                     reserve_appbar(hwnd, AppBarEdge::Top, layout.top_rect)
@@ -966,36 +1097,113 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
             set_work_area_with_retry(
                 reserved_work_area(layout.monitor_rect, top_rect, bottom_rect),
                 "reserved shell work area after fullscreen foreground app exits",
-            )
+            )?;
+
+            Ok(restored_shell_surface_layout(layout, top_rect, bottom_rect))
         })();
 
-        if let Err(error) = restore_result {
-            for hwnd_value in state.registered_appbars.iter().rev().copied() {
-                let _ = unregister_appbar(HWND(hwnd_value as *mut _));
-            }
-            state.registered_appbars.clear();
-            return Err(error);
-        }
+        match restore_result {
+            Ok(restored_layout) => restored_layout,
+            Err(error) => {
+                let mut cleanup_errors = Vec::new();
+                if let Err(park_error) = park_shell_surface_windows(layout) {
+                    cleanup_errors.push(format!(
+                        "failed to park released shell surfaces: {park_error}"
+                    ));
+                }
+                if let Err(release_error) = unregister_tracked_appbars_with(
+                    &mut state.registered_appbars,
+                    unregister_appbar,
+                ) {
+                    cleanup_errors.push(format!(
+                        "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
+                    ));
+                } else if let Err(work_area_error) = set_work_area_with_retry(
+                    layout.monitor_rect,
+                    "full-monitor work area after failed fullscreen shell restore",
+                ) {
+                    cleanup_errors.push(work_area_error.to_string());
+                }
 
-        state.fullscreen_hidden = false;
-        layout
+                if cleanup_errors.is_empty() {
+                    return Err(error);
+                }
+                return Err(format!("{error}; {}", cleanup_errors.join("; ")).into());
+            }
+        }
     };
 
-    let top_hwnd = HWND(layout.top_hwnd as *mut _);
-    let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
-    move_window_to_rect(top_hwnd, layout.top_rect)?;
-    move_window_to_rect(bottom_hwnd, layout.bottom_rect)?;
+    let top_hwnd = HWND(restored_layout.top_hwnd as *mut _);
+    let bottom_hwnd = HWND(restored_layout.bottom_hwnd as *mut _);
+    let position_result = (|| -> AppResult<()> {
+        move_window_to_rect(top_hwnd, restored_layout.top_rect)?;
+        move_window_to_rect(bottom_hwnd, restored_layout.bottom_rect)?;
 
-    if let Some(window) = app_handle.get_webview_window(super::shell_windows::TOP_BAR_LABEL) {
-        window.show()?;
-        apply_no_alt_tab_shell_style_to_hwnd(top_hwnd, super::shell_windows::TOP_BAR_LABEL)?;
-    }
-    if let Some(window) = app_handle.get_webview_window(super::shell_windows::BOTTOM_BAR_LABEL) {
-        window.show()?;
-        apply_no_alt_tab_shell_style_to_hwnd(bottom_hwnd, super::shell_windows::BOTTOM_BAR_LABEL)?;
-    }
+        stabilize_runtime_window_rect(
+            top_hwnd,
+            super::shell_windows::TOP_BAR_LABEL,
+            restored_layout.top_rect,
+        )?;
+        stabilize_runtime_window_rect(
+            bottom_hwnd,
+            super::shell_windows::BOTTOM_BAR_LABEL,
+            restored_layout.bottom_rect,
+        )?;
+        Ok(())
+    })();
 
-    Ok(())
+    match position_result {
+        Ok(()) => {
+            let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+            let mut state = state.lock().expect("shell runtime state is poisoned");
+            if state.cleaned_up {
+                return Ok(());
+            }
+
+            state.shell_layout = Some(restored_layout);
+            state.fullscreen_hidden = false;
+            Ok(())
+        }
+        Err(error) => {
+            let mut cleanup_errors = Vec::new();
+            if let Err(park_error) = park_shell_surface_windows(restored_layout) {
+                cleanup_errors.push(format!(
+                    "failed to park released shell surfaces: {park_error}"
+                ));
+            }
+
+            let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+            let mut state = state.lock().expect("shell runtime state is poisoned");
+            if !state.cleaned_up {
+                match unregister_tracked_appbars_with(
+                    &mut state.registered_appbars,
+                    unregister_appbar,
+                ) {
+                    Ok(()) => {
+                        if let Err(reset_error) = set_work_area_with_retry(
+                            restored_layout.monitor_rect,
+                            "full-monitor work area after failed fullscreen shell surface placement",
+                        ) {
+                            cleanup_errors.push(reset_error.to_string());
+                        }
+                    }
+                    Err(release_error) => cleanup_errors.push(format!(
+                        "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
+                    )),
+                }
+            }
+
+            if cleanup_errors.is_empty() {
+                Err(error)
+            } else {
+                Err(format!(
+                    "{error}; additionally failed to release fullscreen shell restore state: {}",
+                    cleanup_errors.join("; ")
+                )
+                .into())
+            }
+        }
+    }
 }
 
 fn foreground_fullscreen_candidate(
@@ -1146,11 +1354,13 @@ fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_requested_thickness, cleanup_runtime_state_with, normalize_rect_thickness,
-        rect_covers_target, register_tracked_appbar, reserved_work_area,
-        resolve_baseline_work_area, should_hide_shell_for_fullscreen_window,
-        stabilize_runtime_window_rect_with, FullscreenWindowCandidate, ShellRuntimeState,
-        WindowRectSnapshot,
+        apply_requested_thickness, cleanup_runtime_state_with, ensure_shell_bar_resize_allowed,
+        normalize_rect_thickness, parked_rect_below_virtual_desktop,
+        prepare_fullscreen_restore_retry_with, rect_covers_target, register_tracked_appbar,
+        reserved_work_area, resolve_baseline_work_area, restored_shell_surface_layout,
+        should_hide_shell_for_fullscreen_window, stabilize_runtime_window_rect_with,
+        unregister_tracked_appbars_with, FullscreenWindowCandidate, ShellRuntimeState,
+        ShellSurfaceLayout, WindowRectSnapshot,
     };
     use crate::explorer::ExplorerTaskbarSnapshot;
     use windows::Win32::Foundation::{HWND, RECT};
@@ -1258,6 +1468,46 @@ mod tests {
         assert!(state.baseline_work_area.is_none());
         assert!(state.hidden_explorer_taskbar.is_none());
         assert!(state.cleaned_up);
+    }
+
+    #[test]
+    fn failed_appbar_removal_remains_tracked_and_blocks_fresh_restore_registration() {
+        let mut tracked_appbars = vec![11, 22];
+        let mut removal_attempts = Vec::new();
+        let mut fresh_registrations = 0;
+
+        let retry_result = prepare_fullscreen_restore_retry_with(&mut tracked_appbars, |hwnd| {
+            removal_attempts.push(hwnd.0 as isize);
+            if hwnd.0 as isize == 22 {
+                Err("ABM_REMOVE failed for bottom bar".into())
+            } else {
+                Ok(())
+            }
+        });
+
+        if retry_result.is_ok() {
+            fresh_registrations += 1;
+        }
+
+        assert!(retry_result.is_err());
+        assert_eq!(removal_attempts, vec![22, 11]);
+        assert_eq!(tracked_appbars, vec![22]);
+        assert_eq!(fresh_registrations, 0);
+    }
+
+    #[test]
+    fn successful_appbar_removal_clears_all_tracking() {
+        let mut tracked_appbars = vec![11, 22];
+        let mut removal_attempts = Vec::new();
+
+        unregister_tracked_appbars_with(&mut tracked_appbars, |hwnd| {
+            removal_attempts.push(hwnd.0 as isize);
+            Ok(())
+        })
+        .expect("successful AppBar removals should clear tracking");
+
+        assert_eq!(removal_attempts, vec![22, 11]);
+        assert!(tracked_appbars.is_empty());
     }
 
     #[test]
@@ -1395,6 +1645,106 @@ mod tests {
         .expect("runtime stabilization should recover from a zero-height startup rect");
 
         assert_eq!(repositions, vec![expected]);
+    }
+
+    #[test]
+    fn parked_rect_stays_below_a_negative_coordinate_virtual_desktop() {
+        let virtual_desktop = RECT {
+            left: -1920,
+            top: -1080,
+            right: 2560,
+            bottom: 1440,
+        };
+        let bottom_bar = RECT {
+            left: 0,
+            top: 1408,
+            right: 2560,
+            bottom: 1440,
+        };
+
+        assert_eq!(
+            parked_rect_below_virtual_desktop(bottom_bar, virtual_desktop),
+            RECT {
+                left: 0,
+                top: 1441,
+                right: 2560,
+                bottom: 1473,
+            }
+        );
+    }
+
+    #[test]
+    fn fullscreen_restore_layout_uses_newly_negotiated_bottom_rect() {
+        let previous_layout = ShellSurfaceLayout {
+            monitor_rect: RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080,
+            },
+            top_hwnd: 11,
+            bottom_hwnd: 22,
+            top_rect: RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 28,
+            },
+            bottom_rect: RECT {
+                left: 0,
+                top: 1032,
+                right: 1920,
+                bottom: 1080,
+            },
+        };
+        let negotiated_top_rect = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 30,
+        };
+        let negotiated_bottom_rect = RECT {
+            left: 0,
+            top: 1026,
+            right: 1920,
+            bottom: 1080,
+        };
+
+        let restored_layout = restored_shell_surface_layout(
+            previous_layout,
+            negotiated_top_rect,
+            negotiated_bottom_rect,
+        );
+
+        assert_eq!(restored_layout.top_rect, negotiated_top_rect);
+        assert_eq!(restored_layout.bottom_rect, negotiated_bottom_rect);
+        assert_eq!(
+            reserved_work_area(
+                restored_layout.monitor_rect,
+                restored_layout.top_rect,
+                restored_layout.bottom_rect,
+            ),
+            RECT {
+                left: 0,
+                top: 30,
+                right: 1920,
+                bottom: 1026,
+            }
+        );
+        assert_eq!(restored_layout.monitor_rect, previous_layout.monitor_rect);
+        assert_eq!(restored_layout.top_hwnd, previous_layout.top_hwnd);
+        assert_eq!(restored_layout.bottom_hwnd, previous_layout.bottom_hwnd);
+    }
+
+    #[test]
+    fn shell_bar_resize_is_rejected_while_fullscreen_releases_appbars() {
+        assert!(ensure_shell_bar_resize_allowed(false).is_ok());
+        assert_eq!(
+            ensure_shell_bar_resize_allowed(true)
+                .expect_err("fullscreen-released AppBars must reject resize")
+                .to_string(),
+            "Shell AppBars are temporarily released while a fullscreen foreground app is active"
+        );
     }
 
     #[test]

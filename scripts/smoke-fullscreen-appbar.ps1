@@ -137,19 +137,25 @@ $steps += Read-SmokeStep `
     -Id "BRW-004" `
     -Title "Exiting browser fullscreen restores bars" `
     -Instruction "Exit browser fullscreen with F11 or Esc, then keep the browser focused." `
-    -PassCriteria "Top and bottom JasonShell bars reappear and remain visible after fullscreen exits."
+    -PassCriteria "Top and bottom JasonShell bars reappear with painted content; the bottom bar shows its normal background plus launcher/task or process controls, is flush with the monitor bottom edge, and leaves no blank reserved strip below it."
+
+$steps += Read-SmokeStep `
+    -Id "BRW-005" `
+    -Title "Repeated browser fullscreen exits keep the bottom bar flush" `
+    -Instruction "Repeat browser fullscreen entry and exit at least three times, leaving the browser focused after each exit." `
+    -PassCriteria "After every exit, both bars return with painted content; the bottom bar shows its normal background plus launcher/task or process controls, stays flush with the monitor bottom edge, and no blank strip accumulates below it."
 
 $steps += Read-SmokeStep `
     -Id "APP-001" `
     -Title "Optional fullscreen game or app path" `
-    -Instruction "If a fullscreen game or exclusive/borderless fullscreen app is available, launch it, enter fullscreen on the primary display, then repeat: focused fullscreen hides bars, Alt+Tab/focus away restores bars, exiting fullscreen restores bars. Choose Skip if no suitable app is available." `
-    -PassCriteria "A real fullscreen game/app hides both bars only while it is the foreground fullscreen window, and bars restore on focus-away or fullscreen exit."
+    -Instruction "If a fullscreen game or exclusive/borderless fullscreen app is available, launch it, enter fullscreen on the primary display, then repeat at least three exit cycles: focused fullscreen hides bars, Alt+Tab/focus away restores bars, and exiting fullscreen restores bars. Choose Skip if no suitable app is available." `
+    -PassCriteria "A real fullscreen game/app hides both bars only while it is the foreground fullscreen window; after every exit, both bars visibly repaint and the bottom bar shows its normal background plus launcher/task or process controls, is flush with the monitor bottom, and has no blank strip below it."
 
 $finishedAt = Get-Date
 $failed = @($steps | Where-Object { $_.Status -eq "FAIL" })
 $passed = @($steps | Where-Object { $_.Status -eq "PASS" })
 $skipped = @($steps | Where-Object { $_.Status -eq "SKIP" })
-$requiredIds = @("PRE-001", "BRW-001", "BRW-002", "BRW-003", "BRW-004")
+$requiredIds = @("PRE-001", "BRW-001", "BRW-002", "BRW-003", "BRW-004", "BRW-005")
 $requiredNotPassed = @($steps | Where-Object { $requiredIds -contains $_.Id -and $_.Status -ne "PASS" })
 
 $lines = @(
@@ -187,7 +193,7 @@ foreach ($step in $steps) {
 $lines += @(
     "",
     "## Pass/Fail Rule",
-    "- Overall PASS requires PRE-001 and all browser steps BRW-001 through BRW-004 to pass.",
+    "- Overall PASS requires PRE-001 and all browser steps BRW-001 through BRW-005 to pass.",
     "- APP-001 may be skipped when no fullscreen game/app is available.",
     "- Any FAIL means the live fullscreen appbar behavior needs investigation before release."
 )
