@@ -214,6 +214,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /on:lostpointercapture=\{handleTaskGroupLostPointerCapture\}/);
 
   assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`task-button\$\{taskWindow\.isActive \? ' task-button-active' : ''\}\$\{taskWindow\.isMinimized \? ' task-button-minimized' : ''\}`\}[\s\S]*type="button"[\s\S]*title=\{taskWindowLabel\(taskWindow\)\}[\s\S]*ariaLabel=\{taskWindowActionLabel\(taskWindow\)\}[\s\S]*disabled=\{activatingHwnd === taskWindow\.hwnd\}/);
+  assert.match(bottomBarSource, /taskWindowActionLabel\(taskWindow\)/);
   assert.match(bottomBarSource, /onPointerDown=\{\(event\) => handleTaskWindowPointerDown\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onClick=\{\(event\) => handleTaskWindowClick\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onMouseEnter=\{\(event\) => queuePreview\(taskWindow, event\)\}/);

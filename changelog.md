@@ -1,5 +1,6 @@
 ## Change Ledger
 
+ - 2026-08-12 `[CODE]` FIXED: Taskbar window activation now rejects invalid HWNDs before target resolution, retries focus through AttachThreadInput plus SwitchToThisWindow, verifies foreground ownership against target/root owner, and relabels taskbar activation affordance as Focus.
 Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is preserved.
 
 - 2026-08-11 `[CODE]` CHANGED: Quick Commands now has compact sharp-edged icon tiles, native menu resizing, draggable saved-command pane sizing, right-click-only Edit/History, live running indicators, and click-expandable current/retained output history.

@@ -2,10 +2,11 @@ use super::{parse_hwnd, TaskWindowAction};
 use std::thread;
 use std::time::Duration;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::System::Threading::AttachThreadInput;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, IsIconic, IsWindow, PostMessageW, SendMessageTimeoutW,
-    SetForegroundWindow, ShowWindowAsync, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_MAXIMIZE,
-    SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
+    GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, PostMessageW,
+    SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, SwitchToThisWindow, GA_ROOTOWNER,
+    SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
 };
 
 const CLOSE_TIMEOUT_MS: u32 = 750;
@@ -14,15 +15,12 @@ const CLOSE_VERIFY_DELAY_MS: u64 = 50;
 
 pub(super) fn activate_task_window(hwnd: String, was_active: bool) -> Result<(), String> {
     let hwnd = parse_hwnd(&hwnd)?;
-    let is_foreground = unsafe { GetForegroundWindow() == hwnd };
-    let is_minimized = unsafe { IsIconic(hwnd).as_bool() };
-
-    if should_minimize_window(was_active, is_foreground, is_minimized) {
-        minimize_window(hwnd);
-        return Ok(());
+    if !window_exists(hwnd) {
+        return Err("Task window handle is no longer valid".to_string());
     }
 
-    focus_window(hwnd);
+    let _ = was_active;
+    let _ = focus_window(hwnd)?;
     Ok(())
 }
 
@@ -53,19 +51,48 @@ pub(crate) fn maximize_task_window(hwnd: String) -> Result<(), String> {
 
 fn focus_task_window(hwnd: String) -> Result<(), String> {
     let hwnd = parse_hwnd(&hwnd)?;
-    focus_window(hwnd);
-    Ok(())
+    focus_window(hwnd)
 }
 
-fn focus_window(hwnd: windows::Win32::Foundation::HWND) {
+fn focus_window(hwnd: windows::Win32::Foundation::HWND) -> Result<(), String> {
     if unsafe { IsIconic(hwnd).as_bool() } {
         unsafe {
             let _ = ShowWindowAsync(hwnd, SW_RESTORE);
         }
     }
 
-    unsafe {
-        let _ = SetForegroundWindow(hwnd);
+    let target_root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground != hwnd && foreground != target_root {
+        let target_thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
+        let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, None) };
+        if target_thread != 0 && foreground_thread != 0 {
+            unsafe {
+                let _ = AttachThreadInput(foreground_thread, target_thread, true);
+            }
+        }
+        unsafe {
+            SwitchToThisWindow(hwnd, true);
+        }
+        if target_thread != 0 && foreground_thread != 0 {
+            unsafe {
+                let _ = AttachThreadInput(foreground_thread, target_thread, false);
+            }
+        }
+    } else {
+        unsafe {
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+
+    let final_foreground = unsafe { GetForegroundWindow() };
+    if final_foreground == hwnd || final_foreground == target_root {
+        Ok(())
+    } else {
+        Err(
+            "Failed to activate task window: foreground did not switch to target or root owner"
+                .to_string(),
+        )
     }
 }
 
