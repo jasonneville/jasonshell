@@ -209,6 +209,7 @@
   let iconDiagnosticsPath: string | null = null;
   let iconDiagnosticsFirstPaintDurationMs = 0;
   let iconDiagnosticsMetadataCompleteDurationMs = 0;
+  let stackSortLockedByUser = false;
   let gitStatus: StackGitStatus | null = null;
   let gitStatusPath = '';
   let gitStatusRequestSequence = 0;
@@ -372,6 +373,7 @@
 
     closeMenus();
     const loadSequence = ++folderLoadSequence;
+    stackSortLockedByUser = false;
     startNewIconHydrationSession(folderPath);
     const listingStartedAt = performance.now();
     let firstPaintDurationMs = 0;
@@ -379,6 +381,12 @@
     errorMessage = '';
     try {
       const listing = await listStackFolder(folderPath, async (page) => {
+        if (loadSequence !== folderLoadSequence) {
+          return;
+        }
+        if (page.offset === 0 && !stackSortLockedByUser && page.sortColumn && page.sortDirection) {
+          stackState = { ...stackState, sortColumn: page.sortColumn, sortDirection: page.sortDirection };
+        }
         if (!firstPaintDurationMs && page.entries.length) {
           firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
         }
@@ -533,6 +541,7 @@
     }
 
     const loadSequence = ++folderLoadSequence;
+    stackSortLockedByUser = false;
     startNewIconHydrationSession(folderPath);
     const listingStartedAt = performance.now();
     let firstPaintDurationMs = 0;
@@ -547,6 +556,9 @@
         }
 
         mergedListing = mergeStackFolderListings(mergedListing, page);
+        if (page.offset === 0 && !stackSortLockedByUser && page.sortColumn && page.sortDirection) {
+          stackState = { ...stackState, sortColumn: page.sortColumn, sortDirection: page.sortDirection };
+        }
         if (!firstPaintDurationMs && mergedListing.entries.length > 0) {
           firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
         }
@@ -1507,6 +1519,7 @@
   }
 
   function sortBy(column: StackSortColumn) {
+    stackSortLockedByUser = true;
     stackState = updateStackSort(stackState, column);
     focusDetailsGrid();
   }

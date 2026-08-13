@@ -65,6 +65,8 @@ pub struct StackFolderWarning {
 #[serde(rename_all = "camelCase")]
 pub struct StackFolderPage {
     pub path: String,
+    pub sort_column: String,
+    pub sort_direction: String,
     pub items: Vec<StackItem>,
     pub offset: usize,
     pub limit: usize,

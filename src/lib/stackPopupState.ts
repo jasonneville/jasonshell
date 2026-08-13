@@ -486,7 +486,7 @@ export function sortStackEntries(
 ): StackEntry[] {
   const factor = direction === 'asc' ? 1 : -1;
   return [...entries].sort((a, b) => {
-    const folderOrder = folderRank(a) - folderRank(b);
+    const folderOrder = column === 'modified' ? 0 : folderRank(a) - folderRank(b);
     if (folderOrder !== 0) {
       return folderOrder;
     }

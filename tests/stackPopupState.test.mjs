@@ -327,6 +327,21 @@ test('sorts stack entries deterministically while preserving folders first', () 
   );
 });
 
+test('sorts modified desc with folders/files grouped by timestamp and nulls last', () => {
+  const entries = [
+    { ...stackEntry('old-file.txt'), modifiedMs: 10 },
+    { ...stackEntry('new-folder', 'Folder'), size: null, modifiedMs: 30, typeLabel: 'Folder' },
+    { ...stackEntry('new-file.txt'), modifiedMs: 30 },
+    { ...stackEntry('null-folder', 'Folder'), size: null, modifiedMs: null, typeLabel: 'Folder' },
+    { ...stackEntry('null-file.txt'), modifiedMs: null }
+  ];
+
+  assert.deepEqual(
+    sortStackEntries(entries, 'modified', 'desc').map((entry) => entry.name),
+    ['new-folder', 'new-file.txt', 'old-file.txt', 'null-folder', 'null-file.txt']
+  );
+});
+
 test('updates stack sort column and toggles direction', () => {
   const entries = [stackEntry('bravo.txt'), stackEntry('alpha.txt')];
   let state = openStackFolder(defaultStackPopupViewState, documents);

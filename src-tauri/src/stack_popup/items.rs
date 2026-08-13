@@ -31,11 +31,7 @@ fn stack_item_from_path_with_icon_mode(
         .and_then(|value| value.to_str())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let modified_at = link_metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis() as u64);
+    let modified_at = metadata_modified_epoch_millis(&link_metadata);
 
     Ok(StackItem {
         path: path.to_string_lossy().into_owned(),
@@ -87,6 +83,14 @@ fn type_label(path: &Path, is_dir: bool, is_symlink: bool, is_reparse_point: boo
         .and_then(|value| value.to_str())
         .map(|extension| format!("{} File", extension.to_uppercase()))
         .unwrap_or_else(|| "File".to_string())
+}
+
+pub(crate) fn metadata_modified_epoch_millis(metadata: &fs::Metadata) -> Option<u64> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
 }
 
 #[cfg(windows)]

@@ -1,4 +1,4 @@
-use crate::stack_popup::items::stack_item_metadata_from_path;
+use crate::stack_popup::items::{metadata_modified_epoch_millis, stack_item_metadata_from_path};
 use crate::stack_popup::models::{
     StackFolderPage, StackFolderPageDiagnostics, StackFolderWarning, StackItem,
 };
@@ -27,13 +27,30 @@ pub(crate) fn read_stack_folder_page_with_session(
     offset: usize,
     limit: usize,
 ) -> Result<StackFolderPage, String> {
+    read_stack_folder_page_with_session_and_downloads_detector(
+        path,
+        session_id,
+        offset,
+        limit,
+        is_default_downloads_folder_path,
+    )
+}
+
+pub(crate) fn read_stack_folder_page_with_session_and_downloads_detector(
+    path: &str,
+    session_id: Option<&str>,
+    offset: usize,
+    limit: usize,
+    downloads_detector: fn(&str) -> bool,
+) -> Result<StackFolderPage, String> {
     let page_started_at = Instant::now();
     let page_limit = limit.max(1);
     let mut warnings = Vec::new();
     let mut session_started_at = page_started_at;
+    let is_downloads = downloads_detector(path);
 
     let (effective_session_id, entries, total) = if offset == 0 {
-        let (entries, discovered_warnings) = collect_stack_folder_entries(path)?;
+        let (entries, discovered_warnings) = collect_stack_folder_entries(path, is_downloads)?;
         warnings.extend(discovered_warnings);
         let total = entries.len();
         let effective_session_id = with_session_store(|store| {
@@ -104,6 +121,16 @@ pub(crate) fn read_stack_folder_page_with_session(
     log_stack_folder_page_diagnostics(path, offset, page_limit, total, &diagnostics);
     Ok(StackFolderPage {
         path: path.to_string(),
+        sort_column: if is_downloads {
+            "modified".to_string()
+        } else {
+            "name".to_string()
+        },
+        sort_direction: if is_downloads {
+            "desc".to_string()
+        } else {
+            "asc".to_string()
+        },
         items,
         offset,
         limit: page_len,
@@ -117,6 +144,7 @@ pub(crate) fn read_stack_folder_page_with_session(
 
 fn collect_stack_folder_entries(
     path: &str,
+    is_downloads: bool,
 ) -> Result<(Vec<StackFolderEntrySummary>, Vec<StackFolderWarning>), String> {
     if let Some((archive_path, prefix)) = split_zip_virtual_path(path) {
         return collect_zip_folder_entries(&archive_path, &prefix);
@@ -138,11 +166,7 @@ fn collect_stack_folder_entries(
             )),
         }
     }
-    entries.sort_by(|a, b| {
-        folder_sort_rank(a.is_dir)
-            .cmp(&folder_sort_rank(b.is_dir))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    entries.sort_by(|a, b| compare_stack_entries(a, b, is_downloads));
     Ok((entries, warnings))
 }
 
@@ -195,15 +219,74 @@ fn collect_zip_folder_entries(
         .map(|item| StackFolderEntrySummary {
             name: item.name.clone(),
             is_dir: item.kind == "folder",
+            modified_at: item.modified_at,
             item: StackFolderEntryItem::Virtual(item),
         })
         .collect::<Vec<_>>();
-    entries.sort_by(|a, b| {
+    entries.sort_by(|a, b| compare_stack_entries(a, b, false));
+    Ok((entries, Vec::new()))
+}
+
+fn compare_stack_entries(
+    a: &StackFolderEntrySummary,
+    b: &StackFolderEntrySummary,
+    newest_first: bool,
+) -> std::cmp::Ordering {
+    if newest_first {
+        compare_newest_first(a, b)
+    } else {
         folder_sort_rank(a.is_dir)
             .cmp(&folder_sort_rank(b.is_dir))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-    Ok((entries, Vec::new()))
+    }
+}
+
+fn compare_newest_first(
+    a: &StackFolderEntrySummary,
+    b: &StackFolderEntrySummary,
+) -> std::cmp::Ordering {
+    match (a.modified_at, b.modified_at) {
+        (Some(a_modified), Some(b_modified)) => b_modified
+            .cmp(&a_modified)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    }
+}
+
+pub(crate) fn is_default_downloads_folder_path(path: &str) -> bool {
+    let Some(profile) = crate::stack_popup::paths::user_profile_dir() else {
+        return false;
+    };
+    let Some(downloads) =
+        crate::stack_popup::paths::resolve_stack_alias_with_profile("shell:Downloads", &profile)
+    else {
+        return false;
+    };
+    is_downloads_folder_path(path, &downloads)
+}
+
+#[cfg(test)]
+fn sort_stack_entries_for_test(
+    entries: Vec<StackFolderEntrySummary>,
+    newest_first: bool,
+) -> Vec<StackFolderEntrySummary> {
+    let mut entries = entries;
+    entries.sort_by(|a, b| compare_stack_entries(a, b, newest_first));
+    entries
+}
+
+fn is_downloads_folder_path(path: &str, downloads: &Path) -> bool {
+    let actual = fs::canonicalize(path)
+        .ok()
+        .map(|value| value.to_string_lossy().into_owned());
+    let expected = fs::canonicalize(downloads)
+        .ok()
+        .map(|value| value.to_string_lossy().into_owned());
+    actual
+        .zip(expected)
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(&b))
 }
 
 fn zip_child_entry(prefix: &str, name: &str, is_dir: bool) -> Option<(String, bool)> {
@@ -273,6 +356,7 @@ fn split_zip_virtual_path(path: &str) -> Option<(PathBuf, String)> {
 struct StackFolderEntrySummary {
     name: String,
     is_dir: bool,
+    modified_at: Option<u64>,
     item: StackFolderEntryItem,
 }
 
@@ -412,6 +496,9 @@ fn stack_folder_entry_summary(
     Ok(StackFolderEntrySummary {
         name,
         is_dir,
+        modified_at: fs::metadata(&path)
+            .ok()
+            .and_then(|metadata| metadata_modified_epoch_millis(&metadata)),
         item: StackFolderEntryItem::Filesystem(path),
     })
 }
@@ -433,9 +520,13 @@ pub(crate) fn stack_folder_warning(path: Option<PathBuf>, message: String) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::{read_stack_folder_page_with_session, StackFolderPageDiagnostics};
+    use super::{
+        read_stack_folder_page_with_session, sort_stack_entries_for_test, StackFolderEntryItem,
+        StackFolderEntrySummary, StackFolderPageDiagnostics,
+    };
     use std::collections::HashSet;
     use std::fs;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     #[test]
@@ -610,6 +701,108 @@ mod tests {
         );
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn downloads_folder_page_one_contains_newest_entries_before_paging() {
+        let root = test_dir("downloads-default-sort");
+        let downloads = root.join("Downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        let sorted = sort_stack_entries_for_test(
+            vec![
+                StackFolderEntrySummary {
+                    name: "file-0.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(1),
+                    item: StackFolderEntryItem::Filesystem(downloads.join("file-0.txt")),
+                },
+                StackFolderEntrySummary {
+                    name: "file-2.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(3),
+                    item: StackFolderEntryItem::Filesystem(downloads.join("file-2.txt")),
+                },
+                StackFolderEntrySummary {
+                    name: "file-1.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(2),
+                    item: StackFolderEntryItem::Filesystem(downloads.join("file-1.txt")),
+                },
+            ],
+            true,
+        );
+        assert_eq!(
+            sorted
+                .iter()
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["file-2.txt", "file-1.txt", "file-0.txt"]
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ordinary_folder_pages_remain_name_sorted() {
+        let root = test_dir("ordinary-name-sort");
+        let folder = root.join("Documents");
+        fs::create_dir_all(&folder).unwrap();
+        let sorted = sort_stack_entries_for_test(
+            vec![
+                StackFolderEntrySummary {
+                    name: "bravo.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(2),
+                    item: StackFolderEntryItem::Filesystem(folder.join("bravo.txt")),
+                },
+                StackFolderEntrySummary {
+                    name: "alpha.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(1),
+                    item: StackFolderEntryItem::Filesystem(folder.join("alpha.txt")),
+                },
+            ],
+            false,
+        );
+        assert_eq!(
+            sorted
+                .iter()
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["alpha.txt", "bravo.txt"]
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn downloads_folder_entries_sort_modified_desc_with_missing_times_last() {
+        let sorted = sort_stack_entries_for_test(
+            vec![
+                StackFolderEntrySummary {
+                    name: "old.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(1),
+                    item: StackFolderEntryItem::Filesystem(PathBuf::from("old.txt")),
+                },
+                StackFolderEntrySummary {
+                    name: "missing.txt".into(),
+                    is_dir: false,
+                    modified_at: None,
+                    item: StackFolderEntryItem::Filesystem(PathBuf::from("missing.txt")),
+                },
+                StackFolderEntrySummary {
+                    name: "new.txt".into(),
+                    is_dir: false,
+                    modified_at: Some(2),
+                    item: StackFolderEntryItem::Filesystem(PathBuf::from("new.txt")),
+                },
+            ],
+            true,
+        );
+
+        assert_eq!(
+            sorted.into_iter().map(|item| item.name).collect::<Vec<_>>(),
+            vec!["new.txt", "old.txt", "missing.txt"]
+        );
     }
 
     fn test_dir(name: &str) -> std::path::PathBuf {

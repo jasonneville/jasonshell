@@ -548,6 +548,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 - Opening a pin anchors the popup below the clicked pin/top bar; the popup focuses its details grid.
 - Popup preserves Svelte history state while hidden, so navigating folders and hiding/reopening does not reset history unless a new request changes current path behavior.
 - Shows a details grid with sortable `name`, `type`, `size`, and `modified` columns, with folders grouped before files.
+- Opening canonical Downloads uses `modified` descending by default so newest downloads appear first; other folders keep the standard `name` ascending default.
 - Supports Back, Forward, Up, breadcrumb navigation, reload, type-to-select, multi-selection, Select All, and retained rows during loading.
 - File/folder metadata badges include hidden, system, read-only, symlink, and reparse-point state.
 - Folder reads are paged with steady chunking: initial page limit is 60, subsequent pages are 120, and continuation requests carry a backend listing `sessionId`.
@@ -595,7 +596,7 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
   - Back/Forward use reducer history cursor; Up/Backspace use `parentStackPath()`. XButton mouse buttons 3/4 map to back/forward on `svelte:window` mousedown when available.
   - Double-clicking a `.zip` file row navigates into the archive inside Stack Browser. ZIP contents are presented as read-only virtual stack rows with paths under `archive.zip\\relative`; nested ZIP folders use the same folder-open flow and history model as filesystem folders.
   - Selection supports single, Ctrl/Cmd toggle, Shift range from `selectionAnchorPath`, Select All, Home/End/PageUp/PageDown, and type-to-select with a 700ms buffer.
-  - Sorting keeps folders before files for all columns; column toggles asc/desc, then compares by name/type/nullable size/nullable modified using locale numeric comparison. `stackSortHeaderState()` is the single helper for active sort class, `aria-sort`, and visible indicator; inactive columns render no arrow, active ascending renders up, and active descending renders down.
+  - Sorting keeps folders before files for all columns; column toggles asc/desc, then compares by name/type/nullable size/nullable modified using locale numeric comparison. `stackSortHeaderState()` is the single helper for active sort class, `aria-sort`, and visible indicator; inactive columns render no arrow, active ascending renders up, and active descending renders down. The backend creates the paged Downloads snapshot in modified-time descending/newest-first order before returning the first page, matching the frontend default sort and preventing older files from filling page 1.
 - Context menus and inline editing:
   - Row/background menus are Svelte-rendered because Stack Browser has enough height; top-bar pin menus remain native because compact top-bar clipping makes Svelte menus unsuitable there.
   - `positionContextMenuInViewport()` measures after render, clamps/flips menus into visible viewport, and `rowSubmenuOpensLeft` flips the Open With submenu when insufficient right-side width remains.
@@ -1267,7 +1268,7 @@ Use this checklist before touching major shell surfaces:
 - Do keep latest-request polling fallback and request-key de-duplication.
 - Do keep `folderLoadSequence` stale-page rejection for every async folder load path.
 - Do keep retained rows non-interactive until the requested folder page arrives.
-- Do keep folders-first sorting across all sort columns unless intentionally changing Explorer-like behavior.
+- Do keep folders-first sorting across all sort columns unless intentionally changing Explorer-like behavior; modified Downloads is the exception and mixes folders/files by modified timestamp.
 - Do validate path/name/file operations in Rust, not only in Svelte.
 - Do keep inline editor event isolation so input clicks/keys do not bubble into selection/activation handlers.
 - Do not silently follow/copy symlink or reparse-point trees without cycle/reparse policy and tests.

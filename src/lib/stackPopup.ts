@@ -154,6 +154,8 @@ type StackFolderPage = {
   limit: number;
   total: number;
   hasMore: boolean;
+  sortColumn?: 'name' | 'modified';
+  sortDirection?: 'asc' | 'desc';
   sessionId?: string;
   warnings?: StackFolderWarning[];
   diagnostics?: StackFolderPageDiagnostics;
@@ -258,7 +260,11 @@ export type StackFolderListing = {
   warnings: StackFolderWarning[];
 };
 
-export type StackFolderListingPage = StackFolderListing & {
+export type StackFolderListingMeta = {
+  sortColumn?: 'name' | 'modified';
+  sortDirection?: 'asc' | 'desc';
+};
+export type StackFolderListingPage = StackFolderListing & StackFolderListingMeta & {
   offset: number;
   limit: number;
   hasMore: boolean;
@@ -684,7 +690,9 @@ function stackFolderListingPageFromPage(page: StackFolderPage): StackFolderListi
     warnings: page.warnings ?? [],
     offset: page.offset,
     limit: page.limit,
-    hasMore: page.hasMore
+    hasMore: page.hasMore,
+    sortColumn: page.sortColumn,
+    sortDirection: page.sortDirection
   };
 }
 
