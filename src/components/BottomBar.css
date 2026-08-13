@@ -211,6 +211,10 @@
   width: 2px;
 }
 
+.bottom-bar .task-group-notified {
+  box-shadow: inset 0 2px 0 var(--js-color-error-border);
+}
+
 .bottom-bar .task-group-minimized {
   opacity: 0.78;
 }
@@ -273,10 +277,10 @@
 
 .bottom-bar .task-count {
   align-items: center;
-  background: var(--js-color-accent-soft);
-  border: 1px solid var(--js-color-accent-border);
+  background: var(--js-color-error);
+  border: 1px solid var(--js-color-error-border);
   border-radius: 999px;
-  color: var(--js-color-text-strong);
+  color: var(--js-color-error-text);
   display: inline-flex;
   font-size: 0.54rem;
   font-weight: 800;
@@ -288,6 +292,10 @@
   right: 0.12rem;
   top: 0.12rem;
   z-index: 1;
+}
+
+.bottom-bar .task-group-notified .task-button {
+  border-top: 2px solid transparent;
 }
 
 .bottom-bar .task-button {

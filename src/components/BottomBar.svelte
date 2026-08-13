@@ -939,6 +939,7 @@
           <div
             class:task-group-active={group.isActive}
             class:task-group-busy={group.isBusy}
+            class:task-group-notified={group.notificationCount > 0}
             class:task-group-minimized={group.isMinimized}
             class:task-group-dragging={draggingGroupKey === group.key}
             class:task-group-drop-target={dropTargetGroupKey === group.key && draggingGroupKey !== group.key}
@@ -954,7 +955,11 @@
             on:pointercancel={cancelTaskGroupPointerDrag}
             on:lostpointercapture={handleTaskGroupLostPointerCapture}
           >
-            {#if group.windows.length > 1}
+            {#if group.notificationCount > 0}
+              <span class="task-count" aria-label={`${group.notificationCount} notifications`}>
+                {group.notificationCount}
+              </span>
+            {:else if group.windows.length > 1}
               <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
             {/if}
             {#each group.windows as taskWindow (taskWindow.hwnd)}

@@ -23,7 +23,8 @@ function taskWindow(overrides) {
     iconDataUrl: overrides.iconDataUrl ?? 'data:image/png;base64,icon',
     isActive: overrides.isActive ?? false,
     isMinimized: overrides.isMinimized ?? false,
-    activityState: overrides.activityState ?? 'idle'
+    activityState: overrides.activityState ?? 'idle',
+    notificationCount: overrides.notificationCount ?? 0
   };
 }
 
@@ -37,6 +38,17 @@ test('groups open task windows by application identity', () => {
   assert.deepEqual(groups.map((group) => group.key), ['firefox', 'code']);
   assert.equal(groups[0].windows.length, 2);
   assert.equal(groups[0].isActive, true);
+  assert.equal(groups[0].notificationCount, 0);
+});
+
+test('keeps group notification count at the highest window count', () => {
+  const groups = buildTaskWindowGroups([
+    taskWindow({ hwnd: '10', processName: 'Code', title: 'Editor', notificationCount: 2 }),
+    taskWindow({ hwnd: '11', processName: 'code', title: 'Preview', notificationCount: 7 }),
+    taskWindow({ hwnd: '12', processName: 'code', title: 'Terminal', notificationCount: 3 })
+  ]);
+
+  assert.equal(groups[0].notificationCount, 7);
 });
 
 test('marks a task window group busy when any eligible contained window is busy', () => {

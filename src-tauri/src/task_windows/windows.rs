@@ -1,6 +1,6 @@
 use super::{
     icons::{window_icon_data_url, EMPTY_ICON_DATA_URL},
-    TaskbarProcessWindow, TaskbarWindow, TaskbarWindowActivityState,
+    notifications, TaskbarProcessWindow, TaskbarWindow, TaskbarWindowActivityState,
 };
 use std::collections::HashMap;
 use std::mem::size_of;
@@ -80,26 +80,36 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
             continue;
         }
 
-        let icon_data_url = window_icon_data_url(candidate.hwnd, candidate.process_path.as_deref())
-            .unwrap_or_else(|_| EMPTY_ICON_DATA_URL.to_string());
+        let native_hwnd = candidate.hwnd;
         let hwnd = candidate.hwnd_string();
+        let title = candidate.title;
+        let process_name = candidate.process_name;
+        let process_path = candidate.process_path.clone();
+        let is_active = candidate.is_active;
+        let is_minimized = candidate.is_minimized;
+        let process_id = candidate.process_id;
+        let notification_count =
+            notifications::notification_count_for_process_path(process_path.as_deref());
+        let icon_data_url = window_icon_data_url(native_hwnd, process_path.as_deref())
+            .unwrap_or_else(|_| EMPTY_ICON_DATA_URL.to_string());
         let activity_state = task_window_activity_state(
             &hwnd,
-            candidate.process_id,
-            &candidate.title,
-            &candidate.process_name,
-            process_cpu_time_ticks(candidate.process_id),
+            process_id,
+            &title,
+            &process_name,
+            process_cpu_time_ticks(process_id),
         );
 
         windows.push(TaskbarWindow {
             hwnd,
-            title: candidate.title,
-            process_id: candidate.process_id,
-            process_name: candidate.process_name,
+            title,
+            process_id,
+            process_name,
             icon_data_url,
-            is_active: candidate.is_active,
-            is_minimized: candidate.is_minimized,
+            is_active,
+            is_minimized,
             activity_state,
+            notification_count,
         });
     }
 

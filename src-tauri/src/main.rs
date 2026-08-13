@@ -385,6 +385,7 @@ fn main() {
             #[cfg(target_os = "windows")]
             {
                 appbar::activate_shell_surfaces(app, &windows)?;
+                task_windows::start_notification_tracking();
             }
 
             #[cfg(not(target_os = "windows"))]

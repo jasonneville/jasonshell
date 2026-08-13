@@ -1,4 +1,6 @@
-use super::{actions::resolve_activation_target, TaskbarWindow, TaskbarWindowActivityState};
+use super::{
+    actions::resolve_activation_target, notifications, TaskbarWindow, TaskbarWindowActivityState,
+};
 use super::{
     actions::{should_fallback_post_close, should_minimize_window, should_use_foreground_handoff},
     windows::{
@@ -120,6 +122,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             is_active: true,
             is_minimized: false,
             activity_state: TaskbarWindowActivityState::Idle,
+            notification_count: 0,
         },
         TaskbarWindow {
             hwnd: "7".to_string(),
@@ -130,6 +133,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             is_active: false,
             is_minimized: false,
             activity_state: TaskbarWindowActivityState::Idle,
+            notification_count: 0,
         },
         TaskbarWindow {
             hwnd: "15".to_string(),
@@ -140,6 +144,7 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             is_active: false,
             is_minimized: true,
             activity_state: TaskbarWindowActivityState::Idle,
+            notification_count: 0,
         },
     ];
 
@@ -152,6 +157,20 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             .collect::<Vec<_>>(),
         vec!["7", "15", "42"]
     );
+}
+
+#[test]
+fn notification_count_tracks_per_app_identity_until_focus_reset() {
+    notifications::clear_all_notification_state();
+    notifications::record_notification_for_test("Mail.App", 1);
+    notifications::record_notification_for_test("Mail.App", 2);
+    notifications::record_notification_for_test("Mail.App", 2);
+    notifications::record_notification_for_test("Chat.App", 2);
+
+    assert_eq!(notifications::notification_count_for_app_id("Mail.App"), 2);
+    assert_eq!(notifications::notification_count_for_app_id("Chat.App"), 1);
+    notifications::clear_notifications_for_app_id("Mail.App");
+    assert_eq!(notifications::notification_count_for_app_id("Mail.App"), 0);
 }
 
 #[test]

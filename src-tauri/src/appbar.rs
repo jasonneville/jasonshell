@@ -1332,7 +1332,7 @@ fn start_taskbar_guard(state: &mut ShellRuntimeState) {
     let stop_signal = Arc::clone(&stop);
     let guard = thread::spawn(move || {
         while !stop_signal.load(Ordering::Relaxed) {
-            let _ = explorer::enforce_taskbar_hidden(snapshot);
+            let _ = explorer::enforce_primary_taskbar_hidden(snapshot.original_rect);
             thread::sleep(Duration::from_millis(100));
         }
     });

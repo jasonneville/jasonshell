@@ -8,6 +8,7 @@ export type TaskWindowGroup = {
   isActive: boolean;
   isMinimized: boolean;
   isBusy: boolean;
+  notificationCount: number;
 };
 
 export type TaskbarGroupRect = {
@@ -109,6 +110,7 @@ export function buildTaskWindowGroups(
       group.isMinimized &&= taskWindow.isMinimized;
       group.isBusy ||= taskWindow.activityState === 'busy'
         && isTaskWindowActivityIndicatorEligible(taskWindow);
+      group.notificationCount = Math.max(group.notificationCount, taskWindow.notificationCount);
       continue;
     }
 
@@ -120,7 +122,8 @@ export function buildTaskWindowGroups(
       isActive: taskWindow.isActive,
       isMinimized: taskWindow.isMinimized,
       isBusy: taskWindow.activityState === 'busy'
-        && isTaskWindowActivityIndicatorEligible(taskWindow)
+        && isTaskWindowActivityIndicatorEligible(taskWindow),
+      notificationCount: taskWindow.notificationCount
     });
   }
 

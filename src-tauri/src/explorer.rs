@@ -88,6 +88,18 @@ pub fn enforce_taskbar_hidden(snapshot: ExplorerTaskbarSnapshot) -> Result<bool,
     set_taskbar_visibility(taskbar, false)
 }
 
+pub fn enforce_primary_taskbar_hidden(primary_monitor_rect: RECT) -> Result<bool, WindowsError> {
+    let Some(snapshot) = primary_taskbar_snapshot(primary_monitor_rect)? else {
+        return Ok(false);
+    };
+
+    if !snapshot.originally_visible {
+        return Ok(true);
+    }
+
+    set_taskbar_visibility(HWND(snapshot.hwnd_value as *mut _), false)
+}
+
 pub fn restore_taskbar(snapshot: ExplorerTaskbarSnapshot) -> Result<bool, WindowsError> {
     if !snapshot.restore_to_visible {
         return Ok(true);

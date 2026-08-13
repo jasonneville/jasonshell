@@ -10,6 +10,7 @@ type TaskbarWindowPayload = {
   isActive: boolean;
   isMinimized: boolean;
   activityState?: TaskbarWindowActivityState;
+  notificationCount?: number;
 };
 
 export type TaskbarWindowActivityState = 'idle' | 'busy';
@@ -23,6 +24,7 @@ export type TaskbarWindow = {
   isActive: boolean;
   isMinimized: boolean;
   activityState: TaskbarWindowActivityState;
+  notificationCount: number;
 };
 
 export type TaskbarProcessWindow = {
@@ -33,11 +35,15 @@ export type TaskbarProcessWindow = {
 };
 
 function normalizeTaskbarWindow(window: TaskbarWindowPayload): TaskbarWindow {
+  const notificationCount = typeof window.notificationCount === 'number' && Number.isFinite(window.notificationCount)
+    ? Math.max(0, Math.floor(window.notificationCount))
+    : 0;
   return {
     ...window,
     hwnd: String(window.hwnd),
     processId: typeof window.processId === 'number' ? window.processId : null,
-    activityState: window.activityState === 'busy' ? 'busy' : 'idle'
+    activityState: window.activityState === 'busy' ? 'busy' : 'idle',
+    notificationCount
   };
 }
 

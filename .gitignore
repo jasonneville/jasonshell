@@ -28,6 +28,8 @@ result.txt
 .worktrees/
 .tmp-*/
 .local/
+*.cer
+*.pfx
 
 # OS/editor noise
 .DS_Store

@@ -48,6 +48,17 @@ If prerequisites are already installed and repo deps are present, you can also r
 
 During `npm run tauri dev`, the primary shell surfaces report live runtime metrics to the terminal. Use those metrics to catch zero-height WebView/native-window regressions.
 
+## Notification Badges
+
+Bottom-bar badges use Windows toast deliveries since each app was last focused. This is not a Teams unread count. Windows notification history requires package identity, so register the local development sparse package before testing badges:
+
+```powershell
+cargo build --manifest-path src-tauri/Cargo.toml
+powershell -ExecutionPolicy Bypass -File .\scripts\register-notification-identity.ps1
+```
+
+The script creates a Current User development certificate, trusts it only for Current User, copies the debug executable into an untracked local loose package, registers it, then launches JasonShell through that package identity. Close any `npm run tauri dev` instance first. Re-run it after rebuilding the executable.
+
 ## Validation
 
 ```powershell

@@ -11,6 +11,7 @@ pub struct TaskbarWindow {
     pub is_active: bool,
     pub is_minimized: bool,
     pub activity_state: TaskbarWindowActivityState,
+    pub notification_count: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -51,11 +52,18 @@ mod actions;
 #[cfg(target_os = "windows")]
 mod icons;
 #[cfg(target_os = "windows")]
+mod notifications;
+#[cfg(target_os = "windows")]
 mod previews;
 #[cfg(all(target_os = "windows", test))]
 mod tests;
 #[cfg(target_os = "windows")]
 mod windows;
+
+#[cfg(target_os = "windows")]
+pub(crate) fn start_notification_tracking() {
+    notifications::start_notification_tracking();
+}
 
 #[tauri::command]
 pub fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
@@ -85,7 +93,12 @@ pub fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, Strin
 pub fn activate_task_window(hwnd: String, minimize_if_active: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        actions::activate_task_window(hwnd, minimize_if_active)
+        let app_path = task_window_process_path(&hwnd).ok();
+        actions::activate_task_window(hwnd, minimize_if_active)?;
+        if let Some(app_path) = app_path {
+            notifications::clear_notifications_for_process_path(&app_path);
+        }
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {

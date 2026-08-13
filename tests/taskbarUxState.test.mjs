@@ -8,6 +8,7 @@ import {
 } from '../dist-tests/features/bottom-bar/taskbarUxState.js';
 
 const bottomBarCss = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
+const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 
 test('detects taskbar overflow and exposes keyboard guidance', () => {
   assert.deepEqual(taskbarOverflowState(320, 500, 9), {
@@ -36,10 +37,18 @@ test('summarizes task group state for stronger accessible indicators', () => {
     windows: [{ hwnd: '1' }, { hwnd: '2' }],
     isActive: true,
     isMinimized: false,
-    isBusy: true
+    isBusy: true,
+    notificationCount: 4
   });
 
-  assert.equal(label, 'Code, 2 windows, active, activity detected');
+  assert.equal(label, 'Code, 2 windows, 4 notifications, active, activity detected');
+});
+
+test('renders notified task groups with red badge and top border', () => {
+  assert.match(bottomBarSource, /class:task-group-notified=\{group\.notificationCount > 0\}/);
+  assert.match(bottomBarSource, /aria-label=\{`\$\{group\.notificationCount\} notifications`\}/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-group-notified \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-error-border\);/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-error\);[\s\S]*color: var\(--js-color-error-text\);/);
 });
 
 test('sizes task buttons by content with minimum and maximum bounds', () => {
