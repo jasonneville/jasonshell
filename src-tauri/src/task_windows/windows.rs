@@ -72,9 +72,7 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
 
     let mut windows = Vec::new();
     for hwnd in handles {
-        let Some(candidate) =
-            build_window_candidate(hwnd, foreground, current_process_id)?
-        else {
+        let Some(candidate) = build_window_candidate(hwnd, foreground, current_process_id)? else {
             continue;
         };
 
@@ -125,9 +123,7 @@ pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>
 
     let mut windows = Vec::new();
     for hwnd in handles {
-        let Some(candidate) =
-            build_window_candidate(hwnd, foreground, current_process_id)?
-        else {
+        let Some(candidate) = build_window_candidate(hwnd, foreground, current_process_id)? else {
             continue;
         };
 

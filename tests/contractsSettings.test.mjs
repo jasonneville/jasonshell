@@ -269,6 +269,7 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'command-panel:closed',
     'process-manager:open',
     'process-manager:closed',
+    'quick-command:run-updated',
     'search:toggle-centered',
     'search-engine:progress',
     'search-index:refreshed',
@@ -344,7 +345,8 @@ test('settings wrapper declares versioned schema and stable command names', () =
     workspaces: [],
     taskHistory: [],
     quickCommands: {
-      entries: []
+      entries: [],
+      history: []
     },
     stackBrowser: {
       terminalProfile: 'windowsTerminal'

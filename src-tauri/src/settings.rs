@@ -111,6 +111,8 @@ pub struct QuickCommandsSettings {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickCommandRunHistoryEntry {
+    #[serde(default)]
+    pub run_id: String,
     pub command_id: String,
     pub started_at_epoch_ms: u64,
     #[serde(default)]
@@ -120,10 +122,32 @@ pub struct QuickCommandRunHistoryEntry {
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    #[serde(default)]
+    pub transcript: Vec<QuickCommandTranscriptEntry>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
     #[serde(default)]
     pub running: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickCommandTranscriptEntry {
+    pub kind: String,
+    pub body: String,
+    pub request_id: Option<String>,
+    pub prompt: Option<String>,
+    pub secret: bool,
+    #[serde(default)]
+    pub max_length: Option<usize>,
+    #[serde(default)]
+    pub redacted: bool,
+    #[serde(default)]
+    pub sequence: u64,
+    #[serde(default)]
+    pub at_epoch_ms: u64,
+    #[serde(default)]
+    pub pending: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -503,6 +527,10 @@ fn validate_quick_commands_settings(
         normalized.push(entry);
     }
     quick_commands.entries = normalized;
+    // Pre-runId history cannot be safely addressed by stop/input IPC.
+    quick_commands
+        .history
+        .retain(|entry| !entry.run_id.trim().is_empty() && !entry.command_id.trim().is_empty());
     Ok(quick_commands)
 }
 
@@ -799,7 +827,7 @@ fn reject_secret_setting_keys(value: &Value, path: &[String]) -> Result<(), Stri
             for (key, child) in map {
                 let mut next_path = path.to_vec();
                 next_path.push(key.clone());
-                if is_secret_key(key) {
+                if is_secret_key(key) && !allow_secret_setting_key(&next_path) {
                     return Err(format!(
                         "shell settings must not store secret-like key: {}",
                         next_path.join(".")
@@ -819,6 +847,19 @@ fn reject_secret_setting_keys(value: &Value, path: &[String]) -> Result<(), Stri
         }
         _ => Ok(()),
     }
+}
+
+fn allow_secret_setting_key(path: &[String]) -> bool {
+    matches!(
+        path,
+        [section, history, entry, transcript, transcript_index, field]
+            if section == "quickCommands"
+                && history == "history"
+                && entry.parse::<usize>().is_ok()
+                && transcript == "transcript"
+                && transcript_index.parse::<usize>().is_ok()
+                && field == "secret"
+    )
 }
 
 fn is_secret_key(key: &str) -> bool {
@@ -1070,6 +1111,34 @@ mod tests {
         let error = reject_secret_setting_keys(&value, &[]).unwrap_err();
 
         assert!(error.contains("workspaces.0.apiToken"));
+    }
+
+    #[test]
+    fn allows_quick_command_transcript_secret_field() {
+        let value = json!({
+            "schema": "jasonshell.settings",
+            "version": 1,
+            "quickCommands": {
+                "history": [{
+                    "runId": "run-1",
+                    "commandId": "cmd",
+                    "startedAtEpochMs": 1,
+                    "startedAtFiletime100ns": 2,
+                    "finishedAtEpochMs": 3,
+                    "processId": 4,
+                    "exitCode": null,
+                    "stdout": "",
+                    "stderr": "",
+                    "transcript": [{"kind":"text","body":"x","requestId":null,"prompt":null,"secret":true}],
+                    "stdoutTruncated": false,
+                    "stderrTruncated": false,
+                    "running": false
+                }]
+            }
+        });
+
+        let settings: ShellSettings = serde_json::from_value(value).unwrap();
+        assert!(settings.quick_commands.history[0].transcript[0].secret);
     }
 
     #[test]

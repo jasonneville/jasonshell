@@ -183,8 +183,7 @@ mod tests {
     use super::{
         command_panel_focus_loss_nonce_is_current, command_panel_work_area,
         current_command_panel_focus_loss_nonce, invalidate_command_panel_focus_loss_nonce,
-        take_command_panel_resize_save_suppression,
-        suppress_next_command_panel_resize_save,
+        suppress_next_command_panel_resize_save, take_command_panel_resize_save_suppression,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 

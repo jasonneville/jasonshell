@@ -90,6 +90,7 @@ pub mod commands {
     pub const RUN_QUICK_COMMAND: &str = "run_quick_command";
     pub const STOP_QUICK_COMMAND: &str = "stop_quick_command";
     pub const LIST_QUICK_COMMAND_HISTORY: &str = "list_quick_command_history";
+    pub const SEND_QUICK_COMMAND_INPUT: &str = "send_quick_command_input";
     pub const SAVE_COMMAND_PANEL_SIZE: &str = "save_command_panel_size";
     pub const SAVE_QUICK_COMMANDS_SETTINGS: &str = "save_quick_commands_settings";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
@@ -227,6 +228,7 @@ pub mod commands {
         RUN_QUICK_COMMAND,
         STOP_QUICK_COMMAND,
         LIST_QUICK_COMMAND_HISTORY,
+        SEND_QUICK_COMMAND_INPUT,
         SAVE_COMMAND_PANEL_SIZE,
         SAVE_QUICK_COMMANDS_SETTINGS,
         LIST_PINNED_STACK_FOLDERS,
@@ -345,6 +347,7 @@ pub mod events {
     pub const TOP_BAR_PIN_MENU_ACTION: &str = "top-bar:pin-menu-action";
     pub const TRAY_PANEL_OPEN: &str = "tray-panel:open";
     pub const TRAY_PANEL_CLOSED: &str = "tray-panel:closed";
+    pub const QUICK_COMMAND_RUN_UPDATED: &str = "quick-command:run-updated";
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
@@ -382,6 +385,7 @@ pub mod events {
         TASKBAR_REFRESH_LAUNCHERS,
         TASKBAR_REFRESH_WINDOWS,
         TOP_BAR_PIN_MENU_ACTION,
+        QUICK_COMMAND_RUN_UPDATED,
         TRAY_PANEL_CLOSED,
         TRAY_PANEL_OPEN,
     ];
@@ -549,6 +553,7 @@ mod tests {
                 "taskbar:refresh-launchers",
                 "taskbar:refresh-windows",
                 "top-bar:pin-menu-action",
+                "quick-command:run-updated",
                 "tray-panel:closed",
                 "tray-panel:open",
             ]

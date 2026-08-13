@@ -41,9 +41,15 @@ Use this after the static validation gates pass. These checks require a Windows 
 
 - Clicking the command button (`>_`) opens `command-panel` anchored under the top bar.
 - Saved-command list supports Run/Edit/Delete and remains responsive while other top-bar popups are closed.
-- Editor supports Label, Mode, Program/Script path, Working directory, and Arguments (one arg per line).
+- Editor supports Label, Mode, target program/command block, Working directory, and Arguments (one arg per line for direct mode).
 - Save persists entries through `load_shell_settings`/`save_shell_settings`; restart confirms persistence.
-- Running a command in `direct`, `powershellFile`, and `cmdFile` mode succeeds for known-safe sample commands and closes the panel on success.
+- Running known-safe `direct` and `commandBlock` entries starts a live run, shows bounded merged transcript updates, preserves UI responsiveness, and records completed history. Legacy `powershellFile`/`cmdFile` entries are migration-only and should not appear as new UI save modes.
+- Quick-command normal input: run a safe script that emits versioned OSC `Request-JasonShellInput` with current backend runId, enter `hello`, submit, and verify backend writes `hello\r\n` to piped stdin, transcript shows submitted input, child output arrives in backend-arrival order, and completed history preserves bounded transcript/output.
+- Quick-command secret input: run a safe script that requests secret input, submit a test value, and verify JasonShell transcript/history shows redacted submitted input. If the child echoes the value in stdout/stderr, record that as expected raw child output, not a JasonShell redaction failure.
+- Quick-command malformed marker: run a safe script that emits a malformed/unsupported `Request-JasonShellInput` OSC marker. Verify no prompt is accepted for submission, malformed marker is handled without crashing, and later valid output/completion still renders.
+- Quick-command stale input: start a prompt run, stop it or start a replacement run, then attempt to submit the old prompt. Verify backend rejects the submission by command/run/request validation and does not write to the new/stopped child stdin.
+- Quick-command stop during input: while an input prompt is pending, click red Stop. Verify stop validates active command-id/PID/run ownership, kills the process tree, clears/settles pending prompt UI, and does not accept late input for the stopped run.
+- Quick-command push/poll fallback: observe live output through push events under normal conditions; if event delivery is missed or panel is reopened, verify the 1100 ms aggregate polling fallback catches up without duplicating transcript rows.
 - Invalid entries (for example secret-like args, non-absolute script path modes, empty label/target) show inline validation errors inside the popup.
 - `command-panel` closes on focus loss and top-bar `aria-expanded` state clears.
 

@@ -12,6 +12,10 @@ import {
   nextDuplicateQuickCommandLabel,
   nextUniqueQuickCommandId,
   quickCommandRunRequest,
+  deriveQuickCommandPendingInputRequest,
+  normalizeQuickCommandInputMaxLength,
+  normalizeQuickCommandInputValue,
+  mergeQuickCommandRunHistoryEntries,
   listQuickCommandHistory,
   stopQuickCommand,
   saveQuickCommandsSettings
@@ -21,7 +25,7 @@ const source = readFileSync(new URL('../src/lib/quickCommands.ts', import.meta.u
 
 test('quick command wrapper exposes stable mode contract and defaults', () => {
   assert.deepEqual(QUICK_COMMAND_MODES, ['direct', 'commandBlock']);
-  assert.deepEqual(defaultQuickCommandsSettings(), { entries: [] });
+  assert.deepEqual(defaultQuickCommandsSettings(), { entries: [], history: [] });
 });
 
 test('quick command settings coercion normalizes entries and validates security rules', () => {
@@ -127,16 +131,110 @@ test('quick command block textarea helpers preserve command-per-line semantics',
 });
 
 test('quick command run request validates id and wrapper uses IPC constants', () => {
-  assert.deepEqual(quickCommandRunRequest('  git-status  '), { id: 'git-status' });
+  const request = quickCommandRunRequest('  git-status  ');
+  assert.deepEqual(request, { id: 'git-status' });
   assert.throws(() => quickCommandRunRequest('   '), /must not be empty/);
   assert.match(source, /IPC_COMMANDS\.runQuickCommand/);
   assert.match(source, /IPC_COMMANDS\.listQuickCommandHistory/);
   assert.match(source, /IPC_COMMANDS\.saveQuickCommandsSettings/);
+  assert.match(source, /IPC_COMMANDS\.sendQuickCommandInput/);
   assert.equal(typeof listQuickCommandHistory, 'function');
   assert.equal(typeof saveQuickCommandsSettings, 'function');
   assert.equal(typeof stopQuickCommand, 'function');
   assert.doesNotMatch(source, /invoke\('run_quick_command'/);
   assert.match(source, /IPC_COMMANDS\.stopQuickCommand/);
+});
+
+test('quick command settings discard legacy history without a run id', () => {
+  const settings = coerceQuickCommandsSettings({
+    entries: [],
+    history: [{ commandId: 'old-command', startedAtEpochMs: 1 }]
+  });
+  assert.deepEqual(settings.history, []);
+});
+
+test('quick command pending input derives from transcript request markers', () => {
+  const pending = deriveQuickCommandPendingInputRequest({
+    runId: 'run-1',
+    commandId: 'deploy',
+    processId: 123,
+    transcript: [
+      { kind: 'output', body: 'hi', requestId: null, prompt: null, secret: false, redacted: false, sequence: 1, atEpochMs: 10, pending: false },
+      { kind: 'input-request', body: '', requestId: 'req-1', prompt: 'Password', secret: true, redacted: true, maxLength: 8, sequence: 2, atEpochMs: 20, pending: true }
+    ]
+  });
+
+  assert.deepEqual(pending, {
+    runId: 'run-1',
+    commandId: 'deploy',
+    processId: 123,
+    requestId: 'req-1',
+    kind: 'password',
+    prompt: 'Password',
+    secret: true,
+    redacted: true,
+    maxLength: 8,
+    sequence: 2,
+    atEpochMs: 20,
+    pending: true
+  });
+});
+
+test('quick command input helpers bound max length and trim unicode by code point', () => {
+  assert.equal(normalizeQuickCommandInputMaxLength(0), 1);
+  assert.equal(normalizeQuickCommandInputMaxLength(99_999), 16384);
+  assert.equal(normalizeQuickCommandInputMaxLength(12.8), 12);
+  assert.equal(normalizeQuickCommandInputValue('a🙂b', 2), 'a🙂');
+});
+
+test('quick command history merge flips running false on exit snapshots', () => {
+  const merged = mergeQuickCommandRunHistoryEntries(
+    [{ runId: 'run-1', commandId: 'a', startedAtEpochMs: 1, finishedAtEpochMs: 2, processId: 3, exitCode: null, stdout: 'old', stderr: 'old-err', stdoutTruncated: true, stderrTruncated: true, running: true, transcript: [{ kind: 'output', body: 'A', requestId: null, prompt: null, secret: false, redacted: false, sequence: 1, atEpochMs: 1, pending: false }] }],
+    [{ runId: 'run-1', commandId: 'a', startedAtEpochMs: 1, finishedAtEpochMs: 3, processId: 3, exitCode: 0, stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false, running: false, transcript: [{ kind: 'exit', body: '0', requestId: null, prompt: null, secret: false, redacted: false, sequence: 9, atEpochMs: 3, pending: false }] }]
+  );
+  assert.equal(merged[0].running, false);
+  assert.equal(merged[0].exitCode, 0);
+  assert.equal(merged[0].stdout, '');
+  assert.equal(merged[0].stderr, '');
+  assert.equal(merged[0].stdoutTruncated, false);
+  assert.equal(merged[0].stderrTruncated, false);
+  assert.equal(merged[0].transcript.at(-1)?.kind, 'exit');
+});
+
+test('quick command pending input maps prompt kinds and confirm can be empty', () => {
+  const pending = deriveQuickCommandPendingInputRequest({
+    runId: 'run-2',
+    commandId: 'confirm',
+    processId: 5,
+    transcript: [
+      { kind: 'confirm', body: '', requestId: 'req-2', prompt: 'Continue?', secret: false, redacted: false, maxLength: 24, sequence: 1, atEpochMs: 1, pending: true }
+    ]
+  });
+
+  assert.deepEqual(pending, {
+    runId: 'run-2',
+    commandId: 'confirm',
+    processId: 5,
+    requestId: 'req-2',
+    kind: 'confirm',
+    prompt: 'Continue?',
+    secret: false,
+    redacted: false,
+    maxLength: 24,
+    sequence: 1,
+    atEpochMs: 1,
+    pending: true
+  });
+});
+
+test('quick command history merge prefers runId and transcript sequence', () => {
+  const merged = mergeQuickCommandRunHistoryEntries(
+    [{ runId: 'run-1', commandId: 'a', startedAtEpochMs: 1, finishedAtEpochMs: 2, processId: 3, exitCode: null, stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false, running: true, transcript: [{ kind: 'output', body: 'A', requestId: null, prompt: null, secret: false, redacted: false, sequence: 1, atEpochMs: 1, pending: false }] }],
+    [{ runId: 'run-1', commandId: 'a', startedAtEpochMs: 1, finishedAtEpochMs: 2, processId: 3, exitCode: null, stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false, running: true, transcript: [{ kind: 'input-request', body: '', requestId: 'r', prompt: 'p', secret: false, redacted: false, sequence: 2, atEpochMs: 2, pending: true }] }]
+  );
+  assert.equal(merged[0].transcript.length, 2);
+  assert.equal(merged[0].transcript[0].sequence, 1);
+  assert.equal(merged[0].transcript[1].sequence, 2);
 });
 
 test('quick command duplicate labels stay unique case-insensitively', () => {

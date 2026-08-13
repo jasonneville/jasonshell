@@ -1,5 +1,11 @@
 ## Change Ledger
 
+- 2026-08-12 `[CODE]` DOCS: Documented current quick-command terminal input protocol with backend `runId`, versioned `Request-JasonShellInput` OSC markers, CRLF stdin writes, bounded merged transcript, secret submitted-input redaction limits, request/run validation, and push plus polling fallback.
+- 2026-08-12 `[CODE]` DOCS: Updated Windows smoke checklist for quick-command normal input, secret input, malformed marker, stale input, stop during prompt, and push/poll fallback cases; removed stale UI mode smoke wording for `powershellFile`/`cmdFile`.
+- 2026-08-12 `[TOOL]` VALIDATED: Docs-only pass; no source/tests edited or executed.
+
+- 2026-08-12 `[CODE]` FIXED/CHANGED: Quick Commands now has an accessible top-right red `×` via the existing `hideCommandPanel` path; the delete confirmation overlay blocks background interaction.
+
 - 2026-08-12 `[CODE]` IMPLEMENTED: Documented current task-preview native DWM frame behavior: live thumbnails use 48 logical px top inset and 4 logical px side/bottom insets, preserve source aspect ratio inside the renderer frame, and keep header/close/captured fallback behavior unchanged.
 
 - 2026-08-12 `[CODE]` FIXED: Windows bootstrap now does per-prerequisite detection, requests admin only immediately before missing package installs, uses a single quoted VS Build Tools override string, and gates WebView2/Rust/Node installs on detected absence.
@@ -32,9 +38,15 @@ Policy: future entries follow `CHANGELOG_POLICY.md`. Existing history below is p
 - 2026-08-11 `[CODE]` FIXED: `close_task_window` no longer routes through preview-source validation, so close keeps the normal action path for hidden windows while still rejecting internal JasonShell HWNDs; preview capture keeps using the preview validator.
 - 2026-08-11 `[CODE]` TESTED: Added Rust and Node regressions proving close path avoids preview validation and preview capture still calls it.
 - 2026-08-11 `[TOOL]` VALIDATED: `cargo test --manifest-path src-tauri/Cargo.toml task_windows` and compiled `tests/taskbarPreviewContract.test.mjs` passed.
+- 2026-08-12 `[CODE]` FIXED: Quick Commands delete now opens an accessible confirmation dialog before saving removal; cancel leaves entries unchanged and confirm persists deletion.
+- 2026-08-12 `[CODE]` TESTED: Added command-panel source coverage for the delete confirmation dialog and cancel/confirm wording.
+- 2026-08-12 `[CODE]` FIXED: Quick Commands delete confirmation now uses a fixed local modal with initial focus, Escape cancel, Tab/Shift+Tab focus trap, trigger-focus restore, and no duplicate confirm submits while the save is in flight.
+- 2026-08-12 `[CODE]` TESTED: Added command-panel source and CSS contract coverage for the delete modal focus trap, focus restore, and overlay styling.
 - 2026-08-12 `[CODE]` CHANGED: Running Quick Commands replace green Run with red square Stop. Stop verifies active command-id/PID ownership then terminates its Windows process tree through `taskkill.exe /T /F`.
 - 2026-08-12 `[CODE]` DOCS: Updated Quick Commands spec for left-click config loading, Configuration/Previous runs tabs, 1100 ms aggregate live-run polling, spinner/stop behavior, and persisted command-panel logical size restoration/clamping/anchoring.
 - 2026-08-12 `[TOOL]` VALIDATED: Factual prior coverage documented in `master_spec.md`: command-panel and quick-command focused gates cover saved logical size persistence/restoration/clamping, 1100 ms live-history polling, spinner/stop ownership flow, and Configuration/Previous runs tab wiring. No tests were run for this docs-only update.
+- 2026-08-12 `[CODE]` FIXED: Quick Commands run and contextual history now select target command before opening Previous runs; empty Previous runs shows an explicit select-command state instead of aggregate history.
+- 2026-08-12 `[TOOL]` VALIDATED: Refreshed command-panel wiring/theme coverage for selected-only backend history, persistent history scroll host, race guards, and explicit no-selection state; `npm run check` passed. Full `npm run test:node` remains blocked by unrelated source-contract intent registry mismatch for `bootstrapWindowsContract.test.mjs`.
 
 - 2026-08-11 `[CODE]` DOCS: Documented current Quick Commands duplicate naming/id-save behavior, command-panel actual-size/work-area placement, and deferred focus-loss closure recheck in `master_spec.md`.
 

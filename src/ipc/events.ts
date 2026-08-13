@@ -20,6 +20,7 @@ export const IPC_EVENTS = {
   searchPanelInteraction: 'search-panel:interaction',
   searchPanelClosed: 'search-panel:closed',
   searchIndexRefreshed: 'search-index:refreshed',
+  quickCommandRunUpdated: 'quick-command:run-updated',
   stackPopupOpen: 'stack-popup:open',
   stackTerminalClosed: 'stack-terminal:closed',
   stackTerminalCwd: 'stack-terminal:cwd',
