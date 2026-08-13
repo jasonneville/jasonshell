@@ -38,7 +38,8 @@ test('preview outer root owns full-bounds hover retention handlers', () => {
   assert.match(previewSource, /on:pointerenter=\{handlePreviewPointerEnter\}/);
   assert.match(previewSource, /on:pointerleave=\{\(event\) => void handlePreviewPointerLeave\(event\)\}/);
   assert.doesNotMatch(previewSource, /onMouseEnter=\{\(\) => void emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)\}/);
-  assert.doesNotMatch(previewSource, /onMouseLeave=\{\(\) => void hidePreviewSurface\(\)\}/);
+  assert.doesNotMatch(previewSource, /hideTaskWindowPreview\(/);
+  assert.match(previewSource, /TASK_PREVIEW_HIDE_REQUEST_EVENT/);
 });
 
 test('preview pointer leave ignores top-half/internal transitions and hides only outside root', () => {
@@ -47,7 +48,15 @@ test('preview pointer leave ignores top-half/internal transitions and hides only
   assert.match(leaveBody, /event\.relatedTarget/);
   assert.match(leaveBody, /contains\(relatedTarget\)/);
   assert.match(leaveBody, /return;/);
-  assert.match(leaveBody, /await hidePreviewSurface\(\)/);
+  assert.match(leaveBody, /await requestPreviewHide\('schedule'\)/);
+});
+
+test('scheduled hide keeps preview alive until backend hide event arrives', () => {
+  const hideBody = functionBody(previewSource, 'requestPreviewHide');
+  assert.match(hideBody, /if \(mode === 'immediate'\)/);
+  assert.match(hideBody, /preview = null;/);
+  assert.match(hideBody, /await emit\(TASK_PREVIEW_HIDE_REQUEST_EVENT, \{ mode \}\);/);
+  assert.doesNotMatch(hideBody, /if \(mode === 'schedule'\)[\s\S]*preview = null;/);
 });
 
 test('preview close button is accessible red X and does not activate preview', () => {
@@ -59,7 +68,7 @@ test('preview close button is accessible red X and does not activate preview', (
   assert.match(closeBody, /event\.preventDefault\(\)/);
   assert.match(closeBody, /event\.stopPropagation\(\)/);
   assert.match(closeBody, /await closePreviewedTaskWindow\(preview\.hwnd\)/);
-  assert.match(closeBody, /await hidePreviewSurface\(\)/);
+  assert.match(closeBody, /await requestPreviewHide\('immediate'\)/);
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /top:/);
   assert.match(closeButtonRule, /right:/);

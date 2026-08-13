@@ -1,5 +1,8 @@
 ## Change Ledger
 
+- 2026-08-13 `[CODE]` DOCS: Documented current task-preview generation ownership: BottomBar owns monotonic show/hide ids, preview-surface hide requests route through `task-preview:hide-request`, Rust ignores stale/non-increasing show/hide generations before task-preview window mutation, and DWM remains primary with GDI fallback.
+- 2026-08-13 `[TOOL]` VALIDATED: Source-contract, TypeScript, and Rust checks passed for task-preview generation ownership and stale-request handling; no live desktop smoke claimed.
+
 - 2026-08-12 `[CODE]` DOCS: Documented current quick-command terminal input protocol with backend `runId`, versioned `Request-JasonShellInput` OSC markers, CRLF stdin writes, bounded merged transcript, secret submitted-input redaction limits, request/run validation, and push plus polling fallback.
 - 2026-08-12 `[CODE]` DOCS: Updated Windows smoke checklist for quick-command normal input, secret input, malformed marker, stale input, stop during prompt, and push/poll fallback cases; removed stale UI mode smoke wording for `powershellFile`/`cmdFile`.
 - 2026-08-12 `[TOOL]` VALIDATED: Docs-only pass; no source/tests edited or executed.

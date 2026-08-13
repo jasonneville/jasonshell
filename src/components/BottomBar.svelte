@@ -56,6 +56,8 @@
     TASK_PREVIEW_DELAY_MS,
     TASK_PREVIEW_HIDE_DELAY_MS,
     TASK_PREVIEW_HOVER_ENTER_EVENT,
+    TASK_PREVIEW_HIDE_REQUEST_EVENT,
+    type TaskPreviewHideRequest,
     taskWindowActionLabel,
     taskWindowLabel
   } from '../lib/taskbarUi';
@@ -101,7 +103,7 @@
   let openWindows: TaskbarWindow[] = [];
   let launchingShortcutPath: string | null = null;
   let activatingHwnd: string | null = null;
-  let previewRequestId = 0;
+  let previewRequestId = Date.now();
   let previewShowTimer: number | null = null;
   let previewHideTimer: number | null = null;
   let taskGroupOrder: string[] = [];
@@ -265,10 +267,9 @@
       previewHideTimer = null;
     }
   }
-  async function hidePreview() {
+  async function hidePreview(requestId = nextPreviewRequestId()) {
     clearPreviewShowTimer();
     clearPreviewHideTimer();
-    const requestId = nextPreviewRequestId();
     await hideTaskWindowPreview(requestId).catch((error) => {
       console.error('Failed to hide task preview', error);
     });
@@ -278,11 +279,16 @@
     clearPreviewHideTimer();
     const requestId = nextPreviewRequestId();
     previewHideTimer = window.setTimeout(() => {
-      void hideTaskWindowPreview(requestId).catch((error) => {
-        console.error('Failed to hide task preview', error);
-      });
+      void hidePreview(requestId);
       previewHideTimer = null;
     }, TASK_PREVIEW_HIDE_DELAY_MS);
+  }
+  function handlePreviewHideRequest(event: { payload: TaskPreviewHideRequest }) {
+    if (event.payload.mode === 'schedule') {
+      schedulePreviewHide();
+      return;
+    }
+    void hidePreview();
   }
   function queuePreview(taskWindow: TaskbarWindow, event: MouseEvent) {
     const button = event.currentTarget as HTMLButtonElement | null;
@@ -792,6 +798,10 @@
 
     registerAsyncUnlistener(listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
       clearPreviewHideTimer();
+    }));
+
+    registerAsyncUnlistener(listen<TaskPreviewHideRequest>(TASK_PREVIEW_HIDE_REQUEST_EVENT, (event: { payload: TaskPreviewHideRequest }) => {
+      handlePreviewHideRequest(event);
     }));
     unlisteners.push(addShellSettingsChangeListener((settings) => {
       void applyBottomBarSettings(settings).catch((error) => {

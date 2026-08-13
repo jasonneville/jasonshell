@@ -46,6 +46,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'stackBrowserTopBarPinFlow.test.mjs',
     'stackBrowserCloseButton.test.mjs',
     'taskbarWindows.test.mjs',
+    'bottomBarPreviewRequestId.test.mjs',
     'stackPopupContextMenu.test.mjs',
     'stackPopupDiagnosticsWiring.test.mjs',
     'stackPopupGitStatus.test.mjs',

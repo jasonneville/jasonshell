@@ -5,11 +5,11 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
     closePreviewedTaskWindow,
-    hideTaskWindowPreview,
     isNativeLiveTaskPreviewPayload,
     type TaskPreviewPayload
   } from '../lib/taskbarPreview';
   import {
+    TASK_PREVIEW_HIDE_REQUEST_EVENT,
     TASKBAR_REFRESH_WINDOWS_EVENT,
     TASK_PREVIEW_HOVER_ENTER_EVENT
   } from '../lib/taskbarUi';
@@ -21,11 +21,12 @@
   $: previewPrimaryTitle = preview ? (preview.title || preview.processName) : '';
   $: previewSecondaryText = preview && preview.processName !== previewPrimaryTitle ? preview.processName : '';
 
-  async function hidePreviewSurface() {
-    preview = null;
-    await hideTaskWindowPreview(Date.now()).catch((error) => {
-      console.error('Failed to hide task preview', error);
-    });
+  async function requestPreviewHide(mode: 'schedule' | 'immediate') {
+    if (mode === 'immediate') {
+      preview = null;
+    }
+
+    await emit(TASK_PREVIEW_HIDE_REQUEST_EVENT, { mode });
   }
 
   async function handlePreviewActivate() {
@@ -36,7 +37,7 @@
     try {
       await maximizeTaskWindow(preview.hwnd);
       await emit(TASKBAR_REFRESH_WINDOWS_EVENT);
-      await hidePreviewSurface();
+      await requestPreviewHide('immediate');
     } catch (error) {
       console.error(`Failed to maximize task window ${preview.hwnd}`, error);
     }
@@ -61,7 +62,7 @@
     if (root && relatedTarget && root.contains(relatedTarget)) {
       return;
     }
-    await hidePreviewSurface();
+    await requestPreviewHide('schedule');
   }
 
   async function handlePreviewClose(event: MouseEvent) {
@@ -74,7 +75,7 @@
     try {
       await closePreviewedTaskWindow(preview.hwnd);
       await emit(TASKBAR_REFRESH_WINDOWS_EVENT);
-      await hidePreviewSurface();
+      await requestPreviewHide('immediate');
     } catch (error) {
       console.error(`Failed to close task window ${preview.hwnd}`, error);
     }

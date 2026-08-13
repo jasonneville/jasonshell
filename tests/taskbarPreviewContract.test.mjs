@@ -84,6 +84,9 @@ test('task preview payload contract exposes native live thumbnail flag and sourc
 
 test('task preview surface gives native DWM thumbnails an unobstructed frame', () => {
   assert.match(taskPreviewSurfaceSource, /isNativeLiveTaskPreviewPayload/);
+  assert.match(taskPreviewSurfaceSource, /TASK_PREVIEW_HIDE_REQUEST_EVENT/);
+  assert.match(taskPreviewSurfaceSource, /requestPreviewHide\('schedule'\)/);
+  assert.match(taskPreviewSurfaceSource, /requestPreviewHide\('immediate'\)/);
   assert.match(
     taskPreviewSurfaceSource,
     /previewSurfaceClass = `surface preview-surface\$\{isNativeLivePreview \? ' preview-surface-native' : ''\}`/
@@ -120,13 +123,13 @@ test('task preview publish path rechecks request freshness before emitting nativ
   );
   assert.match(
     taskPreviewRustSource,
-    /fn clear_active_live_thumbnail_if_current\([\s\S]*if preview_request_is_current\(&state, request_id\) \{[\s\S]*clear_active_live_thumbnail\(&mut state\);/
+    /fn clear_active_live_thumbnail_if_current_locked\([\s\S]*if preview_request_is_current\(state, request_id\) \{[\s\S]*clear_active_live_thumbnail\(state\);[\s\S]*}/
   );
 });
 
 test('task preview publish path does not hold runtime mutex across Tauri window operations', () => {
   assert.match(taskPreviewRustSource, /fn ensure_preview_request_is_current\(/);
-  assert.match(taskPreviewRustSource, /fn clear_active_live_thumbnail_if_current\(/);
+  assert.match(taskPreviewRustSource, /fn clear_active_live_thumbnail_if_current_locked\(/);
 
   const publishFunction = extractRustFunction(taskPreviewRustSource, 'publish_and_show_preview');
 
@@ -140,26 +143,29 @@ test('task preview publish path does not hold runtime mutex across Tauri window 
 
   assert.match(
     publishFunction,
-    /if !ensure_preview_request_is_current\(state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*preview_window\s*\.\s*emit\(/,
+    /if !ensure_preview_request_is_current\(state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*if let Err\(error\) = preview_window\s*\.\s*emit\(/,
     'freshness should be checked immediately before emit'
   );
   assert.match(
     publishFunction,
-    /if !ensure_preview_request_is_current\(state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*preview_window\s*\.\s*set_position\(/,
+    /if !ensure_preview_request_is_current\(state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*if let Err\(error\) = preview_window\s*\.\s*set_position\(/,
     'freshness should be checked immediately before set_position'
   );
   assert.match(
     publishFunction,
-    /if !ensure_preview_request_is_current\(state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*preview_window\s*\.\s*show\(/,
+    /if !ensure_preview_request_is_current\(state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*if let Err\(error\) = preview_window\s*\.\s*show\(/,
     'freshness should be checked immediately before show'
   );
 
   const hideFunction = extractRustFunction(taskPreviewRustSource, 'hide_task_window_preview');
   assert.match(
     hideFunction,
-    /let mut state = state[\s\S]*?begin_task_preview_hide\(&mut state, request_id\);\s*\}\s*let preview_window = app_handle/,
+    /let mut state = state[\s\S]*?begin_task_preview_hide\(&mut state, request_id\)[\s\S]*?\}\s*;\s*if !should_hide[\s\S]*?let preview_window = app_handle/,
     'hide_task_window_preview should close the runtime state lock scope before reading/using the preview window'
   );
+  assert.match(hideFunction, /if !ensure_preview_request_is_current\(&state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*preview_window\s*\.\s*emit\(/);
+  assert.match(hideFunction, /if !ensure_preview_request_is_current\(&state, request_id\)\? \{[\s\S]*?return Ok\(\(\)\);[\s\S]*?\}\s*preview_window\s*\.\s*hide\(/);
+  assert.match(taskPreviewRustSource, /fn begin_task_preview_hide\([\s\S]*?clear_active_live_thumbnail\(state\);/);
 });
 
 test('task window close path skips preview validator while preview capture still uses it', () => {

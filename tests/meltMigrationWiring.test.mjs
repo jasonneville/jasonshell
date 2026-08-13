@@ -141,7 +141,7 @@ test('search panel and task-preview safe action buttons use Melt-backed real but
   assert.match(taskPreviewSource, /onClick=\{\(\) => void handlePreviewActivate\(\)\}/);
   assert.match(taskPreviewSource, /onKeyDown=\{\(event\) => void handlePreviewKeydown\(event\)\}/);
   assert.match(taskPreviewSource, /function handlePreviewPointerEnter\(\)[\s\S]*emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)/);
-  assert.match(taskPreviewSource, /async function handlePreviewPointerLeave\(event: PointerEvent\)[\s\S]*event\.currentTarget[\s\S]*event\.relatedTarget[\s\S]*root\.contains\(relatedTarget\)[\s\S]*hidePreviewSurface\(\)/);
+  assert.match(taskPreviewSource, /async function handlePreviewPointerLeave\(event: PointerEvent\)[\s\S]*event\.currentTarget[\s\S]*event\.relatedTarget[\s\S]*root\.contains\(relatedTarget\)[\s\S]*requestPreviewHide\('schedule'\)/);
   assert.match(taskPreviewSource, /on:pointerenter=\{handlePreviewPointerEnter\}/);
   assert.match(taskPreviewSource, /on:pointerleave=\{\(event\) => void handlePreviewPointerLeave\(event\)\}/);
   assert.doesNotMatch(taskPreviewSource, /<button[\s\S]*class="surface preview-surface"/);
@@ -219,6 +219,9 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /onClick=\{\(event\) => handleTaskWindowClick\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onMouseEnter=\{\(event\) => queuePreview\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onMouseLeave=\{schedulePreviewHide\}/);
+  assert.match(bottomBarSource, /TASK_PREVIEW_HIDE_REQUEST_EVENT/);
+  assert.match(bottomBarSource, /listen<TaskPreviewHideRequest>\(TASK_PREVIEW_HIDE_REQUEST_EVENT/);
+  assert.match(bottomBarSource, /function handlePreviewHideRequest\(/);
   assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openTaskMenu\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /<img class="task-icon" src=\{taskWindow\.iconDataUrl\} alt="" draggable="false" \/>/);
   assert.match(bottomBarSource, /<span class="task-label">\{taskWindowLabel\(taskWindow\)\}<\/span>/);
