@@ -1,5 +1,8 @@
 ## Change Ledger
 
+- 2026-08-14 `[CODE]` FIXED: Fullscreen AppBar transitions now track reserved/released/parked state, treat AppBar negotiation as geometry authority, make `SPI_SETWORKAREA` readback best effort, and retain offscreen WebView parking so Explorer work-area races no longer trigger one-second retry storms or repeated restore errors.
+- 2026-08-14 `[CODE]` TESTED: Added fullscreen target/action and retry-controller regressions covering partial release recovery, immediate target-change retries, first-failure log throttling, success reset, and 4 s backoff cap.
+
 - 2026-08-13 `[CODE]` DOCS: Documented current task-preview generation ownership: BottomBar owns monotonic show/hide ids, preview-surface hide requests route through `task-preview:hide-request`, Rust ignores stale/non-increasing show/hide generations before task-preview window mutation, and DWM remains primary with GDI fallback.
 - 2026-08-13 `[TOOL]` VALIDATED: Source-contract, TypeScript, and Rust checks passed for task-preview generation ownership and stale-request handling; no live desktop smoke claimed.
 - 2026-08-13 `[CODE]` DOCS: Documented Stack Browser Downloads default ordering: canonical Downloads opens Date modified descending/newest first, other folders keep name ascending, and backend paging snapshots Downloads newest-first before page 1.

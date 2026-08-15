@@ -13,7 +13,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{App, AppHandle, Manager};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
@@ -91,11 +91,58 @@ pub struct ShellRuntimeState {
     pub baseline_work_area: Option<RECT>,
     pub registered_appbars: Vec<isize>,
     shell_layout: Option<ShellSurfaceLayout>,
-    fullscreen_hidden: bool,
+    fullscreen_state: FullscreenAppBarState,
     fullscreen_guard_stop: Option<Arc<AtomicBool>>,
     fullscreen_guard: Option<JoinHandle<()>>,
     pub taskbar_guard_stop: Option<Arc<AtomicBool>>,
     pub taskbar_guard: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum FullscreenAppBarState {
+    #[default]
+    Reserved,
+    Released,
+    Parked,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GuardRetryState {
+    target: Option<FullscreenGuardTarget>,
+    failures: u32,
+    retry_deadline: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkAreaSyncResult {
+    Ok,
+    Mismatch,
+    SetFailed,
+    GetFailed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FullscreenSyncAction {
+    Hide,
+    Restore,
+    Park,
+    Noop,
+}
+
+impl Default for GuardRetryState {
+    fn default() -> Self {
+        Self {
+            target: None,
+            failures: 0,
+            retry_deadline: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FullscreenGuardTarget {
+    Hide,
+    Restore,
 }
 
 const WORK_AREA_RETRY_ATTEMPTS: usize = 20;
@@ -167,7 +214,7 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
     state.baseline_work_area = None;
     state.hidden_explorer_taskbar = None;
     state.shell_layout = None;
-    state.fullscreen_hidden = false;
+    state.fullscreen_state = FullscreenAppBarState::Reserved;
     state.registered_appbars.clear();
 
     let activation_result = (|| -> AppResult<()> {
@@ -346,7 +393,7 @@ fn resize_shell_bar_runtime(
     let layout = state
         .shell_layout
         .ok_or_else(|| "Shell AppBar layout is not active".to_string())?;
-    ensure_shell_bar_resize_allowed(state.fullscreen_hidden)?;
+    ensure_shell_bar_resize_allowed(state.fullscreen_state)?;
     let top_hwnd = HWND(layout.top_hwnd as *mut _);
     let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
     let mut top_rect = layout.top_rect;
@@ -379,8 +426,8 @@ fn resize_shell_bar_runtime(
     Ok(())
 }
 
-fn ensure_shell_bar_resize_allowed(fullscreen_hidden: bool) -> AppResult<()> {
-    if fullscreen_hidden {
+fn ensure_shell_bar_resize_allowed(fullscreen_state: FullscreenAppBarState) -> AppResult<()> {
+    if fullscreen_state != FullscreenAppBarState::Reserved {
         return Err(
             "Shell AppBars are temporarily released while a fullscreen foreground app is active"
                 .into(),
@@ -638,6 +685,79 @@ fn set_work_area_with_retry(rect: RECT, context: &str) -> AppResult<()> {
         observed.bottom
     )
     .into())
+}
+
+fn sync_work_area_best_effort(rect: RECT, context: &str) -> AppResult<()> {
+    match sync_work_area_best_effort_with(rect, set_work_area, get_work_area) {
+        WorkAreaSyncResult::SetFailed => {
+            eprintln!("warning: could not set {context}; AppBar geometry remains authoritative");
+        }
+        WorkAreaSyncResult::GetFailed => {
+            eprintln!("warning: could not read {context}; AppBar geometry remains authoritative");
+        }
+        WorkAreaSyncResult::Ok | WorkAreaSyncResult::Mismatch => {}
+    }
+    Ok(())
+}
+
+fn sync_work_area_best_effort_with<SetFn, GetFn>(
+    rect: RECT,
+    mut set_work_area_fn: SetFn,
+    mut get_work_area_fn: GetFn,
+) -> WorkAreaSyncResult
+where
+    SetFn: FnMut(RECT) -> AppResult<()>,
+    GetFn: FnMut() -> AppResult<RECT>,
+{
+    match set_work_area_fn(rect) {
+        Err(_) => return WorkAreaSyncResult::SetFailed,
+        Ok(()) => {}
+    }
+    match get_work_area_fn() {
+        Err(_) => WorkAreaSyncResult::GetFailed,
+        Ok(observed) if !rects_match(observed, rect) => WorkAreaSyncResult::Mismatch,
+        Ok(_) => WorkAreaSyncResult::Ok,
+    }
+}
+
+fn fullscreen_guard_retry_delay(failures: u32) -> Duration {
+    let steps = failures.saturating_sub(1).min(4);
+    Duration::from_millis((250 * (1 << steps)).min(4000) as u64)
+}
+
+fn fullscreen_guard_target_or_restore(
+    target: Option<FullscreenGuardTarget>,
+) -> FullscreenGuardTarget {
+    target.unwrap_or(FullscreenGuardTarget::Restore)
+}
+
+fn guard_retry_prepare_target(
+    state: &mut GuardRetryState,
+    target: FullscreenGuardTarget,
+    now: Instant,
+) -> bool {
+    if state.target != Some(target) {
+        state.target = Some(target);
+        state.failures = 0;
+        state.retry_deadline = None;
+        return true;
+    }
+
+    match state.retry_deadline {
+        Some(deadline) if now < deadline => false,
+        _ => true,
+    }
+}
+
+fn guard_retry_register_failure(state: &mut GuardRetryState, now: Instant) {
+    state.failures = state.failures.saturating_add(1);
+    state.retry_deadline = Some(now + fullscreen_guard_retry_delay(state.failures));
+}
+
+fn guard_retry_reset(state: &mut GuardRetryState) {
+    state.target = None;
+    state.failures = 0;
+    state.retry_deadline = None;
 }
 
 fn set_work_area_with_retry_or_warn(rect: RECT, context: &str) -> AppResult<()> {
@@ -925,7 +1045,7 @@ where
     }
 
     state.cleaned_up = true;
-    state.fullscreen_hidden = false;
+    state.fullscreen_state = FullscreenAppBarState::Reserved;
     state.shell_layout = None;
 
     if cleanup_errors.is_empty() {
@@ -941,9 +1061,22 @@ fn start_fullscreen_guard(app_handle: AppHandle, state: &mut ShellRuntimeState) 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_signal = Arc::clone(&stop);
     let guard = thread::spawn(move || {
+        let mut retry_state = GuardRetryState::default();
         while !stop_signal.load(Ordering::Relaxed) {
-            if let Err(error) = sync_fullscreen_shell_surfaces(&app_handle) {
-                eprintln!("fullscreen shell sync failed: {error}");
+            let now = Instant::now();
+            if let Some(target) = foreground_fullscreen_target_for_layout_with_state(&app_handle) {
+                if guard_retry_prepare_target(&mut retry_state, target, now) {
+                    let sync_result =
+                        sync_fullscreen_shell_surfaces_for_target(&app_handle, target);
+                    if let Err(error) = sync_result {
+                        if retry_state.failures == 0 {
+                            eprintln!("fullscreen shell sync failed: {error}");
+                        }
+                        guard_retry_register_failure(&mut retry_state, now);
+                    } else {
+                        guard_retry_reset(&mut retry_state);
+                    }
+                }
             }
             thread::sleep(FULLSCREEN_GUARD_POLL_DELAY);
         }
@@ -963,41 +1096,85 @@ fn stop_fullscreen_guard(state: &mut ShellRuntimeState) {
     }
 }
 
-fn sync_fullscreen_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
-    let (layout, work_area_rect, cleaned_up) = {
+fn sync_fullscreen_shell_surfaces_for_target(
+    app_handle: &AppHandle,
+    target: FullscreenGuardTarget,
+) -> AppResult<()> {
+    let (cleaned_up, state_value) = {
         let state = app_handle.state::<Mutex<ShellRuntimeState>>();
         let Ok(state) = state.try_lock() else {
             return Ok(());
         };
-        (
-            state.shell_layout,
-            state.baseline_work_area.unwrap_or_else(|| {
-                state
-                    .shell_layout
-                    .map(|layout| layout.monitor_rect)
-                    .unwrap_or_default()
-            }),
-            state.cleaned_up,
-        )
+        (state.cleaned_up, state.fullscreen_state)
     };
 
     if cleaned_up {
         return Ok(());
     }
 
-    let Some(layout) = layout else {
-        return Ok(());
-    };
-
-    let should_hide =
-        foreground_fullscreen_candidate(layout.monitor_rect, work_area_rect, std::process::id())
-            .is_some_and(should_hide_shell_for_fullscreen_window);
-
-    if should_hide {
-        hide_shell_for_fullscreen(app_handle)
-    } else {
-        restore_shell_after_fullscreen(app_handle)
+    match fullscreen_sync_action_for_state(state_value, target) {
+        FullscreenSyncAction::Hide | FullscreenSyncAction::Park => {
+            hide_shell_for_fullscreen(app_handle)
+        }
+        FullscreenSyncAction::Restore => restore_shell_after_fullscreen(app_handle),
+        FullscreenSyncAction::Noop => Ok(()),
     }
+}
+
+fn fullscreen_sync_action_for_state(
+    state: FullscreenAppBarState,
+    target: FullscreenGuardTarget,
+) -> FullscreenSyncAction {
+    match (state, target) {
+        (FullscreenAppBarState::Reserved, FullscreenGuardTarget::Hide) => {
+            FullscreenSyncAction::Hide
+        }
+        (FullscreenAppBarState::Reserved, FullscreenGuardTarget::Restore) => {
+            FullscreenSyncAction::Noop
+        }
+        (FullscreenAppBarState::Released, FullscreenGuardTarget::Hide) => {
+            FullscreenSyncAction::Park
+        }
+        (FullscreenAppBarState::Released, FullscreenGuardTarget::Restore) => {
+            FullscreenSyncAction::Restore
+        }
+        (FullscreenAppBarState::Parked, FullscreenGuardTarget::Hide) => FullscreenSyncAction::Noop,
+        (FullscreenAppBarState::Parked, FullscreenGuardTarget::Restore) => {
+            FullscreenSyncAction::Restore
+        }
+    }
+}
+
+fn foreground_fullscreen_target_for_layout_with_state(
+    app_handle: &AppHandle,
+) -> Option<FullscreenGuardTarget> {
+    let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+    let Ok(state) = state.try_lock() else {
+        return None;
+    };
+    let Some(layout) = state.shell_layout else {
+        return None;
+    };
+    let work_area_rect = state.baseline_work_area.unwrap_or(layout.monitor_rect);
+    Some(fullscreen_guard_target_or_restore(
+        foreground_fullscreen_target_for_layout(layout, work_area_rect, std::process::id()),
+    ))
+}
+
+fn foreground_fullscreen_target_for_layout(
+    layout: ShellSurfaceLayout,
+    work_area_rect: RECT,
+    current_process_id: u32,
+) -> Option<FullscreenGuardTarget> {
+    foreground_fullscreen_candidate(layout.monitor_rect, work_area_rect, current_process_id).map(
+        |candidate| {
+            if should_hide_shell_for_fullscreen_window(candidate) {
+                FullscreenGuardTarget::Hide
+            } else {
+                FullscreenGuardTarget::Restore
+            }
+        },
+    )
 }
 
 fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
@@ -1005,13 +1182,19 @@ fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
     let Ok(mut state) = state.try_lock() else {
         return Ok(());
     };
-    if state.cleaned_up || state.fullscreen_hidden {
+    if state.cleaned_up {
         return Ok(());
     }
 
     let Some(layout) = state.shell_layout else {
         return Ok(());
     };
+
+    match state.fullscreen_state {
+        FullscreenAppBarState::Reserved => {}
+        FullscreenAppBarState::Released => {}
+        FullscreenAppBarState::Parked => return Ok(()),
+    }
 
     let mut release_errors = Vec::new();
     if let Err(error) =
@@ -1020,23 +1203,16 @@ fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
         release_errors.push(error.to_string());
     }
 
-    if state.registered_appbars.is_empty() {
-        if let Err(error) = set_work_area_with_retry(
-            layout.monitor_rect,
-            "primary monitor work area while fullscreen foreground app is active",
-        ) {
-            release_errors.push(error.to_string());
-        }
-    }
-
     if !release_errors.is_empty() {
         return Err(release_errors.join("; ").into());
     }
 
+    state.fullscreen_state = FullscreenAppBarState::Released;
+    let _ = sync_work_area_best_effort_with(layout.monitor_rect, set_work_area, get_work_area);
     // Keep persistent WebView2 surfaces alive. Tauri hide/show can leave a surface blank
     // after fullscreen exits even when its HWND geometry is correct.
     park_shell_surface_windows(layout)?;
-    state.fullscreen_hidden = true;
+    state.fullscreen_state = FullscreenAppBarState::Parked;
     Ok(())
 }
 
@@ -1061,7 +1237,7 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
         let Ok(mut state) = state.try_lock() else {
             return Ok(());
         };
-        if state.cleaned_up || !state.fullscreen_hidden {
+        if state.cleaned_up || state.fullscreen_state == FullscreenAppBarState::Reserved {
             return Ok(());
         }
 
@@ -1076,10 +1252,10 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
                 &mut state.registered_appbars,
                 unregister_appbar,
             )?;
-            set_work_area_with_retry(
+            let _ = sync_work_area_best_effort(
                 layout.monitor_rect,
                 "full-monitor work area before retrying fullscreen shell restore",
-            )?;
+            );
         }
 
         let top_hwnd = HWND(layout.top_hwnd as *mut _);
@@ -1094,10 +1270,10 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
                 register_tracked_appbar(&mut state, bottom_hwnd, register_appbar, |hwnd| {
                     reserve_appbar(hwnd, AppBarEdge::Bottom, layout.bottom_rect)
                 })?;
-            set_work_area_with_retry(
+            let _ = sync_work_area_best_effort(
                 reserved_work_area(layout.monitor_rect, top_rect, bottom_rect),
                 "reserved shell work area after fullscreen foreground app exits",
-            )?;
+            );
 
             Ok(restored_shell_surface_layout(layout, top_rect, bottom_rect))
         })();
@@ -1118,11 +1294,11 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
                     cleanup_errors.push(format!(
                         "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
                     ));
-                } else if let Err(work_area_error) = set_work_area_with_retry(
-                    layout.monitor_rect,
-                    "full-monitor work area after failed fullscreen shell restore",
-                ) {
-                    cleanup_errors.push(work_area_error.to_string());
+                } else {
+                    let _ = sync_work_area_best_effort(
+                        layout.monitor_rect,
+                        "full-monitor work area after failed fullscreen shell restore",
+                    );
                 }
 
                 if cleanup_errors.is_empty() {
@@ -1161,7 +1337,7 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
             }
 
             state.shell_layout = Some(restored_layout);
-            state.fullscreen_hidden = false;
+            state.fullscreen_state = FullscreenAppBarState::Reserved;
             Ok(())
         }
         Err(error) => {
@@ -1180,12 +1356,10 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
                     unregister_appbar,
                 ) {
                     Ok(()) => {
-                        if let Err(reset_error) = set_work_area_with_retry(
+                        let _ = sync_work_area_best_effort(
                             restored_layout.monitor_rect,
                             "full-monitor work area after failed fullscreen shell surface placement",
-                        ) {
-                            cleanup_errors.push(reset_error.to_string());
-                        }
+                        );
                     }
                     Err(release_error) => cleanup_errors.push(format!(
                         "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
@@ -1355,14 +1529,18 @@ fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
 mod tests {
     use super::{
         apply_requested_thickness, cleanup_runtime_state_with, ensure_shell_bar_resize_allowed,
-        normalize_rect_thickness, parked_rect_below_virtual_desktop,
+        fullscreen_guard_retry_delay, fullscreen_guard_target_or_restore,
+        fullscreen_sync_action_for_state, guard_retry_prepare_target, guard_retry_register_failure,
+        guard_retry_reset, normalize_rect_thickness, parked_rect_below_virtual_desktop,
         prepare_fullscreen_restore_retry_with, rect_covers_target, register_tracked_appbar,
         reserved_work_area, resolve_baseline_work_area, restored_shell_surface_layout,
         should_hide_shell_for_fullscreen_window, stabilize_runtime_window_rect_with,
-        unregister_tracked_appbars_with, FullscreenWindowCandidate, ShellRuntimeState,
-        ShellSurfaceLayout, WindowRectSnapshot,
+        sync_work_area_best_effort_with, unregister_tracked_appbars_with, FullscreenAppBarState,
+        FullscreenGuardTarget, FullscreenSyncAction, FullscreenWindowCandidate, GuardRetryState,
+        ShellRuntimeState, ShellSurfaceLayout, WindowRectSnapshot, WorkAreaSyncResult,
     };
     use crate::explorer::ExplorerTaskbarSnapshot;
+    use std::time::Duration;
     use windows::Win32::Foundation::{HWND, RECT};
 
     #[test]
@@ -1422,7 +1600,7 @@ mod tests {
             baseline_work_area: Some(baseline_work_area),
             registered_appbars: Vec::new(),
             shell_layout: None,
-            fullscreen_hidden: false,
+            fullscreen_state: FullscreenAppBarState::Reserved,
             fullscreen_guard_stop: None,
             fullscreen_guard: None,
             taskbar_guard_stop: None,
@@ -1738,12 +1916,154 @@ mod tests {
 
     #[test]
     fn shell_bar_resize_is_rejected_while_fullscreen_releases_appbars() {
-        assert!(ensure_shell_bar_resize_allowed(false).is_ok());
+        assert!(ensure_shell_bar_resize_allowed(FullscreenAppBarState::Reserved).is_ok());
         assert_eq!(
-            ensure_shell_bar_resize_allowed(true)
+            ensure_shell_bar_resize_allowed(FullscreenAppBarState::Released)
                 .expect_err("fullscreen-released AppBars must reject resize")
                 .to_string(),
             "Shell AppBars are temporarily released while a fullscreen foreground app is active"
+        );
+        assert!(ensure_shell_bar_resize_allowed(FullscreenAppBarState::Parked).is_err());
+    }
+
+    #[test]
+    fn guard_retry_delay_caps_at_four_seconds() {
+        assert_eq!(fullscreen_guard_retry_delay(0), Duration::from_millis(250));
+        assert_eq!(fullscreen_guard_retry_delay(1), Duration::from_millis(250));
+        assert_eq!(fullscreen_guard_retry_delay(2), Duration::from_millis(500));
+        assert_eq!(fullscreen_guard_retry_delay(3), Duration::from_millis(1000));
+        assert_eq!(fullscreen_guard_retry_delay(4), Duration::from_millis(2000));
+        assert_eq!(
+            fullscreen_guard_retry_delay(99),
+            Duration::from_millis(4000)
+        );
+    }
+
+    #[test]
+    fn released_state_hides_via_park_action_and_restore_is_eligible_from_released() {
+        assert_eq!(
+            fullscreen_sync_action_for_state(
+                FullscreenAppBarState::Released,
+                FullscreenGuardTarget::Hide
+            ),
+            FullscreenSyncAction::Park
+        );
+        assert_eq!(
+            fullscreen_sync_action_for_state(
+                FullscreenAppBarState::Released,
+                FullscreenGuardTarget::Restore
+            ),
+            FullscreenSyncAction::Restore
+        );
+    }
+
+    #[test]
+    fn work_area_sync_reports_diagnostics_without_failing_transition() {
+        let target = RECT {
+            left: 0,
+            top: 10,
+            right: 100,
+            bottom: 90,
+        };
+        assert_eq!(
+            sync_work_area_best_effort_with(target, |_| Err("set fail".into()), || Ok(target)),
+            WorkAreaSyncResult::SetFailed
+        );
+        assert_eq!(
+            sync_work_area_best_effort_with(target, |_| Ok(()), || Err("get fail".into())),
+            WorkAreaSyncResult::GetFailed
+        );
+        assert_eq!(
+            sync_work_area_best_effort_with(
+                target,
+                |_| Ok(()),
+                || Ok(RECT {
+                    left: 0,
+                    top: 0,
+                    right: 100,
+                    bottom: 100
+                })
+            ),
+            WorkAreaSyncResult::Mismatch
+        );
+    }
+
+    #[test]
+    fn best_effort_work_area_sync_does_not_fail_on_mismatch() {
+        let target = RECT {
+            left: 0,
+            top: 10,
+            right: 100,
+            bottom: 90,
+        };
+        let mut set_calls = 0;
+        let result = sync_work_area_best_effort_with(
+            target,
+            |_| {
+                set_calls += 1;
+                Ok(())
+            },
+            || {
+                Ok(RECT {
+                    left: 0,
+                    top: 0,
+                    right: 100,
+                    bottom: 100,
+                })
+            },
+        );
+        assert_eq!(result, WorkAreaSyncResult::Mismatch);
+        assert_eq!(set_calls, 1);
+    }
+
+    #[test]
+    fn guard_retry_skips_until_deadline_then_retries_and_target_change_bypasses() {
+        let now = std::time::Instant::now();
+        let later = now + Duration::from_millis(300);
+        let mut retry = GuardRetryState::default();
+        assert!(guard_retry_prepare_target(
+            &mut retry,
+            FullscreenGuardTarget::Hide,
+            now
+        ));
+        retry.failures = 1;
+        retry.retry_deadline = Some(later);
+        assert!(!guard_retry_prepare_target(
+            &mut retry,
+            FullscreenGuardTarget::Hide,
+            now
+        ));
+        assert!(guard_retry_prepare_target(
+            &mut retry,
+            FullscreenGuardTarget::Hide,
+            later
+        ));
+        assert!(guard_retry_prepare_target(
+            &mut retry,
+            FullscreenGuardTarget::Restore,
+            now
+        ));
+    }
+
+    #[test]
+    fn guard_retry_success_and_failure_state_updates_are_deterministic() {
+        let now = std::time::Instant::now();
+        let mut retry = GuardRetryState::default();
+        guard_retry_register_failure(&mut retry, now);
+        assert_eq!(retry.target, None);
+        assert_eq!(retry.failures, 1);
+        assert_eq!(retry.retry_deadline, Some(now + Duration::from_millis(250)));
+        guard_retry_reset(&mut retry);
+        assert_eq!(retry.target, None);
+        assert_eq!(retry.failures, 0);
+        assert_eq!(retry.retry_deadline, None);
+    }
+
+    #[test]
+    fn foreground_candidate_absent_or_non_hide_restores_shell() {
+        assert_eq!(
+            fullscreen_guard_target_or_restore(None),
+            FullscreenGuardTarget::Restore
         );
     }
 
