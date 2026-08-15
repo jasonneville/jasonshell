@@ -66,6 +66,19 @@
   let pendingInputError = '';
   let pendingInputInput: HTMLInputElement | HTMLTextAreaElement | null = null;
 
+  type TranscriptTokenKind = 'prompt' | 'path' | 'url' | 'level-error' | 'level-warning' | 'level-success' | 'level-info';
+  type TranscriptSegment = { text: string; kind: TranscriptTokenKind | null };
+
+  const TRANSCRIPT_PROMPT_PATTERN = /^((?:PS\s+)?(?:(?:[A-Za-z]:[\\/]|~[\\/]|\.\.[\\/]|\.\/[\\/]|[^\s:@]+@[^\s:@]+[:/]|[^\s]+:[\\/])[^^\n]*?[>$#❯])\s+)/u;
+  const TRANSCRIPT_TOKEN_PATTERNS = [
+    { kind: 'url' as const, pattern: /\bhttps?:\/\/[^\s<>"'`]+/iu },
+    { kind: 'path' as const, pattern: /\b(?:[A-Za-z]:[\\/](?:[^\\/\s<>:"|?*]+[\\/])*[^\\/\s<>:"|?*]+|\\\\[^\s<>:"|?*]+(?:\\[^\s<>:"|?*]+)+|~[\\/][^\s<>"'`]+|\.\.[\\/][^\s<>"'`]+|\.\/[^^\s<>"'`]+)/u },
+    { kind: 'level-error' as const, pattern: /\b(?:error|fatal|failed|failure|panic|crash|exception|err)\b/iu },
+    { kind: 'level-warning' as const, pattern: /\b(?:warn|warning|caution|deprecated|todo)\b/iu },
+    { kind: 'level-success' as const, pattern: /\b(?:success|succeeded|ok|done|complete|completed|passed|pass|ready)\b/iu },
+    { kind: 'level-info' as const, pattern: /\b(?:info|debug|trace)\b/iu }
+  ];
+
   function blankEditor(): CommandEditorModel { return { id: null, label: '', mode: 'direct', targetPath: '', cwd: '', argsText: '', commandsText: '' }; }
   function inputValue(event: Event): string { return (event.currentTarget as HTMLInputElement).value; }
   function selectValue(event: Event): string { return (event.currentTarget as HTMLSelectElement).value; }
@@ -224,6 +237,50 @@
   function normalizeDraftLength(value: string, maxLength: number): string { return Array.from(value).slice(0, maxLength).join(''); }
   function currentPendingInputMaxLength(): number { return pendingInputRequest?.maxLength ?? 4096; }
 
+  function transcriptLineClass(kind: string): string {
+    if (kind === 'stderr') return 'command-transcript-line--stderr';
+    if (kind === 'system') return 'command-transcript-line--system';
+    if (kind === 'input-request') return 'command-transcript-line--prompt';
+    if (kind === 'input-submitted') return 'command-transcript-line--command';
+    if (kind === 'confirm') return 'command-transcript-line--success';
+    return '';
+  }
+
+  function transcriptBodySegments(body: string): TranscriptSegment[] {
+    if (!body) return [];
+    const promptMatch = body.match(TRANSCRIPT_PROMPT_PATTERN);
+    const segments: TranscriptSegment[] = [];
+    let remainder = body;
+    if (promptMatch?.[1]) {
+      segments.push({ text: promptMatch[1], kind: 'prompt' });
+      remainder = body.slice(promptMatch[1].length);
+    }
+    let index = 0;
+    while (index < remainder.length) {
+      let nextMatch: { kind: TranscriptTokenKind; start: number; end: number; text: string } | null = null;
+      for (const candidate of TRANSCRIPT_TOKEN_PATTERNS) {
+        const match = remainder.slice(index).match(candidate.pattern);
+        if (!match || match.index === undefined) continue;
+        const start = index + match.index;
+        const text = match[0];
+        const end = start + text.length;
+        if (!nextMatch || start < nextMatch.start || (start === nextMatch.start && end > nextMatch.end)) {
+          nextMatch = { kind: candidate.kind, start, end, text };
+        }
+      }
+      if (!nextMatch) {
+        segments.push({ text: remainder.slice(index), kind: null });
+        break;
+      }
+      if (nextMatch.start > index) {
+        segments.push({ text: remainder.slice(index, nextMatch.start), kind: null });
+      }
+      segments.push({ text: nextMatch.text, kind: nextMatch.kind });
+      index = nextMatch.end;
+    }
+    return segments;
+  }
+
   function updatePendingInputFromHistory() {
     const run = pendingInputRequest ? allHistory.find((entry) => entry.runId === pendingInputRequest?.runId) : allHistory.find((entry) => deriveQuickCommandPendingInputRequest(entry));
     pendingInputRequest = run ? deriveQuickCommandPendingInputRequest(run) : null;
@@ -269,21 +326,21 @@
   onMount(() => {
     void refreshEntries();
     void refreshHistory();
-    const unlistenPromise = listen(IPC_EVENTS.quickCommandRunUpdated, (event) => handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent));
+    const unlistenPromise = listen(IPC_EVENTS.quickCommandRunUpdated, (event: { payload: unknown }) => handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent));
     const interval = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
-    return () => { window.clearInterval(interval); void unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined); };
+    return () => { window.clearInterval(interval); void unlistenPromise.then((unlisten: () => void) => unlisten()).catch(() => undefined); };
   });
 </script>
 
 <svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
 
 <div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={stopListResize}>
-  <header class="command-panel-header"><div><p>JasonShell</p><h1 id="command-panel-title">Quick Commands</h1></div><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}>×</MeltActionButton></header>
+  <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}>×</MeltActionButton></header>
   {#if panelError}<p class="command-panel-error" role="alert">{panelError}</p>{/if}
   {#if pendingInputError}<p class="command-panel-error" role="alert">{pendingInputError}</p>{/if}
   <section class="command-panel-layout">
     <aside class="command-list" aria-label="Saved commands">
-      <div class="command-list-header"><h2>Saved</h2><MeltActionButton ariaLabel="Create command" onClick={startNewEntry}>New</MeltActionButton></div>
+      <div class="command-list-header"><h2>Saved</h2><MeltActionButton class="command-text-button" ariaLabel="Create command" onClick={startNewEntry}>New</MeltActionButton></div>
       {#if loading}<p class="command-list-state">Loading commands…</p>{:else if !entries.length}<p class="command-list-state">No quick commands saved.</p>{:else}
         <ul>
           {#each entries as entry (entry.id)}
@@ -310,17 +367,17 @@
         <section class="command-input-panel" aria-label="Backend input required">
           <div class="command-input-meta"><div><p>{pending.kind}</p><strong>{pending.prompt || 'Input required'}</strong></div><span>{pending.secret ? 'Password' : 'Input'}</span></div>
           <label class="command-input-field"><span>{pending.secret ? 'Secret input' : 'Input'}</span>{#if pending.secret}<input bind:this={pendingInputInput} type="password" value={pendingInputDraft} disabled={pendingInputBusy} maxlength={currentPendingInputMaxLength()} on:input={(event) => (pendingInputDraft = normalizeDraftLength(inputValue(event), currentPendingInputMaxLength()))} on:keydown={handlePendingInputKeydown} />{:else}<textarea bind:this={pendingInputInput} rows="3" value={pendingInputDraft} disabled={pendingInputBusy} maxlength={currentPendingInputMaxLength()} on:input={(event) => (pendingInputDraft = normalizeDraftLength(textareaValue(event), currentPendingInputMaxLength()))} on:keydown={handlePendingInputKeydown}></textarea>{/if}</label>
-          <div class="command-editor-actions"><MeltActionButton ariaLabel="Submit input" disabled={pendingInputBusy} onClick={() => void submitPendingInput()}>Send</MeltActionButton><MeltActionButton ariaLabel="Clear draft" disabled={pendingInputBusy} onClick={clearPendingInputDraft}>Clear draft</MeltActionButton></div>
+          <div class="command-editor-actions"><MeltActionButton class="command-text-button" ariaLabel="Submit input" disabled={pendingInputBusy} onClick={() => void submitPendingInput()}>Send</MeltActionButton><MeltActionButton class="command-text-button" ariaLabel="Clear draft" disabled={pendingInputBusy} onClick={clearPendingInputDraft}>Clear draft</MeltActionButton></div>
         </section>
       {/if}
       {#if activeTab === 'configuration'}
-        <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}>{saving ? 'Saving…' : 'Save'}</MeltActionButton><MeltActionButton ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}>Clear</MeltActionButton></div></div>
+        <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton class="command-text-button" ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}>{saving ? 'Saving…' : 'Save'}</MeltActionButton><MeltActionButton class="command-text-button" ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}>Clear</MeltActionButton></div></div>
       {:else}
-        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host"><p class="command-history-notice">One merged transcript. History recovery keyed by runId and transcript sequence.</p>{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} on:click|preventDefault={() => toggleRunOutput(run)} on:keydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRunOutput(run); } }}><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><section class="command-transcript-shell" aria-label="Merged transcript">{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}><span class="command-transcript-kind">{line.kind}</span><span class="command-transcript-body">{line.body}</span></div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</section></div></details>{/each}{/if}</div></div></div>
+        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host"><p class="command-history-notice">One merged transcript. History recovery keyed by runId and transcript sequence.</p>{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} on:click|preventDefault={() => toggleRunOutput(run)} on:keydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRunOutput(run); } }}><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><section class="command-transcript-shell" aria-label="Merged transcript">{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</section></div></details>{/each}{/if}</div></div></div>
       {/if}
     </section>
   </section>
   {#if contextEntry}<div bind:this={contextMenuElement} class="command-context-menu" role="menu" style={`left: ${contextMenuPosition.x}px; top: ${contextMenuPosition.y}px`}><button bind:this={contextMenuFirstAction} type="button" role="menuitem" on:click={showHistory}>View output history</button><button type="button" role="menuitem" on:click={editContextEntry}>Edit command</button><button type="button" role="menuitem" on:click={duplicateContextEntry}>Duplicate command</button></div>{/if}
-  {#if deleteConfirmation}<div class="delete-confirm-backdrop" role="presentation" on:click|stopPropagation><div bind:this={deleteConfirmationDialog} class="delete-confirm-dialog" role="alertdialog" tabindex="-1" aria-modal="true" aria-labelledby="command-delete-confirm-title" aria-describedby="command-delete-confirm-message" on:keydown={handleDeleteConfirmationKeydown}><h2 id="command-delete-confirm-title">Confirm Delete</h2><p id="command-delete-confirm-message">Delete quick command “{deleteConfirmation.label}”? This cannot be undone.</p><div class="delete-confirm-actions"><MeltActionButton disabled={deleteConfirmationBusy} onClick={cancelDeleteEntry}>Cancel</MeltActionButton><MeltActionButton class="danger" disabled={deleteConfirmationBusy} onClick={() => void confirmDeleteEntry()}>Delete</MeltActionButton></div></div></div>{/if}
+  {#if deleteConfirmation}<div class="delete-confirm-backdrop" role="presentation" on:click|stopPropagation><div bind:this={deleteConfirmationDialog} class="delete-confirm-dialog" role="alertdialog" tabindex="-1" aria-modal="true" aria-labelledby="command-delete-confirm-title" aria-describedby="command-delete-confirm-message" on:keydown={handleDeleteConfirmationKeydown}><h2 id="command-delete-confirm-title">Confirm Delete</h2><p id="command-delete-confirm-message">Delete quick command “{deleteConfirmation.label}”? This cannot be undone.</p><div class="delete-confirm-actions"><MeltActionButton class="command-text-button" disabled={deleteConfirmationBusy} onClick={cancelDeleteEntry}>Cancel</MeltActionButton><MeltActionButton class="command-text-button danger" disabled={deleteConfirmationBusy} onClick={() => void confirmDeleteEntry()}>Delete</MeltActionButton></div></div></div>{/if}
 </div>
 

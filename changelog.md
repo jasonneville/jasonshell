@@ -6,6 +6,10 @@
 - 2026-08-13 `[CODE]` DOCS: Documented current task-preview generation ownership: BottomBar owns monotonic show/hide ids, preview-surface hide requests route through `task-preview:hide-request`, Rust ignores stale/non-increasing show/hide generations before task-preview window mutation, and DWM remains primary with GDI fallback.
 - 2026-08-13 `[TOOL]` VALIDATED: Source-contract, TypeScript, and Rust checks passed for task-preview generation ownership and stale-request handling; no live desktop smoke claimed.
 - 2026-08-13 `[CODE]` DOCS: Documented Stack Browser Downloads default ordering: canonical Downloads opens Date modified descending/newest first, other folders keep name ascending, and backend paging snapshots Downloads newest-first before page 1.
+- 2026-08-13 `[CODE]` FIXED: Quick Commands header now drops the `JasonShell` banner label, saved-command text buttons keep normal page sizing, and merged history output hides stream labels while coloring stdout/stderr/system/input rows with the existing terminal palette.
+- 2026-08-13 `[CODE]` TESTED: Added command-panel source coverage for the header/banner removal, compact text-button styling, and merged transcript color contract.
+- 2026-08-13 `[CODE]` FIXED: Quick Commands merged transcript now gets safe terminal-like inline highlighting for prompt/command prefixes, paths, URLs, and common success/warning/error/info tokens while keeping raw text, whitespace, and DOM-text-only rendering intact.
+- 2026-08-13 `[CODE]` TESTED: Extended command-panel source coverage for transcript tokenization helpers and new transcript token color classes.
 
 - 2026-08-12 `[CODE]` DOCS: Documented current quick-command terminal input protocol with backend `runId`, versioned `Request-JasonShellInput` OSC markers, CRLF stdin writes, bounded merged transcript, secret submitted-input redaction limits, request/run validation, and push plus polling fallback.
 - 2026-08-12 `[CODE]` DOCS: Updated Windows smoke checklist for quick-command normal input, secret input, malformed marker, stale input, stop during prompt, and push/poll fallback cases; removed stale UI mode smoke wording for `powershellFile`/`cmdFile`.

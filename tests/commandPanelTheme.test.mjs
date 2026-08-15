@@ -40,6 +40,7 @@ test('quick commands surface uses shared shell theme tokens for primary surfaces
   assert.match(commandPanelCss, /z-index: 80;/);
   assert.match(commandPanelCss, /\.delete-confirm-dialog \{[\s\S]*box-shadow: var\(--js-shadow-raised\);[\s\S]*width: min\(28rem, calc\(100vw - 1.5rem\)\);/);
   assert.match(commandPanelCss, /\.delete-confirm-actions :global\(button\):focus-visible \{[\s\S]*box-shadow: var\(--js-focus-ring\);/);
+  assert.match(commandPanelCss, /command-transcript-token--url/);
 });
 
 test('quick commands keep compact icon controls and context-only history/edit actions', () => {

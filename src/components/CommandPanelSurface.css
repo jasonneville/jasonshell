@@ -28,7 +28,7 @@
 .command-panel-header h1,
 .command-list h2,
 .command-editor h2 { font-size: 0.82rem; margin: 0; }
-.command-panel-header p { color: var(--js-color-text-muted); font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 0.15rem; text-transform: uppercase; }
+.command-panel-header { align-items: center; justify-content: space-between; }
 
 .command-panel-close-button {
   background: #dc2626;
@@ -55,6 +55,12 @@
 .command-panel-close-button:focus-visible { background: #ef4444; }
 .command-panel-close-button:focus-visible { box-shadow: var(--js-focus-ring); outline: 0; }
 .command-panel-close-button:active { background: #b91c1c; transform: translateY(1px); }
+
+.command-text-button {
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
 
 .command-panel-error,
 .command-form-errors {
@@ -129,11 +135,30 @@
 .command-history-body { display: grid; gap: var(--js-space-2); padding-top: var(--js-space-2); }
 .command-list-state { font-size: 0.7rem; margin: 0; }
 .command-transcript-shell { background: var(--js-color-surface); border-left: 2px solid var(--js-color-accent-border); color: var(--js-color-text); font: 0.67rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace; margin: 0; max-height: 12rem; overflow: auto; padding: 0.45rem; white-space: pre-wrap; }
-.command-transcript-line { display: grid; gap: 0.15rem; margin: 0 0 0.35rem; }
+.command-transcript-line { color: var(--js-color-text); display: block; margin: 0 0 0.15rem; white-space: pre-wrap; }
 .command-transcript-line:last-child { margin-bottom: 0; }
-.command-transcript-kind { color: var(--js-color-text-muted); font-size: 0.56rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.command-transcript-line[data-kind='stderr'] { color: var(--js-color-error-text); }
+.command-transcript-line[data-kind='system'],
+.command-transcript-line[data-kind='input-request'],
+.command-transcript-line[data-kind='input-submitted'] { color: var(--js-color-warning-border); }
+.command-transcript-line[data-kind='confirm'] { color: var(--js-color-success-border); }
+.command-transcript-line--stderr { color: var(--js-color-error-text); }
+.command-transcript-line--system { color: var(--js-color-warning-border); }
+.command-transcript-line--prompt,
+.command-transcript-line--command { color: var(--js-color-warning-border); }
+.command-transcript-line--success { color: var(--js-color-success-border); }
+.command-transcript-token { white-space: inherit; }
+.command-transcript-token--prompt { color: var(--js-color-warning-border); }
+.command-transcript-token--path { color: color-mix(in srgb, var(--js-color-text) 78%, var(--js-color-accent-border)); }
+.command-transcript-token--url { color: color-mix(in srgb, var(--js-color-text) 40%, var(--js-color-accent-border)); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 50%, transparent); text-underline-offset: 0.12em; }
+.command-transcript-token--level-error { color: var(--js-color-error-text); font-weight: 700; }
+.command-transcript-token--level-warning { color: var(--js-color-warning-border); font-weight: 700; }
+.command-transcript-token--level-success { color: var(--js-color-success-border); font-weight: 700; }
+.command-transcript-token--level-info { color: color-mix(in srgb, var(--js-color-text) 76%, var(--js-color-accent-border)); }
+.command-transcript-kind { display: none; }
 .command-transcript-body { white-space: pre-wrap; }
-.command-transcript-line.redacted .command-transcript-body { color: var(--js-color-text-muted); font-style: italic; }
+.command-transcript-line.redacted { color: var(--js-color-text-muted); font-style: italic; }
+.command-transcript-line.redacted .command-transcript-token { color: inherit; }
 
 .command-input-panel { background: var(--js-color-surface-sunken); border: 1px solid var(--js-color-accent-border); display: grid; gap: var(--js-space-2); padding: var(--js-space-2); }
 .command-input-meta strong { display: block; font-size: 0.74rem; }
@@ -148,7 +173,7 @@
   border: 1px solid var(--js-color-border);
   border-radius: 0;
   color: var(--js-color-text);
-  font-size: 0.69rem;
+  font-size: 0.72rem;
   padding: 0.34rem 0.4rem;
 }
 .command-input-field textarea,

@@ -21,6 +21,8 @@ import {
   saveQuickCommandsSettings
 } from '../dist-tests/lib/quickCommands.js';
 
+const quickCommandsSource = readFileSync(new URL('../src-tauri/src/quick_commands.rs', import.meta.url), 'utf8');
+
 const source = readFileSync(new URL('../src/lib/quickCommands.ts', import.meta.url), 'utf8');
 
 test('quick command wrapper exposes stable mode contract and defaults', () => {
@@ -235,6 +237,14 @@ test('quick command history merge prefers runId and transcript sequence', () => 
   assert.equal(merged[0].transcript.length, 2);
   assert.equal(merged[0].transcript[0].sequence, 1);
   assert.equal(merged[0].transcript[1].sequence, 2);
+});
+
+test('quick command backend emits merged transcript snapshots with ordered stream chunks', () => {
+  assert.match(quickCommandsSource, /append_running_output/);
+  assert.match(quickCommandsSource, /kind = if is_stdout \{ "stdout" \} else \{ "stderr" \}/);
+  assert.match(quickCommandsSource, /push_transcript\(/);
+  assert.match(quickCommandsSource, /emit_run_updated_from_transcript\(/);
+  assert.match(quickCommandsSource, /sequence: next_sequence\(\)/);
 });
 
 test('quick command duplicate labels stay unique case-insensitively', () => {
