@@ -53,6 +53,7 @@
   let deleteTriggerElement: HTMLButtonElement | null = null;
   let contextMenuPosition = { x: 16, y: 112 };
   let activeRunIds = new Set<string>();
+  let activeCommandIds = new Set<string>();
   let expandedRunIds = new Set<string>();
   let activeTab: CommandPanelTab = 'configuration';
   let listWidth = 180;
@@ -65,6 +66,13 @@
   let pendingInputBusy = false;
   let pendingInputError = '';
   let pendingInputInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+  const TRANSCRIPT_SEGMENT_CACHE_LIMIT = 256;
+  let historyPollTimer: number | null = null;
+  let historyUpdateFrame: number | null = null;
+  let historyUpdateQueued = false;
+  let lastLiveHistoryUpdateAtByRun = new Map<string, number>();
+  let transcriptSegmentCache = new Map<string, TranscriptSegment[]>();
+  let transcriptSegmentCacheOrder: string[] = [];
 
   type TranscriptTokenKind = 'prompt' | 'path' | 'url' | 'level-error' | 'level-warning' | 'level-success' | 'level-info';
   type TranscriptSegment = { text: string; kind: TranscriptTokenKind | null };
@@ -176,7 +184,8 @@
     runningId = entry.id; panelError = ''; formErrors = [];
     try {
       const { runId } = await runQuickCommand(quickCommandRunRequest(entry.id));
-      activeRunIds = new Set([...activeRunIds, entry.id]);
+      activeCommandIds = new Set([...activeCommandIds, entry.id]);
+      activeRunIds = new Set([...activeRunIds, runId]);
       expandedRunIds = new Set([...expandedRunIds, runId]);
       selectCommand(entry);
       activeTab = 'previousRuns';
@@ -199,7 +208,8 @@
       if (requestId !== historyRequestId || editor.id !== selectedId) return;
       allHistory = mergeQuickCommandRunHistoryEntries(allHistory, allRuns);
       history = selectedId ? allHistory.filter((run) => run.commandId === selectedId) : [];
-      activeRunIds = new Set(allHistory.filter((run) => run.running).map((run) => run.commandId));
+      activeRunIds = new Set(allHistory.filter((run) => run.running).map((run) => run.runId));
+      activeCommandIds = new Set(allHistory.filter((run) => run.running).map((run) => run.commandId));
       const nextExpandedIds = new Set(expandedRunIds);
       for (const run of allHistory) if (run.commandId === selectedId && run.running) nextExpandedIds.add(historyRunKey(run));
       expandedRunIds = nextExpandedIds;
@@ -233,7 +243,28 @@
   function dismissContextMenu(event: MouseEvent) { if (contextMenuElement?.contains(event.target as Node)) return; contextEntry = null; }
   function dismissContextMenuOnEscape(event: KeyboardEvent) { if (event.key === 'Escape' && contextEntry) { event.preventDefault(); contextEntry = null; } }
   function commandRowKeydown(event: KeyboardEvent, entry: QuickCommandEntry) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectCommand(entry); } else { openKeyboardContextMenu(event, entry); } }
-  function shouldPollHistory(): boolean { return activeTab === 'previousRuns' || activeRunIds.size > 0 || pendingInputRequest !== null; }
+  function shouldPollHistory(): boolean {
+    if (pendingInputRequest !== null) return true;
+    if (activeRunIds.size === 0) return false;
+    const now = Date.now();
+    // Contract: activeCommandIds holds command IDs; freshness map keys must match the same ID domain.
+    for (const runId of activeRunIds) {
+      const lastLiveAt = lastLiveHistoryUpdateAtByRun.get(runId);
+      if (lastLiveAt === undefined || now - lastLiveAt >= 1100) return true;
+    }
+    return false;
+  }
+  function pruneLiveHistoryUpdateTimes() {
+    if (!lastLiveHistoryUpdateAtByRun.size) return;
+    const activeIds = new Set(allHistory.filter((run) => run.running).map((run) => run.runId));
+    for (const runId of lastLiveHistoryUpdateAtByRun.keys()) if (!activeIds.has(runId)) lastLiveHistoryUpdateAtByRun.delete(runId);
+  }
+  function pruneTranscriptSegmentCache() {
+    while (transcriptSegmentCacheOrder.length > TRANSCRIPT_SEGMENT_CACHE_LIMIT) {
+      const removed = transcriptSegmentCacheOrder.shift();
+      if (removed) transcriptSegmentCache.delete(removed);
+    }
+  }
   function normalizeDraftLength(value: string, maxLength: number): string { return Array.from(value).slice(0, maxLength).join(''); }
   function currentPendingInputMaxLength(): number { return pendingInputRequest?.maxLength ?? 4096; }
 
@@ -246,8 +277,11 @@
     return '';
   }
 
-  function transcriptBodySegments(body: string): TranscriptSegment[] {
+  function transcriptBodySegments(runId: string, sequence: number | null | undefined, fallbackKey: string, body: string): TranscriptSegment[] {
     if (!body) return [];
+    const cacheKey = sequence === undefined || sequence === null ? `${runId}:fallback:${fallbackKey}` : `${runId}:${sequence}`;
+    const cached = transcriptSegmentCache.get(cacheKey);
+    if (cached) return cached;
     const promptMatch = body.match(TRANSCRIPT_PROMPT_PATTERN);
     const segments: TranscriptSegment[] = [];
     let remainder = body;
@@ -278,6 +312,9 @@
       segments.push({ text: nextMatch.text, kind: nextMatch.kind });
       index = nextMatch.end;
     }
+    transcriptSegmentCache.set(cacheKey, segments);
+    transcriptSegmentCacheOrder.push(cacheKey);
+    pruneTranscriptSegmentCache();
     return segments;
   }
 
@@ -289,7 +326,7 @@
 
   function handleQuickCommandRunUpdated(payload: QuickCommandRunUpdatedEvent) {
     const existing = allHistory.find((run) => run.runId === payload.runId) ?? null;
-    allHistory = mergeQuickCommandRunHistoryEntries(allHistory, [{
+    const nextHistory = mergeQuickCommandRunHistoryEntries(allHistory, [{
       runId: payload.runId,
       commandId: payload.commandId,
       startedAtEpochMs: existing?.startedAtEpochMs ?? payload.atEpochMs ?? Date.now(),
@@ -303,8 +340,18 @@
       running: payload.kind !== 'exit' && payload.kind !== 'stopped',
       transcript: [payload]
     }]);
-    history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
-    updatePendingInputFromHistory();
+    allHistory = nextHistory;
+    lastLiveHistoryUpdateAtByRun.set(payload.runId, Date.now());
+    pruneLiveHistoryUpdateTimes();
+    if (historyUpdateFrame !== null) return;
+    historyUpdateQueued = true;
+    historyUpdateFrame = window.requestAnimationFrame(() => {
+      historyUpdateFrame = null;
+      if (!historyUpdateQueued) return;
+      historyUpdateQueued = false;
+      history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
+      updatePendingInputFromHistory();
+    });
   }
 
   async function submitPendingInput() {
@@ -327,8 +374,8 @@
     void refreshEntries();
     void refreshHistory();
     const unlistenPromise = listen(IPC_EVENTS.quickCommandRunUpdated, (event: { payload: unknown }) => handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent));
-    const interval = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
-    return () => { window.clearInterval(interval); void unlistenPromise.then((unlisten: () => void) => unlisten()).catch(() => undefined); };
+    historyPollTimer = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
+    return () => { if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; void unlistenPromise.then((unlisten: () => void) => unlisten()).catch(() => undefined); };
   });
 </script>
 
@@ -349,9 +396,9 @@
                 <button class="command-select" type="button" aria-label={`Edit ${entry.label}`} on:click={() => selectCommand(entry)} on:keydown={(event) => commandRowKeydown(event, entry)}><strong>{entry.label}</strong></button>
                 <button class="command-context-trigger" type="button" aria-label={`More options for ${entry.label}`} aria-haspopup="menu" on:click|stopPropagation={() => selectCommand(entry)} on:keydown={(event) => openKeyboardContextMenu(event, entry)}></button>
                 <div class="command-row-actions">
-                  {#if runningId === entry.id || activeRunIds.has(entry.id)}<span class="command-spinner" aria-label={`${entry.label} is running`}></span>{/if}
-                  <MeltActionButton class={`command-icon-button ${activeRunIds.has(entry.id) ? 'command-stop-button' : 'command-run-button'}`} ariaLabel={activeRunIds.has(entry.id) ? `Stop ${entry.label}` : `Run ${entry.label}`} disabled={Boolean(runningId || saving || stoppingId === entry.id)} onClick={() => void (activeRunIds.has(entry.id) ? stopEntry(entry.id) : runEntry(entry))}>{#if activeRunIds.has(entry.id)}<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg>{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>{/if}</MeltActionButton>
-                  <MeltActionButton class="command-icon-button command-delete-button" ariaLabel={`Delete ${entry.label}`} disabled={Boolean(runningId || saving || activeRunIds.has(entry.id))} onClick={(event) => void deleteEntry(entry.id, event)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5h6v8H5V5Zm1-2h4l1 1h3v1H2V4h3l1-1Z" /></svg></MeltActionButton>
+                  {#if runningId === entry.id || activeCommandIds.has(entry.id)}<span class="command-spinner" aria-label={`${entry.label} is running`}></span>{/if}
+                  <MeltActionButton class={`command-icon-button ${activeCommandIds.has(entry.id) ? 'command-stop-button' : 'command-run-button'}`} ariaLabel={activeCommandIds.has(entry.id) ? `Stop ${entry.label}` : `Run ${entry.label}`} disabled={Boolean(runningId || saving || stoppingId === entry.id)} onClick={() => void (activeCommandIds.has(entry.id) ? stopEntry(entry.id) : runEntry(entry))}>{#if activeCommandIds.has(entry.id)}<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg>{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>{/if}</MeltActionButton>
+                  <MeltActionButton class="command-icon-button command-delete-button" ariaLabel={`Delete ${entry.label}`} disabled={Boolean(runningId || saving || activeCommandIds.has(entry.id))} onClick={(event) => void deleteEntry(entry.id, event)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5h6v8H5V5Zm1-2h4l1 1h3v1H2V4h3l1-1Z" /></svg></MeltActionButton>
                 </div>
               </div>
             </li>
@@ -373,7 +420,7 @@
       {#if activeTab === 'configuration'}
         <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton class="command-text-button" ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}>{saving ? 'Saving…' : 'Save'}</MeltActionButton><MeltActionButton class="command-text-button" ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}>Clear</MeltActionButton></div></div>
       {:else}
-        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host"><p class="command-history-notice">One merged transcript. History recovery keyed by runId and transcript sequence.</p>{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} on:click|preventDefault={() => toggleRunOutput(run)} on:keydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRunOutput(run); } }}><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><section class="command-transcript-shell" aria-label="Merged transcript">{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</section></div></details>{/each}{/if}</div></div></div>
+        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host"><p class="command-history-notice">One merged transcript. History recovery keyed by runId and transcript sequence.</p>{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} on:click|preventDefault={() => toggleRunOutput(run)} on:keydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRunOutput(run); } }}><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><section class="command-transcript-shell" aria-label="Merged transcript">{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(run.runId, line.sequence, `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`, line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</section></div></details>{/each}{/if}</div></div></div>
       {/if}
     </section>
   </section>

@@ -507,6 +507,7 @@ mod windows_impl {
         enrich_process_tree, is_pid_killable, record_cpu_snapshot, retain_process_snapshots,
         workspace_hint_from_metadata, ProcessCpuSnapshot, ProcessInfo,
     };
+    use crate::task_windows::bounded_string_cache::BoundedStringCache;
     use std::collections::HashMap;
     use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
@@ -538,9 +539,12 @@ mod windows_impl {
         PROCESS_TERMINATE, PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
     };
 
-    type ProcessIconCache = Mutex<HashMap<String, Option<String>>>;
+    type ProcessIconCache = Mutex<BoundedStringCache<String>>;
 
     static PROCESS_ICON_DATA_URLS: OnceLock<ProcessIconCache> = OnceLock::new();
+    const PROCESS_ICON_CACHE_CAPACITY: usize = 128;
+    const PROCESS_ICON_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+    const PROCESS_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs(30);
 
     pub(super) fn list_processes() -> Result<Vec<ProcessInfo>, String> {
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
@@ -662,7 +666,13 @@ mod windows_impl {
     }
 
     fn process_icon_data_url(executable_path: Option<&str>) -> Option<String> {
-        let cache = PROCESS_ICON_DATA_URLS.get_or_init(|| Mutex::new(HashMap::new()));
+        let cache = PROCESS_ICON_DATA_URLS.get_or_init(|| {
+            Mutex::new(BoundedStringCache::new(
+                PROCESS_ICON_CACHE_CAPACITY,
+                PROCESS_ICON_CACHE_TTL,
+                PROCESS_ICON_CACHE_NEGATIVE_TTL,
+            ))
+        });
         process_icon_data_url_from_cache_with_extractor(
             cache,
             executable_path,
@@ -697,10 +707,10 @@ mod windows_impl {
         cache: &ProcessIconCache,
         executable_path: &str,
     ) -> Option<Option<String>> {
-        let Ok(cache) = cache.lock() else {
+        let Ok(mut cache) = cache.lock() else {
             return None;
         };
-        cache.get(executable_path).cloned()
+        cache.get_cloned(&executable_path.to_string())
     }
 
     fn resolve_process_icon_data_url(executable_path: &Path) -> Option<String> {
@@ -715,7 +725,7 @@ mod windows_impl {
         let Ok(mut cache) = cache.lock() else {
             return;
         };
-        cache.insert(executable_path.to_string(), icon_data_url);
+        cache.insert(executable_path.to_string(), icon_data_url)
     }
 
     fn gpu_percent_by_pid() -> HashMap<u32, f64> {
@@ -1079,7 +1089,11 @@ mod windows_impl {
 
         #[test]
         fn process_icon_cache_hit_is_reused_without_extraction() {
-            let cache = Mutex::new(HashMap::new());
+            let cache = Mutex::new(BoundedStringCache::new(
+                PROCESS_ICON_CACHE_CAPACITY,
+                PROCESS_ICON_CACHE_TTL,
+                PROCESS_ICON_CACHE_NEGATIVE_TTL,
+            ));
             let calls = AtomicUsize::new(0);
 
             let first = process_icon_data_url_from_cache_with_extractor(
@@ -1106,7 +1120,11 @@ mod windows_impl {
 
         #[test]
         fn process_icon_cache_hit_is_available_while_miss_extracts() {
-            let cache = Arc::new(Mutex::new(HashMap::new()));
+            let cache = Arc::new(Mutex::new(BoundedStringCache::new(
+                PROCESS_ICON_CACHE_CAPACITY,
+                PROCESS_ICON_CACHE_TTL,
+                PROCESS_ICON_CACHE_NEGATIVE_TTL,
+            )));
             cache.lock().unwrap().insert(
                 "C:\\Tools\\cached.exe".to_string(),
                 Some("data:image/png;base64,cached".to_string()),

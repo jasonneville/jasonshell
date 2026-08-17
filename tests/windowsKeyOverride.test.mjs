@@ -6,12 +6,27 @@ function readSource(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('Ctrl+Space search hotkey emits centered search toggle event to top-bar only', () => {
+test('native hook callback only classifies and hands off to bounded queue', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const procStart = rust.indexOf('unsafe extern "system" fn windows_key_hook_proc');
+  const procEnd = rust.indexOf('#[cfg(windows)]\nfn control_key_is_down()', procStart);
+  const proc = rust.slice(procStart, procEnd);
 
-  assert.match(rust, /pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str = "search:toggle-centered";/);
-  assert.match(rust, /emit_to\(\s*crate::shell_windows::TOP_BAR_LABEL,\s*SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
-  assert.doesNotMatch(rust, /SEARCH_PANEL_LABEL,\s*SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+  assert.match(rust, /mpsc::sync_channel\(8\)/);
+  assert.match(proc, /try_send\(decision\)/);
+  assert.doesNotMatch(proc, /AppHandle/);
+  assert.doesNotMatch(proc, /emit_to\(/);
+});
+
+test('worker owns AppHandle and emit_to for hook events', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const procStart = rust.indexOf('unsafe extern "system" fn windows_key_hook_proc');
+  const procEnd = rust.indexOf('#[cfg(windows)]\nfn control_key_is_down()', procStart);
+  const proc = rust.slice(procStart, procEnd);
+
+  assert.match(rust, /let worker_app_handle = app_handle\.clone\(\);/);
+  assert.match(rust, /worker_app_handle\.emit_to\(/);
+  assert.doesNotMatch(proc, /emit_to\(/);
 });
 
 test('TopBar listens for native Ctrl+Space search toggle through existing centered paths', () => {
@@ -87,7 +102,7 @@ test('native hook passes through when hook state is unavailable', () => {
   assert.doesNotMatch(rust, /\bwin_down: bool/);
   assert.match(rust, /pub fn unavailable_hook_state_decision\(_event: SearchHotkeyEvent\) -> SearchHotkeyDecision/);
   assert.match(rust, /SearchHotkeyDecision::PassThrough/);
-  assert.match(rust, /\(unavailable_hook_state_decision\(event\), None\)/);
+  assert.match(rust, /unavailable_hook_state_decision\(event\)/);
 });
 
 test('native Ctrl+Space hotkey toggles once and does not capture Windows key', () => {
@@ -102,4 +117,15 @@ test('native Ctrl+Space hotkey toggles once and does not capture Windows key', (
   assert.match(rust, /VK_LCONTROL/);
   assert.match(rust, /VK_RCONTROL/);
   assert.doesNotMatch(rust, /VK_LWIN|VK_RWIN|LeftWin|RightWin/);
+});
+
+test('fullscreen guard instrumentation tracks duration and wake counts', () => {
+  const rust = readSource('../src-tauri/src/appbar.rs');
+
+  assert.match(rust, /fullscreen guard/);
+  assert.match(rust, /AtomicU64/);
+  assert.match(rust, /FULLSCREEN_GUARD_WAKE_COUNT\.store\(0, Ordering::Relaxed\)/);
+  assert.match(rust, /FULLSCREEN_GUARD_WAKE_COUNT\.fetch_add\(1, Ordering::Relaxed\)/);
+  assert.match(rust, /fullscreen guard summary duration_ms=/);
+  assert.match(rust, /wake_count=/);
 });

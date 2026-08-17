@@ -1,22 +1,53 @@
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
-
-static SEARCH_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
 
 pub(crate) fn icon_data_url_for_path(path: &Path) -> Option<String> {
-    let key = normalize_icon_cache_key(path)?;
-    let cache = SEARCH_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let Ok(mut cache) = cache.lock() else {
-        return resolve_icon_data_url(path);
-    };
-    if let Some(cached) = cache.get(&key) {
-        return cached.clone();
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        return None;
     }
 
-    let resolved = resolve_icon_data_url(path);
-    cache.insert(key, resolved.clone());
-    resolved
+    #[cfg(target_os = "windows")]
+    {
+        windows_cache::windows_icon_data_url_for_path(path)
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_cache {
+    use super::normalize_icon_cache_key;
+    use crate::task_windows::bounded_string_cache::BoundedStringCache;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    static SEARCH_ICON_CACHE: OnceLock<Mutex<BoundedStringCache<String>>> = OnceLock::new();
+    const SEARCH_ICON_CACHE_CAPACITY: usize = 128;
+    const SEARCH_ICON_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+    const SEARCH_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs(30);
+
+    pub(super) fn windows_icon_data_url_for_path(path: &Path) -> Option<String> {
+        let key = normalize_icon_cache_key(path)?;
+        let cache = SEARCH_ICON_CACHE.get_or_init(|| {
+            Mutex::new(BoundedStringCache::new(
+                SEARCH_ICON_CACHE_CAPACITY,
+                SEARCH_ICON_CACHE_TTL,
+                SEARCH_ICON_CACHE_NEGATIVE_TTL,
+            ))
+        });
+        let cached = cache
+            .lock()
+            .ok()
+            .and_then(|mut cache| cache.get_cloned(&key));
+        if let Some(cached) = cached {
+            return cached;
+        }
+        let resolved = super::resolve_icon_data_url(path);
+        if let Ok(mut cache) = cache.lock() {
+            cache.insert(key, resolved.clone());
+        }
+        resolved
+    }
 }
 
 fn normalize_icon_cache_key(path: &Path) -> Option<String> {

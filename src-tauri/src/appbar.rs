@@ -9,7 +9,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use std::thread::{self, JoinHandle};
@@ -152,6 +152,7 @@ const STARTUP_STABILIZATION_DELAY: Duration = Duration::from_millis(100);
 const REQUIRED_STABLE_POLLS: usize = 3;
 const FULLSCREEN_GUARD_POLL_DELAY: Duration = Duration::from_millis(250);
 const FULLSCREEN_RECT_TOLERANCE: i32 = 2;
+static FULLSCREEN_GUARD_WAKE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy)]
 enum AppBarEdge {
@@ -1057,12 +1058,15 @@ where
 
 fn start_fullscreen_guard(app_handle: AppHandle, state: &mut ShellRuntimeState) {
     stop_fullscreen_guard(state);
+    FULLSCREEN_GUARD_WAKE_COUNT.store(0, Ordering::Relaxed);
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_signal = Arc::clone(&stop);
     let guard = thread::spawn(move || {
+        let guard_started_at = Instant::now();
         let mut retry_state = GuardRetryState::default();
         while !stop_signal.load(Ordering::Relaxed) {
+            FULLSCREEN_GUARD_WAKE_COUNT.fetch_add(1, Ordering::Relaxed);
             let now = Instant::now();
             if let Some(target) = foreground_fullscreen_target_for_layout_with_state(&app_handle) {
                 if guard_retry_prepare_target(&mut retry_state, target, now) {
@@ -1080,6 +1084,11 @@ fn start_fullscreen_guard(app_handle: AppHandle, state: &mut ShellRuntimeState) 
             }
             thread::sleep(FULLSCREEN_GUARD_POLL_DELAY);
         }
+        eprintln!(
+            "fullscreen guard summary duration_ms={} wake_count={}",
+            guard_started_at.elapsed().as_millis(),
+            FULLSCREEN_GUARD_WAKE_COUNT.load(Ordering::Relaxed)
+        );
     });
 
     state.fullscreen_guard_stop = Some(stop);

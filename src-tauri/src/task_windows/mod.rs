@@ -47,8 +47,16 @@ pub struct TaskWindowPreviewImage {
     pub height: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskbarWindowsSnapshot {
+    pub sequence: u64,
+    pub windows: Vec<TaskbarWindow>,
+}
+
 #[cfg(target_os = "windows")]
 mod actions;
+pub(crate) mod bounded_string_cache;
 #[cfg(target_os = "windows")]
 mod icons;
 #[cfg(target_os = "windows")]
@@ -60,9 +68,25 @@ mod tests;
 #[cfg(target_os = "windows")]
 mod windows;
 
+pub(crate) const TASKBAR_WINDOWS_SNAPSHOT_EVENT: &str = "taskbar:windows-snapshot";
+
 #[cfg(target_os = "windows")]
 pub(crate) fn start_notification_tracking() {
     notifications::start_notification_tracking();
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn start_taskbar_snapshot_pipeline(app: &tauri::AppHandle) {
+    windows::ensure_taskbar_snapshot_worker_started(app.clone());
+    windows::refresh_taskbar_snapshot_now(Some(app)).ok();
+}
+
+#[tauri::command]
+pub fn request_taskbar_windows_refresh() {
+    #[cfg(target_os = "windows")]
+    {
+        windows::request_taskbar_snapshot_refresh();
+    }
 }
 
 #[tauri::command]

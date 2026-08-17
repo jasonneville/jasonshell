@@ -79,3 +79,16 @@ test('icon cache miss resolves shell icon outside the cache mutex', () => {
   assert.match(resolverSource, /store_stack_icon_cache_result\(cache_key,\s*icon_data_url\.clone\(\)\)/);
   assert.doesNotMatch(resolverSource, /cache\.lock\(\)[\s\S]*resolve_shell_icon_data_url/);
 });
+
+test('stack/search/process icon caches are bounded by ttl and capacity constants', () => {
+  const boundedCache = readFileSync(new URL('../src-tauri/src/task_windows/bounded_string_cache.rs', import.meta.url), 'utf8');
+  const searchIcons = readFileSync(new URL('../src-tauri/src/search/icons.rs', import.meta.url), 'utf8');
+  const processManager = readFileSync(new URL('../src-tauri/src/process_manager.rs', import.meta.url), 'utf8');
+  assert.match(boundedCache, /pub\(crate\) struct BoundedStringCache/);
+  assert.match(searchIcons, /SEARCH_ICON_CACHE_CAPACITY: usize = 128/);
+  assert.match(searchIcons, /SEARCH_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs\(30\)/);
+  assert.match(processManager, /PROCESS_ICON_CACHE_CAPACITY: usize = 128/);
+  assert.match(processManager, /PROCESS_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs\(30\)/);
+  assert.match(rustIcons, /STACK_ICON_CACHE_CAPACITY: usize = 128/);
+  assert.match(rustIcons, /STACK_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs\(30\)/);
+});

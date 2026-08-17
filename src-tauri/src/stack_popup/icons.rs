@@ -1,12 +1,18 @@
 use crate::stack_popup::models::{StackItemIconResolution, StackItemIconResolutionBatch};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use std::time::Instant;
+
+use crate::task_windows::bounded_string_cache::BoundedStringCache;
 
 pub(crate) const STACK_ICON_RESOLVE_BATCH_LIMIT: usize = 24;
 
-static STACK_POPUP_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+static STACK_POPUP_ICON_CACHE: OnceLock<Mutex<BoundedStringCache<String>>> = OnceLock::new();
+const STACK_ICON_CACHE_CAPACITY: usize = 128;
+const STACK_ICON_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const STACK_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs(30);
 
 pub(crate) fn resolve_stack_item_icons_for_paths(
     paths: Vec<String>,
@@ -102,15 +108,27 @@ fn resolve_stack_item_icon(path: &str) -> StackItemIconResolution {
 }
 
 fn cached_stack_icon_lookup(cache_key: &str) -> Option<Option<String>> {
-    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| {
+        Mutex::new(BoundedStringCache::new(
+            STACK_ICON_CACHE_CAPACITY,
+            STACK_ICON_CACHE_TTL,
+            STACK_ICON_CACHE_NEGATIVE_TTL,
+        ))
+    });
     cache
         .lock()
         .ok()
-        .and_then(|cache_guard| cache_guard.get(cache_key).cloned())
+        .and_then(|mut cache_guard| cache_guard.get_cloned(&cache_key.to_string()))
 }
 
 fn store_stack_icon_cache_result(cache_key: String, icon_data_url: Option<String>) {
-    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = STACK_POPUP_ICON_CACHE.get_or_init(|| {
+        Mutex::new(BoundedStringCache::new(
+            STACK_ICON_CACHE_CAPACITY,
+            STACK_ICON_CACHE_TTL,
+            STACK_ICON_CACHE_NEGATIVE_TTL,
+        ))
+    });
     if let Ok(mut cache_guard) = cache.lock() {
         cache_guard.insert(cache_key, icon_data_url);
     }

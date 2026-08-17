@@ -70,6 +70,7 @@ fn main() {
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
             task_windows::list_open_task_windows,
+            task_windows::request_taskbar_windows_refresh,
             task_windows::list_taskbar_process_windows,
             task_windows::activate_task_window,
             task_windows::maximize_task_window,
@@ -386,6 +387,7 @@ fn main() {
             {
                 appbar::activate_shell_surfaces(app, &windows)?;
                 task_windows::start_notification_tracking();
+                task_windows::start_taskbar_snapshot_pipeline(app.handle());
             }
 
             #[cfg(not(target_os = "windows"))]

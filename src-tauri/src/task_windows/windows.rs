@@ -1,11 +1,16 @@
 use super::{
     icons::{window_icon_data_url, EMPTY_ICON_DATA_URL},
     notifications, TaskbarProcessWindow, TaskbarWindow, TaskbarWindowActivityState,
+    TaskbarWindowsSnapshot, TASKBAR_WINDOWS_SNAPSHOT_EVENT,
 };
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
@@ -30,6 +35,14 @@ const EXCLUDED_CLASSES: &[&str] = &[
 const EXCLUDED_PROCESS_NAMES: &[&str] = &["dwm"];
 const EXCLUDED_TITLES: &[&str] = &["DWM Notification Window"];
 const CPU_TIME_BUSY_DELTA_TICKS: u64 = 200_000;
+const TASKBAR_REFRESH_SOON_DELAY: Duration = Duration::from_millis(120);
+
+static TASKBAR_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TASKBAR_SNAPSHOT_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
+static TASKBAR_REFRESH_TX: OnceLock<mpsc::Sender<()>> = OnceLock::new();
+static LAST_TASKBAR_SNAPSHOT: OnceLock<Mutex<Option<TaskbarWindowsSnapshot>>> = OnceLock::new();
+static LAST_TASKBAR_SNAPSHOT_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+const TASKBAR_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug)]
 pub(super) struct ActivitySnapshot {
@@ -58,6 +71,37 @@ pub(super) struct WindowCandidate {
 }
 
 pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
+    if let Some(snapshot) = last_taskbar_snapshot_if_fresh() {
+        return Ok(snapshot.windows);
+    }
+    refresh_taskbar_snapshot_now(None)?;
+    Ok(last_taskbar_snapshot_if_fresh()
+        .map(|snapshot| snapshot.windows)
+        .unwrap_or_default())
+}
+
+pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
+    if TASKBAR_SNAPSHOT_WORKER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let (tx, rx) = mpsc::channel::<()>();
+    let _ = TASKBAR_REFRESH_TX.set(tx);
+    thread::spawn(move || loop {
+        if rx.recv().is_err() {
+            break;
+        }
+        while rx.recv_timeout(TASKBAR_REFRESH_SOON_DELAY).is_ok() {}
+        let _ = refresh_taskbar_snapshot_now(Some(&app));
+    });
+}
+
+pub(super) fn request_taskbar_snapshot_refresh() {
+    if let Some(tx) = TASKBAR_REFRESH_TX.get() {
+        let _ = tx.send(());
+    }
+}
+
+pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<(), String> {
     let current_process_id = std::process::id();
     let foreground = unsafe { GetForegroundWindow() };
     let mut handles = Vec::new();
@@ -71,6 +115,7 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
     }
 
     let mut windows = Vec::new();
+    let mut cpu_time_by_process_id: HashMap<u32, Option<u64>> = HashMap::new();
     for hwnd in handles {
         let Some(candidate) = build_window_candidate(hwnd, foreground, current_process_id)? else {
             continue;
@@ -89,16 +134,14 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
         let is_minimized = candidate.is_minimized;
         let process_id = candidate.process_id;
         let notification_count =
-            notifications::notification_count_for_process_path(process_path.as_deref());
+            notifications::notification_count_for_process_path(process_path.as_deref(), None);
         let icon_data_url = window_icon_data_url(native_hwnd, process_path.as_deref())
             .unwrap_or_else(|_| EMPTY_ICON_DATA_URL.to_string());
-        let activity_state = task_window_activity_state(
-            &hwnd,
-            process_id,
-            &title,
-            &process_name,
-            process_cpu_time_ticks(process_id),
-        );
+        let cpu_time_ticks = *cpu_time_by_process_id
+            .entry(process_id)
+            .or_insert_with(|| process_cpu_time_ticks(process_id));
+        let activity_state =
+            task_window_activity_state(&hwnd, process_id, &title, &process_name, cpu_time_ticks);
 
         windows.push(TaskbarWindow {
             hwnd,
@@ -115,7 +158,32 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
 
     sort_windows_stably(&mut windows);
     retain_activity_snapshots(windows.iter().map(|window| window.hwnd.as_str()));
-    Ok(windows)
+    let sequence = TASKBAR_SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Ok(mut snapshot) = LAST_TASKBAR_SNAPSHOT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        *snapshot = Some(TaskbarWindowsSnapshot {
+            sequence,
+            windows: windows.clone(),
+        });
+    }
+    if let Ok(mut snapshot_at) = LAST_TASKBAR_SNAPSHOT_AT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        *snapshot_at = Some(Instant::now());
+    }
+    if let Some(app) = app {
+        let _ = app.emit(
+            TASKBAR_WINDOWS_SNAPSHOT_EVENT,
+            TaskbarWindowsSnapshot {
+                sequence,
+                windows: windows.clone(),
+            },
+        );
+    }
+    Ok(())
 }
 
 pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {
@@ -401,6 +469,23 @@ fn task_window_activity_state(
     );
 
     activity_state
+}
+
+fn last_taskbar_snapshot_if_fresh() -> Option<TaskbarWindowsSnapshot> {
+    let snapshot_at = LAST_TASKBAR_SNAPSHOT_AT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()?
+        .as_ref()
+        .copied()?;
+    if snapshot_at.elapsed() > TASKBAR_SNAPSHOT_MAX_AGE {
+        return None;
+    }
+    LAST_TASKBAR_SNAPSHOT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()?
+        .clone()
 }
 
 pub(super) fn is_activity_indicator_eligible(process_name: &str, title: &str) -> bool {

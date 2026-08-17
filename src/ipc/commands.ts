@@ -2,6 +2,7 @@ export const IPC_COMMANDS = {
   listPinnedTaskbarApps: 'list_pinned_taskbar_apps',
   launchPinnedTaskbarApp: 'launch_pinned_taskbar_app',
   listOpenTaskWindows: 'list_open_task_windows',
+  requestTaskbarWindowsRefresh: 'request_taskbar_windows_refresh',
   listTaskbarProcessWindows: 'list_taskbar_process_windows',
   activateTaskWindow: 'activate_task_window',
   maximizeTaskWindow: 'maximize_task_window',

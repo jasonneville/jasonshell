@@ -2,9 +2,12 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use png::{BitDepth, ColorType, Encoder};
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
@@ -23,23 +26,120 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub(super) const EMPTY_ICON_DATA_URL: &str = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 
 const WM_GETICON_TIMEOUT_MS: u32 = 25;
+const WINDOW_ICON_CACHE_CAPACITY: usize = 256;
+const WINDOW_ICON_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const WINDOW_ICON_CACHE_NEGATIVE_TTL: Duration = Duration::from_secs(20);
+
+static WINDOW_ICON_CACHE: OnceLock<
+    Mutex<crate::task_windows::bounded_string_cache::BoundedStringCache<String>>,
+> = OnceLock::new();
 
 pub(super) fn window_icon_data_url(
     hwnd: HWND,
     process_path: Option<&Path>,
 ) -> Result<String, String> {
-    if let Some(icon) = taskbar_icon_handle(hwnd) {
-        return Ok(format!(
-            "data:image/png;base64,{}",
-            BASE64.encode(icon_to_png_bytes(icon)?)
-        ));
+    let icon_identity = taskbar_icon_identity(hwnd);
+    window_icon_data_url_with_resolver(
+        hwnd,
+        process_path,
+        icon_identity,
+        |_hwnd, process_path, icon| {
+            if let Some(icon) = icon {
+                let png = icon_to_png_bytes(icon)?;
+                Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
+            } else if let Some(process_path) = process_path {
+                file_icon_data_url(process_path)
+            } else {
+                Ok(empty_icon_data_url().to_string())
+            }
+        },
+    )
+}
+
+fn window_icon_data_url_with_resolver<F>(
+    hwnd: HWND,
+    process_path: Option<&Path>,
+    icon_identity: WindowIconIdentity,
+    resolver: F,
+) -> Result<String, String>
+where
+    F: FnOnce(HWND, Option<&Path>, Option<HICON>) -> Result<String, String>,
+{
+    let key = window_icon_cache_key(hwnd, process_path, &icon_identity);
+    let cache = WINDOW_ICON_CACHE.get_or_init(|| {
+        Mutex::new(
+            crate::task_windows::bounded_string_cache::BoundedStringCache::new(
+                WINDOW_ICON_CACHE_CAPACITY,
+                WINDOW_ICON_CACHE_TTL,
+                WINDOW_ICON_CACHE_NEGATIVE_TTL,
+            ),
+        )
+    });
+
+    if let Ok(mut cache) = cache.lock() {
+        if let Some(cached) = cache.get_cloned(&key) {
+            return Ok(cached.unwrap_or_else(|| empty_icon_data_url().to_string()));
+        }
     }
 
-    if let Some(process_path) = process_path {
-        return file_icon_data_url(process_path);
+    let resolved = resolver(hwnd, process_path, icon_identity.hicon());
+
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(key, resolved.clone().ok());
     }
 
-    Ok(EMPTY_ICON_DATA_URL.to_string())
+    resolved
+}
+
+fn window_icon_cache_key(
+    hwnd: HWND,
+    process_path: Option<&Path>,
+    icon_identity: &WindowIconIdentity,
+) -> String {
+    let path = process_path
+        .map(|path| path.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mut key = String::with_capacity(path.len() + 64);
+    let _ = write!(
+        &mut key,
+        "{}|{}|{}",
+        hwnd.0 as usize,
+        path,
+        icon_identity.cache_token()
+    );
+    key
+}
+
+#[derive(Clone, Copy)]
+enum WindowIconIdentity {
+    Icon(HICON),
+    Missing,
+}
+
+impl WindowIconIdentity {
+    fn hicon(self) -> Option<HICON> {
+        match self {
+            Self::Icon(icon) => Some(icon),
+            Self::Missing => None,
+        }
+    }
+
+    fn cache_token(self) -> String {
+        match self {
+            Self::Icon(icon) => format!("icon:{:p}", icon.0),
+            Self::Missing => "icon:none".to_string(),
+        }
+    }
+}
+
+fn taskbar_icon_identity(hwnd: HWND) -> WindowIconIdentity {
+    taskbar_icon_handle(hwnd)
+        .map(WindowIconIdentity::Icon)
+        .unwrap_or(WindowIconIdentity::Missing)
+}
+
+fn empty_icon_data_url() -> &'static str {
+    EMPTY_ICON_DATA_URL
 }
 
 fn taskbar_icon_handle(hwnd: HWND) -> Option<HICON> {
@@ -240,4 +340,75 @@ fn to_wide(value: impl AsRef<OsStr>) -> Vec<u16> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn source_helper_keeps_resolution_outside_lock() {
+        let calls = AtomicUsize::new(0);
+        let result = window_icon_data_url_with_resolver(
+            HWND(1 as *mut _),
+            None,
+            WindowIconIdentity::Missing,
+            |_, _, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok("data:image/png;base64,test".to_string())
+            },
+        );
+
+        assert_eq!(result.as_deref(), Ok("data:image/png;base64,test"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cache_key_changes_with_icon_identity() {
+        let hwnd = HWND(7 as *mut _);
+        let path = Some(Path::new("C:/Windows/explorer.exe"));
+        let missing = window_icon_cache_key(hwnd, path, &WindowIconIdentity::Missing);
+        let icon_a =
+            window_icon_cache_key(hwnd, path, &WindowIconIdentity::Icon(HICON(1 as *mut _)));
+        let icon_b =
+            window_icon_cache_key(hwnd, path, &WindowIconIdentity::Icon(HICON(2 as *mut _)));
+
+        assert_ne!(missing, icon_a);
+        assert_ne!(icon_a, icon_b);
+    }
+
+    #[test]
+    fn cache_hit_skips_resolution_even_with_icon_identity() {
+        let cache = WINDOW_ICON_CACHE.get_or_init(|| {
+            Mutex::new(
+                crate::task_windows::bounded_string_cache::BoundedStringCache::new(
+                    WINDOW_ICON_CACHE_CAPACITY,
+                    WINDOW_ICON_CACHE_TTL,
+                    WINDOW_ICON_CACHE_NEGATIVE_TTL,
+                ),
+            )
+        });
+
+        let hwnd = HWND(11 as *mut _);
+        let key = window_icon_cache_key(hwnd, None, &WindowIconIdentity::Missing);
+        cache
+            .lock()
+            .unwrap()
+            .insert(key, Some("data:image/png;base64,cached".to_string()));
+
+        let calls = AtomicUsize::new(0);
+        let result = window_icon_data_url_with_resolver(
+            hwnd,
+            None,
+            WindowIconIdentity::Missing,
+            |_, _, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok("data:image/png;base64,miss".to_string())
+            },
+        );
+
+        assert_eq!(result.as_deref(), Ok("data:image/png;base64,cached"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
 }

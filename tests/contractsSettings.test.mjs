@@ -295,6 +295,7 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'task:started',
     'taskbar:refresh-launchers',
     'taskbar:refresh-windows',
+    'taskbar:windows-snapshot',
     'terminal-panel:closed',
     'terminal-panel:open',
     'top-bar:pin-menu-action',

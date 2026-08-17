@@ -52,7 +52,6 @@
   } from '../lib/taskbarGroups';
   import {
     TASKBAR_REFRESH_LAUNCHERS_EVENT,
-    TASKBAR_REFRESH_WINDOWS_EVENT,
     TASK_PREVIEW_DELAY_MS,
     TASK_PREVIEW_HIDE_DELAY_MS,
     TASK_PREVIEW_HOVER_ENTER_EVENT,
@@ -69,6 +68,7 @@
   import {
     activateTaskWindow,
     listOpenTaskWindows,
+    requestTaskbarWindowsRefresh,
     type TaskbarWindow
   } from '../lib/taskbarWindows';
   import {
@@ -77,6 +77,7 @@
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
   const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
+  const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
   let launcherMessage = 'Loading Explorer taskbar pins…';
   let shellSettings: ShellSettings | null = null;
   let bottomBarHeightLogical = 32.4;
@@ -101,6 +102,7 @@
   let suppressClickLauncherKey: string | null = null;
   let taskbarMessage = 'Loading open windows…';
   let openWindows: TaskbarWindow[] = [];
+  let lastTaskbarSnapshotSequence = 0;
   let launchingShortcutPath: string | null = null;
   let activatingHwnd: string | null = null;
   let previewRequestId = Date.now();
@@ -788,8 +790,13 @@
     void loadBottomBarResizeSettings();
     void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
-    registerAsyncUnlistener(listen(TASKBAR_REFRESH_WINDOWS_EVENT, () => {
-      void refreshTaskbarWindows();
+    registerAsyncUnlistener(listen<{ sequence: number; windows: TaskbarWindow[] }>('taskbar:windows-snapshot', (event) => {
+      if (event.payload.sequence <= lastTaskbarSnapshotSequence) return;
+      lastTaskbarSnapshotSequence = event.payload.sequence;
+      openWindows = event.payload.windows;
+    }));
+    registerAsyncUnlistener(listen('taskbar:refresh-windows', () => {
+      void requestTaskbarWindowsRefresh();
     }));
 
     registerAsyncUnlistener(listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
@@ -809,9 +816,6 @@
       });
     }));
 
-    const taskbarPollTimer = window.setInterval(() => {
-      void refreshTaskbarWindows();
-    }, 1_000);
     const resizeHandler = () => updateTaskbarOverflow();
     let shellSurfaceHotkeyHandled = false;
     let terminalSurfaceHotkeyHandled = false;
@@ -865,7 +869,6 @@
       clearPreviewHideTimer();
       const requestId = nextPreviewRequestId();
       void hideTaskWindowPreview(requestId).catch(() => undefined);
-      window.clearInterval(taskbarPollTimer);
       window.clearTimeout(runtimeMetricsTimer);
       window.removeEventListener('resize', resizeHandler);
       window.removeEventListener('keydown', keydownHandler, true);

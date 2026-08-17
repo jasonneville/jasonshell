@@ -58,6 +58,17 @@ test('process manager icon extraction is outside cache mutex guard', () => {
   assert.doesNotMatch(helper, /cache\.lock\(\)[\s\S]*shell_file_icon_data_url/);
 });
 
+test('bounded icon cache helper enforces ttl and lru-like capacity', () => {
+  const helper = readFileSync('src-tauri/src/task_windows/bounded_string_cache.rs', 'utf8');
+  assert.match(helper, /capacity: usize/);
+  assert.match(helper, /positive_ttl: Duration/);
+  assert.match(helper, /negative_ttl: Duration/);
+  assert.match(helper, /evict_over_capacity/);
+  assert.match(helper, /evict_expired/);
+  assert.match(helper, /caches_positive_and_negative_values/);
+  assert.match(helper, /evicts_oldest_entry_at_capacity/);
+});
+
 test('task preview window operations happen after runtime guard is dropped', () => {
   const body = extractFunction(taskPreview, 'publish_and_show_preview');
   assert.match(body, /ensure_preview_request_is_current\(state, request_id\)\?/);

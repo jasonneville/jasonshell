@@ -1,8 +1,7 @@
-#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(windows)]
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 #[cfg(windows)]
 use tauri::{AppHandle, Emitter};
 #[cfg(windows)]
@@ -147,9 +146,10 @@ impl SearchHotkeyClassifier {
                 SearchHotkeyDecision::PassThrough
             }
             (SearchHotkeyCode::Backquote, SearchHotkeyEventKind::KeyDown) => {
+                let repeated = event.repeat || self.backquote_down;
                 self.backquote_down = true;
                 if self.any_alt_down() {
-                    if !event.repeat {
+                    if !repeated {
                         SearchHotkeyDecision::ToggleTerminal
                     } else {
                         SearchHotkeyDecision::Suppress
@@ -240,9 +240,11 @@ pub fn toggle_search_event_target_label() -> &'static str {
 
 #[cfg(windows)]
 struct NativeHookState {
-    app_handle: AppHandle,
     classifier: SearchHotkeyClassifier,
     hook: isize,
+    action_tx: mpsc::SyncSender<SearchHotkeyDecision>,
+    worker_stop: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(windows)]
@@ -262,12 +264,61 @@ pub fn install_windows_key_hook(app_handle: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    let (action_tx, action_rx) = mpsc::sync_channel(8);
+    let worker_stop = Arc::new(AtomicBool::new(false));
+    let worker_stop_signal = Arc::clone(&worker_stop);
+    let worker_app_handle = app_handle.clone();
+    let worker = std::thread::spawn(move || {
+        while !worker_stop_signal.load(Ordering::Relaxed) {
+            match action_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(SearchHotkeyDecision::ToggleSearch) => {
+                    let _ = worker_app_handle.emit_to(
+                        crate::shell_windows::TOP_BAR_LABEL,
+                        SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT,
+                        (),
+                    );
+                }
+                Ok(SearchHotkeyDecision::ToggleTerminal) => {
+                    let _ = worker_app_handle.emit_to(
+                        crate::shell_windows::TOP_BAR_LABEL,
+                        TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
+                        (),
+                    );
+                }
+                Ok(SearchHotkeyDecision::PassThrough | SearchHotkeyDecision::Suppress) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        while let Ok(action) = action_rx.try_recv() {
+            match action {
+                SearchHotkeyDecision::ToggleSearch => {
+                    let _ = worker_app_handle.emit_to(
+                        crate::shell_windows::TOP_BAR_LABEL,
+                        SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT,
+                        (),
+                    );
+                }
+                SearchHotkeyDecision::ToggleTerminal => {
+                    let _ = worker_app_handle.emit_to(
+                        crate::shell_windows::TOP_BAR_LABEL,
+                        TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
+                        (),
+                    );
+                }
+                SearchHotkeyDecision::PassThrough | SearchHotkeyDecision::Suppress => {}
+            }
+        }
+    });
+
     let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(windows_key_hook_proc), None, 0) }
         .map_err(|error| format!("failed to install search hotkey hook: {error}"))?;
     *guard = Some(NativeHookState {
-        app_handle,
         classifier: SearchHotkeyClassifier::default(),
         hook: hook.0 as isize,
+        action_tx,
+        worker_stop,
+        worker: Some(worker),
     });
     Ok(())
 }
@@ -285,7 +336,12 @@ pub fn uninstall_windows_key_hook() {
     let Some(state) = guard.take() else {
         return;
     };
+    state.worker_stop.store(true, Ordering::Relaxed);
     let _ = unsafe { UnhookWindowsHookEx(HHOOK(state.hook as *mut _)) };
+    drop(state.action_tx);
+    if let Some(worker) = state.worker {
+        let _ = worker.join();
+    }
 }
 
 #[cfg(not(windows))]
@@ -300,46 +356,30 @@ unsafe extern "system" fn windows_key_hook_proc(
     if code == HC_ACTION as i32 {
         let event = keyboard_hook_event(wparam, lparam);
         if let Some(event) = event {
-            let (decision, app_handle) = if let Ok(mut guard) = native_hook_state().lock() {
+            let decision = if let Ok(mut guard) = native_hook_state().lock() {
                 if let Some(state) = guard.as_mut() {
                     let decision = state
                         .classifier
                         .handle_event_with_control_override(event, control_key_is_down());
-                    let app_handle = if matches!(
+                    if matches!(
                         decision,
                         SearchHotkeyDecision::ToggleSearch | SearchHotkeyDecision::ToggleTerminal
                     ) {
-                        Some(state.app_handle.clone())
-                    } else {
-                        None
-                    };
-                    (decision, app_handle)
+                        let _ = state.action_tx.try_send(decision);
+                    }
+                    decision
                 } else {
-                    (unavailable_hook_state_decision(event), None)
+                    unavailable_hook_state_decision(event)
                 }
             } else {
-                (unavailable_hook_state_decision(event), None)
+                unavailable_hook_state_decision(event)
             };
 
             match decision {
                 SearchHotkeyDecision::ToggleSearch => {
-                    if let Some(app_handle) = app_handle {
-                        let _ = app_handle.emit_to(
-                            crate::shell_windows::TOP_BAR_LABEL,
-                            SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT,
-                            (),
-                        );
-                    }
                     return LRESULT(1);
                 }
                 SearchHotkeyDecision::ToggleTerminal => {
-                    if let Some(app_handle) = app_handle {
-                        let _ = app_handle.emit_to(
-                            crate::shell_windows::TOP_BAR_LABEL,
-                            TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
-                            (),
-                        );
-                    }
                     return LRESULT(1);
                 }
                 SearchHotkeyDecision::Suppress => return LRESULT(1),
@@ -464,6 +504,24 @@ mod tests {
         assert_eq!(
             classifier.handle_event(up(SearchHotkeyCode::LeftAlt)),
             SearchHotkeyDecision::PassThrough
+        );
+    }
+
+    #[test]
+    fn repeated_alt_backquote_does_not_duplicate_terminal_toggle() {
+        let mut classifier = SearchHotkeyClassifier::default();
+
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
+            SearchHotkeyDecision::PassThrough
+        );
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::Backquote)),
+            SearchHotkeyDecision::ToggleTerminal
+        );
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::Backquote)),
+            SearchHotkeyDecision::Suppress
         );
     }
 

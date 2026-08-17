@@ -36,6 +36,7 @@ pub mod commands {
     pub const LIST_PINNED_TASKBAR_APPS: &str = "list_pinned_taskbar_apps";
     pub const LAUNCH_PINNED_TASKBAR_APP: &str = "launch_pinned_taskbar_app";
     pub const LIST_OPEN_TASK_WINDOWS: &str = "list_open_task_windows";
+    pub const REQUEST_TASKBAR_WINDOWS_REFRESH: &str = "request_taskbar_windows_refresh";
     pub const LIST_TASKBAR_PROCESS_WINDOWS: &str = "list_taskbar_process_windows";
     pub const ACTIVATE_TASK_WINDOW: &str = "activate_task_window";
     pub const MAXIMIZE_TASK_WINDOW: &str = "maximize_task_window";
@@ -174,6 +175,7 @@ pub mod commands {
         LIST_PINNED_TASKBAR_APPS,
         LAUNCH_PINNED_TASKBAR_APP,
         LIST_OPEN_TASK_WINDOWS,
+        REQUEST_TASKBAR_WINDOWS_REFRESH,
         LIST_TASKBAR_PROCESS_WINDOWS,
         ACTIVATE_TASK_WINDOW,
         MAXIMIZE_TASK_WINDOW,
@@ -344,6 +346,7 @@ pub mod events {
     pub const TASK_STARTED: &str = "task:started";
     pub const TASKBAR_REFRESH_LAUNCHERS: &str = "taskbar:refresh-launchers";
     pub const TASKBAR_REFRESH_WINDOWS: &str = "taskbar:refresh-windows";
+    pub const TASKBAR_WINDOWS_SNAPSHOT: &str = "taskbar:windows-snapshot";
     pub const TOP_BAR_PIN_MENU_ACTION: &str = "top-bar:pin-menu-action";
     pub const TRAY_PANEL_OPEN: &str = "tray-panel:open";
     pub const TRAY_PANEL_CLOSED: &str = "tray-panel:closed";
@@ -384,6 +387,7 @@ pub mod events {
         TASK_STARTED,
         TASKBAR_REFRESH_LAUNCHERS,
         TASKBAR_REFRESH_WINDOWS,
+        TASKBAR_WINDOWS_SNAPSHOT,
         TOP_BAR_PIN_MENU_ACTION,
         QUICK_COMMAND_RUN_UPDATED,
         TRAY_PANEL_CLOSED,
@@ -442,6 +446,7 @@ mod tests {
         assert!(unique.contains("load_shell_settings"));
         assert!(unique.contains("save_shell_settings"));
         assert!(unique.contains("list_workspaces"));
+        assert!(unique.contains("request_taskbar_windows_refresh"));
         assert!(unique.contains("activate_workspace"));
         assert!(unique.contains("show_stack_popup"));
         assert!(unique.contains("begin_stack_popup_focus_loss_hold"));
@@ -552,6 +557,7 @@ mod tests {
                 "task:started",
                 "taskbar:refresh-launchers",
                 "taskbar:refresh-windows",
+                "taskbar:windows-snapshot",
                 "top-bar:pin-menu-action",
                 "quick-command:run-updated",
                 "tray-panel:closed",

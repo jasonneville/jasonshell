@@ -164,6 +164,7 @@
   });
   let launchers: PinnedTaskbarLauncher[] = [];
   let openWindows: TaskbarWindow[] = [];
+  let lastTaskbarSnapshotSequence = 0;
   let stackPins: StackPin[] = [];
   let searchResults: SearchPanelResult[] = [];
   let searchResultsQuery = '';
@@ -238,6 +239,7 @@
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
   const TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity';
+  const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
   const TERMINAL_PANEL_ID = 'terminal-panel';
   const COMMAND_PANEL_ID = 'command-panel';
   const TRAY_PANEL_ID = 'tray-panel';
@@ -1645,11 +1647,6 @@
     const terminalActivityTimer = window.setInterval(() => {
       terminalActivityNowMs = Date.now();
     }, 450);
-    const searchRefreshTimer = window.setInterval(() => {
-      void listOpenTaskWindows().then((windows) => {
-        openWindows = windows;
-      });
-    }, 1_000);
     const runtimeMetricsTimer = window.setTimeout(() => {
       void reportShellSurfaceRuntimeMetrics('top-bar').catch((error) => {
         console.error('Top bar runtime metrics failed', error);
@@ -1674,6 +1671,11 @@
     }));
     registerAsyncUnlistener(listen(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, () => {
       toggleCenteredSearchFromHotkey();
+    }));
+    registerAsyncUnlistener(listen<{ sequence: number; windows: TaskbarWindow[] }>(TASKBAR_WINDOWS_SNAPSHOT_EVENT, (event) => {
+      if (event.payload.sequence <= lastTaskbarSnapshotSequence) return;
+      lastTaskbarSnapshotSequence = event.payload.sequence;
+      openWindows = event.payload.windows;
     }));
     registerAsyncUnlistener(listen(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, () => {
       void toggleTerminalPanel(terminalControl);
@@ -1840,7 +1842,6 @@
       railScrollButtonsDisposed = true;
       window.clearInterval(timer);
       window.clearInterval(terminalActivityTimer);
-      window.clearInterval(searchRefreshTimer);
       window.clearTimeout(runtimeMetricsTimer);
       cancelSearchEngineTimer();
       cancelSearchFreshnessRetry();

@@ -245,6 +245,29 @@ test('quick command backend emits merged transcript snapshots with ordered strea
   assert.match(quickCommandsSource, /push_transcript\(/);
   assert.match(quickCommandsSource, /emit_run_updated_from_transcript\(/);
   assert.match(quickCommandsSource, /sequence: next_sequence\(\)/);
+  assert.match(quickCommandsSource, /VecDeque<QuickCommandTranscriptEntry>/);
+  assert.doesNotMatch(quickCommandsSource, /remove\(0\)/);
+});
+
+test('quick command backend assigns one sequence per terminal semantic entry and reuses it in payload plus persisted transcript', () => {
+  assert.match(quickCommandsSource, /let sequence = next_sequence\(\);[\s\S]*?push_transcript\([\s\S]*?kind: "exit"\.into\(\),[\s\S]*?sequence,[\s\S]*?\}\);/);
+  assert.match(quickCommandsSource, /let sequence = next_sequence\(\);[\s\S]*?push_transcript\([\s\S]*?kind: "stopped"\.into\(\),[\s\S]*?sequence,[\s\S]*?\}\);/);
+  assert.match(quickCommandsSource, /kind: "exit"\.into\(\),[\s\S]*?sequence,/);
+  assert.match(quickCommandsSource, /kind: "stopped"\.into\(\),[\s\S]*?sequence,/);
+  assert.match(quickCommandsSource, /push_transcript\([\s\S]*?kind: "stopped"\.into\(\),[\s\S]*?\);/);
+  assert.doesNotMatch(quickCommandsSource, /state\.transcript\.push_back\(QuickCommandTranscriptEntry \{[\s\S]*?kind: "stopped"\.into\(\)/);
+});
+
+test('quick command backend exit snapshot preserves redaction contract', () => {
+  assert.match(quickCommandsSource, /body: exit_code\.map\(\|c\| c\.to_string\(\)\)\.unwrap_or_default\(\)/);
+  assert.match(quickCommandsSource, /redacted: false/);
+  assert.match(quickCommandsSource, /"\[redacted\]"\.to_string\(\)/);
+});
+
+test('quick command backend history and transcript payload order stay stable under bounded retention', () => {
+  assert.match(quickCommandsSource, /state\.transcript\.iter\(\)\.cloned\(\)\.collect\(\)/);
+  assert.match(quickCommandsSource, /transcript: transcript\.into_iter\(\)\.collect\(\)/);
+  assert.match(quickCommandsSource, /push_back\(/);
 });
 
 test('quick command duplicate labels stay unique case-insensitively', () => {

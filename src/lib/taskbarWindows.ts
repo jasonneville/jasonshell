@@ -74,3 +74,7 @@ export function maximizeTaskWindow(hwnd: string): Promise<void> {
 export function closeTaskWindow(hwnd: string): Promise<void> {
   return invoke(IPC_COMMANDS.closeTaskWindow, { hwnd });
 }
+
+export function requestTaskbarWindowsRefresh(): Promise<void> {
+  return invoke(IPC_COMMANDS.requestTaskbarWindowsRefresh);
+}

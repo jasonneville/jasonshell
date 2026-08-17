@@ -5,7 +5,7 @@ use crate::settings::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{ChildStdin, Command, Stdio};
@@ -80,7 +80,7 @@ struct QuickCommandRunState {
     stdin: Option<ChildStdin>,
     running: bool,
     pending: Option<QuickCommandPendingInput>,
-    transcript: Vec<QuickCommandTranscriptEntry>,
+    transcript: VecDeque<QuickCommandTranscriptEntry>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     stdout_truncated: bool,
@@ -434,7 +434,7 @@ fn spawn_quick_command(
                 stdin,
                 running: true,
                 pending: None,
-                transcript: vec![],
+                transcript: VecDeque::new(),
                 stdout: vec![],
                 stderr: vec![],
                 stdout_truncated: false,
@@ -466,18 +466,22 @@ fn spawn_quick_command(
                 return;
             };
             let mut transcript = state.transcript.clone();
-            transcript.push(QuickCommandTranscriptEntry {
-                kind: "exit".into(),
-                body: exit_code.map(|c| c.to_string()).unwrap_or_default(),
-                request_id: None,
-                prompt: None,
-                secret: false,
-                max_length: None,
-                redacted: false,
-                sequence: next_sequence(),
-                at_epoch_ms: finished_at_epoch_ms,
-                pending: false,
-            });
+            let sequence = next_sequence();
+            push_transcript(
+                &mut transcript,
+                QuickCommandTranscriptEntry {
+                    kind: "exit".into(),
+                    body: exit_code.map(|c| c.to_string()).unwrap_or_default(),
+                    request_id: None,
+                    prompt: None,
+                    secret: false,
+                    max_length: None,
+                    redacted: false,
+                    sequence,
+                    at_epoch_ms: finished_at_epoch_ms,
+                    pending: false,
+                },
+            );
             let history = settings::QuickCommandRunHistoryEntry {
                 run_id: run_id.clone(),
                 command_id: command_id.clone(),
@@ -488,7 +492,7 @@ fn spawn_quick_command(
                 exit_code,
                 stdout: String::from_utf8_lossy(&stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&stderr).into_owned(),
-                transcript,
+                transcript: transcript.into_iter().collect(),
                 stdout_truncated: stdout_truncated || state.stdout_truncated,
                 stderr_truncated: stderr_truncated || state.stderr_truncated,
                 running: false,
@@ -504,7 +508,7 @@ fn spawn_quick_command(
                 max_length: None,
                 secret: false,
                 redacted: false,
-                sequence: next_sequence(),
+                sequence,
                 at_epoch_ms: finished_at_epoch_ms,
                 pending: false,
             };
@@ -832,12 +836,12 @@ fn emit_run_updated_from_transcript(
     payload
 }
 fn push_transcript(
-    transcript: &mut Vec<QuickCommandTranscriptEntry>,
+    transcript: &mut VecDeque<QuickCommandTranscriptEntry>,
     entry: QuickCommandTranscriptEntry,
 ) {
-    transcript.push(entry);
+    transcript.push_back(entry);
     if transcript.len() > TRANSCRIPT_LIMIT {
-        transcript.remove(0);
+        transcript.pop_front();
     }
 }
 fn state_to_history(state: &QuickCommandRunState) -> settings::QuickCommandRunHistoryEntry {
@@ -853,7 +857,7 @@ fn state_to_history(state: &QuickCommandRunState) -> settings::QuickCommandRunHi
         exit_code: state.exit_code,
         stdout: String::from_utf8_lossy(&state.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&state.stderr).into_owned(),
-        transcript: state.transcript.clone(),
+        transcript: state.transcript.iter().cloned().collect(),
         stdout_truncated: state.stdout_truncated,
         stderr_truncated: state.stderr_truncated,
         running: state.running,
@@ -941,6 +945,7 @@ fn stop_running_quick_command(
     if process_creation_time_for_pid(process_id)? != started_at_filetime_100ns {
         return Err("quick command is no longer running".into());
     }
+    let sequence = next_sequence();
     let state = {
         let mut runs_guard = runs()
             .lock()
@@ -955,18 +960,21 @@ fn stop_running_quick_command(
             return Err("quick command is no longer running".into());
         }
         let mut state = runs_guard.remove(run_id).unwrap();
-        state.transcript.push(QuickCommandTranscriptEntry {
-            kind: "stopped".into(),
-            body: String::new(),
-            request_id: None,
-            prompt: None,
-            secret: false,
-            redacted: false,
-            sequence: next_sequence(),
-            at_epoch_ms: current_epoch_ms(),
-            pending: false,
-            max_length: None,
-        });
+        push_transcript(
+            &mut state.transcript,
+            QuickCommandTranscriptEntry {
+                kind: "stopped".into(),
+                body: String::new(),
+                request_id: None,
+                prompt: None,
+                secret: false,
+                redacted: false,
+                sequence,
+                at_epoch_ms: current_epoch_ms(),
+                pending: false,
+                max_length: None,
+            },
+        );
         state
     };
     let status = Command::new(r"C:\Windows\System32\taskkill.exe")
@@ -993,7 +1001,7 @@ fn stop_running_quick_command(
                 exit_code: None,
                 stdout: String::from_utf8_lossy(&state.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&state.stderr).into_owned(),
-                transcript: state.transcript.clone(),
+                transcript: state.transcript.iter().cloned().collect(),
                 stdout_truncated: state.stdout_truncated,
                 stderr_truncated: state.stderr_truncated,
                 running: false,
@@ -1015,7 +1023,7 @@ fn stop_running_quick_command(
             max_length: None,
             secret: false,
             redacted: false,
-            sequence: next_sequence(),
+            sequence,
             at_epoch_ms: finished_at_epoch_ms,
             pending: false,
         },
@@ -1124,7 +1132,7 @@ mod tests {
             stdin: None,
             running: true,
             pending: None,
-            transcript: vec![],
+            transcript: VecDeque::new(),
             stdout: vec![],
             stderr: vec![],
             stdout_truncated: false,
@@ -1162,7 +1170,7 @@ mod tests {
             stdin: None,
             running: true,
             pending: None,
-            transcript: vec![],
+            transcript: VecDeque::new(),
             stdout: vec![],
             stderr: vec![],
             stdout_truncated: false,
@@ -1211,8 +1219,8 @@ mod tests {
     }
     #[test]
     fn transcript_bound() {
-        let mut t = vec![];
-        for i in 0..300 {
+        let mut t = VecDeque::new();
+        for i in 0..TRANSCRIPT_LIMIT {
             push_transcript(
                 &mut t,
                 QuickCommandTranscriptEntry {
@@ -1223,13 +1231,30 @@ mod tests {
                     secret: false,
                     max_length: None,
                     redacted: false,
-                    sequence: i,
-                    at_epoch_ms: i,
+                    sequence: 7,
+                    at_epoch_ms: i as u64,
                     pending: false,
                 },
             );
         }
+        push_transcript(
+            &mut t,
+            QuickCommandTranscriptEntry {
+                kind: "stdout".into(),
+                body: "terminal".into(),
+                request_id: None,
+                prompt: None,
+                secret: false,
+                max_length: None,
+                redacted: false,
+                sequence: 7,
+                at_epoch_ms: TRANSCRIPT_LIMIT as u64,
+                pending: false,
+            },
+        );
         assert_eq!(t.len(), TRANSCRIPT_LIMIT);
+        assert_eq!(t.back().map(|entry| entry.body.as_str()), Some("terminal"));
+        assert!(t.iter().all(|entry| entry.sequence == 7));
     }
     #[test]
     fn run_ids_unique() {
@@ -1238,7 +1263,7 @@ mod tests {
     #[test]
     fn history_bounded() {
         let h = append_quick_command_history_bounded(
-            vec![],
+            Vec::new(),
             QuickCommandRunHistoryEntry {
                 run_id: "r".into(),
                 command_id: "c".into(),
@@ -1249,7 +1274,7 @@ mod tests {
                 exit_code: None,
                 stdout: String::new(),
                 stderr: String::new(),
-                transcript: vec![],
+                transcript: Vec::new(),
                 stdout_truncated: false,
                 stderr_truncated: false,
                 running: false,
@@ -1269,7 +1294,7 @@ mod tests {
             stdin: None,
             running: false,
             pending: None,
-            transcript: vec![],
+            transcript: VecDeque::new(),
             stdout: vec![1],
             stderr: vec![2],
             stdout_truncated: true,
