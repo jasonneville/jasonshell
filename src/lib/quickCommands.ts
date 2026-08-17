@@ -47,6 +47,7 @@ export interface QuickCommandRunHistoryEntry {
 export interface QuickCommandsSettings {
   entries: QuickCommandEntry[];
   history: QuickCommandRunHistoryEntry[];
+  listWidth: number;
 }
 
 export interface RunQuickCommandRequest {
@@ -103,8 +104,11 @@ type ShellSettingsRecord = Record<string, unknown> & {
 
 const DEFAULT_QUICK_COMMANDS_SETTINGS: QuickCommandsSettings = {
   entries: [],
-  history: []
+  history: [],
+  listWidth: 180
 };
+const MIN_QUICK_COMMANDS_LIST_WIDTH = 128;
+const MAX_QUICK_COMMANDS_LIST_WIDTH = 420;
 
 const SECRET_KEY_PATTERN = /(token|secret|password|credential|api[_-]?key|authorization|cookie)/iu;
 const SECRET_VALUE_PATTERN = /\b(?:bearer\s+\S+|ghp_[A-Za-z0-9_.-]+|gho_[A-Za-z0-9_.-]+|github_pat_[A-Za-z0-9_.-]+|xoxb-[A-Za-z0-9_.-]+|sk-[A-Za-z0-9_.-]+|akia[A-Za-z0-9_.-]*)\b/iu;
@@ -113,7 +117,7 @@ const MIN_QUICK_COMMAND_INPUT_LENGTH = 1;
 const MAX_QUICK_COMMAND_INPUT_LENGTH = 16384;
 
 export function defaultQuickCommandsSettings(): QuickCommandsSettings {
-  return { entries: [], history: [] };
+  return { ...DEFAULT_QUICK_COMMANDS_SETTINGS };
 }
 
 export function coerceQuickCommandsSettings(value: unknown): QuickCommandsSettings {
@@ -135,7 +139,12 @@ export function coerceQuickCommandsSettings(value: unknown): QuickCommandsSettin
     }
     seen.add(entry.id);
   }
-  return { entries, history };
+  return { entries, history, listWidth: normalizeQuickCommandsListWidth(record?.listWidth) };
+}
+
+export function normalizeQuickCommandsListWidth(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_QUICK_COMMANDS_SETTINGS.listWidth;
+  return Math.round(Math.min(Math.max(value, MIN_QUICK_COMMANDS_LIST_WIDTH), MAX_QUICK_COMMANDS_LIST_WIDTH));
 }
 
 export function parseQuickCommandArgsTextarea(value: string): string[] {

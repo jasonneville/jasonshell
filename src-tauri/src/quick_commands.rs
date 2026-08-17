@@ -319,6 +319,7 @@ pub fn save_quick_commands_settings(
 ) -> Result<settings::QuickCommandsSettings, String> {
     settings::update_shell_settings_for_app(&app_handle, |settings| {
         settings.quick_commands.entries = quick_commands.entries;
+        settings.quick_commands.list_width = quick_commands.list_width;
     })
     .map(|s| s.quick_commands)
 }

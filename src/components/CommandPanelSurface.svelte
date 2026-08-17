@@ -114,6 +114,7 @@
       const quickCommands = await loadQuickCommandsSettings();
       entries = sortedEntries(quickCommands.entries);
       allHistory = quickCommands.history;
+      listWidth = quickCommands.listWidth;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
       updatePendingInputFromHistory();
       if (editor.id && !entries.some((entry) => entry.id === editor.id)) editor = blankEditor();
@@ -136,7 +137,7 @@
     panelError = '';
     try {
       const nextEntries = [...entries.filter((entry) => entry.id !== id), nextEntry];
-      const saved = await saveQuickCommandsSettings({ entries: nextEntries, history: allHistory });
+      const saved = await saveQuickCommandsSettings({ entries: nextEntries, history: allHistory, listWidth });
       entries = sortedEntries(saved.entries);
       allHistory = saved.history;
       startEditEntry(nextEntry);
@@ -167,7 +168,7 @@
     try {
       const latestRuns = await listQuickCommandHistory({ id });
       if (latestRuns.some((run) => run.running)) { panelError = 'Cannot delete quick command while it is running.'; return; }
-      const saved = await saveQuickCommandsSettings({ entries: entries.filter((entry) => entry.id !== id), history: allHistory });
+      const saved = await saveQuickCommandsSettings({ entries: entries.filter((entry) => entry.id !== id), history: allHistory, listWidth });
       entries = sortedEntries(saved.entries);
       allHistory = saved.history;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
@@ -231,7 +232,7 @@
   function toggleRunOutput(run: QuickCommandRunHistoryEntry) { const id = historyRunKey(run); const next = new Set(expandedRunIds); if (next.has(id)) next.delete(id); else next.add(id); expandedRunIds = next; }
   function startListResize(event: PointerEvent) { event.preventDefault(); resizePointerId = event.pointerId; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); }
   function resizeList(event: PointerEvent) { if (resizePointerId !== event.pointerId || !panelElement) return; const panelLeft = panelElement.getBoundingClientRect().left; listWidth = Math.round(Math.min(Math.max(event.clientX - panelLeft - 16, 128), 420)); }
-  function stopListResize(event: PointerEvent) { if (resizePointerId === event.pointerId) resizePointerId = null; }
+  function stopListResize(event: PointerEvent) { if (resizePointerId === event.pointerId) { resizePointerId = null; void saveQuickCommandsSettings({ entries, history: allHistory, listWidth }).catch((error) => console.error('Failed to persist quick command pane width', error)); } }
   function closePanel() { void hideCommandPanel().catch((error) => console.error('Failed to hide command panel', error)); }
   function selectCommand(entry: QuickCommandEntry) { startEditEntry(entry); contextEntry = null; activeTab = 'configuration'; }
   function showHistory() { if (contextEntry) selectCommand(contextEntry); activeTab = 'previousRuns'; contextEntry = null; void refreshHistory(); }

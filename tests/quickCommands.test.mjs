@@ -15,6 +15,7 @@ import {
   deriveQuickCommandPendingInputRequest,
   normalizeQuickCommandInputMaxLength,
   normalizeQuickCommandInputValue,
+  normalizeQuickCommandsListWidth,
   mergeQuickCommandRunHistoryEntries,
   listQuickCommandHistory,
   stopQuickCommand,
@@ -27,7 +28,9 @@ const source = readFileSync(new URL('../src/lib/quickCommands.ts', import.meta.u
 
 test('quick command wrapper exposes stable mode contract and defaults', () => {
   assert.deepEqual(QUICK_COMMAND_MODES, ['direct', 'commandBlock']);
-  assert.deepEqual(defaultQuickCommandsSettings(), { entries: [], history: [] });
+  assert.deepEqual(defaultQuickCommandsSettings(), { entries: [], history: [], listWidth: 180 });
+  assert.equal(normalizeQuickCommandsListWidth(99), 128);
+  assert.equal(normalizeQuickCommandsListWidth(999), 420);
 });
 
 test('quick command settings coercion normalizes entries and validates security rules', () => {

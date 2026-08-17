@@ -1,5 +1,8 @@
 ## Change Ledger
 
+- 2026-08-17 `[CODE]` FIXED: Quick Commands now persists the left saved-command pane width, restoring it on launch with bounded legacy-safe defaults.
+- 2026-08-17 `[TOOL]` VALIDATED: `npm run check` passed; Rust suite compiled and ran 484 passed, 1 ignored, 1 unrelated pre-existing VS Code resolver failure.
+
 - 2026-08-17 `[CODE]` DOCS: Clarified live-proven task-window close behavior: UIPI access-denied failures on normal `WM_CLOSE` send/post can use the same one-shot elevated helper after captured identity validation, while protected/system targets remain unsupported and may stay denied.
 - 2026-08-17 `[TOOL]` REVIEWED: Docs-only pass; inspected `master_spec.md`, `CHANGELOG_POLICY.md`, `changelog.md`, and current task-window close implementation. No code/tests changed or run.
 

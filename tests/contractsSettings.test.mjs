@@ -347,7 +347,8 @@ test('settings wrapper declares versioned schema and stable command names', () =
     taskHistory: [],
     quickCommands: {
       entries: [],
-      history: []
+      history: [],
+      listWidth: 180
     },
     stackBrowser: {
       terminalProfile: 'windowsTerminal'

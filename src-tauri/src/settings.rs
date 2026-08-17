@@ -106,6 +106,8 @@ pub struct QuickCommandsSettings {
     pub entries: Vec<QuickCommandEntry>,
     #[serde(default)]
     pub history: Vec<QuickCommandRunHistoryEntry>,
+    #[serde(default = "default_quick_commands_list_width")]
+    pub list_width: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -268,6 +270,7 @@ impl Default for QuickCommandsSettings {
         Self {
             entries: Vec::new(),
             history: Vec::new(),
+            list_width: default_quick_commands_list_width(),
         }
     }
 }
@@ -278,6 +281,10 @@ fn default_search_result_limit() -> usize {
 
 fn default_everything_max_results() -> usize {
     100
+}
+
+fn default_quick_commands_list_width() -> u32 {
+    180
 }
 
 fn default_true() -> bool {
@@ -517,6 +524,7 @@ pub(crate) fn clamp_shell_bar_height_logical(value: f64, minimum: f64) -> f64 {
 fn validate_quick_commands_settings(
     mut quick_commands: QuickCommandsSettings,
 ) -> Result<QuickCommandsSettings, String> {
+    quick_commands.list_width = quick_commands.list_width.clamp(128, 420);
     let mut seen_ids = HashSet::new();
     let mut normalized = Vec::with_capacity(quick_commands.entries.len());
     for entry in quick_commands.entries {
