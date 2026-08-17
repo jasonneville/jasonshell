@@ -42,6 +42,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'stackBrowserMarginSelection.test.mjs',
     'stackBrowserGitStatus.test.mjs',
     'stackBrowserTerminal.test.mjs',
+    'stackBrowserPhase1Safety.test.mjs',
     'stackBrowserPathAutocomplete.test.mjs',
     'stackBrowserTopBarPinFlow.test.mjs',
     'stackBrowserCloseButton.test.mjs',

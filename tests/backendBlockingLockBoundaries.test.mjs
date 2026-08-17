@@ -30,15 +30,15 @@ test('stack archive extraction and recursive file ops run behind blocking task b
   assert.match(extractStackArchive, /pub\s+async\s+fn\s+extract_stack_archive/);
   assert.match(extractStackArchive, /tauri::async_runtime::spawn_blocking\(move \|\| run_archive_extraction_plan\(plan\)\)/);
   const runArchiveExtractionPlan = extractFunction(stackPopup, 'run_archive_extraction_plan');
-  assert.match(runArchiveExtractionPlan, /Command::new\(&plan\.executable\)[\s\S]*\.status\(\)/);
+  assert.match(runArchiveExtractionPlan, /process_runner::run_process\(spec\)/);
   assert.doesNotMatch(extractStackArchive, /\.status\(\)/, 'archive status wait must not remain on the async command path');
 
   const pasteStackItems = extractFunction(stackPopup, 'paste_stack_items');
   assert.match(pasteStackItems, /pub\s+async\s+fn\s+paste_stack_items/);
-  assert.match(pasteStackItems, /paste_stack_clipboard_items_async\(&state, destination\)\.await/);
+  assert.match(pasteStackItems, /paste_stack_clipboard_items_async\(&app_handle, &state, destination\)\.await/);
 
   const pasteAsync = extractFunction(stackClipboard, 'paste_stack_clipboard_items_async');
-  assert.match(pasteAsync, /tauri::async_runtime::spawn_blocking\(move \|\| \{\s*paste_clipboard_items\(&clipboard, &destination\)/);
+  assert.match(pasteAsync, /tauri::async_runtime::spawn_blocking\(move \|\| \{\s*paste_clipboard_items\(&clipboard, &destination, journal_dir\.as_deref\(\)\)/);
 
   const deleteStackItem = extractFunction(stackPopup, 'delete_stack_item');
   assert.match(deleteStackItem, /pub\s+async\s+fn\s+delete_stack_item/);

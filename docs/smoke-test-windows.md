@@ -1,6 +1,6 @@
 # Windows Live Smoke Test Checklist
 
-Status: current live-smoke checklist for JasonShell tray-and-command phases 0-5 validation.
+Status: current live-smoke checklist for JasonShell tray/command plus Stack Browser Phase 1 safety validation. Stack Browser Phase 1 smoke is pending unless a maintainer records live Windows evidence; static tests do not replace these checks.
 
 Use this after the static validation gates pass. These checks require a Windows desktop session, WebView2, and `npm run tauri dev`; they are not replaced by Node or Rust unit tests.
 
@@ -60,6 +60,11 @@ Use this after the static validation gates pass. These checks require a Windows 
 - Right-click row and background menus fit inside the visible screen.
 - Native Explorer folder drops onto the top bar are accepted when valid.
 - Mouse XButton back/forward behavior works when the stack popup has focus.
+- Caller guards: from normal UI, verify top-bar pin/show flows still work, `stack-popup` file/Git/archive actions still work, and terminal-panel path open/reveal bridges still work for their intended targets. If testing via a dev console or injected invoke harness, verify a wrong-surface Stack Git command such as `stack_git_push` from `command-panel` fails with `Unauthorized caller for command stack_git_push`.
+- Git safety: in a Git repo, open Git workbench, load status/log/tree/branches, stage a selected changed path, and verify deleted-file staging works only for a path shown in fresh status. Verify remote fetch/pull/push failures return bounded actionable errors and do not hang on credential prompts.
+- Archive timeout/error: with a safe test archive, verify normal extraction still works. If timeout env override is set to a short clamped value for a controlled hanging extractor, verify JasonShell returns a timeout error and remains responsive.
+- Clipboard copy/cut: copy and cut from Stack Browser, paste into Explorer, and verify Explorer sees the expected copy/move DropEffect. Paste back into Stack Browser and verify collision naming plus refresh. If a clipboard publish failure is induced, verify no partial unusable file-list data remains on the clipboard.
+- Recovery journal: perform Stack Browser copy paste and cut/move fallback paste, then inspect app-local `stack-browser-recovery/` for per-operation JSON artifacts with planned/completed or failed/interrupted state. Verify no recovery UI appears and no automatic repair/rollback/source deletion occurs after restart.
 
 ## Bottom Bar
 
@@ -81,5 +86,6 @@ Use this after the static validation gates pass. These checks require a Windows 
 
 ## Notes
 
+- Stack Browser Phase 1 manual Windows smoke status: pending/not run in this docs pass.
 - `npm run tauri dev` may fail when ports `1420`/`1421` are already occupied; stop the conflicting dev server and retry.
 - If `cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --` reports AppBar/work-area warnings, capture logs and continue manual popup/relay checks before marking smoke complete.

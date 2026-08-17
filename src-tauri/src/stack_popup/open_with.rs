@@ -33,8 +33,8 @@ const VSCODE_SPEC: OpenWithCandidateSpec = OpenWithCandidateSpec {
     executables: &[
         r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe",
         r"%ProgramFiles%\Microsoft VS Code\Code.exe",
-        "code.cmd",
-        "code.exe",
+        r"C:\Program Files\Microsoft VS Code\Code.exe",
+        r"C:\Program Files (x86)\Microsoft VS Code\Code.exe",
     ],
     source: "common-editor",
 };
@@ -132,23 +132,16 @@ fn resolve_executable(candidate: &str) -> Option<PathBuf> {
     let expanded = expand_environment(candidate);
     let path = PathBuf::from(&expanded);
     if path.is_absolute() {
-        return path.exists().then_some(path);
+        return path.exists().then(|| std::fs::canonicalize(&path).ok()).flatten();
     }
 
-    std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .map(|dir| dir.join(&expanded))
-        .find(|path| path.exists())
-        .or_else(|| windows_dir_candidate(&expanded))
+    windows_dir_candidate(&expanded)
 }
 
 fn windows_dir_candidate(executable: &str) -> Option<PathBuf> {
-    std::env::var_os("WINDIR")
-        .or_else(|| std::env::var_os("SystemRoot"))
-        .map(PathBuf::from)
-        .map(|dir| dir.join("System32").join(executable))
-        .filter(|path| path.exists())
+    let system_root = std::env::var_os("SystemRoot")?;
+    let path = PathBuf::from(system_root).join("System32").join(executable);
+    path.exists().then(|| std::fs::canonicalize(&path).ok()).flatten()
 }
 
 fn expand_environment(candidate: &str) -> String {

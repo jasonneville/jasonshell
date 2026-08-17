@@ -1,5 +1,13 @@
 ## Change Ledger
 
+- 2026-08-17 `[CODE]` FIXED: Bottom-bar task clicks now apply predicted active/minimized highlighting immediately after native activation succeeds, then reconcile through the authoritative snapshot stream instead of overwriting UI with a fresh cached read.
+
+- 2026-08-17 `[CODE]` FIXED: Documented bottom-bar taskbar regression fix: sole Rust task snapshot worker now scans at bounded 1-second cadence plus 120 ms coalesced explicit refresh requests, `taskbar:windows-snapshot` updates bottom-bar live without clicking tasks, frontend remains non-polling, and `list_open_task_windows` stays cache/fallback.
+- 2026-08-17 `[TOOL]` VALIDATED: Focused taskbar tests passed: `node --test tests/taskbarWindows.test.mjs tests/taskbarUxState.test.mjs tests/taskWindowSnapshotPipeline.test.mjs`; `cargo test --manifest-path src-tauri/Cargo.toml task_windows` passed with 38 passed, 0 failed, 431 filtered out.
+
+- 2026-08-16 `[CODE]` DOCS: Documented actual Stack Browser Phase 1 safety behavior only: backend caller guards/matrix, bounded Git/archive runner timeout/error semantics, canonical Git path validation, clipboard RAII DropEffect-before-CF_HDROP ordering, app-local recovery journal scope with no automatic repair, manual Windows smoke checklist, and corrected stale root `stack_browser.md` virtualization wording.
+- 2026-08-16 `[TOOL]` VALIDATED: Docs-only pass after inspecting final source/plan. Manual Windows smoke not run; status remains pending. Preserved known unrelated `npm run test:node`/`npm run validate` failures exactly: `sorts stack entries deterministically while preserving folders first` and `sorts modified desc with folders/files grouped by timestamp and nulls last`.
+
 - 2026-08-16 `[CODE]` IMPLEMENTED P05: Hardened global input hook source path so the low-level Windows callback only classifies/tiny state then nonblocking `try_send`s to a bounded capacity-8 sync channel; emitter worker owns `AppHandle`/`emit_to`; uninstall stops/joins worker. Ctrl+Space unchanged, Alt+Backquote held-repeat duplicate terminal toggles suppressed, frontend fallback preserved, AppBar semantics unchanged, and guard instrumentation resets per start then logs `duration_ms`/`wake_count` on stop. P05 release gates remain pending/blocked.
 - 2026-08-16 `[TOOL]` VALIDATED P05: Focused tests passed: `node --test tests/windowsKeyOverride.test.mjs`; from `src-tauri`, `cargo fmt --all && cargo test windows_key_hook`. Fullscreen smoke is interactive/not run; full Plan 01 release comparison and residual-risk artifact remain unavailable because 18 manual scenarios are blocked. P05 is not complete/release accepted.
 

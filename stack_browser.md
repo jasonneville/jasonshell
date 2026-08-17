@@ -24,9 +24,17 @@ Implement the `features.md` Stack Popup as a persistent shell-owned folder brows
 - Paste applies the current JasonShell stack clipboard into the active folder and refreshes the visible rows.
 - Rename validates that the new name is a child name, rejects path separators, and fails if the destination already exists.
 - Paste chooses Explorer-style collision names with `- Copy (n)` suffixes.
+- Paste copy and cut/move fallback paths write backend-only app-local recovery journals under `stack-browser-recovery/` unless `JASONSHELL_RECOVERY_JOURNAL_DISABLE` is set. Journals are private recovery artifacts, not user-visible history, and JasonShell classifies stale running records without automatic repair, rollback, or source deletion.
 - Folder reads consume all backend pages and surface partial-listing warnings when individual entries cannot be inspected.
 - Stack item metadata distinguishes hidden, system, read-only, symlink, and reparse-point entries so display and copy safeguards can make those states visible.
 - Pin persistence writes through a temporary file and rename, and corrupt pin JSON is backed up before the rail falls back to an empty/default load.
+- Windows clipboard interop uses RAII cleanup for clipboard sessions/global locks/owned memory, writes `Preferred DropEffect` before CF_HDROP, and clears partial publish state if file-list publish fails after DropEffect succeeds.
+
+## Git And Subprocess Safety
+
+- Stack Browser commands are backend caller-label guarded. Pin/show commands are limited to their owning surfaces, file/Git/archive commands are limited to `stack-popup`, search pinning remains allowed from `search-panel`, and terminal commands validate the stored session target rather than trusting request payload target labels.
+- Stack Git keeps fixed argv and NUL-delimited pathspec stdin. Repo roots and absolute path requests are canonicalized before staging; missing/deleted relative paths are accepted only when present in a fresh backend Git status path set.
+- Git and archive extraction use a bounded subprocess runner that drains stdout/stderr concurrently, retains at most 64 KiB per stream, applies timeouts, and kills owned processes on timeout. Git defaults: 10s read/probe, 30s local mutation, 90s remote. Archive extraction default: 10min. Env overrides are clamped.
 
 ## Main Interfaces
 
@@ -45,6 +53,6 @@ Implement the `features.md` Stack Popup as a persistent shell-owned folder brows
 
 ## Known Limits
 
-- Very large folders are fully enumerated through backend pages, but the current UI still renders the accumulated rows directly rather than virtualizing them.
+- Very large folders are read through backend pages and the Svelte view owns virtualized visible-row calculation for the accumulated listing state; memory and row-state pressure can still grow with very large accumulated snapshots.
 - Paste consumes JasonShell's runtime clipboard state; copy/cut also publishes native Windows clipboard data for Explorer interoperability.
 - External folder changes are refreshed through explicit reload after operations, not a long-lived watcher.

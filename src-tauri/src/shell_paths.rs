@@ -198,8 +198,8 @@ fn is_safe_control_panel_arg(arg: &str) -> bool {
 const VSCODE_EXECUTABLE_CANDIDATES: &[&str] = &[
     r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe",
     r"%ProgramFiles%\Microsoft VS Code\Code.exe",
-    "code.cmd",
-    "code.exe",
+    r"C:\Program Files\Microsoft VS Code\Code.exe",
+    r"C:\Program Files (x86)\Microsoft VS Code\Code.exe",
 ];
 
 pub(crate) fn resolve_vscode_executable() -> Option<std::path::PathBuf> {
@@ -218,15 +218,12 @@ where
 fn resolve_executable_candidate(candidate: &str) -> Option<std::path::PathBuf> {
     let expanded = expand_environment(candidate);
     let path = std::path::PathBuf::from(&expanded);
-    if path.is_absolute() {
-        return path.exists().then_some(path);
+    if !path.is_absolute() {
+        return None;
     }
-
-    std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .map(|dir| dir.join(&expanded))
-        .find(|path| path.exists())
+    path.exists()
+        .then(|| std::fs::canonicalize(&path).ok())
+        .flatten()
 }
 
 fn expand_environment(candidate: &str) -> String {

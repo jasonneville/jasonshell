@@ -7,6 +7,7 @@ const modSource = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', i
 const taskbarWindowsSource = readFileSync(new URL('../src/lib/taskbarWindows.ts', import.meta.url), 'utf8');
 const taskWindowsSource = readFileSync(new URL('../src-tauri/src/task_windows/windows.rs', import.meta.url), 'utf8');
 const taskbarUiSource = readFileSync(new URL('../src/lib/taskbarUi.ts', import.meta.url), 'utf8');
+const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 
 test('task window activation validates live hwnds and verifies focus outcome', () => {
   assert.match(actionsSource, /if !window_exists\(target\) \|\| !window_exists\(raw_hwnd\) \{[\s\S]*Task window is no longer available/);
@@ -29,6 +30,13 @@ test('task window command carries guarded active-click intent', () => {
 
 test('taskbar labels expose active-window minimize toggle', () => {
   assert.match(taskbarUiSource, /taskWindow\.isActive \? 'Minimize' : 'Focus'/);
+});
+
+test('task window activation updates active highlight before cached snapshot refresh', () => {
+  assert.match(bottomBarSource, /function applyOptimisticTaskWindowActivation\(taskWindow: TaskbarWindow\)/);
+  assert.match(bottomBarSource, /isActive: window\.hwnd === taskWindow\.hwnd \? !taskWindow\.isActive : false/);
+  assert.match(bottomBarSource, /isMinimized: window\.hwnd === taskWindow\.hwnd \? taskWindow\.isActive : window\.isMinimized/);
+  assert.match(bottomBarSource, /await activateTaskWindow\(taskWindow\.hwnd, taskWindow\.isActive\);\s*applyOptimisticTaskWindowActivation\(taskWindow\);\s*void requestTaskbarWindowsRefresh\(\);/);
 });
 
 test('task window source no longer uses monitor-specific gating', () => {

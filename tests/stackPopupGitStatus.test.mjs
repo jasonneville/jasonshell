@@ -17,7 +17,12 @@ const rustMain = readRepoFile('src-tauri/src/main.rs');
 const rustContracts = readRepoFile('src-tauri/src/contracts.rs');
 const masterSpec = readRepoFile('master_spec.md');
 
+function stripRustTestBlocks(source) {
+  return source.replace(/\n#\[cfg\(test\)\][\s\S]*$/m, '\n');
+}
+
 test('stack git status backend is a separate non-listing command using git porcelain', () => {
+  const productionRustGitStatus = stripRustTestBlocks(rustGitStatus);
   assert.match(commandsSource, /getStackGitStatus:\s*'get_stack_git_status'/);
   assert.match(commandsSource, /stackGitAddPaths:\s*'stack_git_add_paths'/);
   assert.match(commandsSource, /stackGitCommit:\s*'stack_git_commit'/);
@@ -33,14 +38,17 @@ test('stack git status backend is a separate non-listing command using git porce
   assert.match(rustMain, /stack_popup::get_stack_git_status/);
   assert.match(rustMain, /stack_popup::stack_git_add_paths/);
   assert.match(rustMain, /stack_popup::stack_git_commit/);
-  assert.match(rustGitStatus, /Command::new\("git"\)/);
-  assert.match(rustGitStatus, /"--porcelain=v1"/);
-  assert.match(rustGitStatus, /"-z"/);
-  assert.match(rustGitStatus, /"rev-parse"/);
-  assert.match(rustGitStatus, /tauri::async_runtime::spawn_blocking/);
-  assert.match(rustGitStatus, /"--pathspec-from-file=-"/);
-  assert.match(rustGitStatus, /"--pathspec-file-nul"/);
-  assert.match(rustGitStatus, /"commit"/);
+  assert.match(productionRustGitStatus, /process_runner::run_process|run_process\(/);
+  assert.match(productionRustGitStatus, /GIT_TIMEOUT_ENV_VAR/);
+  assert.match(productionRustGitStatus, /spawn_blocking/);
+  assert.match(productionRustGitStatus, /git_stdout_bytes/);
+  assert.match(productionRustGitStatus, /"--porcelain=v1"/);
+  assert.match(productionRustGitStatus, /"-z"/);
+  assert.match(productionRustGitStatus, /"rev-parse"/);
+  assert.doesNotMatch(productionRustGitStatus, /Command::new\("git"\)/);
+  assert.match(productionRustGitStatus, /"--pathspec-from-file=-"/);
+  assert.match(productionRustGitStatus, /"--pathspec-file-nul"/);
+  assert.match(productionRustGitStatus, /"commit"/);
   assert.match(masterSpec, /Stack popup:[\s\S]*`get_stack_git_status`/);
 });
 

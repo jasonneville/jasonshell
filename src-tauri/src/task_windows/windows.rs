@@ -35,14 +35,15 @@ const EXCLUDED_CLASSES: &[&str] = &[
 const EXCLUDED_PROCESS_NAMES: &[&str] = &["dwm"];
 const EXCLUDED_TITLES: &[&str] = &["DWM Notification Window"];
 const CPU_TIME_BUSY_DELTA_TICKS: u64 = 200_000;
+const TASKBAR_SNAPSHOT_REFRESH_CADENCE: Duration = Duration::from_secs(1);
 const TASKBAR_REFRESH_SOON_DELAY: Duration = Duration::from_millis(120);
 
 static TASKBAR_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static TASKBAR_SNAPSHOT_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
-static TASKBAR_REFRESH_TX: OnceLock<mpsc::Sender<()>> = OnceLock::new();
+static TASKBAR_REFRESH_TX: OnceLock<mpsc::SyncSender<()>> = OnceLock::new();
 static LAST_TASKBAR_SNAPSHOT: OnceLock<Mutex<Option<TaskbarWindowsSnapshot>>> = OnceLock::new();
 static LAST_TASKBAR_SNAPSHOT_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
-const TASKBAR_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(500);
+const TASKBAR_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(1_120);
 
 #[derive(Clone, Debug)]
 pub(super) struct ActivitySnapshot {
@@ -84,20 +85,44 @@ pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
     if TASKBAR_SNAPSHOT_WORKER_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let (tx, rx) = mpsc::channel::<()>();
+    // One pending request is enough: the next scan publishes complete state.
+    let (tx, rx) = mpsc::sync_channel::<()>(1);
     let _ = TASKBAR_REFRESH_TX.set(tx);
-    thread::spawn(move || loop {
-        if rx.recv().is_err() {
-            break;
+    thread::spawn(move || {
+        let mut last_refresh_at = Instant::now();
+        loop {
+            let next_refresh_at = last_refresh_at + TASKBAR_SNAPSHOT_REFRESH_CADENCE;
+            match rx.recv_timeout(next_refresh_at.saturating_duration_since(Instant::now())) {
+                Ok(()) => {
+                    let deadline = Instant::now() + TASKBAR_REFRESH_SOON_DELAY;
+                    while Instant::now() < deadline {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            break;
+                        }
+                        match rx.recv_timeout(remaining) {
+                            Ok(()) => {}
+                            Err(mpsc::RecvTimeoutError::Timeout) => break,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            let remaining = next_refresh_at.saturating_duration_since(Instant::now());
+            if !remaining.is_zero() {
+                thread::sleep(remaining);
+            }
+            let _ = refresh_taskbar_snapshot_now(Some(&app));
+            last_refresh_at = Instant::now();
         }
-        while rx.recv_timeout(TASKBAR_REFRESH_SOON_DELAY).is_ok() {}
-        let _ = refresh_taskbar_snapshot_now(Some(&app));
     });
 }
 
 pub(super) fn request_taskbar_snapshot_refresh() {
     if let Some(tx) = TASKBAR_REFRESH_TX.get() {
-        let _ = tx.send(());
+        let _ = tx.try_send(());
     }
 }
 

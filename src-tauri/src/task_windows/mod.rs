@@ -77,8 +77,8 @@ pub(crate) fn start_notification_tracking() {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn start_taskbar_snapshot_pipeline(app: &tauri::AppHandle) {
-    windows::ensure_taskbar_snapshot_worker_started(app.clone());
     windows::refresh_taskbar_snapshot_now(Some(app)).ok();
+    windows::ensure_taskbar_snapshot_worker_started(app.clone());
 }
 
 #[tauri::command]

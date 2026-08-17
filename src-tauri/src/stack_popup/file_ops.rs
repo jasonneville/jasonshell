@@ -1,4 +1,5 @@
 use crate::stack_popup::items::{metadata_is_reparse_point, stack_item_from_path};
+use crate::stack_popup::recovery_journal::{new_recovery_operation_id, recovery_journal_path, RecoveryJournalEntry, RecoveryJournalManifest, RecoveryJournalOperationKind, RecoveryJournalState, write_recovery_journal_atomic};
 use crate::stack_popup::models::StackItem;
 use crate::stack_popup::paths::{
     normalize_existing_dir, normalize_existing_path, validate_child_name,
@@ -89,8 +90,15 @@ pub(crate) fn next_new_text_document_path(parent: &Path) -> Result<PathBuf, Stri
 #[cfg(target_os = "windows")]
 fn launch_terminal_at_dir(directory: &Path) -> Result<(), String> {
     use std::process::Command;
+    use std::fs;
 
-    if Command::new("wt.exe")
+    let system_root = std::env::var_os("SystemRoot").ok_or_else(|| "SystemRoot is unavailable".to_string())?;
+    let system32 = PathBuf::from(system_root).join("System32");
+    let wt = system32.join("wt.exe");
+    let powershell = system32.join("WindowsPowerShell").join("v1.0").join("powershell.exe");
+    let cmd = system32.join("cmd.exe");
+
+    if wt.exists() && Command::new(fs::canonicalize(&wt).unwrap_or(wt))
         .arg("-d")
         .arg(directory)
         .spawn()
@@ -99,7 +107,7 @@ fn launch_terminal_at_dir(directory: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    if Command::new("powershell.exe")
+    if powershell.exists() && Command::new(fs::canonicalize(&powershell).unwrap_or(powershell))
         .arg("-NoExit")
         .arg("-NoLogo")
         .arg("-Command")
@@ -111,7 +119,7 @@ fn launch_terminal_at_dir(directory: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    Command::new("cmd.exe")
+    Command::new(fs::canonicalize(&cmd).unwrap_or(cmd))
         .arg("/K")
         .arg("cd")
         .arg("/d")
@@ -248,11 +256,123 @@ pub(crate) fn copy_path(source: &Path, destination: &Path) -> Result<(), String>
     copy_path_inner(source, destination, &mut visited)
 }
 
+pub(crate) fn copy_path_with_journal(source: &Path, destination: &Path, journal_dir: Option<&Path>) -> Result<(), String> {
+    let operation_id = new_recovery_operation_id();
+    let Some(journal_dir) = journal_dir else { return copy_path(source, destination); };
+    let mut journal = journal_entry_for(source, destination, &operation_id, RecoveryJournalOperationKind::Copy, Some(journal_dir))?;
+    journal.transition_to(RecoveryJournalState::CopyStarted, now_ms());
+    write_journal(Some(journal_dir), &operation_id, &journal)?;
+    let res = copy_path_with_manifest(source, destination, &mut journal);
+    match res {
+        Ok(()) => {
+            journal.transition_to(RecoveryJournalState::CopiedVerified, now_ms());
+            journal.transition_to(RecoveryJournalState::Completed, now_ms());
+            write_journal(Some(journal_dir), &operation_id, &journal)?;
+            Ok(())
+        }
+        Err(message) => {
+            journal.mark_failed(message.clone(), now_ms());
+            write_journal(Some(journal_dir), &operation_id, &journal).ok();
+            Err(message)
+        }
+    }
+}
+
 pub(crate) fn move_path_with_fallback(source: &Path, destination: &Path) -> Result<(), String> {
     move_path_with_rename(source, destination, |source, destination| {
         fs::rename(source, destination)
     })
 }
+
+pub(crate) fn move_path_with_fallback_journal(source: &Path, destination: &Path, journal_dir: Option<&Path>) -> Result<(), String> {
+    let operation_id = new_recovery_operation_id();
+    let Some(journal_dir) = journal_dir else { return move_path_with_fallback(source, destination); };
+    let mut journal = journal_entry_for(source, destination, &operation_id, RecoveryJournalOperationKind::Cut, Some(journal_dir))?;
+    journal.transition_to(RecoveryJournalState::CopyStarted, now_ms());
+    write_journal(Some(journal_dir), &operation_id, &journal)?;
+    match fs::rename(source, destination) {
+        Ok(()) => {
+            journal.transition_to(RecoveryJournalState::Completed, now_ms());
+            write_journal(Some(journal_dir), &operation_id, &journal)?;
+            Ok(())
+        }
+        Err(rename_error) => {
+            let copy_res = copy_path_with_manifest(source, destination, &mut journal);
+            if let Err(message) = copy_res {
+                journal.mark_failed(format!("Failed to move stack item: {rename_error}; fallback copy failed: {message}"), now_ms());
+                write_journal(Some(journal_dir), &operation_id, &journal).ok();
+                return Err(format!("Failed to move stack item: {rename_error}; fallback copy failed: {message}"));
+            }
+            journal.transition_to(RecoveryJournalState::DeleteStarted, now_ms());
+            write_journal(Some(journal_dir), &operation_id, &journal)?;
+            let delete_res = remove_after_move_copy(source);
+            match delete_res {
+                Ok(()) => {
+                    journal.transition_to(RecoveryJournalState::SourceRemoved, now_ms());
+                    write_journal(Some(journal_dir), &operation_id, &journal)?;
+                    journal.transition_to(RecoveryJournalState::Completed, now_ms());
+                    write_journal(Some(journal_dir), &operation_id, &journal)?;
+                    Ok(())
+                }
+                Err(delete_error) => {
+                    journal.mark_failed(format!("Failed to move stack item after fallback copy: {delete_error}"), now_ms());
+                    write_journal(Some(journal_dir), &operation_id, &journal).ok();
+                    Err(format!("Failed to move stack item after fallback copy: {delete_error}"))
+                }
+            }
+        }
+    }
+}
+
+fn write_journal(journal_dir: Option<&Path>, operation_id: &str, journal: &RecoveryJournalEntry) -> Result<(), String> {
+    let dir = journal_dir.ok_or_else(|| "Recovery journal unavailable".to_string())?;
+    write_recovery_journal_atomic(&recovery_journal_path(dir, operation_id), journal)
+}
+
+fn journal_entry_for(source: &Path, destination: &Path, operation_id: &str, kind: RecoveryJournalOperationKind, journal_dir: Option<&Path>) -> Result<RecoveryJournalEntry, String> {
+    journal_dir.ok_or_else(|| "Recovery journal unavailable".to_string())?;
+    let mut entry = RecoveryJournalEntry::new(operation_id.to_string(), destination.to_string_lossy().into_owned(), vec![source.to_string_lossy().into_owned()], now_ms());
+    entry.mode = match kind { RecoveryJournalOperationKind::Copy => "copy".into(), RecoveryJournalOperationKind::Cut => "cut".into() };
+    entry.source = source.to_string_lossy().into_owned();
+    entry.destination = destination.to_string_lossy().into_owned();
+    entry.source_path = entry.source.clone();
+    entry.destination_path = entry.destination.clone();
+    Ok(entry)
+}
+
+fn copy_path_with_manifest(source: &Path, destination: &Path, journal: &mut RecoveryJournalEntry) -> Result<(), String> {
+    let manifest = build_manifest(source)?;
+    journal.source_manifest = Some(manifest.clone());
+    copy_path(source, destination)?;
+    journal.copied_manifest = Some(build_manifest(destination)?);
+    if journal.source_manifest != journal.copied_manifest { return Err("Failed to copy stack item: manifest mismatch".to_string()); }
+    if source.is_file() {
+        let expected = fs::metadata(source).map_err(|error| format!("Failed to inspect source after copy: {error}"))?.len();
+        let copied = fs::metadata(destination).map_err(|error| format!("Failed to inspect destination after copy: {error}"))?.len();
+        if expected != copied { return Err("Failed to copy stack item: byte count mismatch".to_string()); }
+    }
+    Ok(())
+}
+
+fn build_manifest(path: &Path) -> Result<RecoveryJournalManifest, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| format!("Failed to inspect stack item for manifest: {error}"))?;
+    if metadata.is_dir() {
+        let mut file_count = 0;
+        let mut dir_count = 0;
+        let mut total_bytes = 0;
+        for entry in fs::read_dir(path).map_err(|error| format!("Failed to read stack folder for manifest: {error}"))? {
+            let entry = entry.map_err(|error| format!("Failed to inspect stack folder entry: {error}"))?;
+            let child = entry.path();
+            let child_meta = fs::symlink_metadata(&child).map_err(|error| format!("Failed to inspect stack folder child: {error}"))?;
+            if child_meta.is_dir() { dir_count += 1; } else { file_count += 1; total_bytes += child_meta.len(); }
+        }
+        Ok(RecoveryJournalManifest { file_count, dir_count, total_bytes, skipped_unsupported_count: 0 })
+    } else {
+        Ok(RecoveryJournalManifest { file_count: 1, dir_count: 0, total_bytes: metadata.len(), skipped_unsupported_count: 0 })
+    }
+}
+
+fn now_ms() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64 }
 
 pub(crate) fn move_path_with_rename<F>(
     source: &Path,
@@ -305,12 +425,11 @@ fn copy_path_inner(
                 .to_string(),
         );
     }
-    if metadata.is_dir() {
-        copy_dir_inner(source, destination, visited)
-    } else {
-        fs::copy(source, destination)
-            .map(|_| ())
-            .map_err(|error| format!("Failed to copy stack item: {error}"))
+    if metadata.is_dir() { copy_dir_inner(source, destination, visited) } else {
+        let expected = metadata.len();
+        let copied = fs::copy(source, destination).map_err(|error| format!("Failed to copy stack item: {error}"))?;
+        if copied != expected { return Err("Failed to copy stack item: byte count mismatch".to_string()); }
+        Ok(())
     }
 }
 

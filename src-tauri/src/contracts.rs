@@ -132,6 +132,7 @@ pub mod commands {
     pub const NEW_STACK_FOLDER: &str = "new_stack_folder";
     pub const NEW_STACK_TEXT_FILE: &str = "new_stack_text_file";
     pub const OPEN_STACK_TERMINAL_HERE: &str = "open_stack_terminal_here";
+    pub const OPEN_STACK_FOLDER_IN_VSCODE: &str = "open_stack_folder_in_vscode";
     pub const START_PERSISTENT_TERMINAL: &str = "start_persistent_terminal";
     pub const START_STACK_TERMINAL: &str = "start_stack_terminal";
     pub const READ_STACK_TERMINAL: &str = "read_stack_terminal";
@@ -271,6 +272,7 @@ pub mod commands {
         NEW_STACK_FOLDER,
         NEW_STACK_TEXT_FILE,
         OPEN_STACK_TERMINAL_HERE,
+        OPEN_STACK_FOLDER_IN_VSCODE,
         START_PERSISTENT_TERMINAL,
         START_STACK_TERMINAL,
         READ_STACK_TERMINAL,
@@ -469,6 +471,7 @@ mod tests {
         assert!(unique.contains("prepare_stack_file_drag"));
         assert!(unique.contains("new_stack_text_file"));
         assert!(unique.contains("open_stack_terminal_here"));
+        assert!(unique.contains("open_stack_folder_in_vscode"));
         assert!(unique.contains("start_stack_terminal"));
         assert!(unique.contains("read_stack_terminal"));
         assert!(unique.contains("write_stack_terminal"));

@@ -333,6 +333,13 @@
       updateTaskbarOverflow();
     }
   }
+  function applyOptimisticTaskWindowActivation(taskWindow: TaskbarWindow) {
+    openWindows = openWindows.map((window) => ({
+      ...window,
+      isActive: window.hwnd === taskWindow.hwnd ? !taskWindow.isActive : false,
+      isMinimized: window.hwnd === taskWindow.hwnd ? taskWindow.isActive : window.isMinimized
+    }));
+  }
   async function loadPinnedLaunchers() {
     launcherMessage = 'Loading Explorer taskbar pins…';
     try {
@@ -499,12 +506,13 @@
 
     try {
       await activateTaskWindow(taskWindow.hwnd, taskWindow.isActive);
+      applyOptimisticTaskWindowActivation(taskWindow);
+      void requestTaskbarWindowsRefresh();
       taskbarMessage = 'Window toggled';
-      await refreshTaskbarWindows();
     } catch (error) {
       console.error(`Failed to focus task window ${taskWindow.hwnd}`, error);
       taskbarMessage = `Window focus unavailable for ${taskWindowLabel(taskWindow)}`;
-      await refreshTaskbarWindows();
+      void refreshTaskbarWindows();
     } finally {
       activatingHwnd = null;
     }

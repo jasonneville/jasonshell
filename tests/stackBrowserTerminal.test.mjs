@@ -269,6 +269,19 @@ test('phase 3 backend keeps live sessions registered and records PTY size metada
   );
 });
 
+test('terminal auth precedes side effects in poll and stop, with no drain/remove/kill before auth', () => {
+  const pollStart = rustTerminal.indexOf('pub(crate) fn poll_stack_terminal_session');
+  const stopStart = rustTerminal.indexOf('pub(crate) fn stop_stack_terminal_session');
+  const requestStopStart = rustTerminal.indexOf('fn request_terminal_stop');
+  const pollBody = rustTerminal.slice(pollStart, stopStart);
+  const stopBody = rustTerminal.slice(stopStart, requestStopStart);
+  assert.match(pollBody, /authorize_stack_terminal_session_target\(caller_label, &session\.target_label, crate::contracts::commands::POLL_STACK_TERMINAL_SESSION\)\?/);
+  assert.ok(pollBody.indexOf('authorize_stack_terminal_session_target') < pollBody.indexOf('drain_terminal_output'));
+  assert.ok(pollBody.indexOf('authorize_stack_terminal_session_target') < pollBody.indexOf('refresh_session_running'));
+  assert.match(stopBody, /authorize_stack_terminal_session_target\(caller_label, &session\.target_label, crate::contracts::commands::STOP_STACK_TERMINAL\)\?/);
+  assert.ok(stopBody.indexOf('authorize_stack_terminal_session_target') < stopBody.indexOf('request_terminal_stop'));
+});
+
 test('phase 1 terminal PowerShell launch plan uses trusted path explicitly and has fallback coverage', () => {
   assert.match(rustTerminal, /fn powershell_cmd_launch_line\(powershell: PathBuf\) -> String/);
   assert.match(rustTerminal, /powershell\.to_string_lossy\(\)/);

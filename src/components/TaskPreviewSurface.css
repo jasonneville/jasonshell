@@ -37,9 +37,8 @@
 .preview-header {
   align-items: center;
   background: var(--js-bg-surface);
-  border: 1px solid var(--js-color-border-soft);
+  border: none;
   border-radius: var(--js-radius-sm);
-  box-shadow: var(--js-inset-highlight);
   box-sizing: border-box;
   display: flex;
   flex: 0 0 auto;

@@ -47,3 +47,24 @@ test('producer avoids holding locks across enum/winrt/icon emit', () => {
   assert.match(windowsSource, /task_window_activity_state/);
   assert.doesNotMatch(windowsSource, /lock\(\)[\s\S]{0,300}(EnumWindows|window_icon_data_url|emit_to)/);
 });
+
+test('taskbar snapshot worker has bounded 1s backend cadence and 120ms request coalescing', () => {
+  assert.match(windowsSource, /const TASKBAR_SNAPSHOT_REFRESH_CADENCE: Duration = Duration::from_secs\(1\);/);
+  assert.match(windowsSource, /const TASKBAR_REFRESH_SOON_DELAY: Duration = Duration::from_millis\(120\);/);
+  assert.match(windowsSource, /const TASKBAR_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis\(1_120\);/);
+  assert.doesNotMatch(windowsSource, /refresh_taskbar_snapshot_now\(Some\(&app\)\);\s*loop \{/);
+  assert.match(windowsSource, /thread::spawn\(move \|\| \{/);
+  assert.match(windowsSource, /mpsc::sync_channel::<\(\)>\(1\)/);
+  assert.match(windowsSource, /let mut last_refresh_at = Instant::now\(\);/);
+  assert.match(windowsSource, /let next_refresh_at = last_refresh_at \+ TASKBAR_SNAPSHOT_REFRESH_CADENCE;/);
+  assert.match(windowsSource, /rx\.recv_timeout\(next_refresh_at\.saturating_duration_since\(Instant::now\(\)\)\)/);
+  assert.match(windowsSource, /let deadline = Instant::now\(\) \+ TASKBAR_REFRESH_SOON_DELAY;/);
+  assert.match(windowsSource, /while Instant::now\(\) < deadline \{/);
+  assert.match(windowsSource, /rx\.recv_timeout\(remaining\)/);
+  assert.match(windowsSource, /tx\.try_send\(\(\)\)/);
+  assert.match(windowsSource, /thread::sleep\(remaining\)/);
+  assert.match(windowsSource, /last_refresh_at = Instant::now\(\);/);
+  assert.match(windowsSource, /refresh_taskbar_snapshot_now\(Some\(&app\)\)/);
+  assert.match(modSource, /refresh_taskbar_snapshot_now\(Some\(app\)\)\.ok\(\);\s*windows::ensure_taskbar_snapshot_worker_started/);
+  assert.doesNotMatch(windowsSource, /setInterval|setTimeout|frontend poll/i);
+});

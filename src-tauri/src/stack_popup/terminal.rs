@@ -348,6 +348,7 @@ struct TerminalReaderMessage {
 pub(crate) async fn start_stack_terminal_session(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalStartRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
     let cwd = PathBuf::from(super::paths::normalize_existing_dir(&request.folder_path)?);
@@ -355,7 +356,7 @@ pub(crate) async fn start_stack_terminal_session(
     let profile = request
         .profile
         .unwrap_or(shell_settings.stack_browser.terminal_profile);
-    let target_label = terminal_event_target_label(request.target_label.as_deref())?;
+    let target_label = terminal_session_target_label(caller_label, request.target_label.as_deref())?;
     let app_handle_for_spawn = app_handle.clone();
     let session = tauri::async_runtime::spawn_blocking(move || {
         spawn_terminal_session(Some(app_handle_for_spawn), profile, cwd, target_label)
@@ -376,24 +377,33 @@ pub(crate) async fn start_stack_terminal_session(
 pub(crate) async fn write_stack_terminal_session(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalWriteRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
+    let (target_label, writer) = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+        authorize_stack_terminal_session_target(
+            caller_label,
+            &session.target_label,
+            crate::contracts::commands::WRITE_STACK_TERMINAL,
+        )?;
+        (
+            session.target_label.clone(),
+            session
+                .writer
+                .clone()
+                .ok_or_else(|| "Terminal session writer is closed".to_string())?,
+        )
+    };
     if request.input.len() > MAX_STACK_TERMINAL_WRITE_BYTES {
         return Err(format!(
             "Terminal input is limited to {MAX_STACK_TERMINAL_WRITE_BYTES} bytes per write"
         ));
     }
     let input = request.input;
-    let writer = {
-        let mut runtime = state
-            .lock()
-            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-        let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
-        session
-            .writer
-            .clone()
-            .ok_or_else(|| "Terminal session writer is closed".to_string())?
-    };
     let input_for_write = input.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut writer = writer
@@ -406,7 +416,7 @@ pub(crate) async fn write_stack_terminal_session(
     })
     .await
     .map_err(|error| format!("Failed to join terminal write task: {error}"))??;
-    let (target_label, snapshot) = {
+    let snapshot = {
         let mut runtime = state
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
@@ -414,7 +424,7 @@ pub(crate) async fn write_stack_terminal_session(
         if let Some(cwd) = session.observe_terminal_input_for_cwd(&input) {
             session.cwd = cwd;
         }
-        (session.target_label.clone(), session.snapshot())
+        session.snapshot()
     };
     emit_cwd_update(app_handle, &target_label, &snapshot);
     Ok(snapshot)
@@ -423,15 +433,17 @@ pub(crate) async fn write_stack_terminal_session(
 pub(crate) async fn write_stack_terminal(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalWriteRequest,
 ) -> Result<(), String> {
-    write_stack_terminal_session(app_handle, state, request)
+    write_stack_terminal_session(app_handle, state, caller_label, request)
         .await
         .map(|_| ())
 }
 
 pub(crate) fn resize_stack_terminal_session(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalResizeRequest,
 ) -> Result<(), String> {
     validate_stack_terminal_session_id(&request.session_id)?;
@@ -441,6 +453,7 @@ pub(crate) fn resize_stack_terminal_session(
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
         let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+        authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::RESIZE_STACK_TERMINAL)?;
         session
             .master
             .clone()
@@ -472,9 +485,10 @@ pub(crate) fn resize_stack_terminal_session(
 pub(crate) fn read_stack_terminal(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     session_id: String,
 ) -> Result<StackTerminalReadResult, String> {
-    let result = poll_stack_terminal_session(app_handle, state, session_id)?;
+    let result = poll_stack_terminal_session(app_handle, state, caller_label, session_id)?;
     let output = result
         .chunks
         .iter()
@@ -493,6 +507,7 @@ pub(crate) fn read_stack_terminal(
 pub(crate) fn poll_stack_terminal_session(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     session_id: String,
 ) -> Result<StackTerminalPollResult, String> {
     let (target_label, snapshot, returned_session_id, cwd, running, chunks) = {
@@ -500,6 +515,7 @@ pub(crate) fn poll_stack_terminal_session(
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
         let session = runtime.terminal_sessions.session_mut(&session_id)?;
+        authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::POLL_STACK_TERMINAL_SESSION)?;
         let mut chunks = drain_terminal_output(session);
         let running = refresh_session_running(session, &mut chunks);
         (
@@ -530,8 +546,17 @@ pub(crate) fn poll_stack_terminal_session(
 pub(crate) fn stop_stack_terminal_session(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalStopRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
+    let target_label = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+        authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::STOP_STACK_TERMINAL)?;
+        session.target_label.clone()
+    };
     let Some(mut session) = request_terminal_stop(state, &request.session_id)? else {
         let snapshot = StackTerminalSessionSnapshot {
             session_id: request.session_id,
@@ -553,7 +578,6 @@ pub(crate) fn stop_stack_terminal_session(
     let _ = session.child.kill();
     let _ = session.child.wait();
     session.running = false;
-    let target_label = session.target_label.clone();
     let snapshot = session.snapshot();
     emit_terminal_closed(app_handle, &target_label, &snapshot);
     Ok(snapshot)
@@ -572,28 +596,29 @@ fn request_terminal_stop(
 pub(crate) fn stop_stack_terminal(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalStopRequest,
 ) -> Result<(), String> {
-    stop_stack_terminal_session(app_handle, state, request).map(|_| ())
+    stop_stack_terminal_session(app_handle, state, caller_label, request).map(|_| ())
 }
 
 pub(crate) fn list_stack_terminals(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     target_label: Option<String>,
 ) -> Result<Vec<StackTerminalSessionSnapshot>, String> {
-    if let Some(label) = target_label.as_deref() {
-        terminal_event_target_label(Some(label))?;
-    }
+    let target_label = terminal_session_target_label(caller_label, target_label.as_deref())?;
     let runtime = state
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
     Ok(runtime
         .terminal_sessions
-        .list_by_target(target_label.as_deref()))
+        .list_by_target(Some(target_label.as_str())))
 }
 
 pub(crate) fn rename_stack_terminal(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     request: StackTerminalRenameRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
     validate_stack_terminal_session_id(&request.session_id)?;
@@ -602,6 +627,7 @@ pub(crate) fn rename_stack_terminal(
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
     let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
+    authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::RENAME_STACK_TERMINAL)?;
     session.title = title;
     Ok(session.snapshot())
 }
@@ -631,13 +657,34 @@ pub(crate) fn stop_terminal_sessions_for_target(
 
 pub(crate) fn get_stack_terminal_cwd(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
+    caller_label: &str,
     session_id: String,
 ) -> Result<StackTerminalSessionSnapshot, String> {
     let mut runtime = state
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
     let session = runtime.terminal_sessions.session_mut(&session_id)?;
+    authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::GET_STACK_TERMINAL_CWD)?;
     Ok(session.snapshot())
+}
+
+fn terminal_session_target_label(caller_label: &str, target_label: Option<&str>) -> Result<String, String> {
+    let requested = target_label.unwrap_or(caller_label);
+    if requested != caller_label {
+        return Err(format!("Terminal session target must match caller {caller_label}"));
+    }
+    terminal_event_target_label(Some(requested))
+}
+
+fn authorize_stack_terminal_session_target(
+    caller_label: &str,
+    session_target_label: &str,
+    command: &str,
+) -> Result<(), String> {
+    if session_target_label != caller_label {
+        return Err(format!("Unauthorized terminal session target for command {command}"));
+    }
+    Ok(())
 }
 
 fn spawn_terminal_session(
@@ -1591,6 +1638,20 @@ mod tests {
     }
 
     #[test]
+    fn write_stack_terminal_session_authorizes_before_writer_clone() {
+        let source = include_str!("terminal.rs");
+        let write_fn = source
+            .split("pub(crate) async fn write_stack_terminal_session(")
+            .nth(1)
+            .expect("write fn present");
+        let auth_pos = write_fn
+            .find("authorize_stack_terminal_session_target")
+            .expect("auth guard present");
+        let writer_pos = write_fn.find(".writer").expect("writer clone present");
+        assert!(auth_pos < writer_pos);
+    }
+
+    #[test]
     fn generated_terminal_session_ids_are_bounded() {
         let first = new_stack_terminal_session_id();
         let second = new_stack_terminal_session_id();
@@ -1783,6 +1844,49 @@ mod tests {
             registry.session_mut("stack-term-live").is_ok(),
             "live terminal sessions must not disappear from registry during poll/write/resize"
         );
+    }
+
+    #[test]
+    fn terminal_session_target_defaults_to_caller_and_rejects_foreign_target() {
+        assert_eq!(
+            terminal_session_target_label(shell_windows::STACK_POPUP_LABEL, None).unwrap(),
+            shell_windows::STACK_POPUP_LABEL
+        );
+        assert_eq!(
+            terminal_session_target_label(shell_windows::TERMINAL_PANEL_LABEL, Some(shell_windows::TERMINAL_PANEL_LABEL))
+                .unwrap(),
+            shell_windows::TERMINAL_PANEL_LABEL
+        );
+        assert!(terminal_session_target_label(shell_windows::STACK_POPUP_LABEL, Some(shell_windows::TERMINAL_PANEL_LABEL)).is_err());
+    }
+
+    #[test]
+    fn terminal_session_target_auth_rejects_mismatched_caller() {
+        assert!(authorize_stack_terminal_session_target(
+            shell_windows::STACK_POPUP_LABEL,
+            shell_windows::STACK_POPUP_LABEL,
+            crate::contracts::commands::READ_STACK_TERMINAL,
+        )
+        .is_ok());
+        assert!(authorize_stack_terminal_session_target(
+            shell_windows::STACK_POPUP_LABEL,
+            shell_windows::TERMINAL_PANEL_LABEL,
+            crate::contracts::commands::READ_STACK_TERMINAL,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn terminal_list_target_defaults_to_caller_and_rejects_other_target() {
+        assert_eq!(
+            terminal_session_target_label(shell_windows::STACK_POPUP_LABEL, None).unwrap(),
+            shell_windows::STACK_POPUP_LABEL
+        );
+        assert!(terminal_session_target_label(
+            shell_windows::STACK_POPUP_LABEL,
+            Some(shell_windows::TERMINAL_PANEL_LABEL)
+        )
+        .is_err());
     }
 
     fn test_dir(name: &str) -> PathBuf {

@@ -38,8 +38,20 @@ test('phase 4 top-bar pin menu includes Open in VS Code and dispatches action pa
 test('phase 4 backend includes shared VS Code resolver with safe missing-install error', () => {
   assert.match(shellPathsRs, /pub fn open_folder_in_vscode/);
   assert.match(shellPathsRs, /resolve_vscode_executable/);
-  assert.match(shellPathsRs, /code\.cmd/);
-  assert.match(shellPathsRs, /code\.exe/);
+  const resolverBody = shellPathsRs.slice(
+    shellPathsRs.indexOf('fn resolve_executable_candidate'),
+    shellPathsRs.indexOf('fn expand_environment')
+  );
+  assert.doesNotMatch(resolverBody, /PATH|split_paths\(|code\.cmd/);
   assert.match(shellPathsRs, /Visual Studio Code was not found/);
   assert.match(stackPopupRs, /pub fn open_stack_folder_in_vscode/);
+});
+
+test('phase 4 rejects bare executable PATH candidates for VS Code and terminal launch', () => {
+  const resolverBody = shellPathsRs.slice(
+    shellPathsRs.indexOf('const VSCODE_EXECUTABLE_CANDIDATES'),
+    shellPathsRs.indexOf('#[cfg(target_os = "windows")]')
+  );
+  assert.doesNotMatch(resolverBody, /Command::new\("code\.(cmd|exe)"\)|split_paths\(|PATH/);
+  assert.doesNotMatch(stackPopupRs, /Command::new\("wt\.exe"\)|Command::new\("powershell\.exe"\)|Command::new\("cmd\.exe"\)/);
 });
