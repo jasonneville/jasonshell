@@ -1,5 +1,11 @@
 ## Change Ledger
 
+- 2026-08-17 `[CODE]` FIXED: Bottom-bar open-window task tiles now flex to equal widths across the strip instead of sizing to content bounds, while label ellipsis, overflow handling, launcher widths, and task drag/reorder remain intact.
+- 2026-08-17 `[TOOL]` VALIDATED: Focused taskbar UX test updated for equal flex sizing; `node --test tests/taskbarUxState.test.mjs` and `npm run check` passed.
+
+- 2026-08-17 `[CODE]` FIXED: Bottom-bar task groups now keep equal inner tile flex but cap group width at `calc(10rem * var(--task-window-count, 1))`, leaving unused strip space on the right for small group counts.
+- 2026-08-17 `[TOOL]` VALIDATED: Updated taskbar UX contract to assert the proportional max-width cap; focused Node test and `npm run check` passed.
+
 - 2026-08-17 `[CODE]` FIXED: Quick Commands now persists the left saved-command pane width, restoring it on launch with bounded legacy-safe defaults.
 - 2026-08-17 `[TOOL]` VALIDATED: `npm run check` passed; Rust suite compiled and ran 484 passed, 1 ignored, 1 unrelated pre-existing VS Code resolver failure.
 

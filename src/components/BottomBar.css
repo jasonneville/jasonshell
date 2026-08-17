@@ -182,7 +182,8 @@
   border-top: 0;
   border-bottom: 0;
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: var(--task-window-count, 1) 1 0;
+  max-width: calc(10rem * var(--task-window-count, 1));
   gap: 0;
   height: 100%;
   min-width: 0;
@@ -309,14 +310,13 @@
   color: var(--js-color-text);
   cursor: pointer;
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   font-size: 0.62rem;
   font-weight: 600;
   gap: 0.28rem;
   height: 100%;
   min-height: 0;
-  max-width: 14rem;
-  min-width: 6.2rem;
+  min-width: 0;
   padding: 0 0.38rem;
   transition:
     border-color 140ms ease,

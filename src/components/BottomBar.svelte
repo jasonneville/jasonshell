@@ -552,8 +552,9 @@
   }
   function taskGroupStyle(group: TaskWindowGroup) {
     const previewOrderIndex = taskGroupPreviewOrder.indexOf(group.key);
+    const windowCountStyle = `--task-window-count: ${Math.max(group.windows.length, 1)};`;
     if (draggingGroupKey !== group.key || !taskGroupDragStarted) {
-      return previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '';
+      return `${windowCountStyle}${previewOrderIndex >= 0 ? ` order: ${previewOrderIndex};` : ''}`;
     }
 
     const liveReorderOffset = taskbarGroupReorderOffset(
@@ -563,8 +564,8 @@
     );
     const visualDelta = taskGroupDragDeltaX + liveReorderOffset;
     return draggingGroupKey === group.key && taskGroupDragStarted
-      ? `order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`
-      : (previewOrderIndex >= 0 ? `order: ${previewOrderIndex};` : '');
+      ? `${windowCountStyle} order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`
+      : `${windowCountStyle}${previewOrderIndex >= 0 ? ` order: ${previewOrderIndex};` : ''}`;
   }
   function taskGroupRects() {
     return Array.from(document.querySelectorAll<HTMLElement>('[data-task-group-key]'))

@@ -51,13 +51,20 @@ test('renders notified task groups with red badge and top border', () => {
   assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-error\);[\s\S]*color: var\(--js-color-error-text\);/);
 });
 
-test('sizes task buttons by content with minimum and maximum bounds', () => {
+test('sizes task buttons as equal flex items without content-sized bounds', () => {
+  assert.match(bottomBarSource, /style=\{taskGroupStyle\(group\)\}/);
+  assert.match(bottomBarSource, /--task-window-count:\s*\$\{Math\.max\(group\.windows\.length, 1\)\};/);
+
+  const taskGroupRule = bottomBarCss.match(/\.bottom-bar \.task-group \{[\s\S]*?\n\}/)?.[0] ?? '';
   const taskButtonRule = bottomBarCss.match(/\.bottom-bar \.task-button \{[\s\S]*?\n\}/)?.[0] ?? '';
   const taskLabelRule = bottomBarCss.match(/\.bottom-bar \.task-label \{[\s\S]*?\n\}/)?.[0] ?? '';
 
-  assert.match(taskButtonRule, /flex:\s*0 1 auto;/);
-  assert.match(taskButtonRule, /min-width:\s*6\.2rem;/);
-  assert.match(taskButtonRule, /max-width:\s*14rem;/);
+  assert.match(taskGroupRule, /flex:\s*var\(--task-window-count, 1\) 1 0;/);
+  assert.match(taskGroupRule, /max-width:\s*calc\(10rem \* var\(--task-window-count, 1\)\);/);
+  assert.match(taskButtonRule, /flex:\s*1 1 0;/);
+  assert.match(taskButtonRule, /min-width:\s*0;/);
+  assert.doesNotMatch(taskButtonRule, /min-width:\s*6\.2rem;/);
+  assert.doesNotMatch(taskButtonRule, /max-width:\s*14rem;/);
   assert.match(taskLabelRule, /text-overflow:\s*ellipsis;/);
   assert.match(taskLabelRule, /min-width:\s*0;/);
 });
