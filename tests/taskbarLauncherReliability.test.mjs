@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const launchersRs = readFileSync(new URL('../src-tauri/src/launchers.rs', import.meta.url), 'utf8');
+const taskWindowWindowsRs = readFileSync(new URL('../src-tauri/src/task_windows/windows.rs', import.meta.url), 'utf8');
+const taskWindowHelperRs = readFileSync(new URL('../src-tauri/src/task_windows/helper.rs', import.meta.url), 'utf8');
 const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 const mainRs = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
 
@@ -49,11 +51,18 @@ test('Explorer taskbar pin launch ShellExecutes the shortcut path without Resolv
 
 test('Explorer taskbar pin launch retries with elevation on access denied', () => {
   const launchBody = extractFunction(launchersRs, 'launch_pinned_taskbar_app', 1);
-  const helperBody = extractFunction(launchersRs, 'shell_execute_shortcut');
 
-  assert.match(launchBody, /Some\("runas"\)/);
+  assert.match(launchBody, /launch_pinned_taskbar_app_as_admin/);
   assert.match(launchBody, /SE_ERR_ACCESSDENIED/);
-  assert.match(helperBody, /Ok\(code\)/);
+  assert.match(launchersRs, /match shell_execute_shortcut\(shortcut_path, Some\("runas"\)/);
+});
+
+test('elevated launcher helper has no status-file handoff and no helper argv path', () => {
+  assert.doesNotMatch(launchersRs, /write_helper_status|wait_for_helper_status|launch_status_token|status_path/);
+  assert.match(launchersRs, /shell_execute_shortcut\(shortcut_path, Some\("runas"\)/);
+  assert.match(launchersRs, /handle_launch_pinned_taskbar_helper_args\(\)/);
+  assert.match(taskWindowHelperRs, /helper_exit_code_for_shell_execute_result/);
+  assert.match(taskWindowHelperRs, /UAC canceled/);
 });
 
 test('Explorer launch failure does not remove the visible launcher row', () => {

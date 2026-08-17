@@ -5,6 +5,7 @@ use super::{
 };
 use std::collections::HashMap;
 use std::mem::size_of;
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -12,12 +13,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetExitCodeProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
+    WaitForSingleObject, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetAncestor, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
@@ -259,6 +261,93 @@ pub(super) fn process_image_path_for_hwnd(hwnd: HWND) -> Result<PathBuf, String>
         .ok_or_else(|| "Task window executable path is unavailable".to_string())
 }
 
+pub(super) fn spawn_task_window_helper(
+    hwnd: String,
+    pid: u32,
+    creation_time: u64,
+    canonical_image_path: PathBuf,
+) -> Result<(), String> {
+    launch_task_window_helper(hwnd, pid, creation_time, canonical_image_path)
+}
+
+fn launch_task_window_helper(
+    hwnd: String,
+    pid: u32,
+    creation_time: u64,
+    canonical_image_path: PathBuf,
+) -> Result<(), String> {
+    let helper_exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let args = format!(
+        "--task-window-helper {} {} {} {}",
+        hwnd,
+        pid,
+        creation_time,
+        super::helper::encode_canonical_path(&canonical_image_path)
+    );
+    let process_handle = shell_execute_runas_wait(&helper_exe, &args, "task window helper")?;
+    let exit_code = wait_for_process_exit(process_handle, std::time::Duration::from_secs(8))?;
+    super::helper::helper_exit_code_for_shell_execute_result(exit_code)?;
+    Ok(())
+}
+
+fn shell_execute_runas_wait(executable: &Path, arguments: &str, operation: &str) -> Result<HANDLE, String> {
+    let mut execute_info = SHELLEXECUTEINFOW::default();
+    execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    let verb = wide_null(std::ffi::OsStr::new("runas"));
+    let executable_wide = wide_null(executable.as_os_str());
+    let arguments_wide = wide_null(std::ffi::OsStr::new(arguments));
+    execute_info.lpVerb = windows::core::PCWSTR(verb.as_ptr());
+    execute_info.lpFile = windows::core::PCWSTR(executable_wide.as_ptr());
+    execute_info.lpParameters = windows::core::PCWSTR(arguments_wide.as_ptr());
+    execute_info.nShow = windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0 as i32;
+    unsafe { ShellExecuteExW(&mut execute_info) }.map_err(|error| shell_execute_error_for_operation(operation, error))?;
+    if execute_info.hProcess.0.is_null() {
+        return Err(format!("Failed to launch {operation}: process handle unavailable"));
+    }
+    Ok(execute_info.hProcess)
+}
+
+fn wait_for_process_exit(handle: HANDLE, timeout: std::time::Duration) -> Result<u32, String> {
+    struct ProcessHandleGuard(HANDLE);
+    impl Drop for ProcessHandleGuard {
+        fn drop(&mut self) {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
+    let _guard = ProcessHandleGuard(handle);
+    let wait = unsafe { WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128) as u32) };
+    match wait {
+        WAIT_OBJECT_0 => {
+            let mut exit_code = 0u32;
+            unsafe { GetExitCodeProcess(handle, &mut exit_code) }.map_err(|error| format!("Failed to read helper exit code: {error}"))?;
+            Ok(exit_code)
+        }
+        WAIT_TIMEOUT => Err("Task window helper timed out".to_string()),
+        _ => Err("Task window helper wait failed".to_string()),
+    }
+}
+
+fn shell_execute_error_for_operation(operation: &str, error: windows::core::Error) -> String {
+    if shell_execute_status_for_error(error.code()) == ShellExecuteStatus::UacCanceled {
+        return "UAC canceled".to_string();
+    }
+    format!("Failed to launch {operation}: {error}")
+}
+
+#[derive(PartialEq, Eq)]
+enum ShellExecuteStatus { UacCanceled, Other }
+
+fn shell_execute_status_for_error(hr: windows::core::HRESULT) -> ShellExecuteStatus {
+    if super::helper::is_uac_canceled_shell_execute_code(hr.0 as u32) {
+        ShellExecuteStatus::UacCanceled
+    } else {
+        ShellExecuteStatus::Other
+    }
+}
+
+fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> { value.encode_wide().chain(std::iter::once(0)).collect() }
+
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
     let handles = &mut *(lparam.0 as *mut Vec<HWND>);
     handles.push(hwnd);
@@ -268,6 +357,35 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> w
 impl WindowCandidate {
     fn hwnd_string(&self) -> String {
         (self.hwnd.0 as isize).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_window_helper_arg_uses_plain_decimal_hwnd_value() {
+        let hwnd = 123456789isize;
+        assert_eq!(hwnd.to_string(), "123456789");
+    }
+
+    #[test]
+    fn shell_execute_error_maps_uac_cancel_before_context() {
+        let error = windows::core::Error::from(windows::core::HRESULT(1223));
+        assert_eq!(shell_execute_error_for_operation("task window helper", error), "UAC canceled");
+    }
+
+    #[test]
+    fn shell_execute_error_maps_hresult_from_win32_uac_cancel() {
+        let error = windows::core::Error::from(windows::core::HRESULT(0x8007_04C7u32 as i32));
+        assert_eq!(shell_execute_error_for_operation("task window helper", error), "UAC canceled");
+    }
+
+    #[test]
+    fn shell_execute_error_does_not_map_arbitrary_hresult() {
+        let error = windows::core::Error::from(windows::core::HRESULT(0x8007_0005u32 as i32));
+        assert_ne!(shell_execute_error_for_operation("task window helper", error), "UAC canceled");
     }
 }
 

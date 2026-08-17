@@ -60,6 +60,23 @@ Terminal with Windows Node.js/Rust installed."
 
 #[cfg(target_os = "windows")]
 fn main() {
+    match launchers::handle_launch_pinned_taskbar_helper_args() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+    match task_windows::handle_task_window_helper_args() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+
     let builder = tauri::Builder::default()
         .manage(shell_runtime_state())
         .manage(task_preview_state())

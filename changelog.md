@@ -1,5 +1,11 @@
 ## Change Ledger
 
+- 2026-08-17 `[CODE]` DOCS: Clarified live-proven task-window close behavior: UIPI access-denied failures on normal `WM_CLOSE` send/post can use the same one-shot elevated helper after captured identity validation, while protected/system targets remain unsupported and may stay denied.
+- 2026-08-17 `[TOOL]` REVIEWED: Docs-only pass; inspected `master_spec.md`, `CHANGELOG_POLICY.md`, `changelog.md`, and current task-window close implementation. No code/tests changed or run.
+
+- 2026-08-17 `[CODE]` DOCS: Documented current bottom-bar/task-preview task-window close behavior: normal WM_CLOSE/post/terminate ladder, AccessDenied-only one-shot same-exe `runas` helper, helper HWND/PID/creation-time/canonical-image identity checks, UAC cancellation/error mapping, internal JasonShell close rejection for all close callers, and no SeDebugPrivilege/taskkill/tree/full elevation.
+- 2026-08-17 `[TOOL]` REVIEWED: Docs-only pass after inspecting current `task_windows` implementation and taskbar/preview close source-contract tests; no validation commands run.
+
 - 2026-08-17 `[CODE]` FIXED: Bottom-bar task clicks now apply predicted active/minimized highlighting immediately after native activation succeeds, then reconcile through the authoritative snapshot stream instead of overwriting UI with a fresh cached read.
 
 - 2026-08-17 `[CODE]` FIXED: Documented bottom-bar taskbar regression fix: sole Rust task snapshot worker now scans at bounded 1-second cadence plus 120 ms coalesced explicit refresh requests, `taskbar:windows-snapshot` updates bottom-bar live without clicking tasks, frontend remains non-polling, and `list_open_task_windows` stays cache/fallback.

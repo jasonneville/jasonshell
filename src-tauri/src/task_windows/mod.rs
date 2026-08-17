@@ -60,6 +60,8 @@ pub(crate) mod bounded_string_cache;
 #[cfg(target_os = "windows")]
 mod icons;
 #[cfg(target_os = "windows")]
+mod helper;
+#[cfg(target_os = "windows")]
 mod notifications;
 #[cfg(target_os = "windows")]
 mod previews;
@@ -160,8 +162,9 @@ pub fn close_task_window(hwnd: String) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn reject_internal_shell_hwnd(hwnd: &str) -> Result<(), String> {
-    if is_jasonshell_window(hwnd)? {
+pub(super) fn reject_internal_shell_hwnd(hwnd: &str) -> Result<(), String> {
+    let target_path = task_window_process_path(hwnd)?;
+    if reject_internal_shell_process_path(&target_path)? {
         return Err(
             "Refusing to close an internal JasonShell window from task preview".to_string(),
         );
@@ -170,8 +173,9 @@ fn reject_internal_shell_hwnd(hwnd: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn is_jasonshell_window(hwnd: &str) -> Result<bool, String> {
-    let target_path = task_window_process_path(hwnd)?;
+pub(super) fn reject_internal_shell_process_path(
+    target_path: &std::path::Path,
+) -> Result<bool, String> {
     let current_exe = std::env::current_exe()
         .map_err(|error| format!("Current JasonShell executable path is unavailable: {error}"))?;
     Ok(target_path == current_exe)
@@ -183,6 +187,21 @@ pub(crate) fn perform_task_window_action(
     action: TaskWindowAction,
 ) -> Result<(), String> {
     actions::perform_task_window_action(hwnd, action)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn handle_task_window_helper_args() -> Result<bool, String> {
+    helper::handle_task_window_helper_args()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn spawn_task_window_helper(
+    hwnd: String,
+    pid: u32,
+    creation_time: u64,
+    canonical_image_path: std::path::PathBuf,
+) -> Result<(), String> {
+    windows::spawn_task_window_helper(hwnd, pid, creation_time, canonical_image_path)
 }
 
 #[cfg(not(target_os = "windows"))]

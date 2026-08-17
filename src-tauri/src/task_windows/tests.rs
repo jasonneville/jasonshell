@@ -1,5 +1,6 @@
 use super::{
-    actions::resolve_activation_target, notifications, TaskbarWindow, TaskbarWindowActivityState,
+    actions::resolve_activation_target, notifications, reject_internal_shell_process_path,
+    TaskbarWindow, TaskbarWindowActivityState,
 };
 use super::{
     actions::{should_fallback_post_close, should_minimize_window, should_use_foreground_handoff},
@@ -312,6 +313,12 @@ fn suppresses_generic_windows_with_llm_text_in_title() {
         "notepad",
         "Claude prompt notes"
     ));
+}
+
+#[test]
+fn rejects_current_exe_as_internal_shell_close_target() {
+    let current_exe = std::env::current_exe().expect("current exe");
+    assert!(reject_internal_shell_process_path(&current_exe).unwrap());
 }
 
 #[test]

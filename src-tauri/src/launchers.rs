@@ -36,6 +36,10 @@ pub fn reveal_pinned_shortcut_target(shortcut_path: String) -> Result<(), String
     imp::reveal_pinned_shortcut_target(shortcut_path)
 }
 
+pub fn handle_launch_pinned_taskbar_helper_args() -> Result<bool, String> {
+    imp::handle_launch_pinned_taskbar_helper_args()
+}
+
 pub fn copy_pinned_shortcut_path(shortcut_path: String) -> Result<(), String> {
     imp::copy_pinned_shortcut_path(shortcut_path)
 }
@@ -123,12 +127,7 @@ mod imp {
     pub fn launch_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
         let shortcut_path = validate_shortcut_path(&shortcut_path)?;
         match shell_execute_shortcut(shortcut_path.clone(), None, "launch pinned shortcut") {
-            Ok(SE_ERR_ACCESSDENIED) => shell_execute_shortcut(
-                shortcut_path,
-                Some("runas"),
-                "launch pinned shortcut as administrator after access denied",
-            )
-            .map(|_| ()),
+            Ok(SE_ERR_ACCESSDENIED) => launch_pinned_taskbar_app_as_admin(shortcut_path),
             Ok(_) => Ok(()),
             Err(error) => Err(error),
         }
@@ -136,12 +135,14 @@ mod imp {
 
     pub fn run_pinned_taskbar_app_as_admin(shortcut_path: String) -> Result<(), String> {
         let shortcut_path = validate_shortcut_path(&shortcut_path)?;
-        shell_execute_shortcut(
-            shortcut_path,
-            Some("runas"),
-            "run pinned shortcut as administrator",
-        )
-        .map(|_| ())
+        launch_pinned_taskbar_app_as_admin(shortcut_path)
+    }
+
+    fn launch_pinned_taskbar_app_as_admin(shortcut_path: PathBuf) -> Result<(), String> {
+        match shell_execute_shortcut(shortcut_path, Some("runas"), "launch pinned shortcut as administrator") {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn open_pinned_shortcut_properties(shortcut_path: String) -> Result<(), String> {
@@ -355,6 +356,10 @@ mod imp {
                 Ok(code)
             }
         })
+    }
+
+    pub fn handle_launch_pinned_taskbar_helper_args() -> Result<bool, String> {
+        Ok(false)
     }
 
     fn reveal_path_in_explorer(path: &Path, context: &str) -> Result<(), String> {
