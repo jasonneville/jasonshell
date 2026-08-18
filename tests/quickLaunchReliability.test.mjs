@@ -62,6 +62,20 @@ test('quick launch panel exposes only admin right-click action', () => {
   assert.match(quickLaunchLibSource, /showQuickLaunchPanelContextMenu/);
 });
 
+test('quick launch selected row and focus-visible stay background-only', () => {
+  const focusedRule = quickLaunchPanelSource.match(/\.rows button:focus-visible \{[\s\S]*?^  \}/m)?.[0] ?? '';
+  const selectedRule = quickLaunchPanelSource.match(/\.rows button\.focused \{[\s\S]*?^  \}/m)?.[0] ?? '';
+  const baseRule = quickLaunchPanelSource.match(/\.rows button \{[\s\S]*?^  \}/m)?.[0] ?? '';
+  assert.match(baseRule, /border: 1px solid transparent;/);
+  assert.match(selectedRule, /background: var\(--js-color-selected\);/);
+  assert.doesNotMatch(selectedRule, /outline|box-shadow|border-color/);
+  assert.match(focusedRule, /background: var\(--js-color-selected\);/);
+  assert.match(focusedRule, /outline:\s*none;/);
+  assert.match(focusedRule, /outline-offset:\s*0;/);
+  assert.match(focusedRule, /box-shadow:\s*none;/);
+  assert.match(focusedRule, /border-color:\s*transparent;/);
+});
+
 test('quick launch panel ignores stale closed nonce and clears state on valid close', () => {
   const closeFn = quickLaunchPanelSource.match(/listen<\{ nonce: string \| null \}>\(QUICK_LAUNCH_CLOSED_EVENT, \(event\) => \{[\s\S]*?^    \}\);/m)?.[0] ?? '';
   assert.match(closeFn, /if \(event\.payload\.nonce !== null && event\.payload\.nonce !== quickLaunchNonce\) \{/);

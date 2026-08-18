@@ -72,6 +72,10 @@ test('top bar command button is left of tray button and enforces popup exclusivi
 test('command panel surface includes compact list actions, resize controls, and command-block editor flow', () => {
   assert.match(commandPanelSource, /id="command-panel"[\s\S]*role="dialog"/);
   assert.match(commandPanelSource, /function selectCommand\(entry: QuickCommandEntry\) \{[\s\S]*startEditEntry\(entry\);[\s\S]*contextEntry = null;[\s\S]*\}/);
+  assert.match(commandPanelSource, /data-selected=\{editor\.id === entry\.id\}/);
+  assert.doesNotMatch(commandPanelSource, /role="listbox"/);
+  assert.doesNotMatch(commandPanelSource, /role="option"/);
+  assert.doesNotMatch(commandPanelSource, /aria-selected=\{editor\.id === entry\.id\}/);
   assert.match(commandPanelSource, /on:click=\{\(\) => selectCommand\(entry\)\}/);
   assert.match(commandPanelSource, /on:keydown=\{\(event\) => commandRowKeydown\(event, entry\)\}/);
   assert.match(commandPanelSource, /command-run-button/);

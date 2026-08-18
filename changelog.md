@@ -1,5 +1,20 @@
 ## Change Ledger
 
+- 2026-08-18 `[CODE]` DOCS: Clarified Quick Launch durable spec: native/browser focus outline is suppressed and keyboard focus remains hover-equivalent background only.
+- 2026-08-18 `[TOOL]` REVIEWED: Docs-only pass; read `master_spec.md` target section, `CHANGELOG_POLICY.md`, and `changelog.md`. No source or tests edited or executed.
+
+- 2026-08-18 `[CODE]` DOCS: Updated Quick Launch visual behavior spec: launcher keyboard focus has no outline/ring and uses the same subtle selected background as hover.
+- 2026-08-18 `[TOOL]` VALIDATED: Quick Launch focus behavior source/tests updated; focused Quick Launch reliability test and `npm run check` passed.
+
+- 2026-08-18 `[CODE]` FIXED: Quick Launch selected row now keeps background-only selection while `:focus-visible` uses outline-only accessible ring, removing the duplicate inset ring.
+- 2026-08-18 `[TOOL]` VALIDATED: `node --test tests/quickLaunchReliability.test.mjs` and `npm run check` passed.
+
+- 2026-08-18 `[CODE]` DOCS: Documented Quick Launch row styling contract: selected launcher row uses background-only selection, while keyboard focus-visible ring remains separate.
+- 2026-08-18 `[TOOL]` REVIEWED: Docs-only pass; inspected `master_spec.md`, `CHANGELOG_POLICY.md`, and `changelog.md`. No source/tests edited or executed.
+
+- 2026-08-18 `[CODE]` DOCS: Documented Quick Commands saved-command selection-highlight fix: row selection is active-editor-id based and matching saved commands render exactly one selected row.
+- 2026-08-18 `[TOOL]` VALIDATED: Updated Quick Commands selection-highlight source/tests; focused Quick Commands single-selected-row test and `npm run check` passed.
+
 - 2026-08-18 `[CODE]` DOCS: Clarified Stack Browser marquee selection behavior: drag can start from blank file-pane margins above/below rows and empty corners, while rows, controls, and scrollbar stay excluded.
 - 2026-08-18 `[TOOL]` VALIDATED: Stack Browser marquee focused 19-test suite, `npm run check`, and `npm run build` passed.
 

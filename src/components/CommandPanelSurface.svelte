@@ -392,7 +392,7 @@
       {#if loading}<p class="command-list-state">Loading commands…</p>{:else if !entries.length}<p class="command-list-state">No quick commands saved.</p>{:else}
         <ul>
           {#each entries as entry (entry.id)}
-            <li class:selected={editor.id === entry.id} on:contextmenu={(event) => openContextMenu(event, entry)}>
+            <li data-selected={editor.id === entry.id} on:contextmenu={(event) => openContextMenu(event, entry)}>
               <div class="command-row">
                 <button class="command-select" type="button" aria-label={`Edit ${entry.label}`} on:click={() => selectCommand(entry)} on:keydown={(event) => commandRowKeydown(event, entry)}><strong>{entry.label}</strong></button>
                 <button class="command-context-trigger" type="button" aria-label={`More options for ${entry.label}`} aria-haspopup="menu" on:click|stopPropagation={() => selectCommand(entry)} on:keydown={(event) => openKeyboardContextMenu(event, entry)}></button>

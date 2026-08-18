@@ -253,6 +253,7 @@
     align-items: center;
     background: transparent;
     border: 1px solid transparent;
+
     border-radius: var(--js-radius-md);
     color: inherit;
     cursor: pointer;
@@ -267,11 +268,16 @@
   }
 
   .rows button:hover,
-  .rows button:focus-visible,
   .rows button.focused {
     background: var(--js-color-selected);
-    border-color: var(--js-color-accent-border);
+  }
+
+  .rows button:focus-visible {
+    background: var(--js-color-selected);
+    border-color: transparent;
+    box-shadow: none;
     outline: none;
+    outline-offset: 0;
   }
 
   .launcher-icon {
