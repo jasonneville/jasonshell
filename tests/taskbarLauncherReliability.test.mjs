@@ -43,24 +43,40 @@ test('Explorer taskbar pin listing does not hide shortcuts just because Resolve 
 });
 
 test('Explorer taskbar pin launch ShellExecutes the shortcut path without Resolve preflight', () => {
-  const launchBody = extractFunction(launchersRs, 'launch_pinned_taskbar_app', 1);
-
-  assert.doesNotMatch(launchBody, /shortcut_resolves/);
-  assert.match(launchBody, /shell_execute_shortcut/);
+  assert.doesNotMatch(launchersRs, /shortcut_resolves/);
+  assert.match(launchersRs, /shell_execute_shortcut\(\s*shortcut_path\.clone\(\),\s*None,\s*&\[SE_ERR_ACCESSDENIED\],\s*"launch pinned shortcut"/);
+  assert.doesNotMatch(extractFunction(launchersRs, 'shell_execute_shortcut'), /resolved_shortcut_target_path/);
 });
 
 test('Explorer taskbar pin launch retries with elevation on access denied', () => {
-  const launchBody = extractFunction(launchersRs, 'launch_pinned_taskbar_app', 1);
+  assert.match(launchersRs, /SE_ERR_ACCESSDENIED/);
+  assert.match(launchersRs, /shell_execute_shortcut\(\s*shortcut_path\.clone\(\),\s*Some\("runas"\),\s*&\[3, SE_ERR_ACCESSDENIED, SE_ERR_FNF_NOASSOC\]/);
+  assert.match(extractFunction(launchersRs, 'shell_execute_shortcut'), /code <= 32 && !preserved_codes\.contains\(&code\)/);
+  const launchBody = extractFunction(launchersRs, 'launch_pinned_taskbar_app', 2);
+  assert.match(launchBody, /Ok\(SE_ERR_ACCESSDENIED\) => launch_pinned_taskbar_app_as_admin\(shortcut_path\)/);
+});
 
-  assert.match(launchBody, /launch_pinned_taskbar_app_as_admin/);
-  assert.match(launchBody, /SE_ERR_ACCESSDENIED/);
-  assert.match(launchersRs, /match shell_execute_shortcut\(shortcut_path, Some\("runas"\)/);
+test('WindowsApps admin launch falls back to Explorer only for AppX targets', () => {
+  assert.match(launchersRs, /fn is_windowsapps_path\(path: &Path\) -> bool/);
+  assert.match(launchersRs, /eq_ignore_ascii_case\("WindowsApps"\)/);
+  assert.match(launchersRs, /fn launch_windowsapps_target_as_admin_or_explorer_fallback\(/);
+  assert.match(launchersRs, /code == 3 \|\| code == SE_ERR_ACCESSDENIED \|\| code == SE_ERR_FNF_NOASSOC/);
+  assert.match(launchersRs, /windows_explorer_path\(\)\?/);
+  assert.match(launchersRs, /Command::new\(&explorer_path\)\s*\.arg\(shortcut_path\)/);
+  assert.match(launchersRs, /WINDIR is unavailable/);
+});
+
+test('explicit admin launch hands code 3 or access denied shortcut results to AppX fallback helper', () => {
+  const adminBody = extractFunction(launchersRs, 'launch_pinned_taskbar_app_as_admin');
+
+  assert.match(adminBody, /SE_ERR_FNF_NOASSOC/);
+  assert.match(adminBody, /Ok\(code\) if code == 3 \|\| code == SE_ERR_ACCESSDENIED \|\| code == SE_ERR_FNF_NOASSOC => \{/);
+  assert.match(adminBody, /launch_windowsapps_target_as_admin_or_explorer_fallback\(/);
+  assert.doesNotMatch(adminBody, /shell_execute_target\(PathBuf::from\(target_path\), Some\("runas"\), context\.as_str\(\)\)/);
 });
 
 test('elevated launcher helper has no status-file handoff and no helper argv path', () => {
   assert.doesNotMatch(launchersRs, /write_helper_status|wait_for_helper_status|launch_status_token|status_path/);
-  assert.match(launchersRs, /shell_execute_shortcut\(shortcut_path, Some\("runas"\)/);
-  assert.match(launchersRs, /handle_launch_pinned_taskbar_helper_args\(\)/);
   assert.match(taskWindowHelperRs, /helper_exit_code_for_shell_execute_result/);
   assert.match(taskWindowHelperRs, /UAC canceled/);
 });

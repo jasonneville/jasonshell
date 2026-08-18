@@ -1,5 +1,37 @@
 ## Change Ledger
 
+- 2026-08-18 `[CODE]` DOCS: Clarified Stack Browser marquee selection behavior: drag can start from blank file-pane margins above/below rows and empty corners, while rows, controls, and scrollbar stay excluded.
+- 2026-08-18 `[TOOL]` VALIDATED: Stack Browser marquee focused 19-test suite, `npm run check`, and `npm run build` passed.
+
+- 2026-08-17 `[CODE]` FIXED: Quick Launch admin launch now falls back only for validated WindowsApps/AppX targets that refuse elevation with ShellExecute code 3 or access denied, reopening the original pinned `.lnk` through `explorer.exe` unelevated so Store apps launch instead of erroring.
+- 2026-08-17 `[CODE]` FIXED: Quick Launch/launcher admin fallback now also preserves ShellExecute code 31 for explicit shortcut invocation, routes 3/5/31 into the resolved-target helper, and only brokers WindowsApps/AppX targets through Explorer when the validated target itself rejects elevation.
+- 2026-08-17 `[TOOL]` VALIDATED: focused launcher Quick Launch source tests updated; `npm run check` and `cargo check` pending.
+- 2026-08-17 `[TOOL]` VALIDATED: focused launcher/Quick Launch tests, `npm run check`, and `cargo check` passed; cargo warnings remain pre-existing.
+
+- 2026-08-17 [CODE] Quick Launch native context menu now uses backend focus-loss hold/release and backend blur-close helper; explicit admin launch policy no longer falls back to non-elevated target after code 5.
+
+- 2026-08-17 `[CODE]` FIXED: Quick Launch row admin action now uses a panel-scoped native Tauri context menu, revalidates nonce/path through the public quick-launch handler, and keeps panel blur suppression bounded to the native menu/UAC flow.
+- 2026-08-17 `[TOOL]` VALIDATED: pending focused quick-launch native-menu/retry tests, `npm run check`, and `cargo check`.
+
+- 2026-08-17 `[CODE]` FIXED: Quick Launch button now closes on pointerdown while open and suppresses the trailing click, preventing the native blur/focus-loss race from immediately reopening the panel.
+- 2026-08-17 `[CODE]` FIXED: Quick Launch close handling now leaves `suppressQuickLaunchClick` untouched until the trailing click consumes it, so the close event cannot clear suppression too early and reopen the panel.
+- 2026-08-17 `[TOOL]` VALIDATED: pending focused quick-launch reliability test and `npm run check`.
+
+- 2026-08-17 `[CODE]` FIXED: Quick Launch rows now expose a local right-click menu with only `Run as administrator`, wired to the new admin invoke wrapper and preserved panel/menu state on admin failure.
+
+- 2026-08-17 `[CODE]` FIXED: Quick Launch select/close now uses canonical pinned-taskbar shortcut validation, hides the native panel after successful selection, and targets closed events to BottomBar and the panel instead of global emits.
+- 2026-08-17 `[CODE]` FIXED: Quick Launch select now launches the validated canonical pinned shortcut through the internal launcher path first; selection no longer emits a raw-path event back to BottomBar, and launch failures keep the panel visible for retry.
+- 2026-08-17 `[TOOL]` VALIDATED: pending quick launch focused tests, `npm run check`, and `cargo check`.
+
+- 2026-08-17 `[CODE]` FIXED: Quick Launch now uses BottomBar as source-of-truth for alphabetized launcher rows, sends nonce-scoped open/select/closed payloads to the panel, clamps native panel placement from the button anchor, and hides on focus loss via the native lifecycle.
+- 2026-08-17 `[CODE]` FIXED: Quick Launch protocol hardened: camelCase serde payloads, scoped open/select/closed emits, optimistic open rollback on show failure, native-show-first backend state commit, and select flow now keeps panel visible until backend close event.
+- 2026-08-17 `[TOOL]` VALIDATED: Focused quick-launch, surface-loader, Melt wiring, and contract tests passed; `npm run check` passed; `cargo check --manifest-path src-tauri/Cargo.toml` passed with pre-existing warnings only. Full `npm run test:node` still has unrelated pre-existing stack sort failures.
+
+- 2026-08-17 `[CODE]` DOCS: Updated Bottom bar Quick Launch spec to match current implementation: dedicated upward-anchored `quick-launch-panel` native webview, alphabetized Explorer pins with icons, selection via existing BottomBar launch path, close/dismiss lifecycle, and no inline launcher icons.
+
+- 2026-08-17 [CODE] Bottom bar launcher entry changed to a text Quick Launch button that opens an upward alphabetical quick-launch list and keeps existing launch behavior on item click.
+- 2026-08-17 [TOOL] Validated focused quick-launch source test and `npm run check`; broader `node --test tests/*.test.mjs` still has the pre-existing unrelated stack sort failures.
+
 - 2026-08-17 `[CODE]` FIXED: Bottom-bar open-window task tiles now flex to equal widths across the strip instead of sizing to content bounds, while label ellipsis, overflow handling, launcher widths, and task drag/reorder remain intact.
 - 2026-08-17 `[TOOL]` VALIDATED: Focused taskbar UX test updated for equal flex sizing; `node --test tests/taskbarUxState.test.mjs` and `npm run check` passed.
 

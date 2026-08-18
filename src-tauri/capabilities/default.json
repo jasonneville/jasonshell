@@ -2,7 +2,8 @@
   "identifier": "top-bar",
   "description": "Top-bar shell surface capability: search, workspace activation, stack pin, workspace tooling action plans, event, and window-label access.",
   "windows": [
-    "top-bar"
+    "top-bar",
+    "quick-launch-panel"
   ],
   "permissions": [
     "core:default",

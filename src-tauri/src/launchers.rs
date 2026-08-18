@@ -16,7 +16,14 @@ pub fn list_pinned_taskbar_apps() -> Result<Vec<PinnedTaskbarLauncher>, String> 
 }
 
 #[tauri::command]
-pub fn launch_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
+pub fn launch_pinned_taskbar_app(window: tauri::WebviewWindow, shortcut_path: String) -> Result<(), String> {
+    if window.label() != crate::contracts::surfaces::BOTTOM_BAR {
+        return Err("Unauthorized caller for command launch_pinned_taskbar_app".to_string());
+    }
+    launch_pinned_taskbar_app_internal(shortcut_path)
+}
+
+pub fn launch_pinned_taskbar_app_internal(shortcut_path: String) -> Result<(), String> {
     imp::launch_pinned_taskbar_app(shortcut_path)
 }
 
@@ -56,6 +63,10 @@ pub fn pin_task_window_to_taskbar(hwnd: String) -> Result<(), String> {
     imp::pin_task_window_to_taskbar(hwnd)
 }
 
+pub(crate) fn canonicalize_pinned_taskbar_shortcut_path(shortcut_path: &str) -> Result<std::path::PathBuf, String> {
+    imp::canonicalize_pinned_taskbar_shortcut_path(shortcut_path)
+}
+
 #[cfg(target_os = "windows")]
 mod imp {
     use super::PinnedTaskbarLauncher;
@@ -87,6 +98,7 @@ mod imp {
         DestroyIcon, GetIconInfo, HICON, ICONINFO, SW_SHOWNORMAL,
     };
 
+    const SE_ERR_FNF_NOASSOC: isize = 31;
     const SE_ERR_ACCESSDENIED: isize = 5;
 
     pub fn list_pinned_taskbar_apps() -> Result<Vec<PinnedTaskbarLauncher>, String> {
@@ -126,7 +138,12 @@ mod imp {
 
     pub fn launch_pinned_taskbar_app(shortcut_path: String) -> Result<(), String> {
         let shortcut_path = validate_shortcut_path(&shortcut_path)?;
-        match shell_execute_shortcut(shortcut_path.clone(), None, "launch pinned shortcut") {
+        match shell_execute_shortcut(
+            shortcut_path.clone(),
+            None,
+            &[SE_ERR_ACCESSDENIED],
+            "launch pinned shortcut",
+        ) {
             Ok(SE_ERR_ACCESSDENIED) => launch_pinned_taskbar_app_as_admin(shortcut_path),
             Ok(_) => Ok(()),
             Err(error) => Err(error),
@@ -139,8 +156,51 @@ mod imp {
     }
 
     fn launch_pinned_taskbar_app_as_admin(shortcut_path: PathBuf) -> Result<(), String> {
-        match shell_execute_shortcut(shortcut_path, Some("runas"), "launch pinned shortcut as administrator") {
+        match shell_execute_shortcut(
+            shortcut_path.clone(),
+            Some("runas"),
+            &[3, SE_ERR_ACCESSDENIED, SE_ERR_FNF_NOASSOC],
+            "launch pinned shortcut as administrator",
+        ) {
+            Ok(code) if code == 3 || code == SE_ERR_ACCESSDENIED || code == SE_ERR_FNF_NOASSOC => {
+                if let Some(target_path) = resolved_shortcut_target_path(&shortcut_path) {
+                    launch_windowsapps_target_as_admin_or_explorer_fallback(
+                        &shortcut_path,
+                        PathBuf::from(target_path),
+                    )
+                } else {
+                    Err(format!(
+                        "ShellExecuteW failed to launch pinned shortcut as administrator {} with code {SE_ERR_ACCESSDENIED}",
+                        shortcut_path.display()
+                    ))
+                }
+            }
             Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn launch_windowsapps_target_as_admin_or_explorer_fallback(
+        shortcut_path: &Path,
+        target_path: PathBuf,
+    ) -> Result<(), String> {
+        match shell_execute_target(
+            target_path.clone(),
+            Some("runas"),
+            "launch pinned shortcut as administrator",
+        ) {
+            Ok(_) => Ok(()),
+            Err(error) if is_windowsapps_path(&target_path) && shell_execute_error_code(&error).is_some_and(|code| code == 3 || code == SE_ERR_ACCESSDENIED || code == SE_ERR_FNF_NOASSOC) => {
+                // WindowsApps/AppX targets cannot be elevated directly.
+                // Delegate validated pinned .lnk back through Explorer so the app opens unelevated
+                // via the shell broker path instead of failing with a quick-launch error.
+                let explorer_path = windows_explorer_path()?;
+                std::process::Command::new(&explorer_path)
+                    .arg(shortcut_path)
+                    .spawn()
+                    .map_err(|spawn_error| format!("Failed to launch pinned shortcut through {}: {spawn_error}", explorer_path.display()))?;
+                Ok(())
+            }
             Err(error) => Err(error),
         }
     }
@@ -150,9 +210,16 @@ mod imp {
         shell_execute_shortcut(
             shortcut_path,
             Some("properties"),
+            &[],
             "open pinned shortcut properties",
         )
-        .map(|_| ())
+        .and_then(|code| {
+            if code <= 32 {
+                Err(format!("ShellExecuteW failed to open pinned shortcut properties with code {code}"))
+            } else {
+                Ok(())
+            }
+        })
     }
 
     pub fn reveal_pinned_shortcut(shortcut_path: String) -> Result<(), String> {
@@ -318,12 +385,15 @@ mod imp {
     fn shell_execute_shortcut(
         shortcut_path: PathBuf,
         verb: Option<&str>,
+        preserved_codes: &[isize],
         context: &str,
     ) -> Result<isize, String> {
+        let preserved_codes = preserved_codes.to_vec();
         run_in_sta({
             let shortcut_path = shortcut_path.clone();
             let verb = verb.map(str::to_string);
             let context = context.to_string();
+            let preserved_codes = preserved_codes.clone();
             move || {
                 let shortcut_wide = to_wide(&shortcut_path);
                 let verb_wide = verb.as_deref().map(|value| to_wide(OsStr::new(value)));
@@ -342,11 +412,8 @@ mod imp {
                 };
                 let code = result.0 as isize;
 
-                if code <= 32 {
-                    if verb.is_none() && code == SE_ERR_ACCESSDENIED {
-                        return Ok(code);
-                    }
-
+                // Launch callers need access denied intact to apply their own safe fallback.
+                if code <= 32 && !preserved_codes.contains(&code) {
                     return Err(format!(
                         "ShellExecuteW failed to {context} {} with code {code}",
                         shortcut_path.display()
@@ -358,8 +425,50 @@ mod imp {
         })
     }
 
+    fn shell_execute_target(
+        target_path: PathBuf,
+        verb: Option<&str>,
+        context: &str,
+    ) -> Result<isize, String> {
+        run_in_sta({
+            let target_path = target_path.clone();
+            let verb = verb.map(str::to_string);
+            let context = context.to_string();
+            move || {
+                let target_wide = to_wide(&target_path);
+                let verb_wide = verb.as_deref().map(|value| to_wide(OsStr::new(value)));
+                let result = unsafe {
+                    ShellExecuteW(
+                        Some(HWND::default()),
+                        verb_wide
+                            .as_ref()
+                            .map(|value| PCWSTR(value.as_ptr()))
+                            .unwrap_or(PCWSTR::null()),
+                        PCWSTR(target_wide.as_ptr()),
+                        None,
+                        None,
+                        SW_SHOWNORMAL,
+                    )
+                };
+                let code = result.0 as isize;
+                if code <= 32 {
+                    return Err(format!(
+                        "ShellExecuteW failed to {context} {} with code {code}",
+                        target_path.display()
+                    ));
+                }
+                Ok(code)
+            }
+        })
+    }
+
     pub fn handle_launch_pinned_taskbar_helper_args() -> Result<bool, String> {
         Ok(false)
+    }
+
+    fn windows_explorer_path() -> Result<PathBuf, String> {
+        let windir = std::env::var_os("WINDIR").ok_or_else(|| "WINDIR is unavailable".to_string())?;
+        Ok(PathBuf::from(windir).join("explorer.exe"))
     }
 
     fn reveal_path_in_explorer(path: &Path, context: &str) -> Result<(), String> {
@@ -423,7 +532,7 @@ mod imp {
         ))
     }
 
-    fn validate_shortcut_path(shortcut_path: &str) -> Result<PathBuf, String> {
+    pub(crate) fn canonicalize_pinned_taskbar_shortcut_path(shortcut_path: &str) -> Result<PathBuf, String> {
         let requested_path = PathBuf::from(shortcut_path);
 
         if !has_lnk_extension(&requested_path) {
@@ -443,6 +552,20 @@ mod imp {
         }
 
         Ok(canonical_shortcut)
+    }
+
+    fn validate_shortcut_path(shortcut_path: &str) -> Result<PathBuf, String> {
+        canonicalize_pinned_taskbar_shortcut_path(shortcut_path)
+    }
+
+    fn is_windowsapps_path(path: &Path) -> bool {
+        path.components().any(|component| {
+            component.as_os_str().to_string_lossy().eq_ignore_ascii_case("WindowsApps")
+        })
+    }
+
+    fn shell_execute_error_code(error: &str) -> Option<isize> {
+        error.rsplit(" with code ").next()?.parse().ok()
     }
 
     fn launcher_name(shortcut_path: &Path) -> String {

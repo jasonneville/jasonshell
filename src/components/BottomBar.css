@@ -80,6 +80,31 @@
   position: relative;
 }
 
+.bottom-bar .launcher-strip-launchers {
+  display: flex;
+  align-items: stretch;
+}
+
+.bottom-bar .quick-launch-button {
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--js-color-border);
+  color: var(--js-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 799;
+  padding: 0 0.5rem;
+}
+
+.bottom-bar .quick-launch-button:hover,
+.bottom-bar .quick-launch-button:focus-visible {
+  background: var(--js-color-control-hover);
+  color: var(--js-color-text-strong);
+  outline: none;
+}
+
 .bottom-bar .launcher-strip::after {
   background: var(--js-color-border);
   content: '';

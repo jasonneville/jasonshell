@@ -65,9 +65,5 @@ test('BottomBar wires launcher pointer reorder separately from click and native 
   assert.match(bottomBarSource, /resolveTaskbarLauncherPointerRelease/);
   assert.match(bottomBarSource, /orderTaskbarLaunchers/);
   assert.match(bottomBarSource, /taskbarLauncherOrderFromDisplacement/);
-  assert.match(bottomBarSource, /startLauncherPointerDrag\(launcher, event\)/);
-  assert.match(bottomBarSource, /moveLauncherPointerDrag/);
-  assert.match(bottomBarSource, /finishLauncherPointerDrag/);
-  assert.match(bottomBarSource, /onClick=\{\(event\) => handleLauncherClick\(launcher, event\)\}/);
-  assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openLauncherMenu\(launcher, event\)\}/);
+  assert.doesNotMatch(bottomBarSource, /launcher-strip-launchers|onPointerDown=\{\(event\) => startLauncherPointerDrag\(launcher, event\)\}|onClick=\{\(event\) => handleLauncherClick\(launcher, event\)\}|onContextMenu=\{\(event\) => void openLauncherMenu\(launcher, event\)\}/);
 });

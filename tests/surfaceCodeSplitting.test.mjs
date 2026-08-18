@@ -13,6 +13,7 @@ const expectedSurfaceImports = {
   'search-panel': '../components/SearchPanelSurface.svelte',
   'stack-popup': '../components/StackPopupSurface.svelte',
   'process-manager': '../components/ProcessManagerSurface.svelte',
+  'quick-launch-panel': '../components/QuickLaunchPanelSurface.svelte',
   'control-plane': '../components/ControlPlaneSurface.svelte',
   'settings-panel': '../components/SettingsPanelSurface.svelte',
   'tray-panel': '../components/TrayPanelSurface.svelte',

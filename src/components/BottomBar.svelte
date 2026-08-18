@@ -1,5 +1,6 @@
 <script lang="ts">
   import './BottomBar.css';
+  import { invoke } from '@tauri-apps/api/core';
   import { onMount, tick } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
@@ -18,6 +19,7 @@
     shellBarHeightFromDrag
   } from '../lib/shellBarResize';
   import { showProcessManager } from '../lib/processManager';
+  import { hideQuickLaunchPanel } from '../lib/quickLaunchPanel';
   import {
     launchPinnedTaskbarLauncher,
     listPinnedTaskbarLaunchers,
@@ -90,6 +92,7 @@
     console.error('Failed to resize bottom bar', error);
   });
   let launchers: PinnedTaskbarLauncher[] = [];
+  $: quickLaunchers = [...launchers].sort((left, right) => left.name.localeCompare(right.name));
   let launcherOrder: string[] = readPersistedLauncherOrder();
   let draggingLauncherPath: string | null = null;
   let launcherDragPointerId: number | null = null;
@@ -122,9 +125,18 @@
   let pendingTaskWindowHwnd: string | null = null;
   let suppressClickTaskWindowHwnd: string | null = null;
   let taskStripEl: HTMLDivElement | null = null;
+  let quickLaunchPanelOpen = false;
+  let quickLaunchSessionNonce: string | null = null;
+  let quickLaunchOpenInFlight = false;
+  let suppressQuickLaunchClick = false;
   let taskbarOverflow = taskbarOverflowState(0, 0, 0);
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
+  const QUICK_LAUNCH_CLOSED_EVENT = 'quick-launch-panel:closed';
+  const QUICK_LAUNCH_OPEN_EVENT = 'quick-launch-panel:open';
+  type QuickLaunchRow = PinnedTaskbarLauncher;
+  type QuickLaunchOpenPayload = { nonce: string; rows: QuickLaunchRow[] };
+  type QuickLaunchClosedPayload = { nonce: string };
 
   function readPersistedLauncherOrder() {
     try {
@@ -720,6 +732,11 @@
     if (event.key !== 'Escape') {
       return;
     }
+    if (quickLaunchPanelOpen) {
+      event.preventDefault();
+      void hideQuickLaunchPanel();
+      return;
+    }
     if (launcherDragPointerId !== null) {
       event.preventDefault();
       cancelLauncherPointerDrag();
@@ -784,6 +801,50 @@
       console.error('Failed to open process manager', error);
     }
   }
+  async function openQuickLaunchPanel() {
+    if (quickLaunchOpenInFlight) return;
+    if (quickLaunchPanelOpen) {
+      await hideQuickLaunchPanel();
+      return;
+    }
+    quickLaunchOpenInFlight = true;
+    const nonce = crypto.randomUUID();
+    const button = document.querySelector<HTMLButtonElement>('.quick-launch-button');
+    const rect = button?.getBoundingClientRect();
+    const rows = [...launchers].sort((left, right) => left.name.localeCompare(right.name));
+    quickLaunchSessionNonce = nonce;
+    quickLaunchPanelOpen = true;
+    try {
+      await invoke('show_quick_launch_panel', { args: { anchorLeft: rect?.left ?? 0, anchorWidth: rect?.width ?? 0, nonce, rows } });
+    } catch (error) {
+      if (quickLaunchSessionNonce === nonce) {
+        quickLaunchSessionNonce = null;
+        quickLaunchPanelOpen = false;
+      }
+      throw error;
+    } finally {
+      quickLaunchOpenInFlight = false;
+    }
+  }
+  function handleQuickLaunchPointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !quickLaunchPanelOpen) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    suppressQuickLaunchClick = true;
+    void hideQuickLaunchPanel();
+  }
+  function handleQuickLaunchClick() {
+    if (suppressQuickLaunchClick) {
+      suppressQuickLaunchClick = false;
+      return;
+    }
+    void openQuickLaunchPanel();
+  }
+  function isValidQuickLaunchPayload(payload: unknown): payload is QuickLaunchClosedPayload {
+    return !!payload && typeof payload === 'object' && typeof (payload as { nonce?: unknown }).nonce === 'string';
+  }
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     let disposed = false;
@@ -806,6 +867,11 @@
     }));
     registerAsyncUnlistener(listen('taskbar:refresh-windows', () => {
       void requestTaskbarWindowsRefresh();
+    }));
+    registerAsyncUnlistener(listen<QuickLaunchClosedPayload>(QUICK_LAUNCH_CLOSED_EVENT, (event) => {
+      if (!isValidQuickLaunchPayload(event.payload) || event.payload.nonce !== quickLaunchSessionNonce) return;
+      quickLaunchSessionNonce = null;
+      quickLaunchPanelOpen = false;
     }));
 
     registerAsyncUnlistener(listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
@@ -905,34 +971,7 @@
   {/if}
   <section class="taskbar-strip" aria-label="Taskbar">
     <div class="launcher-strip" aria-label="Pinned Explorer taskbar apps">
-      {#if launchers.length}
-        {#each launchers as launcher (launcher.id)}
-          <MeltActionButton
-            class={`launcher-button${draggingLauncherPath === launcher.shortcutPath ? ' launcher-button-dragging' : ''}`}
-            type="button"
-            title={launcher.name}
-            dataPath={launcher.shortcutPath}
-            ariaLabel={`Launch ${launcher.name}`}
-            disabled={launchingShortcutPath === launcher.shortcutPath}
-            style={launcherStyle(launcher)}
-            onPointerDown={(event) => startLauncherPointerDrag(launcher, event)}
-            onPointerMove={moveLauncherPointerDrag}
-            onPointerUp={finishLauncherPointerDrag}
-            onPointerCancel={cancelLauncherPointerDrag}
-            onLostPointerCapture={(event) => {
-              if (launcherDragPointerId === event.pointerId) {
-                cancelLauncherPointerDrag();
-              }
-            }}
-            onClick={(event) => handleLauncherClick(launcher, event)}
-            onContextMenu={(event) => void openLauncherMenu(launcher, event)}
-          >
-            <img class="launcher-icon" src={launcher.iconDataUrl} alt="" draggable="false" />
-          </MeltActionButton>
-        {/each}
-      {:else}
-        <div class="strip-fallback">{launcherMessage}</div>
-      {/if}
+      <MeltActionButton class="quick-launch-button" type="button" ariaLabel="Quick Launch" ariaExpanded={quickLaunchPanelOpen} ariaHaspopup="dialog" onPointerDown={handleQuickLaunchPointerDown} onClick={handleQuickLaunchClick}>Quick Launch</MeltActionButton>
     </div>
 
     <div

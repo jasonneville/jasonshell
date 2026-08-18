@@ -35,10 +35,13 @@ test('blocks interactive row and chrome targets from marquee start', () => {
   }
 });
 
-test('details body owns pointerdown for full margin selection, rows and resize keep ownership', () => {
-  assert.match(surface, /on:pointerdown=\{beginMarqueeSelection\}/);
+test('details pane owns pointerdown for full margin selection, rows and resize keep ownership', () => {
+  assert.match(surface, /class:marquee-selecting=\{!!marqueeSelection\}/);
+  assert.match(surface, /class="details-table"[\s\S]*on:pointerdown=\{beginMarqueeSelection\}/);
   assert.match(surface, /data-stack-marquee-start="body"/);
   assert.match(surface, /class="stack-resize-grip"/);
   assert.match(surface, /on:pointerdown=\{beginResize\}/);
+  assert.match(surface, /function isStackMarqueeScrollbarTarget\(event: PointerEvent\)/);
+  assert.match(surface, /event\.offsetX >= detailsBody\.clientWidth/);
   assert.doesNotMatch(surface, /on:pointerdown=\{\(event\) => beginMarqueeSelection\(event, entry\)\}/);
 });

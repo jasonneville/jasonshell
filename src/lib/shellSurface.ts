@@ -5,6 +5,7 @@ export type ShellSurface =
   | 'search-panel'
   | 'stack-popup'
   | 'process-manager'
+  | 'quick-launch-panel'
   | 'control-plane'
   | 'settings-panel'
   | 'tray-panel'
@@ -43,6 +44,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
   'process-manager': {
     subtitle: 'Running process monitor',
     title: 'JasonShell Process Manager'
+  },
+  'quick-launch-panel': {
+    subtitle: 'Explorer pin launcher list',
+    title: 'JasonShell Quick Launch'
   },
   'control-plane': {
     subtitle: 'Settings and developer dashboard',
@@ -86,6 +91,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'search-panel'
     || label === 'stack-popup'
     || label === 'process-manager'
+    || label === 'quick-launch-panel'
     || label === 'control-plane'
     || label === 'settings-panel'
     || label === 'tray-panel'

@@ -17,6 +17,7 @@ export const surfaceComponentLoaders: Record<LoadableShellSurface, SurfaceCompon
   'search-panel': () => import('../components/SearchPanelSurface.svelte'),
   'stack-popup': () => import('../components/StackPopupSurface.svelte'),
   'process-manager': () => import('../components/ProcessManagerSurface.svelte'),
+  'quick-launch-panel': () => import('../components/QuickLaunchPanelSurface.svelte'),
   'control-plane': () => import('../components/ControlPlaneSurface.svelte'),
   'settings-panel': () => import('../components/SettingsPanelSurface.svelte'),
   'tray-panel': () => import('../components/TrayPanelSurface.svelte'),

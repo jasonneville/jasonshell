@@ -1236,6 +1236,7 @@
   scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
 }
 
+.details-table.marquee-selecting,
 .details-body.marquee-selecting {
   cursor: crosshair;
   user-select: none;

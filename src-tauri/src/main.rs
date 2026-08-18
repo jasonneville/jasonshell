@@ -12,6 +12,7 @@ mod diagnostics;
 mod launchers;
 mod layout;
 mod process_manager;
+mod quick_launch_panel;
 mod providers;
 mod quick_commands;
 mod search;
@@ -108,6 +109,12 @@ fn main() {
             settings::save_shell_bar_lock,
             process_manager::show_process_manager,
             process_manager::hide_process_manager,
+            quick_launch_panel::show_quick_launch_panel,
+            quick_launch_panel::hide_quick_launch_panel_on_focus_loss,
+            quick_launch_panel::hide_quick_launch_panel,
+            quick_launch_panel::select_quick_launch_panel,
+            quick_launch_panel::run_quick_launch_panel_as_admin,
+            quick_launch_panel::show_quick_launch_panel_context_menu,
             control_plane::show_control_plane,
             control_plane::hide_control_plane,
             settings_panel::show_settings_panel,
@@ -279,6 +286,16 @@ fn main() {
             {
                 let _ = window.emit(process_manager::PROCESS_MANAGER_CLOSED_EVENT, ());
                 let _ = window.hide();
+                return;
+            }
+
+            if window.label() == shell_windows::QUICK_LAUNCH_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = quick_launch_panel::hide_quick_launch_panel_on_focus_loss(
+                    window.clone(),
+                    window.app_handle().clone(),
+                );
                 return;
             }
 

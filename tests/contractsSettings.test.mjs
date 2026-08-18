@@ -164,6 +164,7 @@ test('frontend IPC contracts expose command, event, and surface constants for fu
     'search-panel',
     'stack-popup',
     'process-manager',
+    'quick-launch-panel',
     'control-plane',
     'tray-panel',
     'command-panel',
@@ -270,6 +271,8 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'process-manager:open',
     'process-manager:closed',
     'quick-command:run-updated',
+    'quick-launch-panel:closed',
+    'quick-launch-panel:open',
     'search:toggle-centered',
     'search-engine:progress',
     'search-index:refreshed',
@@ -455,7 +458,7 @@ test('backend settings and diagnostics commands are registered with hardened app
       ['stack-popup'],
       ['task-preview'],
       ['terminal-panel'],
-      ['top-bar'],
+      ['top-bar', 'quick-launch-panel'],
       ['tray-panel']
     ]
   );

@@ -193,11 +193,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
 
   assert.doesNotMatch(bottomBarSource, /quick-icon-button|launchQuickIconFromBottomBar|openQuickIconMenu/);
 
-  assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`launcher-button/);
-  assert.match(bottomBarSource, /title=\{launcher\.name\}[\s\S]*dataPath=\{launcher\.shortcutPath\}[\s\S]*ariaLabel=\{`Launch \$\{launcher\.name\}`\}[\s\S]*disabled=\{launchingShortcutPath === launcher\.shortcutPath\}/);
-  assert.match(bottomBarSource, /onPointerDown=\{\(event\) => startLauncherPointerDrag\(launcher, event\)\}/);
-  assert.match(bottomBarSource, /onClick=\{\(event\) => handleLauncherClick\(launcher, event\)\}/);
-  assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openLauncherMenu\(launcher, event\)\}/);
+  assert.doesNotMatch(bottomBarSource, /<div class="launcher-strip-launchers"|<MeltActionButton\s+class=\{`launcher-button/);
 
   assert.match(bottomBarSource, /class:task-group-active=\{group\.isActive\}/);
   assert.match(bottomBarSource, /class:task-group-busy=\{group\.isBusy\}/);

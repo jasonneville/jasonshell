@@ -1884,7 +1884,9 @@
     if (
       event.button !== 0
       || hasRetainedRows
+      || !detailsGrid
       || !detailsBody
+      || isStackMarqueeScrollbarTarget(event)
       || !isStackMarqueeStartTarget(event.target)
     ) {
       return;
@@ -1903,12 +1905,22 @@
       folderPath: currentPath
     };
     try {
-      detailsBody.setPointerCapture(event.pointerId);
+      detailsGrid.setPointerCapture(event.pointerId);
     } catch {
       marqueeSelection = null;
       return;
     }
     updateMarqueeSelection();
+  }
+
+  function isStackMarqueeScrollbarTarget(event: PointerEvent) {
+    if (!detailsBody || event.target !== detailsBody) {
+      return false;
+    }
+    if (detailsBody.scrollHeight <= detailsBody.clientHeight) {
+      return false;
+    }
+    return event.offsetX >= detailsBody.clientWidth;
   }
 
   function isStackMarqueeStartTarget(target: EventTarget | null) {
@@ -1942,7 +1954,9 @@
 
     event.preventDefault();
     try {
-      if (detailsBody?.hasPointerCapture(event.pointerId)) {
+      if (detailsGrid?.hasPointerCapture(event.pointerId)) {
+        detailsGrid.releasePointerCapture(event.pointerId);
+      } else if (detailsBody?.hasPointerCapture(event.pointerId)) {
         detailsBody.releasePointerCapture(event.pointerId);
       }
     } finally {
@@ -2719,6 +2733,7 @@
 
   <div
     class="details-table"
+    class:marquee-selecting={!!marqueeSelection}
     role="grid"
     aria-label="Folder details"
     aria-busy={loadingPath ? 'true' : 'false'}
@@ -2727,6 +2742,7 @@
     tabindex="0"
     bind:this={detailsGrid}
     on:contextmenu={handleBackgroundContextMenu}
+    on:pointerdown={beginMarqueeSelection}
     on:dragover={(event) => handleDropOver(event)}
     on:drop={(event) => void handleDrop(event, currentPath)}
   >
@@ -2744,7 +2760,6 @@
         role="rowgroup"
         bind:this={detailsBody}
         data-stack-marquee-start="body"
-        on:pointerdown={beginMarqueeSelection}
         on:scroll={handleDetailsBodyScroll}
       >
         {#if virtualEntries.beforeHeight}

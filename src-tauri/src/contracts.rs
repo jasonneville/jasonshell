@@ -7,6 +7,7 @@ pub mod surfaces {
     pub const SEARCH_PANEL: &str = "search-panel";
     pub const STACK_POPUP: &str = "stack-popup";
     pub const PROCESS_MANAGER: &str = "process-manager";
+    pub const QUICK_LAUNCH_PANEL: &str = "quick-launch-panel";
     pub const CONTROL_PLANE: &str = "control-plane";
     pub const SETTINGS_PANEL: &str = "settings-panel";
     pub const TRAY_PANEL: &str = "tray-panel";
@@ -22,6 +23,7 @@ pub mod surfaces {
         SEARCH_PANEL,
         STACK_POPUP,
         PROCESS_MANAGER,
+        QUICK_LAUNCH_PANEL,
         CONTROL_PLANE,
         SETTINGS_PANEL,
         TRAY_PANEL,
@@ -45,6 +47,7 @@ pub mod commands {
     pub const HIDE_TASK_WINDOW_PREVIEW: &str = "hide_task_window_preview";
     pub const SHOW_TASK_WINDOW_CONTEXT_MENU: &str = "show_task_window_context_menu";
     pub const SHOW_LAUNCHER_CONTEXT_MENU: &str = "show_launcher_context_menu";
+    pub const SHOW_QUICK_LAUNCH_PANEL_CONTEXT_MENU: &str = "show_quick_launch_panel_context_menu";
     pub const SHOW_TOP_BAR_PIN_CONTEXT_MENU: &str = "show_top_bar_pin_context_menu";
     pub const SHOW_SEARCH_PANEL: &str = "show_search_panel";
     pub const SEARCH_ENGINE: &str = "search_engine";
@@ -53,6 +56,11 @@ pub mod commands {
     pub const GET_SEARCH_PANEL_PAYLOAD: &str = "get_search_panel_payload";
     pub const SHOW_PROCESS_MANAGER: &str = "show_process_manager";
     pub const HIDE_PROCESS_MANAGER: &str = "hide_process_manager";
+    pub const SHOW_QUICK_LAUNCH_PANEL: &str = "show_quick_launch_panel";
+    pub const HIDE_QUICK_LAUNCH_PANEL_ON_FOCUS_LOSS: &str = "hide_quick_launch_panel_on_focus_loss";
+    pub const HIDE_QUICK_LAUNCH_PANEL: &str = "hide_quick_launch_panel";
+    pub const SELECT_QUICK_LAUNCH_PANEL: &str = "select_quick_launch_panel";
+    pub const RUN_QUICK_LAUNCH_PANEL_AS_ADMIN: &str = "run_quick_launch_panel_as_admin";
     pub const SHOW_CONTROL_PLANE: &str = "show_control_plane";
     pub const HIDE_CONTROL_PLANE: &str = "hide_control_plane";
     pub const SHOW_SETTINGS_PANEL: &str = "show_settings_panel";
@@ -185,6 +193,7 @@ pub mod commands {
         HIDE_TASK_WINDOW_PREVIEW,
         SHOW_TASK_WINDOW_CONTEXT_MENU,
         SHOW_LAUNCHER_CONTEXT_MENU,
+        SHOW_QUICK_LAUNCH_PANEL_CONTEXT_MENU,
         SHOW_TOP_BAR_PIN_CONTEXT_MENU,
         SHOW_SEARCH_PANEL,
         SEARCH_ENGINE,
@@ -193,6 +202,10 @@ pub mod commands {
         GET_SEARCH_PANEL_PAYLOAD,
         SHOW_PROCESS_MANAGER,
         HIDE_PROCESS_MANAGER,
+        SHOW_QUICK_LAUNCH_PANEL,
+        HIDE_QUICK_LAUNCH_PANEL,
+        SELECT_QUICK_LAUNCH_PANEL,
+        RUN_QUICK_LAUNCH_PANEL_AS_ADMIN,
         SHOW_CONTROL_PLANE,
         HIDE_CONTROL_PLANE,
         SHOW_SETTINGS_PANEL,
@@ -353,6 +366,8 @@ pub mod events {
     pub const TRAY_PANEL_OPEN: &str = "tray-panel:open";
     pub const TRAY_PANEL_CLOSED: &str = "tray-panel:closed";
     pub const QUICK_COMMAND_RUN_UPDATED: &str = "quick-command:run-updated";
+    pub const QUICK_LAUNCH_PANEL_OPEN: &str = "quick-launch-panel:open";
+    pub const QUICK_LAUNCH_PANEL_CLOSED: &str = "quick-launch-panel:closed";
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
@@ -392,6 +407,8 @@ pub mod events {
         TASKBAR_WINDOWS_SNAPSHOT,
         TOP_BAR_PIN_MENU_ACTION,
         QUICK_COMMAND_RUN_UPDATED,
+        QUICK_LAUNCH_PANEL_OPEN,
+        QUICK_LAUNCH_PANEL_CLOSED,
         TRAY_PANEL_CLOSED,
         TRAY_PANEL_OPEN,
     ];
@@ -414,6 +431,7 @@ mod tests {
                 "search-panel",
                 "stack-popup",
                 "process-manager",
+                "quick-launch-panel",
                 "control-plane",
                 "settings-panel",
                 "tray-panel",
@@ -491,6 +509,12 @@ mod tests {
         assert!(unique.contains("resolve_provider_registry"));
         assert!(unique.contains("show_control_plane"));
         assert!(unique.contains("hide_control_plane"));
+        assert!(unique.contains("show_quick_launch_panel_context_menu"));
+        assert!(unique.contains("show_quick_launch_panel"));
+        assert!(unique.contains("hide_quick_launch_panel_on_focus_loss"));
+        assert!(unique.contains("hide_quick_launch_panel"));
+        assert!(unique.contains("select_quick_launch_panel"));
+        assert!(unique.contains("run_quick_launch_panel_as_admin"));
         assert!(unique.contains("show_settings_panel"));
         assert!(unique.contains("hide_settings_panel"));
         assert!(unique.contains("show_tray_panel"));
@@ -563,6 +587,8 @@ mod tests {
                 "taskbar:windows-snapshot",
                 "top-bar:pin-menu-action",
                 "quick-command:run-updated",
+                "quick-launch-panel:open",
+                "quick-launch-panel:closed",
                 "tray-panel:closed",
                 "tray-panel:open",
             ]

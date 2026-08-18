@@ -13,6 +13,7 @@ const TASKBAR_REFRESH_LAUNCHERS_EVENT: &str = "taskbar:refresh-launchers";
 const TOP_BAR_PIN_MENU_ACTION_EVENT: &str = "top-bar:pin-menu-action";
 const TASK_WINDOW_MENU_PREFIX: &str = "task-window";
 const LAUNCHER_MENU_PREFIX: &str = "launcher";
+const QUICK_LAUNCH_MENU_PREFIX: &str = "quick-launch";
 const TOP_BAR_PIN_MENU_PREFIX: &str = "top-bar-pin";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -28,6 +29,15 @@ pub struct ShowTaskWindowContextMenuRequest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShowLauncherContextMenuRequest {
+    pub shortcut_path: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowQuickLaunchPanelContextMenuRequest {
+    pub nonce: String,
     pub shortcut_path: String,
     pub x: f64,
     pub y: f64,
@@ -206,6 +216,30 @@ pub fn show_launcher_context_menu(
         .map_err(|error| format!("Failed to show launcher context menu: {error}"))
 }
 
+pub fn show_quick_launch_panel_context_menu(
+    app_handle: AppHandle,
+    request: ShowQuickLaunchPanelContextMenuRequest,
+) -> Result<(), String> {
+    let quick_launch_panel = app_handle
+        .get_webview_window(crate::shell_windows::QUICK_LAUNCH_PANEL_LABEL)
+        .ok_or_else(|| "Quick launch panel window is unavailable".to_string())?;
+    let encoded_nonce = BASE64_URL.encode(request.nonce);
+    let encoded_shortcut = BASE64_URL.encode(request.shortcut_path);
+    let admin_item = MenuItem::with_id(
+        &app_handle,
+        format!("{QUICK_LAUNCH_MENU_PREFIX}:runas:{encoded_nonce}:{encoded_shortcut}"),
+        "Run as administrator",
+        true,
+        None::<&str>,
+    )
+    .map_err(|error| format!("Failed to build quick launch admin item: {error}"))?;
+    let menu = Menu::with_items(&app_handle, &[&admin_item])
+        .map_err(|error| format!("Failed to build quick launch context menu: {error}"))?;
+    quick_launch_panel
+        .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
+        .map_err(|error| format!("Failed to show quick launch context menu: {error}"))
+}
+
 #[tauri::command]
 pub fn show_top_bar_pin_context_menu(
     app_handle: AppHandle,
@@ -306,7 +340,7 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
         };
 
         let result = match action {
-            "launch" => launchers::launch_pinned_taskbar_app(shortcut_path.clone()),
+            "launch" => launchers::launch_pinned_taskbar_app_internal(shortcut_path.clone()),
             "runas" => launchers::run_pinned_taskbar_app_as_admin(shortcut_path.clone()),
             "properties" => launchers::open_pinned_shortcut_properties(shortcut_path.clone()),
             "reveal" => launchers::reveal_pinned_shortcut(shortcut_path.clone()),
@@ -322,6 +356,43 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
 
         let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
         let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
+        return;
+    }
+
+    if let Some((action, payload)) = parse_menu_payload(id, QUICK_LAUNCH_MENU_PREFIX) {
+        if action != "runas" {
+            return;
+        }
+        let Some((encoded_nonce, encoded_shortcut)) = payload.split_once(':') else {
+            eprintln!("quick launch menu payload missing nonce/path");
+            return;
+        };
+        let nonce = match decode_menu_payload(encoded_nonce) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("quick launch menu nonce decode failed: {error}");
+                return;
+            }
+        };
+        let shortcut_path = match decode_menu_payload(encoded_shortcut) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("quick launch menu shortcut decode failed: {error}");
+                return;
+            }
+        };
+        let Some(quick_launch_window) = app_handle.get_webview_window(crate::shell_windows::QUICK_LAUNCH_PANEL_LABEL) else {
+            eprintln!("quick launch panel window is unavailable");
+            return;
+        };
+        let result = crate::quick_launch_panel::run_quick_launch_panel_as_admin(
+            quick_launch_window,
+            app_handle.clone(),
+            crate::quick_launch_panel::QuickLaunchPanelRunAsAdminArgs { nonce, shortcut_path },
+        );
+        if let Err(error) = result {
+            eprintln!("quick launch menu action failed: {error}");
+        }
         return;
     }
 
