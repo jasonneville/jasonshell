@@ -4,16 +4,18 @@ import { IPC_COMMANDS } from '../ipc/commands.js';
 type TaskbarWindowPayload = {
   hwnd: string | number | bigint;
   title: string;
-  processId?: number;
+  processId?: number | null;
   processName: string;
   iconDataUrl: string;
   isActive: boolean;
   isMinimized: boolean;
   activityState?: TaskbarWindowActivityState;
-  notificationCount?: number;
+  attentionState?: TaskbarWindowAttentionState;
+  toastCount?: number;
 };
 
 export type TaskbarWindowActivityState = 'idle' | 'busy';
+export type TaskbarWindowAttentionState = 'idle' | 'requested';
 
 export type TaskbarWindow = {
   hwnd: string;
@@ -24,7 +26,8 @@ export type TaskbarWindow = {
   isActive: boolean;
   isMinimized: boolean;
   activityState: TaskbarWindowActivityState;
-  notificationCount: number;
+  attentionState: TaskbarWindowAttentionState;
+  toastCount: number;
 };
 
 export type TaskbarProcessWindow = {
@@ -34,19 +37,22 @@ export type TaskbarProcessWindow = {
   isActive: boolean;
 };
 
-function normalizeTaskbarWindow(window: TaskbarWindowPayload): TaskbarWindow {
-  const notificationCount = typeof window.notificationCount === 'number' && Number.isFinite(window.notificationCount)
-    ? Math.max(0, Math.floor(window.notificationCount))
-    : 0;
+export function normalizeTaskbarWindow(window: TaskbarWindowPayload): TaskbarWindow {
+  const toastCount = safeCount(window.toastCount);
   return {
     ...window,
     hwnd: String(window.hwnd),
     processId: typeof window.processId === 'number' ? window.processId : null,
     activityState: window.activityState === 'busy' ? 'busy' : 'idle',
-    notificationCount
+    attentionState: window.attentionState === 'requested' ? 'requested' : 'idle',
+    toastCount
   };
 }
 
+export function safeCount(value: unknown, max = 9999): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(max, Math.max(0, Math.floor(value)));
+}
 export async function listOpenTaskWindows(): Promise<TaskbarWindow[]> {
   const windows = await invoke<TaskbarWindowPayload[]>(IPC_COMMANDS.listOpenTaskWindows);
   return windows.map(normalizeTaskbarWindow);

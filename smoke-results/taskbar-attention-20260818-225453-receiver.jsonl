@@ -1,0 +1,6 @@
+{"kind":"nativeHookInit","shellMessageId":49192,"hwnd":200172,"threadId":19480}
+{"kind":"nativeHook","signal":"Hide","hwnd":724234,"timestampMs":1787111696536}
+{"kind":"nativeHook","signal":"Show","hwnd":462296,"timestampMs":1787111696538}
+{"kind":"nativeHook","signal":"Destroy","hwnd":724234,"timestampMs":1787111696545}
+{"kind":"nativeHook","signal":"Create","hwnd":789770,"timestampMs":1787111696553}
+{"kind":"nativeHook","signal":"NameChange","hwnd":265126,"timestampMs":1787111696571}

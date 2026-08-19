@@ -381,14 +381,19 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
                 return;
             }
         };
-        let Some(quick_launch_window) = app_handle.get_webview_window(crate::shell_windows::QUICK_LAUNCH_PANEL_LABEL) else {
+        let Some(quick_launch_window) =
+            app_handle.get_webview_window(crate::shell_windows::QUICK_LAUNCH_PANEL_LABEL)
+        else {
             eprintln!("quick launch panel window is unavailable");
             return;
         };
         let result = crate::quick_launch_panel::run_quick_launch_panel_as_admin(
             quick_launch_window,
             app_handle.clone(),
-            crate::quick_launch_panel::QuickLaunchPanelRunAsAdminArgs { nonce, shortcut_path },
+            crate::quick_launch_panel::QuickLaunchPanelRunAsAdminArgs {
+                nonce,
+                shortcut_path,
+            },
         );
         if let Err(error) = result {
             eprintln!("quick launch menu action failed: {error}");

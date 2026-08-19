@@ -38,6 +38,7 @@ pub mod commands {
     pub const LIST_PINNED_TASKBAR_APPS: &str = "list_pinned_taskbar_apps";
     pub const LAUNCH_PINNED_TASKBAR_APP: &str = "launch_pinned_taskbar_app";
     pub const LIST_OPEN_TASK_WINDOWS: &str = "list_open_task_windows";
+    pub const GET_TASKBAR_RUNTIME_DIAGNOSTICS: &str = "get_taskbar_runtime_diagnostics";
     pub const REQUEST_TASKBAR_WINDOWS_REFRESH: &str = "request_taskbar_windows_refresh";
     pub const LIST_TASKBAR_PROCESS_WINDOWS: &str = "list_taskbar_process_windows";
     pub const ACTIVATE_TASK_WINDOW: &str = "activate_task_window";
@@ -184,6 +185,7 @@ pub mod commands {
         LIST_PINNED_TASKBAR_APPS,
         LAUNCH_PINNED_TASKBAR_APP,
         LIST_OPEN_TASK_WINDOWS,
+        GET_TASKBAR_RUNTIME_DIAGNOSTICS,
         REQUEST_TASKBAR_WINDOWS_REFRESH,
         LIST_TASKBAR_PROCESS_WINDOWS,
         ACTIVATE_TASK_WINDOW,
@@ -465,6 +467,7 @@ mod tests {
         assert_eq!(unique.len(), commands::ALL.len());
         assert!(unique.contains("load_shell_settings"));
         assert!(unique.contains("save_shell_settings"));
+        assert!(unique.contains("get_taskbar_runtime_diagnostics"));
         assert!(unique.contains("list_workspaces"));
         assert!(unique.contains("request_taskbar_windows_refresh"));
         assert!(unique.contains("activate_workspace"));

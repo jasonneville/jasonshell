@@ -1,6 +1,7 @@
 use super::{
-    actions::resolve_activation_target, notifications, reject_internal_shell_process_path,
-    TaskbarWindow, TaskbarWindowActivityState,
+    actions::resolve_activation_target, attention, notifications,
+    reject_internal_shell_process_path, TaskbarWindow, TaskbarWindowActivityState,
+    TaskbarWindowAttentionState,
 };
 use super::{
     actions::{should_fallback_post_close, should_minimize_window, should_use_foreground_handoff},
@@ -124,6 +125,8 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             is_minimized: false,
             activity_state: TaskbarWindowActivityState::Idle,
             notification_count: 0,
+            attention_state: TaskbarWindowAttentionState::Idle,
+            toast_count: 0,
         },
         TaskbarWindow {
             hwnd: "7".to_string(),
@@ -135,6 +138,8 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             is_minimized: false,
             activity_state: TaskbarWindowActivityState::Idle,
             notification_count: 0,
+            attention_state: TaskbarWindowAttentionState::Idle,
+            toast_count: 0,
         },
         TaskbarWindow {
             hwnd: "15".to_string(),
@@ -146,6 +151,8 @@ fn sorts_windows_by_handle_for_stable_taskbar_order() {
             is_minimized: true,
             activity_state: TaskbarWindowActivityState::Idle,
             notification_count: 0,
+            attention_state: TaskbarWindowAttentionState::Idle,
+            toast_count: 0,
         },
     ];
 
@@ -336,4 +343,48 @@ fn allows_browser_activity_indicators_only_for_downloads() {
     ));
     assert!(!is_activity_indicator_eligible("", "Chrome download notes"));
     assert!(is_activity_indicator_eligible("chrome", "Download notes"));
+}
+
+#[test]
+fn attention_state_defaults_to_idle_and_stays_idempotent() {
+    let identity = attention::TaskbarAttentionIdentity {
+        root_owner_hwnd: 44,
+        process_id: 55,
+        creation_time: None,
+    };
+    assert_eq!(
+        attention::attention_state_for(&identity),
+        TaskbarWindowAttentionState::Idle
+    );
+    attention::record_taskbar_attention(identity.clone(), true);
+    attention::record_taskbar_attention(identity.clone(), true);
+    assert_eq!(
+        attention::attention_state_for(&identity),
+        TaskbarWindowAttentionState::Requested
+    );
+}
+
+#[test]
+fn clear_taskbar_attention_if_matches_leaves_unrelated_identity_requested() {
+    let flash = attention::TaskbarAttentionIdentity {
+        root_owner_hwnd: 10,
+        process_id: 1,
+        creation_time: Some(1),
+    };
+    let other = attention::TaskbarAttentionIdentity {
+        root_owner_hwnd: 10,
+        process_id: 2,
+        creation_time: Some(1),
+    };
+    attention::record_taskbar_attention(flash.clone(), true);
+    attention::record_taskbar_attention(other.clone(), true);
+    attention::clear_taskbar_attention_if_matches(&flash);
+    assert_eq!(
+        attention::attention_state_for(&flash),
+        TaskbarWindowAttentionState::Idle
+    );
+    assert_eq!(
+        attention::attention_state_for(&other),
+        TaskbarWindowAttentionState::Requested
+    );
 }

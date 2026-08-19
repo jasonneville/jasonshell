@@ -12,9 +12,9 @@ mod diagnostics;
 mod launchers;
 mod layout;
 mod process_manager;
-mod quick_launch_panel;
 mod providers;
 mod quick_commands;
+mod quick_launch_panel;
 mod search;
 mod search_panel;
 mod search_sources;
@@ -77,6 +77,14 @@ fn main() {
             std::process::exit(1);
         }
     }
+    match task_windows::handle_taskbar_flash_fixture_args() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
 
     let builder = tauri::Builder::default()
         .manage(shell_runtime_state())
@@ -88,6 +96,7 @@ fn main() {
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
             task_windows::list_open_task_windows,
+            task_windows::get_taskbar_runtime_diagnostics,
             task_windows::request_taskbar_windows_refresh,
             task_windows::list_taskbar_process_windows,
             task_windows::activate_task_window,
@@ -422,6 +431,9 @@ fn main() {
                 appbar::activate_shell_surfaces(app, &windows)?;
                 task_windows::start_notification_tracking();
                 task_windows::start_taskbar_snapshot_pipeline(app.handle());
+                if let Err(error) = task_windows::start_taskbar_hooks(app.handle().clone()) {
+                    eprintln!("native hook start failed: {error}");
+                }
             }
 
             #[cfg(not(target_os = "windows"))]
@@ -455,6 +467,7 @@ fn main() {
             if let Err(error) = appbar::cleanup_shell_surfaces(app_handle) {
                 eprintln!("cleanup failed: {error}");
             }
+            task_windows::stop_taskbar_hooks();
         }
     });
 }

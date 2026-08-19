@@ -130,24 +130,29 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
 }
 
 fn build_quick_launch_panel_window(app: &mut App) -> AppResult<WebviewWindow> {
-    Ok(
-        WebviewWindowBuilder::new(app, QUICK_LAUNCH_PANEL_LABEL, WebviewUrl::App("index.html".into()))
-            .always_on_top(true)
-            .devtools(false)
-            .decorations(false)
-            .focused(false)
-            .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
-            .inner_size(QUICK_LAUNCH_PANEL_WIDTH_LOGICAL, QUICK_LAUNCH_PANEL_HEIGHT_LOGICAL)
-            .maximizable(false)
-            .minimizable(false)
-            .resizable(false)
-            .shadow(true)
-            .skip_taskbar(true)
-            .theme(Some(Theme::Dark))
-            .title("JasonShell Quick Launch")
-            .visible(false)
-            .build()?,
+    Ok(WebviewWindowBuilder::new(
+        app,
+        QUICK_LAUNCH_PANEL_LABEL,
+        WebviewUrl::App("index.html".into()),
     )
+    .always_on_top(true)
+    .devtools(false)
+    .decorations(false)
+    .focused(false)
+    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+    .inner_size(
+        QUICK_LAUNCH_PANEL_WIDTH_LOGICAL,
+        QUICK_LAUNCH_PANEL_HEIGHT_LOGICAL,
+    )
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(false)
+    .shadow(true)
+    .skip_taskbar(true)
+    .theme(Some(Theme::Dark))
+    .title("JasonShell Quick Launch")
+    .visible(false)
+    .build()?)
 }
 
 fn build_shell_popup_window(

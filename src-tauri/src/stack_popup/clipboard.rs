@@ -19,7 +19,9 @@ impl ClipboardSession {
     fn open() -> Result<Self, String> {
         use windows::Win32::System::DataExchange::OpenClipboard;
 
-        unsafe { OpenClipboard(None).map_err(|error| format!("Failed to open clipboard: {error}"))? };
+        unsafe {
+            OpenClipboard(None).map_err(|error| format!("Failed to open clipboard: {error}"))?
+        };
         Ok(Self)
     }
 }
@@ -82,7 +84,10 @@ impl OwnedGlobalMem {
 
         let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) }
             .map_err(|error| format!("Failed to allocate clipboard memory: {error}"))?;
-        Ok(Self { handle, owned: true })
+        Ok(Self {
+            handle,
+            owned: true,
+        })
     }
 
     fn handle(&self) -> windows::Win32::Foundation::HGLOBAL {
@@ -106,8 +111,9 @@ impl Drop for OwnedGlobalMem {
             unsafe {
                 #[link(name = "kernel32")]
                 extern "system" {
-                    fn GlobalFree(hMem: windows::Win32::Foundation::HGLOBAL)
-                        -> windows::Win32::Foundation::HGLOBAL;
+                    fn GlobalFree(
+                        hMem: windows::Win32::Foundation::HGLOBAL,
+                    ) -> windows::Win32::Foundation::HGLOBAL;
                 }
                 let _ = GlobalFree(self.handle);
             }
@@ -147,8 +153,13 @@ pub(crate) async fn paste_stack_clipboard_items_async(
     destination: String,
 ) -> Result<StackPasteResult, String> {
     let destination = PathBuf::from(normalize_existing_dir(&destination)?);
-    let emergency_disable = crate::stack_popup::recovery_journal::emergency_recovery_journal_disable();
-    let journal_dir = if emergency_disable { None } else { Some(recovery_journal_dir(app_handle)?) };
+    let emergency_disable =
+        crate::stack_popup::recovery_journal::emergency_recovery_journal_disable();
+    let journal_dir = if emergency_disable {
+        None
+    } else {
+        Some(recovery_journal_dir(app_handle)?)
+    };
     let used_internal_clipboard = state
         .lock()
         .expect("stack popup runtime state is poisoned")
@@ -239,7 +250,9 @@ fn paste_one_clipboard_item(
     let target = available_destination_path(destination, source)?;
     match mode {
         ClipboardMode::Copy => copy_path_with_journal(source, &target, journal_dir.as_deref())?,
-        ClipboardMode::Cut => move_path_with_fallback_journal(source, &target, journal_dir.as_deref())?,
+        ClipboardMode::Cut => {
+            move_path_with_fallback_journal(source, &target, journal_dir.as_deref())?
+        }
     }
     stack_item_from_path(target)
 }
@@ -418,9 +431,11 @@ fn set_native_file_clipboard(paths: &[PathBuf], mode: ClipboardMode) -> Result<(
                 let _ = effect_owner.into_handle();
             }
             Err(error) => {
-                let cleanup_error = EmptyClipboard()
-                    .err()
-                    .map(|cleanup| format!("Failed to empty clipboard after file clipboard publish failure: {cleanup}"));
+                let cleanup_error = EmptyClipboard().err().map(|cleanup| {
+                    format!(
+                        "Failed to empty clipboard after file clipboard publish failure: {cleanup}"
+                    )
+                });
                 return Err(cleanup_error
                     .map(|cleanup| format!("Failed to set file clipboard data: {error}; {cleanup}"))
                     .unwrap_or_else(|| format!("Failed to set file clipboard data: {error}")));

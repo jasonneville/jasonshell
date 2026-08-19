@@ -1,5 +1,5 @@
-mod clipboard;
 mod auth;
+mod clipboard;
 mod file_ops;
 mod git_status;
 mod icons;
@@ -7,12 +7,12 @@ mod items;
 mod models;
 mod native_drag;
 mod open_with;
-mod process_runner;
 mod paging;
-mod recovery_journal;
 mod paths;
 mod pins;
 mod popup_window;
+mod process_runner;
+mod recovery_journal;
 pub(crate) mod terminal;
 
 use crate::shell_paths;
@@ -30,6 +30,9 @@ pub struct StackPathSuggestion {
     pub path: String,
 }
 
+pub(crate) use auth::{
+    allowed_stack_command_callers, authorize_stack_command, CallerAuthError, StackCommandAuth,
+};
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
     StackGitBranches, StackGitCommitRequest, StackGitLog, StackGitLogRequest,
@@ -42,7 +45,6 @@ pub use terminal::{
     StackTerminalSessionSnapshot, StackTerminalStartRequest, StackTerminalStopRequest,
     StackTerminalWriteRequest,
 };
-pub(crate) use auth::{authorize_stack_command, allowed_stack_command_callers, CallerAuthError, StackCommandAuth};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArchiveKind {
@@ -138,7 +140,10 @@ pub(crate) fn seven_zip_discovery_candidates() -> Vec<PathBuf> {
 fn find_seven_zip() -> Option<PathBuf> {
     seven_zip_discovery_candidates()
         .into_iter()
-        .find(|candidate| candidate.file_name().and_then(|name| name.to_str()) == Some("7z.exe") && candidate.exists())
+        .find(|candidate| {
+            candidate.file_name().and_then(|name| name.to_str()) == Some("7z.exe")
+                && candidate.exists()
+        })
 }
 
 pub(crate) fn build_archive_extraction_plan(
@@ -351,14 +356,31 @@ pub fn read_stack_folder(
 }
 
 #[tauri::command]
-pub async fn get_stack_git_status(window: WebviewWindow, path: String) -> Result<Option<StackGitStatus>, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::GET_STACK_GIT_STATUS, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn get_stack_git_status(
+    window: WebviewWindow,
+    path: String,
+) -> Result<Option<StackGitStatus>, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::GET_STACK_GIT_STATUS,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_status_for_path_async(path).await
 }
 
 #[tauri::command]
 pub fn open_stack_git_remote_url(window: WebviewWindow, url: String) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::OPEN_STACK_GIT_REMOTE_URL, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_STACK_GIT_REMOTE_URL,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     open_stack_git_remote_url_native(&validate_stack_git_remote_url(&url)?)
 }
 
@@ -423,7 +445,14 @@ pub async fn stack_git_add_paths(
     window: WebviewWindow,
     request: StackGitStageRequest,
 ) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_ADD_PATHS, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_ADD_PATHS,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_add_paths_async(request).await
 }
 
@@ -432,43 +461,110 @@ pub async fn stack_git_commit(
     window: WebviewWindow,
     request: StackGitCommitRequest,
 ) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_COMMIT, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_COMMIT,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_commit_async(request).await
 }
 
 #[tauri::command]
-pub async fn stack_git_log(window: WebviewWindow, request: StackGitLogRequest) -> Result<StackGitLog, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_LOG, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn stack_git_log(
+    window: WebviewWindow,
+    request: StackGitLogRequest,
+) -> Result<StackGitLog, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_LOG,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_log_async(request).await
 }
 
 #[tauri::command]
-pub async fn stack_git_tree(window: WebviewWindow, request: StackGitTreeRequest) -> Result<StackGitTree, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_TREE, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn stack_git_tree(
+    window: WebviewWindow,
+    request: StackGitTreeRequest,
+) -> Result<StackGitTree, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_TREE,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_tree_async(request).await
 }
 
 #[tauri::command]
-pub async fn stack_git_branches(window: WebviewWindow, path: String) -> Result<StackGitBranches, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_BRANCHES, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn stack_git_branches(
+    window: WebviewWindow,
+    path: String,
+) -> Result<StackGitBranches, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_BRANCHES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_branches_async(path).await
 }
 
 #[tauri::command]
-pub async fn stack_git_fetch(window: WebviewWindow, folder_path: String) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_FETCH, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn stack_git_fetch(
+    window: WebviewWindow,
+    folder_path: String,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_FETCH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_fetch_async(folder_path).await
 }
 
 #[tauri::command]
-pub async fn stack_git_pull(window: WebviewWindow, folder_path: String) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_PULL, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn stack_git_pull(
+    window: WebviewWindow,
+    folder_path: String,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_PULL,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_pull_async(folder_path).await
 }
 
 #[tauri::command]
-pub async fn stack_git_push(window: WebviewWindow, folder_path: String) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_PUSH, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub async fn stack_git_push(
+    window: WebviewWindow,
+    folder_path: String,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_PUSH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_push_async(folder_path).await
 }
 
@@ -477,7 +573,14 @@ pub async fn stack_git_checkout_branch(
     window: WebviewWindow,
     request: StackGitBranchRequest,
 ) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_CHECKOUT_BRANCH, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_CHECKOUT_BRANCH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_checkout_branch_async(request).await
 }
 
@@ -486,7 +589,14 @@ pub async fn stack_git_create_branch(
     window: WebviewWindow,
     request: StackGitBranchRequest,
 ) -> Result<StackGitOperationResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STACK_GIT_CREATE_BRANCH, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_CREATE_BRANCH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_create_branch_async(request).await
 }
 
@@ -532,13 +642,30 @@ pub async fn resolve_stack_item_icons(
 
 #[tauri::command]
 pub fn open_stack_item(window: WebviewWindow, path: String) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::OPEN_STACK_ITEM, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_STACK_ITEM,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     shell_paths::open_shell_path(path)
 }
 
 #[tauri::command]
 pub fn open_stack_item_with_picker(window: WebviewWindow, path: String) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::OPEN_STACK_ITEM_WITH_PICKER, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_STACK_ITEM_WITH_PICKER,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let path = paths::normalize_existing_path(&path)?;
     if Path::new(&path).is_dir() {
         return Err("Open with is only available for files".to_string());
@@ -551,7 +678,14 @@ pub fn list_stack_open_with_candidates(
     window: WebviewWindow,
     path: String,
 ) -> Result<Vec<StackOpenWithCandidate>, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::LIST_STACK_OPEN_WITH_CANDIDATES, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::LIST_STACK_OPEN_WITH_CANDIDATES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let path = paths::normalize_existing_path(&path)?;
     if Path::new(&path).is_dir() {
         return Err("Open with is only available for files".to_string());
@@ -560,8 +694,19 @@ pub fn list_stack_open_with_candidates(
 }
 
 #[tauri::command]
-pub fn open_stack_item_with_app(window: WebviewWindow, path: String, app_id: String) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::OPEN_STACK_ITEM_WITH_APP, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub fn open_stack_item_with_app(
+    window: WebviewWindow,
+    path: String,
+    app_id: String,
+) -> Result<(), String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_STACK_ITEM_WITH_APP,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let path = paths::normalize_existing_path(&path)?;
     if Path::new(&path).is_dir() {
         return Err("Open with is only available for files".to_string());
@@ -570,8 +715,19 @@ pub fn open_stack_item_with_app(window: WebviewWindow, path: String, app_id: Str
 }
 
 #[tauri::command]
-pub fn rename_stack_item(window: WebviewWindow, path: String, new_name: String) -> Result<StackItem, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::RENAME_STACK_ITEM, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub fn rename_stack_item(
+    window: WebviewWindow,
+    path: String,
+    new_name: String,
+) -> Result<StackItem, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::RENAME_STACK_ITEM,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     file_ops::rename_stack_item_path(path, new_name)
 }
 
@@ -581,13 +737,33 @@ pub fn copy_stack_items(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     paths: Vec<String>,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::COPY_STACK_ITEMS, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::COPY_STACK_ITEMS,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     clipboard::set_stack_clipboard(&state, models::ClipboardMode::Copy, paths)
 }
 
 #[tauri::command]
-pub fn prepare_stack_file_drag(window: WebviewWindow, paths: Vec<String>) -> Result<StackNativeDragPreparation, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::PREPARE_STACK_FILE_DRAG, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub fn prepare_stack_file_drag(
+    window: WebviewWindow,
+    paths: Vec<String>,
+) -> Result<StackNativeDragPreparation, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::PREPARE_STACK_FILE_DRAG,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     native_drag::start_stack_file_drag(paths)
 }
 
@@ -597,7 +773,17 @@ pub fn cut_stack_items(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     paths: Vec<String>,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::CUT_STACK_ITEMS, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::CUT_STACK_ITEMS,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     clipboard::set_stack_clipboard(&state, models::ClipboardMode::Cut, paths)
 }
 
@@ -608,7 +794,17 @@ pub async fn paste_stack_items(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     destination: String,
 ) -> Result<StackPasteResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::PASTE_STACK_ITEMS, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::PASTE_STACK_ITEMS,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     clipboard::paste_stack_clipboard_items_async(&app_handle, &state, destination).await
 }
 
@@ -619,7 +815,17 @@ pub async fn delete_stack_item(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     path: String,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::DELETE_STACK_ITEM, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::DELETE_STACK_ITEM,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     popup_window::begin_stack_popup_focus_hold(&state);
     let result = file_ops::delete_stack_item_path_async(path).await;
     popup_window::end_stack_popup_focus_hold(&app_handle, &state);
@@ -627,20 +833,54 @@ pub async fn delete_stack_item(
 }
 
 #[tauri::command]
-pub fn new_stack_folder(window: WebviewWindow, parent: String, name: String) -> Result<StackItem, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::NEW_STACK_FOLDER, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+pub fn new_stack_folder(
+    window: WebviewWindow,
+    parent: String,
+    name: String,
+) -> Result<StackItem, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::NEW_STACK_FOLDER,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     file_ops::new_stack_folder_path(parent, name)
 }
 
 #[tauri::command]
 pub fn new_stack_text_file(window: WebviewWindow, parent: String) -> Result<StackItem, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::NEW_STACK_TEXT_FILE, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::NEW_STACK_TEXT_FILE,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     file_ops::new_stack_text_file_path(parent)
 }
 
 #[tauri::command]
 pub fn open_stack_terminal_here(window: WebviewWindow, path: String) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::OPEN_STACK_TERMINAL_HERE, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_STACK_TERMINAL_HERE,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     file_ops::open_terminal_here_path(path)
 }
 
@@ -650,7 +890,14 @@ pub async fn start_persistent_terminal(
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
 ) -> Result<StackTerminalSessionSnapshot, String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::START_PERSISTENT_TERMINAL, callers: &[crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::START_PERSISTENT_TERMINAL,
+            callers: &[crate::shell_windows::TERMINAL_PANEL_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let folder_path = std::env::var("USERPROFILE")
         .ok()
         .filter(|path| Path::new(path).is_dir())
@@ -680,7 +927,17 @@ pub async fn start_stack_terminal(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     request: StackTerminalStartRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::START_STACK_TERMINAL, callers: &[crate::shell_windows::TERMINAL_PANEL_LABEL, crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::START_STACK_TERMINAL,
+            callers: &[
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+                crate::shell_windows::STACK_POPUP_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::start_stack_terminal_session(&app_handle, &state, window.label(), request).await
 }
 
@@ -691,7 +948,17 @@ pub fn read_stack_terminal(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
 ) -> Result<terminal::StackTerminalReadResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::READ_STACK_TERMINAL, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::READ_STACK_TERMINAL,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::read_stack_terminal(&app_handle, &state, window.label(), session_id)
 }
 
@@ -703,7 +970,17 @@ pub async fn write_stack_terminal(
     session_id: String,
     input: String,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::WRITE_STACK_TERMINAL, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::WRITE_STACK_TERMINAL,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::write_stack_terminal(
         &app_handle,
         &state,
@@ -723,7 +1000,17 @@ pub fn resize_stack_terminal(
     pixel_width: Option<u16>,
     pixel_height: Option<u16>,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::RESIZE_STACK_TERMINAL, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::RESIZE_STACK_TERMINAL,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::resize_stack_terminal_session(
         &state,
         window.label(),
@@ -744,8 +1031,23 @@ pub fn stop_stack_terminal(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::STOP_STACK_TERMINAL, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
-    terminal::stop_stack_terminal(&app_handle, &state, window.label(), StackTerminalStopRequest { session_id })
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::STOP_STACK_TERMINAL,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    terminal::stop_stack_terminal(
+        &app_handle,
+        &state,
+        window.label(),
+        StackTerminalStopRequest { session_id },
+    )
 }
 
 #[tauri::command]
@@ -755,7 +1057,17 @@ pub fn poll_stack_terminal_session(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
 ) -> Result<StackTerminalPollResult, String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::POLL_STACK_TERMINAL_SESSION, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::POLL_STACK_TERMINAL_SESSION,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::poll_stack_terminal_session(&app_handle, &state, window.label(), session_id)
 }
 
@@ -765,7 +1077,17 @@ pub fn list_stack_terminals(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     target_label: Option<String>,
 ) -> Result<Vec<StackTerminalSessionSnapshot>, String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::LIST_STACK_TERMINALS, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::LIST_STACK_TERMINALS,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::list_stack_terminals(&state, window.label(), target_label)
 }
 
@@ -776,8 +1098,22 @@ pub fn rename_stack_terminal(
     session_id: String,
     title: String,
 ) -> Result<StackTerminalSessionSnapshot, String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::RENAME_STACK_TERMINAL, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
-    terminal::rename_stack_terminal(&state, window.label(), StackTerminalRenameRequest { session_id, title })
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::RENAME_STACK_TERMINAL,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    terminal::rename_stack_terminal(
+        &state,
+        window.label(),
+        StackTerminalRenameRequest { session_id, title },
+    )
 }
 
 #[tauri::command]
@@ -786,7 +1122,14 @@ pub fn stop_terminal_panel_sessions(
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STOP_TERMINAL_PANEL_SESSIONS, callers: &[crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STOP_TERMINAL_PANEL_SESSIONS,
+            callers: &[crate::shell_windows::TERMINAL_PANEL_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::stop_terminal_sessions_for_target(
         &app_handle,
         &state,
@@ -800,13 +1143,34 @@ pub fn get_stack_terminal_cwd(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     session_id: String,
 ) -> Result<StackTerminalSessionSnapshot, String> {
-    authorize_stack_command(&window, StackCommandAuth::TerminalSessionTarget { command: crate::contracts::commands::GET_STACK_TERMINAL_CWD, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::TerminalSessionTarget {
+            command: crate::contracts::commands::GET_STACK_TERMINAL_CWD,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     terminal::get_stack_terminal_cwd(&state, window.label(), session_id)
 }
 
 #[tauri::command]
 pub fn open_stack_folder_in_vscode(window: WebviewWindow, path: String) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::OPEN_STACK_FOLDER_IN_VSCODE, callers: &[crate::shell_windows::TOP_BAR_LABEL, crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_STACK_FOLDER_IN_VSCODE,
+            callers: &[
+                crate::shell_windows::TOP_BAR_LABEL,
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let path = paths::normalize_existing_dir(&path)?;
     crate::shell_paths::open_folder_in_vscode(path)
 }
@@ -818,7 +1182,17 @@ pub fn reveal_stack_item(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     path: String,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::REVEAL_STACK_ITEM, callers: &[crate::shell_windows::STACK_POPUP_LABEL, crate::shell_windows::TERMINAL_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::REVEAL_STACK_ITEM,
+            callers: &[
+                crate::shell_windows::STACK_POPUP_LABEL,
+                crate::shell_windows::TERMINAL_PANEL_LABEL,
+            ],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let path = paths::normalize_existing_path(&path)?;
     #[cfg(not(target_os = "windows"))]
     let _ = (&app, &state);
@@ -859,7 +1233,14 @@ pub async fn extract_stack_archive(
     destination_mode: ArchiveDestinationMode,
     extractor: ArchiveExtractor,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::EXTRACT_STACK_ARCHIVE, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::EXTRACT_STACK_ARCHIVE,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let archive = PathBuf::from(paths::normalize_existing_path(&archive_path)?);
     if !archive.is_absolute() {
         return Err("Archive path must be absolute".to_string());
@@ -899,7 +1280,10 @@ fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String
             if output.status.success() {
                 Ok(())
             } else {
-                Err(format!("Archive extraction failed with status {}", output.status))
+                Err(format!(
+                    "Archive extraction failed with status {}",
+                    output.status
+                ))
             }
         }
         Err(process_runner::ProcessRunError::Spawn(error)) => {
@@ -938,7 +1322,14 @@ pub fn show_stack_item_properties(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     path: String,
 ) -> Result<(), String> {
-    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::SHOW_STACK_ITEM_PROPERTIES, callers: &[crate::shell_windows::STACK_POPUP_LABEL] }).map_err(CallerAuthError::into_string)?;
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::SHOW_STACK_ITEM_PROPERTIES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     let path = PathBuf::from(paths::normalize_existing_path(&path)?);
     let plan = build_stack_item_properties_plan(&path)?;
     popup_window::suppress_next_stack_popup_focus_loss(&state);
@@ -1756,7 +2147,10 @@ mod tests {
         std::env::set_var("JASONSHELL_ARCHIVE_EXTRACTION_TIMEOUT_SECS", "5");
         assert_eq!(super::archive_extraction_timeout(), Duration::from_secs(30));
         std::env::set_var("JASONSHELL_ARCHIVE_EXTRACTION_TIMEOUT_SECS", "7200");
-        assert_eq!(super::archive_extraction_timeout(), Duration::from_secs(3600));
+        assert_eq!(
+            super::archive_extraction_timeout(),
+            Duration::from_secs(3600)
+        );
         std::env::remove_var("JASONSHELL_ARCHIVE_EXTRACTION_TIMEOUT_SECS");
 
         let stack_source = include_str!("stack_popup.rs");
@@ -1765,7 +2159,9 @@ mod tests {
             .nth(1)
             .and_then(|value| value.split("fn run_archive_extraction_plan").next())
             .expect("archive extraction body present");
-        assert!(archive_body.contains("tauri::async_runtime::spawn_blocking(move || run_archive_extraction_plan(plan))"));
+        assert!(archive_body.contains(
+            "tauri::async_runtime::spawn_blocking(move || run_archive_extraction_plan(plan))"
+        ));
         assert!(!archive_body.contains(".status()"));
 
         let runner_body = stack_source
@@ -1827,7 +2223,10 @@ mod tests {
             "OPEN_STACK_FOLDER_IN_VSCODE",
         ] {
             assert!(stack_source.contains(command), "missing {command}");
-            assert!(stack_source.contains("authorize_stack_command"), "missing guard for {command}");
+            assert!(
+                stack_source.contains("authorize_stack_command"),
+                "missing guard for {command}"
+            );
         }
     }
 
@@ -1935,7 +2334,9 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|candidate| candidate.ends_with(r"7-Zip\7z.exe")));
-        assert!(!candidates.iter().any(|candidate| candidate == Path::new("7z.exe")));
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate == Path::new("7z.exe")));
     }
 
     #[test]

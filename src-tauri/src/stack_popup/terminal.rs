@@ -356,7 +356,8 @@ pub(crate) async fn start_stack_terminal_session(
     let profile = request
         .profile
         .unwrap_or(shell_settings.stack_browser.terminal_profile);
-    let target_label = terminal_session_target_label(caller_label, request.target_label.as_deref())?;
+    let target_label =
+        terminal_session_target_label(caller_label, request.target_label.as_deref())?;
     let app_handle_for_spawn = app_handle.clone();
     let session = tauri::async_runtime::spawn_blocking(move || {
         spawn_terminal_session(Some(app_handle_for_spawn), profile, cwd, target_label)
@@ -453,7 +454,11 @@ pub(crate) fn resize_stack_terminal_session(
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
         let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
-        authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::RESIZE_STACK_TERMINAL)?;
+        authorize_stack_terminal_session_target(
+            caller_label,
+            &session.target_label,
+            crate::contracts::commands::RESIZE_STACK_TERMINAL,
+        )?;
         session
             .master
             .clone()
@@ -515,7 +520,11 @@ pub(crate) fn poll_stack_terminal_session(
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
         let session = runtime.terminal_sessions.session_mut(&session_id)?;
-        authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::POLL_STACK_TERMINAL_SESSION)?;
+        authorize_stack_terminal_session_target(
+            caller_label,
+            &session.target_label,
+            crate::contracts::commands::POLL_STACK_TERMINAL_SESSION,
+        )?;
         let mut chunks = drain_terminal_output(session);
         let running = refresh_session_running(session, &mut chunks);
         (
@@ -554,7 +563,11 @@ pub(crate) fn stop_stack_terminal_session(
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
         let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
-        authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::STOP_STACK_TERMINAL)?;
+        authorize_stack_terminal_session_target(
+            caller_label,
+            &session.target_label,
+            crate::contracts::commands::STOP_STACK_TERMINAL,
+        )?;
         session.target_label.clone()
     };
     let Some(mut session) = request_terminal_stop(state, &request.session_id)? else {
@@ -627,7 +640,11 @@ pub(crate) fn rename_stack_terminal(
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
     let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
-    authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::RENAME_STACK_TERMINAL)?;
+    authorize_stack_terminal_session_target(
+        caller_label,
+        &session.target_label,
+        crate::contracts::commands::RENAME_STACK_TERMINAL,
+    )?;
     session.title = title;
     Ok(session.snapshot())
 }
@@ -664,14 +681,23 @@ pub(crate) fn get_stack_terminal_cwd(
         .lock()
         .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
     let session = runtime.terminal_sessions.session_mut(&session_id)?;
-    authorize_stack_terminal_session_target(caller_label, &session.target_label, crate::contracts::commands::GET_STACK_TERMINAL_CWD)?;
+    authorize_stack_terminal_session_target(
+        caller_label,
+        &session.target_label,
+        crate::contracts::commands::GET_STACK_TERMINAL_CWD,
+    )?;
     Ok(session.snapshot())
 }
 
-fn terminal_session_target_label(caller_label: &str, target_label: Option<&str>) -> Result<String, String> {
+fn terminal_session_target_label(
+    caller_label: &str,
+    target_label: Option<&str>,
+) -> Result<String, String> {
     let requested = target_label.unwrap_or(caller_label);
     if requested != caller_label {
-        return Err(format!("Terminal session target must match caller {caller_label}"));
+        return Err(format!(
+            "Terminal session target must match caller {caller_label}"
+        ));
     }
     terminal_event_target_label(Some(requested))
 }
@@ -682,7 +708,9 @@ fn authorize_stack_terminal_session_target(
     command: &str,
 ) -> Result<(), String> {
     if session_target_label != caller_label {
-        return Err(format!("Unauthorized terminal session target for command {command}"));
+        return Err(format!(
+            "Unauthorized terminal session target for command {command}"
+        ));
     }
     Ok(())
 }
@@ -1853,11 +1881,18 @@ mod tests {
             shell_windows::STACK_POPUP_LABEL
         );
         assert_eq!(
-            terminal_session_target_label(shell_windows::TERMINAL_PANEL_LABEL, Some(shell_windows::TERMINAL_PANEL_LABEL))
-                .unwrap(),
+            terminal_session_target_label(
+                shell_windows::TERMINAL_PANEL_LABEL,
+                Some(shell_windows::TERMINAL_PANEL_LABEL)
+            )
+            .unwrap(),
             shell_windows::TERMINAL_PANEL_LABEL
         );
-        assert!(terminal_session_target_label(shell_windows::STACK_POPUP_LABEL, Some(shell_windows::TERMINAL_PANEL_LABEL)).is_err());
+        assert!(terminal_session_target_label(
+            shell_windows::STACK_POPUP_LABEL,
+            Some(shell_windows::TERMINAL_PANEL_LABEL)
+        )
+        .is_err());
     }
 
     #[test]

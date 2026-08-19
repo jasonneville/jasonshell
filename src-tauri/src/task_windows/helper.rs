@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM, WPARAM};
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Threading::{GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, TerminateProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE};
+use windows::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, TerminateProcess, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{IsWindow, PostMessageW, WM_CLOSE};
 
@@ -41,8 +44,12 @@ pub(super) fn decode_canonical_path(value: &str) -> Result<PathBuf, String> {
     }
     let mut wide = Vec::with_capacity(hex.len() / 4);
     for chunk in hex.as_bytes().chunks_exact(4) {
-        let chunk = std::str::from_utf8(chunk).map_err(|_| "Invalid task-window-helper path descriptor".to_string())?;
-        wide.push(u16::from_str_radix(chunk, 16).map_err(|_| "Invalid task-window-helper path descriptor".to_string())?);
+        let chunk = std::str::from_utf8(chunk)
+            .map_err(|_| "Invalid task-window-helper path descriptor".to_string())?;
+        wide.push(
+            u16::from_str_radix(chunk, 16)
+                .map_err(|_| "Invalid task-window-helper path descriptor".to_string())?,
+        );
     }
     Ok(PathBuf::from(OsString::from_wide(&wide)))
 }
@@ -50,17 +57,28 @@ pub(super) fn decode_canonical_path(value: &str) -> Result<PathBuf, String> {
 #[cfg(target_os = "windows")]
 pub(super) fn handle_task_window_helper_args() -> Result<bool, String> {
     let mut args = std::env::args().skip(1);
-    let Some(flag) = args.next() else { return Ok(false); };
+    let Some(flag) = args.next() else {
+        return Ok(false);
+    };
     if flag != HELPER_ARG_PREFIX {
         return Ok(false);
     }
 
     let hwnd = parse_hwnd(&args.next().ok_or_else(|| helper_usage_error("hwnd"))?)?;
     let pid = parse_pid(&args.next().ok_or_else(|| helper_usage_error("pid"))?)?;
-    let creation_time = parse_u64(&args.next().ok_or_else(|| helper_usage_error("creation_time"))?)?;
-    let canonical_image_path = decode_canonical_path(&args.next().ok_or_else(|| helper_usage_error("image_path"))?)?;
+    let creation_time = parse_u64(
+        &args
+            .next()
+            .ok_or_else(|| helper_usage_error("creation_time"))?,
+    )?;
+    let canonical_image_path = decode_canonical_path(
+        &args
+            .next()
+            .ok_or_else(|| helper_usage_error("image_path"))?,
+    )?;
 
-    let exit_code = handle_task_window_helper_action(hwnd, pid, creation_time, canonical_image_path);
+    let exit_code =
+        handle_task_window_helper_action(hwnd, pid, creation_time, canonical_image_path);
     std::process::exit(exit_code);
 }
 
@@ -93,17 +111,31 @@ fn handle_task_window_helper_action(
         return 0;
     }
 
-    let process_handle = match unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+    let process_handle = match unsafe {
+        OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            pid,
+        )
+    } {
         Ok(handle) => handle,
         Err(_) => return 6,
     };
     if !revalidate_task_window_descriptor(hwnd, pid, creation_time, &canonical_image_path) {
-        unsafe { let _ = CloseHandle(process_handle); }
+        unsafe {
+            let _ = CloseHandle(process_handle);
+        }
         return 3;
     }
     let result = unsafe { TerminateProcess(process_handle, 1) };
-    unsafe { let _ = CloseHandle(process_handle); }
-    if result.is_ok() { 0 } else { 6 }
+    unsafe {
+        let _ = CloseHandle(process_handle);
+    }
+    if result.is_ok() {
+        0
+    } else {
+        6
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -122,20 +154,104 @@ pub(super) fn revalidate_task_window_descriptor(
 }
 
 #[cfg(target_os = "windows")]
-fn wait_for_window_close(hwnd: HWND) -> bool { for _ in 0..10 { if !unsafe { IsWindow(Some(hwnd)).as_bool() } { return true; } std::thread::sleep(std::time::Duration::from_millis(50)); } false }
+fn wait_for_window_close(hwnd: HWND) -> bool {
+    for _ in 0..10 {
+        if !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    false
+}
 
 #[cfg(target_os = "windows")]
-fn process_id(hwnd: HWND) -> Result<u32, String> { let mut pid = 0; unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid)); } if pid == 0 { Err("Helper target rejected: pid unavailable".to_string()) } else { Ok(pid) } }
+fn process_id(hwnd: HWND) -> Result<u32, String> {
+    let mut pid = 0;
+    unsafe {
+        let _ =
+            windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    }
+    if pid == 0 {
+        Err("Helper target rejected: pid unavailable".to_string())
+    } else {
+        Ok(pid)
+    }
+}
 
 #[cfg(target_os = "windows")]
-pub(super) fn process_image_path(pid: u32) -> Result<PathBuf, String> { let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).map_err(|_| "process path unavailable".to_string())? }; struct HandleGuard(windows::Win32::Foundation::HANDLE); impl Drop for HandleGuard { fn drop(&mut self) { unsafe { let _ = CloseHandle(self.0); } } } let _guard = HandleGuard(process_handle); let mut buffer = vec![0u16; 1024]; let mut size = buffer.len() as u32; unsafe { QueryFullProcessImageNameW(process_handle, PROCESS_NAME_WIN32, windows::core::PWSTR(buffer.as_mut_ptr()), &mut size).map_err(|e| e.to_string())?; } Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..size as usize]))) }
+pub(super) fn process_image_path(pid: u32) -> Result<PathBuf, String> {
+    let process_handle = unsafe {
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+            .map_err(|_| "process path unavailable".to_string())?
+    };
+    struct HandleGuard(windows::Win32::Foundation::HANDLE);
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+    let _guard = HandleGuard(process_handle);
+    let mut buffer = vec![0u16; 1024];
+    let mut size = buffer.len() as u32;
+    unsafe {
+        QueryFullProcessImageNameW(
+            process_handle,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(PathBuf::from(String::from_utf16_lossy(
+        &buffer[..size as usize],
+    )))
+}
 
 #[cfg(target_os = "windows")]
-fn process_creation_time(pid: u32) -> Result<u64, String> { let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).map_err(|_| "process time unavailable".to_string())? }; struct HandleGuard(windows::Win32::Foundation::HANDLE); impl Drop for HandleGuard { fn drop(&mut self) { unsafe { let _ = CloseHandle(self.0); } } } let _guard = HandleGuard(process_handle); let mut creation = FILETIME::default(); let mut exit = FILETIME::default(); let mut kernel = FILETIME::default(); let mut user = FILETIME::default(); unsafe { GetProcessTimes(process_handle, &mut creation, &mut exit, &mut kernel, &mut user).map_err(|e| e.to_string())?; } Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64) }
+fn process_creation_time(pid: u32) -> Result<u64, String> {
+    let process_handle = unsafe {
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+            .map_err(|_| "process time unavailable".to_string())?
+    };
+    struct HandleGuard(windows::Win32::Foundation::HANDLE);
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+    let _guard = HandleGuard(process_handle);
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    unsafe {
+        GetProcessTimes(
+            process_handle,
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
+}
 
-fn helper_usage_error(field: &str) -> String { format!("Invalid task-window-helper args: missing {field}") }
-fn parse_pid(value: &str) -> Result<u32, String> { value.parse().map_err(|e| format!("Invalid pid: {e}")) }
-fn parse_u64(value: &str) -> Result<u64, String> { value.parse().map_err(|e| format!("Invalid creation time: {e}")) }
+fn helper_usage_error(field: &str) -> String {
+    format!("Invalid task-window-helper args: missing {field}")
+}
+fn parse_pid(value: &str) -> Result<u32, String> {
+    value.parse().map_err(|e| format!("Invalid pid: {e}"))
+}
+fn parse_u64(value: &str) -> Result<u64, String> {
+    value
+        .parse()
+        .map_err(|e| format!("Invalid creation time: {e}"))
+}
 
 #[cfg(target_os = "windows")]
 pub(super) fn helper_exit_code_for_shell_execute_result(status: u32) -> Result<(), String> {
@@ -187,7 +303,9 @@ mod tests {
 
     #[test]
     fn access_denied_escalation_predicate_is_only_access_denied() {
-        fn should_escalate(code: u32) -> bool { is_access_denied_win32_code(code) }
+        fn should_escalate(code: u32) -> bool {
+            is_access_denied_win32_code(code)
+        }
         assert!(should_escalate(5));
         assert!(should_escalate(0x8007_0005));
         assert!(!should_escalate(0));
@@ -201,10 +319,21 @@ mod tests {
     #[test]
     fn helper_exit_code_mapping_handles_uac_cancel_exactly() {
         assert!(helper_exit_code_for_shell_execute_result(0).is_ok());
-        assert_eq!(helper_exit_code_for_shell_execute_result(1223).unwrap_err(), "UAC canceled");
-        assert_eq!(helper_exit_code_for_shell_execute_result(0x8007_04C7).unwrap_err(), "UAC canceled");
-        assert!(helper_exit_code_for_shell_execute_result(5).unwrap_err().contains("code 5"));
-        assert_ne!(helper_exit_code_for_shell_execute_result(0x8007_0005).unwrap_err(), "UAC canceled");
+        assert_eq!(
+            helper_exit_code_for_shell_execute_result(1223).unwrap_err(),
+            "UAC canceled"
+        );
+        assert_eq!(
+            helper_exit_code_for_shell_execute_result(0x8007_04C7).unwrap_err(),
+            "UAC canceled"
+        );
+        assert!(helper_exit_code_for_shell_execute_result(5)
+            .unwrap_err()
+            .contains("code 5"));
+        assert_ne!(
+            helper_exit_code_for_shell_execute_result(0x8007_0005).unwrap_err(),
+            "UAC canceled"
+        );
     }
 
     #[test]
@@ -218,9 +347,15 @@ mod tests {
     fn descriptor_validation_requires_exact_hwnd_pid_time_and_path_match() {
         let captured = PathBuf::from(r"C:\good.exe");
         let current = PathBuf::from(r"C:\bad.exe");
-        assert!(matches_descriptor_for_test(1, 2, 3, &captured, 1, 2, 3, &captured));
-        assert!(!matches_descriptor_for_test(1, 2, 3, &captured, 1, 2, 3, &current));
-        assert!(!matches_descriptor_for_test(1, 2, 3, &captured, 9, 2, 3, &captured));
+        assert!(matches_descriptor_for_test(
+            1, 2, 3, &captured, 1, 2, 3, &captured
+        ));
+        assert!(!matches_descriptor_for_test(
+            1, 2, 3, &captured, 1, 2, 3, &current
+        ));
+        assert!(!matches_descriptor_for_test(
+            1, 2, 3, &captured, 9, 2, 3, &captured
+        ));
     }
 
     fn matches_descriptor_for_test(

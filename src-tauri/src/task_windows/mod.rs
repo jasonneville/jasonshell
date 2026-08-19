@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub use diagnostics::{TaskbarRuntimeDiagnostics, ToastListenerStatus};
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskbarWindow {
@@ -12,6 +14,8 @@ pub struct TaskbarWindow {
     pub is_minimized: bool,
     pub activity_state: TaskbarWindowActivityState,
     pub notification_count: u32,
+    pub attention_state: TaskbarWindowAttentionState,
+    pub toast_count: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -28,6 +32,14 @@ pub struct TaskbarProcessWindow {
 pub enum TaskbarWindowActivityState {
     Idle,
     Busy,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskbarWindowAttentionState {
+    #[default]
+    Idle,
+    Requested,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -56,11 +68,19 @@ pub struct TaskbarWindowsSnapshot {
 
 #[cfg(target_os = "windows")]
 mod actions;
+#[cfg(target_os = "windows")]
+mod attention;
 pub(crate) mod bounded_string_cache;
+#[cfg(target_os = "windows")]
+mod diagnostics;
+#[cfg(target_os = "windows")]
+pub(crate) mod flash_fixture;
+#[cfg(target_os = "windows")]
+mod helper;
 #[cfg(target_os = "windows")]
 mod icons;
 #[cfg(target_os = "windows")]
-mod helper;
+mod native_hooks;
 #[cfg(target_os = "windows")]
 mod notifications;
 #[cfg(target_os = "windows")]
@@ -83,12 +103,79 @@ pub(crate) fn start_taskbar_snapshot_pipeline(app: &tauri::AppHandle) {
     windows::ensure_taskbar_snapshot_worker_started(app.clone());
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn start_taskbar_hooks(app: tauri::AppHandle) -> Result<(), String> {
+    let _ = app;
+    if !native_hooks::explorer_suppression_v2_enabled_from_env()
+        && !native_hooks::taskbar_native_hooks_enabled_from_env()
+    {
+        return Ok(());
+    }
+    native_hooks::start_native_hooks()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn record_taskbar_attention(
+    identity: attention::TaskbarAttentionIdentity,
+    requested: bool,
+) {
+    attention::record_taskbar_attention(identity, requested);
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn clear_taskbar_attention_if_matches(identity: &attention::TaskbarAttentionIdentity) {
+    attention::clear_taskbar_attention_if_matches(identity);
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn remove_root_owner_taskbar_attention(root_owner_hwnd: isize) {
+    attention::remove_root_owner_taskbar_attention(root_owner_hwnd);
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn taskbar_native_hooks_health() -> native_hooks::NativeHooksHealth {
+    native_hooks::native_hooks_health()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn stop_taskbar_hooks() {
+    native_hooks::stop_native_hooks();
+}
+
 #[tauri::command]
 pub fn request_taskbar_windows_refresh() {
     #[cfg(target_os = "windows")]
     {
         windows::request_taskbar_snapshot_refresh();
     }
+}
+
+#[tauri::command]
+pub fn get_taskbar_runtime_diagnostics() -> Result<TaskbarRuntimeDiagnostics, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(diagnostics::taskbar_runtime_diagnostics())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(TaskbarRuntimeDiagnostics::default())
+    }
+}
+
+pub(crate) fn note_explorer_taskbar_reconcile(
+    tracked: u64,
+    hidden: u64,
+    recreations: u64,
+    hide_failures: u64,
+    last_error: Option<&str>,
+) {
+    diagnostics::note_explorer_taskbar_reconcile(
+        tracked,
+        hidden,
+        recreations,
+        hide_failures,
+        last_error,
+    );
 }
 
 #[tauri::command]
@@ -192,6 +279,11 @@ pub(crate) fn perform_task_window_action(
 #[cfg(target_os = "windows")]
 pub(crate) fn handle_task_window_helper_args() -> Result<bool, String> {
     helper::handle_task_window_helper_args()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn handle_taskbar_flash_fixture_args() -> Result<bool, String> {
+    flash_fixture::handle_taskbar_flash_fixture_args()
 }
 
 #[cfg(target_os = "windows")]

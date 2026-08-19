@@ -8,8 +8,11 @@ export type TaskbarOverflowState = {
 export function taskGroupStateLabel(group: TaskWindowGroup): string {
   const parts = [group.label];
   parts.push(group.windows.length === 1 ? '1 window' : `${group.windows.length} windows`);
-  if (group.notificationCount > 0) {
-    parts.push(group.notificationCount === 1 ? '1 notification' : `${group.notificationCount} notifications`);
+  if (!group.isActive && group.toastCount > 0) {
+    parts.push(group.toastCount === 1 ? '1 toast' : `${group.toastCount} toasts`);
+  }
+  if (!group.isActive && (group.hasAttention || group.toastCount > 0)) {
+    parts.push('needs attention');
   }
   if (group.isActive) {
     parts.push('active');

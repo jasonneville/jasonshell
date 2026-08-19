@@ -16,7 +16,10 @@ pub fn list_pinned_taskbar_apps() -> Result<Vec<PinnedTaskbarLauncher>, String> 
 }
 
 #[tauri::command]
-pub fn launch_pinned_taskbar_app(window: tauri::WebviewWindow, shortcut_path: String) -> Result<(), String> {
+pub fn launch_pinned_taskbar_app(
+    window: tauri::WebviewWindow,
+    shortcut_path: String,
+) -> Result<(), String> {
     if window.label() != crate::contracts::surfaces::BOTTOM_BAR {
         return Err("Unauthorized caller for command launch_pinned_taskbar_app".to_string());
     }
@@ -63,7 +66,9 @@ pub fn pin_task_window_to_taskbar(hwnd: String) -> Result<(), String> {
     imp::pin_task_window_to_taskbar(hwnd)
 }
 
-pub(crate) fn canonicalize_pinned_taskbar_shortcut_path(shortcut_path: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn canonicalize_pinned_taskbar_shortcut_path(
+    shortcut_path: &str,
+) -> Result<std::path::PathBuf, String> {
     imp::canonicalize_pinned_taskbar_shortcut_path(shortcut_path)
 }
 
@@ -190,7 +195,12 @@ mod imp {
             "launch pinned shortcut as administrator",
         ) {
             Ok(_) => Ok(()),
-            Err(error) if is_windowsapps_path(&target_path) && shell_execute_error_code(&error).is_some_and(|code| code == 3 || code == SE_ERR_ACCESSDENIED || code == SE_ERR_FNF_NOASSOC) => {
+            Err(error)
+                if is_windowsapps_path(&target_path)
+                    && shell_execute_error_code(&error).is_some_and(|code| {
+                        code == 3 || code == SE_ERR_ACCESSDENIED || code == SE_ERR_FNF_NOASSOC
+                    }) =>
+            {
                 // WindowsApps/AppX targets cannot be elevated directly.
                 // Delegate validated pinned .lnk back through Explorer so the app opens unelevated
                 // via the shell broker path instead of failing with a quick-launch error.
@@ -198,7 +208,12 @@ mod imp {
                 std::process::Command::new(&explorer_path)
                     .arg(shortcut_path)
                     .spawn()
-                    .map_err(|spawn_error| format!("Failed to launch pinned shortcut through {}: {spawn_error}", explorer_path.display()))?;
+                    .map_err(|spawn_error| {
+                        format!(
+                            "Failed to launch pinned shortcut through {}: {spawn_error}",
+                            explorer_path.display()
+                        )
+                    })?;
                 Ok(())
             }
             Err(error) => Err(error),
@@ -215,7 +230,9 @@ mod imp {
         )
         .and_then(|code| {
             if code <= 32 {
-                Err(format!("ShellExecuteW failed to open pinned shortcut properties with code {code}"))
+                Err(format!(
+                    "ShellExecuteW failed to open pinned shortcut properties with code {code}"
+                ))
             } else {
                 Ok(())
             }
@@ -467,7 +484,8 @@ mod imp {
     }
 
     fn windows_explorer_path() -> Result<PathBuf, String> {
-        let windir = std::env::var_os("WINDIR").ok_or_else(|| "WINDIR is unavailable".to_string())?;
+        let windir =
+            std::env::var_os("WINDIR").ok_or_else(|| "WINDIR is unavailable".to_string())?;
         Ok(PathBuf::from(windir).join("explorer.exe"))
     }
 
@@ -532,7 +550,9 @@ mod imp {
         ))
     }
 
-    pub(crate) fn canonicalize_pinned_taskbar_shortcut_path(shortcut_path: &str) -> Result<PathBuf, String> {
+    pub(crate) fn canonicalize_pinned_taskbar_shortcut_path(
+        shortcut_path: &str,
+    ) -> Result<PathBuf, String> {
         let requested_path = PathBuf::from(shortcut_path);
 
         if !has_lnk_extension(&requested_path) {
@@ -560,7 +580,10 @@ mod imp {
 
     fn is_windowsapps_path(path: &Path) -> bool {
         path.components().any(|component| {
-            component.as_os_str().to_string_lossy().eq_ignore_ascii_case("WindowsApps")
+            component
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("WindowsApps")
         })
     }
 

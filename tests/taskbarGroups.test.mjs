@@ -24,7 +24,8 @@ function taskWindow(overrides) {
     isActive: overrides.isActive ?? false,
     isMinimized: overrides.isMinimized ?? false,
     activityState: overrides.activityState ?? 'idle',
-    notificationCount: overrides.notificationCount ?? 0
+    attentionState: overrides.attentionState ?? 'idle',
+    toastCount: overrides.toastCount ?? 0
   };
 }
 
@@ -38,17 +39,28 @@ test('groups open task windows by application identity', () => {
   assert.deepEqual(groups.map((group) => group.key), ['firefox', 'code']);
   assert.equal(groups[0].windows.length, 2);
   assert.equal(groups[0].isActive, true);
-  assert.equal(groups[0].notificationCount, 0);
+  assert.equal(groups[0].hasAttention, false);
+  assert.equal(groups[0].toastCount, 0);
 });
 
-test('keeps group notification count at the highest window count', () => {
+test('keeps group toast count at the highest window count', () => {
   const groups = buildTaskWindowGroups([
-    taskWindow({ hwnd: '10', processName: 'Code', title: 'Editor', notificationCount: 2 }),
-    taskWindow({ hwnd: '11', processName: 'code', title: 'Preview', notificationCount: 7 }),
-    taskWindow({ hwnd: '12', processName: 'code', title: 'Terminal', notificationCount: 3 })
+    taskWindow({ hwnd: '10', processName: 'Code', title: 'Editor', toastCount: 2 }),
+    taskWindow({ hwnd: '11', processName: 'code', title: 'Preview', toastCount: 7 }),
+    taskWindow({ hwnd: '12', processName: 'code', title: 'Terminal', toastCount: 3 })
   ]);
 
-  assert.equal(groups[0].notificationCount, 7);
+  assert.equal(groups[0].toastCount, 7);
+});
+
+test('marks a task window group attentive when any child requests attention', () => {
+  const groups = buildTaskWindowGroups([
+    taskWindow({ hwnd: '10', processName: 'Code', title: 'Editor', attentionState: 'idle' }),
+    taskWindow({ hwnd: '11', processName: 'code', title: 'Preview', attentionState: 'requested' }),
+    taskWindow({ hwnd: '12', processName: 'code', title: 'Terminal', attentionState: 'idle' })
+  ]);
+
+  assert.equal(groups[0].hasAttention, true);
 });
 
 test('marks a task window group busy when any eligible contained window is busy', () => {

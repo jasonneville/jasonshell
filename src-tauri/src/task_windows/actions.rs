@@ -1,7 +1,7 @@
 use super::{helper::process_image_path, parse_hwnd, TaskWindowAction};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
-use std::path::PathBuf;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, LPARAM, WPARAM};
 use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentThreadId, GetProcessTimes, OpenProcess, TerminateProcess,
@@ -261,7 +261,11 @@ fn close_window(hwnd: windows::Win32::Foundation::HWND) -> Result<(), String> {
         )
     };
     let send_timeout_succeeded = close_status.0 != 0;
-    let send_error = if send_timeout_succeeded { 0 } else { unsafe { GetLastError().0 } };
+    let send_error = if send_timeout_succeeded {
+        0
+    } else {
+        unsafe { GetLastError().0 }
+    };
 
     if send_error != 0 && should_elevate_after_access_denied(send_error) {
         revalidate_close_target(hwnd, &initial_identity)?;
@@ -318,7 +322,9 @@ fn terminate_window_process(
             return elevate_close_target(hwnd, initial_identity);
         }
         Err(error) => {
-            return Err(format!("Failed to open task window process {process_id} for termination: {error}"));
+            return Err(format!(
+                "Failed to open task window process {process_id} for termination: {error}"
+            ));
         }
     };
     let result = unsafe { TerminateProcess(process_handle, 1) };
@@ -331,7 +337,9 @@ fn terminate_window_process(
             return elevate_close_target(hwnd, initial_identity);
         }
         Err(error) => {
-            return Err(format!("Failed to terminate task window process {process_id}: {error}"));
+            return Err(format!(
+                "Failed to terminate task window process {process_id}: {error}"
+            ));
         }
     }
 
@@ -358,7 +366,10 @@ fn revalidate_close_target(
         expected_identity.creation_time,
         &expected_identity.canonical_image_path,
     ) {
-        return Err("Task window target identity could not be revalidated before close fallback".to_string());
+        return Err(
+            "Task window target identity could not be revalidated before close fallback"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -395,7 +406,10 @@ pub(super) fn capture_task_window_identity(
 ) -> Result<TaskWindowIdentity, String> {
     let current = current_task_window_identity(hwnd)?;
     if current.process_id != process_id {
-        return Err("Task window target identity could not be revalidated before close fallback".to_string());
+        return Err(
+            "Task window target identity could not be revalidated before close fallback"
+                .to_string(),
+        );
     }
     Ok(current)
 }
@@ -429,17 +443,33 @@ pub(super) fn task_window_identity_matches(
 }
 
 fn process_creation_time(process_id: u32) -> Result<u64, String> {
-    let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
-        .map_err(|error| format!("Failed to inspect task window process {process_id}: {error}"))?;
+    let process_handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }.map_err(
+            |error| format!("Failed to inspect task window process {process_id}: {error}"),
+        )?;
     struct HandleGuard(windows::Win32::Foundation::HANDLE);
-    impl Drop for HandleGuard { fn drop(&mut self) { unsafe { let _ = CloseHandle(self.0); } } }
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
     let _guard = HandleGuard(process_handle);
     let mut creation = windows::Win32::Foundation::FILETIME::default();
     let mut exit = windows::Win32::Foundation::FILETIME::default();
     let mut kernel = windows::Win32::Foundation::FILETIME::default();
     let mut user = windows::Win32::Foundation::FILETIME::default();
-    unsafe { GetProcessTimes(process_handle, &mut creation, &mut exit, &mut kernel, &mut user) }
-        .map_err(|error| format!("Failed to inspect task window process {process_id}: {error}"))?;
+    unsafe {
+        GetProcessTimes(
+            process_handle,
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    }
+    .map_err(|error| format!("Failed to inspect task window process {process_id}: {error}"))?;
     Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
 }
 
@@ -479,10 +509,30 @@ mod tests {
             creation_time: 20,
             canonical_image_path: PathBuf::from(r"C:\good.exe"),
         };
-        assert!(task_window_identity_matches(&current, 10, 20, &PathBuf::from(r"C:\good.exe")));
-        assert!(!task_window_identity_matches(&current, 11, 20, &PathBuf::from(r"C:\good.exe")));
-        assert!(!task_window_identity_matches(&current, 10, 21, &PathBuf::from(r"C:\good.exe")));
-        assert!(!task_window_identity_matches(&current, 10, 20, &PathBuf::from(r"C:\bad.exe")));
+        assert!(task_window_identity_matches(
+            &current,
+            10,
+            20,
+            &PathBuf::from(r"C:\good.exe")
+        ));
+        assert!(!task_window_identity_matches(
+            &current,
+            11,
+            20,
+            &PathBuf::from(r"C:\good.exe")
+        ));
+        assert!(!task_window_identity_matches(
+            &current,
+            10,
+            21,
+            &PathBuf::from(r"C:\good.exe")
+        ));
+        assert!(!task_window_identity_matches(
+            &current,
+            10,
+            20,
+            &PathBuf::from(r"C:\bad.exe")
+        ));
     }
 
     #[test]
@@ -506,7 +556,11 @@ mod tests {
         let current = captured.clone();
         assert!(revalidate_identity_for_test(&current, &captured).is_ok());
         assert!(revalidate_identity_for_test(
-            &TaskWindowIdentity { process_id: 42, creation_time: 100, canonical_image_path: PathBuf::from(r"C:\good.exe") },
+            &TaskWindowIdentity {
+                process_id: 42,
+                creation_time: 100,
+                canonical_image_path: PathBuf::from(r"C:\good.exe")
+            },
             &captured,
         )
         .is_err());
@@ -540,7 +594,10 @@ mod tests {
         process_id: u32,
     ) -> Result<TaskWindowIdentity, String> {
         if current.process_id != process_id {
-            return Err("Task window target identity could not be revalidated before close fallback".to_string());
+            return Err(
+                "Task window target identity could not be revalidated before close fallback"
+                    .to_string(),
+            );
         }
         Ok(current.clone())
     }
@@ -549,8 +606,16 @@ mod tests {
         current: &TaskWindowIdentity,
         expected: &TaskWindowIdentity,
     ) -> Result<(), String> {
-        if !task_window_identity_matches(current, expected.process_id, expected.creation_time, &expected.canonical_image_path) {
-            return Err("Task window target identity could not be revalidated before close fallback".to_string());
+        if !task_window_identity_matches(
+            current,
+            expected.process_id,
+            expected.creation_time,
+            &expected.canonical_image_path,
+        ) {
+            return Err(
+                "Task window target identity could not be revalidated before close fallback"
+                    .to_string(),
+            );
         }
         Ok(())
     }

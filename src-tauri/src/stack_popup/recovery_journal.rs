@@ -3,8 +3,8 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const RECOVERY_JOURNAL_VERSION: u32 = 1;
 pub(crate) const RECOVERY_JOURNAL_RETENTION_DAYS: u64 = 14;
@@ -131,8 +131,14 @@ impl RecoveryJournalEntry {
         }
     }
 
-    pub(crate) fn mark_stale_running_as_interrupted(&mut self, now_epoch_ms: u64, stale_after_ms: u64) {
-        if !self.is_terminal() && now_epoch_ms.saturating_sub(self.updated_at_epoch_ms) > stale_after_ms {
+    pub(crate) fn mark_stale_running_as_interrupted(
+        &mut self,
+        now_epoch_ms: u64,
+        stale_after_ms: u64,
+    ) {
+        if !self.is_terminal()
+            && now_epoch_ms.saturating_sub(self.updated_at_epoch_ms) > stale_after_ms
+        {
             self.transition_to(RecoveryJournalState::Interrupted, now_epoch_ms);
         }
     }
@@ -161,14 +167,28 @@ pub(crate) fn emergency_recovery_journal_disable() -> bool {
 
 pub(crate) fn new_recovery_operation_id() -> String {
     let counter = OP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     format!("{nanos:x}-{counter:x}-{:x}", std::process::id())
 }
 
-pub(crate) fn write_recovery_journal_atomic(path: &Path, journal: &RecoveryJournalEntry) -> Result<(), String> {
-    let parent = path.parent().ok_or_else(|| "Journal parent unavailable".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| format!("Failed to prepare recovery journal directory: {error}"))?;
-    let temp_path = unique_recovery_journal_temp_path(parent, path.file_stem().and_then(|v| v.to_str()).unwrap_or("recovery-journal"));
+pub(crate) fn write_recovery_journal_atomic(
+    path: &Path,
+    journal: &RecoveryJournalEntry,
+) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Journal parent unavailable".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Failed to prepare recovery journal directory: {error}"))?;
+    let temp_path = unique_recovery_journal_temp_path(
+        parent,
+        path.file_stem()
+            .and_then(|v| v.to_str())
+            .unwrap_or("recovery-journal"),
+    );
     let payload = serde_json::to_vec_pretty(journal)
         .map_err(|error| format!("Failed to serialize recovery journal: {error}"))?;
 
@@ -189,17 +209,25 @@ pub(crate) fn write_recovery_journal_atomic(path: &Path, journal: &RecoveryJourn
     Ok(())
 }
 
-pub(crate) fn cleanup_recovery_journals(dir: &Path, now_epoch_ms: u64, emergency_disable: bool) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn cleanup_recovery_journals(
+    dir: &Path,
+    now_epoch_ms: u64,
+    emergency_disable: bool,
+) -> Result<Vec<PathBuf>, String> {
     if emergency_disable {
         return Ok(Vec::new());
     }
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let retention_ms = Duration::from_secs(RECOVERY_JOURNAL_RETENTION_DAYS * 24 * 60 * 60).as_millis() as u64;
+    let retention_ms =
+        Duration::from_secs(RECOVERY_JOURNAL_RETENTION_DAYS * 24 * 60 * 60).as_millis() as u64;
     let mut removed = Vec::new();
-    for entry in fs::read_dir(dir).map_err(|error| format!("Failed to read recovery journal directory: {error}"))? {
-        let entry = entry.map_err(|error| format!("Failed to read recovery journal entry: {error}"))?;
+    for entry in fs::read_dir(dir)
+        .map_err(|error| format!("Failed to read recovery journal directory: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("Failed to read recovery journal entry: {error}"))?;
         let path = entry.path();
         if !is_terminal_journal_file(&path) || is_reparse_or_symlink(&path)? {
             continue;
@@ -223,20 +251,28 @@ pub(crate) fn cleanup_recovery_journals(dir: &Path, now_epoch_ms: u64, emergency
         };
         if journal.is_terminal() {
             if now_epoch_ms.saturating_sub(modified_ms) >= retention_ms {
-                fs::remove_file(&path).map_err(|error| format!("Failed to remove recovery journal artifact: {error}"))?;
+                fs::remove_file(&path).map_err(|error| {
+                    format!("Failed to remove recovery journal artifact: {error}")
+                })?;
                 removed.push(path);
             }
             continue;
         }
-        journal.mark_stale_running_as_interrupted(now_epoch_ms, RECOVERY_JOURNAL_STALE_INTERRUPT_AFTER_MS);
+        journal.mark_stale_running_as_interrupted(
+            now_epoch_ms,
+            RECOVERY_JOURNAL_STALE_INTERRUPT_AFTER_MS,
+        );
         write_recovery_journal_atomic(&path, &journal)?;
     }
     Ok(removed)
 }
 
 fn is_reparse_or_symlink(path: &Path) -> Result<bool, String> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| format!("Failed to inspect recovery journal artifact: {error}"))?;
-    if metadata.file_type().is_symlink() { return Ok(true); }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Failed to inspect recovery journal artifact: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(true);
+    }
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::fs::MetadataExt;
@@ -255,12 +291,17 @@ fn is_terminal_journal_file(path: &Path) -> bool {
 }
 
 fn unique_recovery_journal_temp_path(dir: &Path, stem: &str) -> PathBuf {
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     dir.join(format!(".{stem}.{nonce}.json.tmp"))
 }
 
 fn epoch_ms(time: SystemTime) -> Option<u64> {
-    time.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as u64)
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
 }
 
 fn sync_parent_dir(parent: &Path) {
@@ -273,10 +314,20 @@ fn sync_parent_dir(parent: &Path) {
 fn replace_file_atomic(temp_path: &Path, target_path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
 
-    let temp: Vec<u16> = temp_path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-    let target: Vec<u16> = target_path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let temp: Vec<u16> = temp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let target: Vec<u16> = target_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     unsafe {
         MoveFileExW(
             PCWSTR(temp.as_ptr()),
@@ -289,7 +340,8 @@ fn replace_file_atomic(temp_path: &Path, target_path: &Path) -> Result<(), Strin
 
 #[cfg(not(target_os = "windows"))]
 fn replace_file_atomic(temp_path: &Path, target_path: &Path) -> Result<(), String> {
-    fs::rename(temp_path, target_path).map_err(|error| format!("Failed to replace recovery journal atomically: {error}"))
+    fs::rename(temp_path, target_path)
+        .map_err(|error| format!("Failed to replace recovery journal atomically: {error}"))
 }
 
 #[cfg(test)]
@@ -300,11 +352,15 @@ mod tests {
 
     #[test]
     fn journal_transitions_and_interrupts_stale_running() {
-        let mut journal = RecoveryJournalEntry::new("op1".into(), "dest".into(), vec!["src".into()], 1000);
+        let mut journal =
+            RecoveryJournalEntry::new("op1".into(), "dest".into(), vec!["src".into()], 1000);
         journal.transition_to(RecoveryJournalState::CopyStarted, 1500);
         journal.transition_to(RecoveryJournalState::CopiedVerified, 1750);
         journal.transition_to(RecoveryJournalState::DeleteStarted, 2000);
-        journal.mark_stale_running_as_interrupted(24 * 60 * 60 * 1000 + 3001, RECOVERY_JOURNAL_STALE_INTERRUPT_AFTER_MS);
+        journal.mark_stale_running_as_interrupted(
+            24 * 60 * 60 * 1000 + 3001,
+            RECOVERY_JOURNAL_STALE_INTERRUPT_AFTER_MS,
+        );
         assert_eq!(journal.state, RecoveryJournalState::Interrupted);
     }
 
@@ -312,7 +368,21 @@ mod tests {
     fn journal_schema_includes_required_fields() {
         let journal = RecoveryJournalEntry::new("op2".into(), "dest".into(), vec![], 42);
         let json = serde_json::to_string(&journal).unwrap();
-        for field in ["mode", "sourceKind", "source", "destination", "selectedCollisionDestination", "sourceFileLength", "copiedFileBytes", "sourceManifest", "copiedManifest", "deleteStartedAtMs", "sourceRemovedAtMs", "completedAtMs", "interruptedAtMs"] {
+        for field in [
+            "mode",
+            "sourceKind",
+            "source",
+            "destination",
+            "selectedCollisionDestination",
+            "sourceFileLength",
+            "copiedFileBytes",
+            "sourceManifest",
+            "copiedManifest",
+            "deleteStartedAtMs",
+            "sourceRemovedAtMs",
+            "completedAtMs",
+            "interruptedAtMs",
+        ] {
             assert!(json.contains(field), "missing {field}");
         }
     }
@@ -331,19 +401,30 @@ mod tests {
 
     #[test]
     fn cleanup_skips_unknown_artifacts_and_respects_emergency_disable() {
-        let root = std::env::temp_dir().join(format!("jasonshell-journal-cleanup-{}", unique_suffix()));
+        let root =
+            std::env::temp_dir().join(format!("jasonshell-journal-cleanup-{}", unique_suffix()));
         fs::create_dir_all(&root).unwrap();
         let known = root.join("recovery-old.json");
         let unknown = root.join("notes.txt");
-        let mut journal = RecoveryJournalEntry::new("op".into(), "dest".into(), vec![], now_ms() - 15 * 24 * 60 * 60 * 1000);
-        journal.transition_to(RecoveryJournalState::Completed, now_ms() - 15 * 24 * 60 * 60 * 1000);
+        let mut journal = RecoveryJournalEntry::new(
+            "op".into(),
+            "dest".into(),
+            vec![],
+            now_ms() - 15 * 24 * 60 * 60 * 1000,
+        );
+        journal.transition_to(
+            RecoveryJournalState::Completed,
+            now_ms() - 15 * 24 * 60 * 60 * 1000,
+        );
         fs::write(&known, serde_json::to_vec(&journal).unwrap()).unwrap();
         fs::write(&unknown, b"keep").unwrap();
-        let removed = cleanup_recovery_journals(&root, now_ms() + 15 * 24 * 60 * 60 * 1000, false).unwrap();
+        let removed =
+            cleanup_recovery_journals(&root, now_ms() + 15 * 24 * 60 * 60 * 1000, false).unwrap();
         assert!(removed.iter().any(|path| path == &known));
         assert!(unknown.exists());
         fs::write(&known, serde_json::to_vec(&journal).unwrap()).unwrap();
-        let removed_disabled = cleanup_recovery_journals(&root, now_ms() + 15 * 24 * 60 * 60 * 1000, true).unwrap();
+        let removed_disabled =
+            cleanup_recovery_journals(&root, now_ms() + 15 * 24 * 60 * 60 * 1000, true).unwrap();
         assert!(removed_disabled.is_empty());
         assert!(known.exists());
     }
@@ -356,7 +437,11 @@ mod tests {
         assert_eq!(first.parent(), Some(root.as_path()));
         assert_eq!(second.parent(), Some(root.as_path()));
         assert_ne!(first, second);
-        assert!(first.file_name().unwrap().to_string_lossy().ends_with(".json.tmp"));
+        assert!(first
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(".json.tmp"));
     }
 
     #[test]
@@ -367,10 +452,16 @@ mod tests {
     }
 
     fn now_ms() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
     }
 
     fn unique_suffix() -> u128 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     }
 }

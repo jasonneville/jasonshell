@@ -28,6 +28,7 @@ result.txt
 .worktrees/
 .tmp-*/
 .local/
+.slim/deepwork/
 *.cer
 *.pfx
 

@@ -132,7 +132,10 @@ fn resolve_executable(candidate: &str) -> Option<PathBuf> {
     let expanded = expand_environment(candidate);
     let path = PathBuf::from(&expanded);
     if path.is_absolute() {
-        return path.exists().then(|| std::fs::canonicalize(&path).ok()).flatten();
+        return path
+            .exists()
+            .then(|| std::fs::canonicalize(&path).ok())
+            .flatten();
     }
 
     windows_dir_candidate(&expanded)
@@ -141,7 +144,9 @@ fn resolve_executable(candidate: &str) -> Option<PathBuf> {
 fn windows_dir_candidate(executable: &str) -> Option<PathBuf> {
     let system_root = std::env::var_os("SystemRoot")?;
     let path = PathBuf::from(system_root).join("System32").join(executable);
-    path.exists().then(|| std::fs::canonicalize(&path).ok()).flatten()
+    path.exists()
+        .then(|| std::fs::canonicalize(&path).ok())
+        .flatten()
 }
 
 fn expand_environment(candidate: &str) -> String {

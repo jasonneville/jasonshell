@@ -38,17 +38,39 @@ test('summarizes task group state for stronger accessible indicators', () => {
     isActive: true,
     isMinimized: false,
     isBusy: true,
-    notificationCount: 4
+    hasAttention: true,
+    toastCount: 4
   });
 
-  assert.equal(label, 'Code, 2 windows, 4 notifications, active, activity detected');
+  assert.equal(label, 'Code, 2 windows, active, activity detected');
 });
 
-test('renders notified task groups with red badge and top border', () => {
-  assert.match(bottomBarSource, /class:task-group-notified=\{group\.notificationCount > 0\}/);
-  assert.match(bottomBarSource, /aria-label=\{`\$\{group\.notificationCount\} notifications`\}/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-group-notified \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-error-border\);/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-error\);[\s\S]*color: var\(--js-color-error-text\);/);
+test('summarizes inactive attention and toast state with combined labels', () => {
+  const label = taskGroupStateLabel({
+    key: 'code',
+    label: 'Code',
+    iconDataUrl: '',
+    windows: [{ hwnd: '1' }, { hwnd: '2' }],
+    isActive: false,
+    isMinimized: true,
+    isBusy: true,
+    hasAttention: true,
+    toastCount: 4
+  });
+
+  assert.equal(label, 'Code, 2 windows, 4 toasts, needs attention, activity detected, minimized');
+});
+
+test('renders attentive task groups with toast badge, amber cue, and active suppression', () => {
+  assert.match(bottomBarSource, /class:task-group-attention=\{taskGroupHasVisibleAttention\(group\)\}/);
+  assert.match(bottomBarSource, /class:task-group-toasted=\{taskGroupHasToast\(group\)\}/);
+  assert.match(bottomBarSource, /aria-label=\{`\$\{group\.toastCount\} \$\{group\.toastCount === 1 \? 'toast' : 'toasts'\}`\}/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-group-attention,\s*\.bottom-bar \.task-group-toasted \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-warning-border\);/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-group-attention \{\s*box-shadow: inset 0 4px 0 #ffd54f;\s*\}/);
+  assert.doesNotMatch(bottomBarCss, /taskbar-attention-flash/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-warning\);[\s\S]*color: var\(--js-color-text-strong\);/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-group-toasted \.task-count \{[\s\S]*box-shadow: 0 0 0 1px var\(--js-color-warning-border\), 0 0 0\.55rem rgba\(245, 191, 92, 0\.28\);/);
+  assert.match(bottomBarCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.bottom-bar \.task-group-busy::after \{[\s\S]*animation: none;[\s\S]*background: var\(--js-color-warning-border\);/);
 });
 
 test('sizes task buttons as equal flex items without content-sized bounds', () => {

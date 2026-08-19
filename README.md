@@ -59,6 +59,29 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register-notification-identit
 
 The script creates a Current User development certificate, trusts it only for Current User, copies the debug executable into an untracked local loose package, registers it, then launches JasonShell through that package identity. Close any `npm run tauri dev` instance first. Re-run it after rebuilding the executable.
 
+Toast counts, native taskbar attention, CPU/title activity, and Explorer taskbar suppression are independent signals. Attention renders amber, toast delivery count renders a red badge, and busy activity keeps its existing treatment.
+
+## Taskbar Controls
+
+Native taskbar attention is enabled by default so ordinary `FlashWindowEx` requests appear as amber attention cues. Set its kill switch to `0` only to disable the receiver. Multi-monitor Explorer taskbar suppression remains default-off pending the full Windows 10/11 release matrix:
+
+```powershell
+$env:JASONSHELL_TASKBAR_NATIVE_HOOKS = '0' # optional attention kill switch
+$env:JASONSHELL_EXPLORER_SUPPRESSION_V2 = '1'
+```
+
+Attention hooks listen for native shell flash/foreground events unless explicitly disabled with exact `0`. Explorer suppression v2 activates only with exact `1`; it owns only taskbars it successfully hides, reconciles Explorer recreation/display changes, and identity-checks taskbars before restore.
+
+Read bounded runtime health without opening UI through Tauri command `get_taskbar_runtime_diagnostics`. It reports native-hook health/last signal, snapshot sequence/reason/latency, attention count, toast listener/package identity/poll state, unresolved app-ID counts, and Explorer suppression counters. Exported strings are path-redacted and samples are bounded.
+
+Troubleshooting:
+
+- Missing toast badges: run the package-identity registration script, then inspect `toastListenerStatus`, `packageIdentityStatus`, and unresolved app-ID diagnostics.
+- Missing attention: confirm `JASONSHELL_TASKBAR_NATIVE_HOOKS` is not `0`, restart JasonShell, inspect native-hook health, then run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke-taskbar-attention.ps1` against a built debug executable.
+- Legacy `NotifyIcon` balloon tips may lack a resolvable app identity, so their red toast badge is not guaranteed; a paired `FlashWindowEx` request still produces the amber attention cue.
+- Explorer taskbar remains visible/reappears: confirm v2 switch, inspect tracked/hidden/recreation/hide-failure diagnostics, then disable the switch if identity or restore errors appear.
+- Unsupported until release matrix passes: any general Windows 11 support claim, protected/elevated cross-integrity windows, and guaranteed toast identity resolution for every unpackaged app.
+
 ## Validation
 
 ```powershell

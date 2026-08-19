@@ -70,6 +70,7 @@
   import {
     activateTaskWindow,
     listOpenTaskWindows,
+    normalizeTaskbarWindow,
     requestTaskbarWindowsRefresh,
     type TaskbarWindow
   } from '../lib/taskbarWindows';
@@ -562,6 +563,12 @@
   function taskGroupLabel(group: TaskWindowGroup) {
     return taskGroupStateLabel(group);
   }
+  function taskGroupHasVisibleAttention(group: TaskWindowGroup) {
+    return !group.isActive && group.hasAttention;
+  }
+  function taskGroupHasToast(group: TaskWindowGroup) {
+    return !group.isActive && group.toastCount > 0;
+  }
   function taskGroupStyle(group: TaskWindowGroup) {
     const previewOrderIndex = taskGroupPreviewOrder.indexOf(group.key);
     const windowCountStyle = `--task-window-count: ${Math.max(group.windows.length, 1)};`;
@@ -863,7 +870,7 @@
     registerAsyncUnlistener(listen<{ sequence: number; windows: TaskbarWindow[] }>('taskbar:windows-snapshot', (event) => {
       if (event.payload.sequence <= lastTaskbarSnapshotSequence) return;
       lastTaskbarSnapshotSequence = event.payload.sequence;
-      openWindows = event.payload.windows;
+      openWindows = event.payload.windows.map(normalizeTaskbarWindow);
     }));
     registerAsyncUnlistener(listen('taskbar:refresh-windows', () => {
       void requestTaskbarWindowsRefresh();
@@ -989,8 +996,9 @@
         {#each taskWindowGroups as group (group.key)}
           <div
             class:task-group-active={group.isActive}
+            class:task-group-attention={taskGroupHasVisibleAttention(group)}
+            class:task-group-toasted={taskGroupHasToast(group)}
             class:task-group-busy={group.isBusy}
-            class:task-group-notified={group.notificationCount > 0}
             class:task-group-minimized={group.isMinimized}
             class:task-group-dragging={draggingGroupKey === group.key}
             class:task-group-drop-target={dropTargetGroupKey === group.key && draggingGroupKey !== group.key}
@@ -1006,9 +1014,9 @@
             on:pointercancel={cancelTaskGroupPointerDrag}
             on:lostpointercapture={handleTaskGroupLostPointerCapture}
           >
-            {#if group.notificationCount > 0}
-              <span class="task-count" aria-label={`${group.notificationCount} notifications`}>
-                {group.notificationCount}
+            {#if taskGroupHasToast(group)}
+              <span class="task-count" aria-label={`${group.toastCount} ${group.toastCount === 1 ? 'toast' : 'toasts'}`}>
+                {group.toastCount}
               </span>
             {:else if group.windows.length > 1}
               <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>

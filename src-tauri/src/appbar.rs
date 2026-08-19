@@ -87,7 +87,8 @@ pub struct ResizeShellBarResponse {
 #[derive(Default)]
 pub struct ShellRuntimeState {
     pub cleaned_up: bool,
-    pub hidden_explorer_taskbar: Option<explorer::ExplorerTaskbarSnapshot>,
+    pub hidden_explorer_taskbars: Vec<explorer::ExplorerTaskbarSnapshot>,
+    pub hidden_explorer_taskbars_v2: Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>>,
     pub baseline_work_area: Option<RECT>,
     pub registered_appbars: Vec<isize>,
     shell_layout: Option<ShellSurfaceLayout>,
@@ -213,48 +214,49 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
     let mut state = state.lock().expect("shell runtime state is poisoned");
     state.cleaned_up = false;
     state.baseline_work_area = None;
-    state.hidden_explorer_taskbar = None;
+    state.hidden_explorer_taskbars.clear();
+    state.hidden_explorer_taskbars_v2 = None;
     state.shell_layout = None;
     state.fullscreen_state = FullscreenAppBarState::Reserved;
     state.registered_appbars.clear();
 
     let activation_result = (|| -> AppResult<()> {
         let current_work_area = get_work_area()?;
-        let explorer_taskbar = explorer::primary_taskbar_snapshot(monitor_rect)?;
-        let should_restore_hidden_taskbar = explorer_taskbar
-            .and_then(|snapshot| snapshot.baseline_work_area(monitor_rect))
-            .is_some()
-            && work_area_looks_dirty(current_work_area, monitor_rect);
+        let explorer_taskbars = explorer::all_taskbar_snapshots()?;
         state.baseline_work_area = Some(resolve_baseline_work_area(
             monitor_rect,
             current_work_area,
-            explorer_taskbar,
+            explorer_taskbars
+                .iter()
+                .copied()
+                .find(|snapshot| snapshot.monitor_rect == monitor_rect),
         ));
-        state.hidden_explorer_taskbar = explorer_taskbar.and_then(|mut snapshot| {
-            if should_restore_hidden_taskbar {
-                snapshot.restore_to_visible = true;
+        if taskbar_suppression_v2_enabled_from_env() {
+            let owned = Arc::new(Mutex::new(explorer::hide_taskbars_if_needed(
+                explorer_taskbars,
+            )?));
+            if !owned.lock().expect("taskbar v2 state poisoned").is_empty() {
+                state.hidden_explorer_taskbars_v2 = Some(Arc::clone(&owned));
+                start_taskbar_guard_v2(&mut state, owned);
+                set_work_area_with_retry_or_warn(
+                    monitor_rect,
+                    "monitor work area while Explorer taskbar is hidden",
+                )?;
             }
+        } else {
+            state.hidden_explorer_taskbars =
+                explorer::hide_primary_taskbar_if_needed(monitor_rect)?
+                    .filter(|snapshot| snapshot.hidden_by_jasonshell)
+                    .into_iter()
+                    .collect();
 
-            if snapshot.originally_visible || snapshot.restore_to_visible {
-                Some(snapshot)
-            } else {
-                None
+            if !state.hidden_explorer_taskbars.is_empty() {
+                start_taskbar_guard(&mut state);
+                set_work_area_with_retry_or_warn(
+                    monitor_rect,
+                    "monitor work area while Explorer taskbar is hidden",
+                )?;
             }
-        });
-
-        if state.hidden_explorer_taskbar.is_some() {
-            if state
-                .hidden_explorer_taskbar
-                .is_some_and(|snapshot| snapshot.originally_visible)
-            {
-                state.hidden_explorer_taskbar =
-                    explorer::hide_primary_taskbar_if_needed(monitor_rect)?;
-            }
-            start_taskbar_guard(&mut state);
-            set_work_area_with_retry_or_warn(
-                monitor_rect,
-                "monitor work area while Explorer taskbar is hidden",
-            )?;
         }
 
         let top_hwnd = hwnd_from_tauri_window(&windows.top)?;
@@ -275,7 +277,7 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
             "reserved shell work area",
         )?;
 
-        if let Some(snapshot) = state.hidden_explorer_taskbar {
+        if let Some(snapshot) = state.hidden_explorer_taskbars.first().copied() {
             if !explorer::enforce_taskbar_hidden(snapshot)? {
                 eprintln!(
                     "Explorer taskbar remained visible after startup retries; guard thread will continue enforcement"
@@ -309,7 +311,7 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
             resolved_bottom_rect,
         )?;
 
-        if let Some(snapshot) = state.hidden_explorer_taskbar {
+        if let Some(snapshot) = state.hidden_explorer_taskbars.first().copied() {
             if !explorer::enforce_taskbar_hidden(snapshot)? {
                 eprintln!(
                     "Explorer taskbar was still visible after shell surfaces finished showing"
@@ -1026,7 +1028,12 @@ where
         cleanup_errors.push(error.to_string());
     }
 
-    if let Some(taskbar_snapshot) = state.hidden_explorer_taskbar.take() {
+    let hidden_taskbars = if let Some(v2) = state.hidden_explorer_taskbars_v2.take() {
+        v2.lock().expect("taskbar v2 state poisoned").clone()
+    } else {
+        state.hidden_explorer_taskbars.drain(..).collect()
+    };
+    for taskbar_snapshot in hidden_taskbars {
         match restore_taskbar(taskbar_snapshot) {
             Ok(true) => {}
             Ok(false) => cleanup_errors.push(
@@ -1507,7 +1514,7 @@ fn rect_has_area(rect: RECT) -> bool {
 fn start_taskbar_guard(state: &mut ShellRuntimeState) {
     stop_taskbar_guard(state);
 
-    let Some(snapshot) = state.hidden_explorer_taskbar else {
+    let Some(snapshot) = state.hidden_explorer_taskbars.first().copied() else {
         return;
     };
 
@@ -1515,7 +1522,7 @@ fn start_taskbar_guard(state: &mut ShellRuntimeState) {
     let stop_signal = Arc::clone(&stop);
     let guard = thread::spawn(move || {
         while !stop_signal.load(Ordering::Relaxed) {
-            let _ = explorer::enforce_primary_taskbar_hidden(snapshot.original_rect);
+            let _ = explorer::enforce_hidden_taskbars(&[snapshot]);
             thread::sleep(Duration::from_millis(100));
         }
     });
@@ -1524,9 +1531,37 @@ fn start_taskbar_guard(state: &mut ShellRuntimeState) {
     state.taskbar_guard = Some(guard);
 }
 
+fn start_taskbar_guard_v2(
+    state: &mut ShellRuntimeState,
+    owned: Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>,
+) {
+    stop_taskbar_guard(state);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_signal = Arc::clone(&stop);
+    let guard = thread::spawn(move || {
+        let mut generation = 0;
+        while !stop_signal.load(Ordering::Relaxed) {
+            generation = explorer::wait_for_taskbar_reconcile(generation);
+            if stop_signal.load(Ordering::Relaxed) {
+                break;
+            }
+            if let Ok(mut snapshots) = owned.lock() {
+                let _ = explorer::reconcile_owned_taskbars(&mut snapshots);
+            }
+        }
+    });
+    state.taskbar_guard_stop = Some(stop);
+    state.taskbar_guard = Some(guard);
+}
+
+fn taskbar_suppression_v2_enabled_from_env() -> bool {
+    matches!(std::env::var("JASONSHELL_EXPLORER_SUPPRESSION_V2"), Ok(value) if value == "1")
+}
+
 fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
     if let Some(stop) = state.taskbar_guard_stop.take() {
         stop.store(true, Ordering::Relaxed);
+        explorer::request_taskbar_reconcile();
     }
 
     if let Some(guard) = state.taskbar_guard.take() {
@@ -1593,19 +1628,26 @@ mod tests {
             bottom: 1080,
         };
         let hidden_taskbar = ExplorerTaskbarSnapshot {
-            hwnd_value: 44,
-            originally_visible: true,
-            restore_to_visible: true,
-            original_rect: RECT {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 44,
+                process_id: 12,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: baseline_work_area,
+            taskbar_rect: RECT {
                 left: 0,
                 top: 1032,
                 right: 1920,
                 bottom: 1080,
             },
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
         };
         let mut state = ShellRuntimeState {
             cleaned_up: false,
-            hidden_explorer_taskbar: Some(hidden_taskbar),
+            hidden_explorer_taskbars: vec![hidden_taskbar],
+            hidden_explorer_taskbars_v2: None,
             baseline_work_area: Some(baseline_work_area),
             registered_appbars: Vec::new(),
             shell_layout: None,
@@ -1642,7 +1684,7 @@ mod tests {
                 Ok(())
             },
             |snapshot| {
-                restored_taskbars.push(snapshot.hwnd_value);
+                restored_taskbars.push(snapshot.identity.hwnd);
                 Ok(true)
             },
         )
@@ -1650,10 +1692,10 @@ mod tests {
 
         assert_eq!(removed_appbars, vec![hwnd.0 as isize]);
         assert_eq!(restored_work_areas, vec![baseline_work_area]);
-        assert_eq!(restored_taskbars, vec![hidden_taskbar.hwnd_value]);
+        assert_eq!(restored_taskbars, vec![hidden_taskbar.identity.hwnd]);
         assert!(state.registered_appbars.is_empty());
         assert!(state.baseline_work_area.is_none());
-        assert!(state.hidden_explorer_taskbar.is_none());
+        assert!(state.hidden_explorer_taskbars.is_empty());
         assert!(state.cleaned_up);
     }
 
@@ -1712,15 +1754,21 @@ mod tests {
             bottom: 1032,
         };
         let taskbar_snapshot = ExplorerTaskbarSnapshot {
-            hwnd_value: 44,
-            originally_visible: true,
-            restore_to_visible: true,
-            original_rect: RECT {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 44,
+                process_id: 12,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
                 left: 0,
                 top: 1032,
                 right: 1920,
                 bottom: 1080,
             },
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
         };
 
         assert_eq!(
@@ -1749,15 +1797,21 @@ mod tests {
             bottom: 1032,
         };
         let taskbar_snapshot = ExplorerTaskbarSnapshot {
-            hwnd_value: 44,
-            originally_visible: false,
-            restore_to_visible: false,
-            original_rect: RECT {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 44,
+                process_id: 12,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
                 left: 0,
                 top: 1032,
                 right: 1920,
                 bottom: 1080,
             },
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: false,
+            hidden_by_jasonshell: false,
         };
 
         assert_eq!(

@@ -12,6 +12,7 @@
   import {
     activateTaskWindow,
     listOpenTaskWindows,
+    normalizeTaskbarWindow,
     type TaskbarWindow
   } from '../lib/taskbarWindows';
   import {
@@ -1675,7 +1676,7 @@
     registerAsyncUnlistener(listen<{ sequence: number; windows: TaskbarWindow[] }>(TASKBAR_WINDOWS_SNAPSHOT_EVENT, (event) => {
       if (event.payload.sequence <= lastTaskbarSnapshotSequence) return;
       lastTaskbarSnapshotSequence = event.payload.sequence;
-      openWindows = event.payload.windows;
+      openWindows = event.payload.windows.map(normalizeTaskbarWindow);
     }));
     registerAsyncUnlistener(listen(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, () => {
       void toggleTerminalPanel(terminalControl);

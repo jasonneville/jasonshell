@@ -15,7 +15,10 @@ pub(crate) enum StackCommandAuth {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CallerAuthError {
-    Unauthorized { command: &'static str, caller: String },
+    Unauthorized {
+        command: &'static str,
+        caller: String,
+    },
 }
 
 impl CallerAuthError {
@@ -57,57 +60,268 @@ pub(crate) fn authorize_stack_command(
 // terminal session target auth: caller must match stored session target; never trust request target alone.
 
 pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
-    StackCommandAuth::AllowedCallers { command: contracts::commands::LIST_PINNED_STACK_FOLDERS, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::PIN_STACK_FOLDER, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP, contracts::surfaces::SEARCH_PANEL] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::UNPIN_STACK_FOLDER, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::REORDER_PINNED_STACK_FOLDERS, callers: &[contracts::surfaces::TOP_BAR] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::SHOW_STACK_POPUP, callers: &[contracts::surfaces::TOP_BAR] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::HIDE_STACK_POPUP, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::BEGIN_STACK_POPUP_FOCUS_LOSS_HOLD, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::END_STACK_POPUP_FOCUS_LOSS_HOLD, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::GET_STACK_POPUP_REQUEST, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::RESIZE_STACK_POPUP, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::READ_STACK_FOLDER, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::SUGGEST_STACK_PATHS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::RESOLVE_STACK_ITEM_ICONS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::OPEN_STACK_ITEM, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::OPEN_STACK_ITEM_WITH_PICKER, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::LIST_STACK_OPEN_WITH_CANDIDATES, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::OPEN_STACK_ITEM_WITH_APP, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::RENAME_STACK_ITEM, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::COPY_STACK_ITEMS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::PREPARE_STACK_FILE_DRAG, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::CUT_STACK_ITEMS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::PASTE_STACK_ITEMS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::DELETE_STACK_ITEM, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::NEW_STACK_FOLDER, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::NEW_STACK_TEXT_FILE, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::OPEN_STACK_TERMINAL_HERE, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::REVEAL_STACK_ITEM, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::EXTRACT_STACK_ARCHIVE, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::SHOW_STACK_ITEM_PROPERTIES, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::OPEN_STACK_FOLDER_IN_VSCODE, callers: &[contracts::surfaces::TOP_BAR, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::GET_STACK_GIT_STATUS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::OPEN_STACK_GIT_REMOTE_URL, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_ADD_PATHS, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_COMMIT, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_LOG, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_TREE, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_BRANCHES, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_FETCH, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_PULL, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_PUSH, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_CHECKOUT_BRANCH, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STACK_GIT_CREATE_BRANCH, callers: &[contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::START_PERSISTENT_TERMINAL, callers: &[contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::START_STACK_TERMINAL, callers: &[contracts::surfaces::TERMINAL_PANEL, contracts::surfaces::STACK_POPUP] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::READ_STACK_TERMINAL, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::WRITE_STACK_TERMINAL, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::RESIZE_STACK_TERMINAL, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::STOP_STACK_TERMINAL, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::POLL_STACK_TERMINAL_SESSION, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::LIST_STACK_TERMINALS, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::RENAME_STACK_TERMINAL, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::AllowedCallers { command: contracts::commands::STOP_TERMINAL_PANEL_SESSIONS, callers: &[contracts::surfaces::TERMINAL_PANEL] },
-    StackCommandAuth::TerminalSessionTarget { command: contracts::commands::GET_STACK_TERMINAL_CWD, callers: &[contracts::surfaces::STACK_POPUP, contracts::surfaces::TERMINAL_PANEL] },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::LIST_PINNED_STACK_FOLDERS,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::PIN_STACK_FOLDER,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::SEARCH_PANEL,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::UNPIN_STACK_FOLDER,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::REORDER_PINNED_STACK_FOLDERS,
+        callers: &[contracts::surfaces::TOP_BAR],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::SHOW_STACK_POPUP,
+        callers: &[contracts::surfaces::TOP_BAR],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::HIDE_STACK_POPUP,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::BEGIN_STACK_POPUP_FOCUS_LOSS_HOLD,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::END_STACK_POPUP_FOCUS_LOSS_HOLD,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::GET_STACK_POPUP_REQUEST,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::RESIZE_STACK_POPUP,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::READ_STACK_FOLDER,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::SUGGEST_STACK_PATHS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::RESOLVE_STACK_ITEM_ICONS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::OPEN_STACK_ITEM,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::OPEN_STACK_ITEM_WITH_PICKER,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::LIST_STACK_OPEN_WITH_CANDIDATES,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::OPEN_STACK_ITEM_WITH_APP,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::RENAME_STACK_ITEM,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::COPY_STACK_ITEMS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::PREPARE_STACK_FILE_DRAG,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::CUT_STACK_ITEMS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::PASTE_STACK_ITEMS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::DELETE_STACK_ITEM,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::NEW_STACK_FOLDER,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::NEW_STACK_TEXT_FILE,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::OPEN_STACK_TERMINAL_HERE,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::REVEAL_STACK_ITEM,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::EXTRACT_STACK_ARCHIVE,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::SHOW_STACK_ITEM_PROPERTIES,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::OPEN_STACK_FOLDER_IN_VSCODE,
+        callers: &[
+            contracts::surfaces::TOP_BAR,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::GET_STACK_GIT_STATUS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::OPEN_STACK_GIT_REMOTE_URL,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_ADD_PATHS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_COMMIT,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_LOG,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_TREE,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_BRANCHES,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_FETCH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_PULL,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_PUSH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_CHECKOUT_BRANCH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_CREATE_BRANCH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::START_PERSISTENT_TERMINAL,
+        callers: &[contracts::surfaces::TERMINAL_PANEL],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::START_STACK_TERMINAL,
+        callers: &[
+            contracts::surfaces::TERMINAL_PANEL,
+            contracts::surfaces::STACK_POPUP,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::READ_STACK_TERMINAL,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::WRITE_STACK_TERMINAL,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::RESIZE_STACK_TERMINAL,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::STOP_STACK_TERMINAL,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::POLL_STACK_TERMINAL_SESSION,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::LIST_STACK_TERMINALS,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::RENAME_STACK_TERMINAL,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STOP_TERMINAL_PANEL_SESSIONS,
+        callers: &[contracts::surfaces::TERMINAL_PANEL],
+    },
+    StackCommandAuth::TerminalSessionTarget {
+        command: contracts::commands::GET_STACK_TERMINAL_CWD,
+        callers: &[
+            contracts::surfaces::STACK_POPUP,
+            contracts::surfaces::TERMINAL_PANEL,
+        ],
+    },
 ];

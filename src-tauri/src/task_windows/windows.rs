@@ -1,4 +1,5 @@
 use super::{
+    actions, attention,
     icons::{window_icon_data_url, EMPTY_ICON_DATA_URL},
     notifications, TaskbarProcessWindow, TaskbarWindow, TaskbarWindowActivityState,
     TaskbarWindowsSnapshot, TASKBAR_WINDOWS_SNAPSHOT_EVENT,
@@ -13,7 +14,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Foundation::{
+    CloseHandle, FILETIME, HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Threading::{
     GetExitCodeProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
@@ -38,14 +41,47 @@ const EXCLUDED_PROCESS_NAMES: &[&str] = &["dwm"];
 const EXCLUDED_TITLES: &[&str] = &["DWM Notification Window"];
 const CPU_TIME_BUSY_DELTA_TICKS: u64 = 200_000;
 const TASKBAR_SNAPSHOT_REFRESH_CADENCE: Duration = Duration::from_secs(1);
-const TASKBAR_REFRESH_SOON_DELAY: Duration = Duration::from_millis(120);
+const TASKBAR_REFRESH_NATIVE_COALESCE: Duration = Duration::from_millis(30);
+const TASKBAR_REFRESH_MANUAL_COALESCE: Duration = Duration::from_millis(120);
 
 static TASKBAR_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static TASKBAR_SNAPSHOT_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
-static TASKBAR_REFRESH_TX: OnceLock<mpsc::SyncSender<()>> = OnceLock::new();
+static TASKBAR_REFRESH_TX: OnceLock<mpsc::SyncSender<TaskbarRefreshRequest>> = OnceLock::new();
 static LAST_TASKBAR_SNAPSHOT: OnceLock<Mutex<Option<TaskbarWindowsSnapshot>>> = OnceLock::new();
 static LAST_TASKBAR_SNAPSHOT_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 const TASKBAR_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(1_120);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TaskbarRefreshReason {
+    Native,
+    Manual,
+}
+
+impl TaskbarRefreshReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            TaskbarRefreshReason::Native => "native",
+            TaskbarRefreshReason::Manual => "manual",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TaskbarRefreshRequest {
+    reason: TaskbarRefreshReason,
+    requested_at: Instant,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TaskbarRefreshDiagnostics {
+    last_reason: Option<TaskbarRefreshReason>,
+    last_signal_at: Option<Instant>,
+    last_snapshot_at: Option<Instant>,
+    last_latency_ms: u64,
+    coalesced_count: u64,
+}
+
+static TASKBAR_REFRESH_DIAGNOSTICS: OnceLock<Mutex<TaskbarRefreshDiagnostics>> = OnceLock::new();
 
 #[derive(Clone, Debug)]
 pub(super) struct ActivitySnapshot {
@@ -88,35 +124,58 @@ pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
         return;
     }
     // One pending request is enough: the next scan publishes complete state.
-    let (tx, rx) = mpsc::sync_channel::<()>(1);
+    let (tx, rx) = mpsc::sync_channel::<TaskbarRefreshRequest>(8);
     let _ = TASKBAR_REFRESH_TX.set(tx);
     thread::spawn(move || {
         let mut last_refresh_at = Instant::now();
         loop {
             let next_refresh_at = last_refresh_at + TASKBAR_SNAPSHOT_REFRESH_CADENCE;
             match rx.recv_timeout(next_refresh_at.saturating_duration_since(Instant::now())) {
-                Ok(()) => {
-                    let deadline = Instant::now() + TASKBAR_REFRESH_SOON_DELAY;
-                    while Instant::now() < deadline {
-                        let remaining = deadline.saturating_duration_since(Instant::now());
-                        if remaining.is_zero() {
+                Ok(mut request) => {
+                    let mut due = request_due_at(request);
+                    loop {
+                        let now = Instant::now();
+                        if now >= due {
                             break;
                         }
-                        match rx.recv_timeout(remaining) {
-                            Ok(()) => {}
+                        match rx.recv_timeout(due.saturating_duration_since(now)) {
+                            Ok(next) => {
+                                request = coalesce_request(request, next);
+                                due = request_due_at(request);
+                                if let Ok(mut diag) = TASKBAR_REFRESH_DIAGNOSTICS
+                                    .get_or_init(
+                                        || Mutex::new(TaskbarRefreshDiagnostics::default()),
+                                    )
+                                    .lock()
+                                {
+                                    diag.coalesced_count += 1;
+                                }
+                            }
                             Err(mpsc::RecvTimeoutError::Timeout) => break,
                             Err(mpsc::RecvTimeoutError::Disconnected) => return,
                         }
+                    }
+                    if let Ok(mut diag) = TASKBAR_REFRESH_DIAGNOSTICS
+                        .get_or_init(|| Mutex::new(TaskbarRefreshDiagnostics::default()))
+                        .lock()
+                    {
+                        diag.last_reason = Some(request.reason);
+                        diag.last_signal_at = Some(request.requested_at);
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
-            let remaining = next_refresh_at.saturating_duration_since(Instant::now());
-            if !remaining.is_zero() {
-                thread::sleep(remaining);
-            }
             let _ = refresh_taskbar_snapshot_now(Some(&app));
+            if let Ok(mut diag) = TASKBAR_REFRESH_DIAGNOSTICS
+                .get_or_init(|| Mutex::new(TaskbarRefreshDiagnostics::default()))
+                .lock()
+            {
+                if let Some(signal_at) = diag.last_signal_at {
+                    diag.last_latency_ms = signal_at.elapsed().as_millis() as u64;
+                }
+                diag.last_snapshot_at = Some(Instant::now());
+            }
             last_refresh_at = Instant::now();
         }
     });
@@ -124,7 +183,88 @@ pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
 
 pub(super) fn request_taskbar_snapshot_refresh() {
     if let Some(tx) = TASKBAR_REFRESH_TX.get() {
-        let _ = tx.try_send(());
+        if let Ok(mut diag) = TASKBAR_REFRESH_DIAGNOSTICS
+            .get_or_init(|| Mutex::new(TaskbarRefreshDiagnostics::default()))
+            .lock()
+        {
+            diag.last_reason = Some(TaskbarRefreshReason::Manual);
+            diag.last_signal_at = Some(Instant::now());
+        }
+        let _ = tx.try_send(TaskbarRefreshRequest {
+            reason: TaskbarRefreshReason::Manual,
+            requested_at: Instant::now(),
+        });
+    }
+}
+
+pub(super) fn request_taskbar_snapshot_refresh_native(signal_timestamp: Instant) {
+    if let Some(tx) = TASKBAR_REFRESH_TX.get() {
+        if let Ok(mut diag) = TASKBAR_REFRESH_DIAGNOSTICS
+            .get_or_init(|| Mutex::new(TaskbarRefreshDiagnostics::default()))
+            .lock()
+        {
+            diag.last_reason = Some(TaskbarRefreshReason::Native);
+            diag.last_signal_at = Some(signal_timestamp);
+        }
+        let _ = tx.try_send(TaskbarRefreshRequest {
+            reason: TaskbarRefreshReason::Native,
+            requested_at: signal_timestamp,
+        });
+    }
+}
+
+pub(super) fn taskbar_snapshot_diagnostics_snapshot(
+) -> super::diagnostics::SnapshotPipelineDiagnosticsSnapshot {
+    let diag = TASKBAR_REFRESH_DIAGNOSTICS
+        .get_or_init(|| Mutex::new(TaskbarRefreshDiagnostics::default()))
+        .lock()
+        .ok()
+        .map(|diag| diag.clone())
+        .unwrap_or_default();
+    let (sequence, refreshed_at_ms) = LAST_TASKBAR_SNAPSHOT_AT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|at| at.as_ref().copied())
+        .map(|at| {
+            let age_ms = at.elapsed().as_millis() as u64;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0);
+            (
+                TASKBAR_SNAPSHOT_SEQUENCE.load(Ordering::SeqCst),
+                now_ms.saturating_sub(age_ms),
+            )
+        })
+        .unwrap_or((TASKBAR_SNAPSHOT_SEQUENCE.load(Ordering::SeqCst), 0));
+    super::diagnostics::SnapshotPipelineDiagnosticsSnapshot {
+        sequence,
+        refresh_reason: diag
+            .last_reason
+            .map(|r| r.as_str().to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        refreshed_at_ms: refreshed_at_ms,
+        latency_ms: diag.last_latency_ms,
+    }
+}
+
+fn request_due_at(request: TaskbarRefreshRequest) -> Instant {
+    request.requested_at
+        + match request.reason {
+            TaskbarRefreshReason::Native => TASKBAR_REFRESH_NATIVE_COALESCE,
+            TaskbarRefreshReason::Manual => TASKBAR_REFRESH_MANUAL_COALESCE,
+        }
+}
+
+fn coalesce_request(
+    old: TaskbarRefreshRequest,
+    new: TaskbarRefreshRequest,
+) -> TaskbarRefreshRequest {
+    if request_due_at(new) <= request_due_at(old) {
+        new
+    } else {
+        old
     }
 }
 
@@ -142,6 +282,7 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
     }
 
     let mut windows = Vec::new();
+    let mut visible_attention_identities = Vec::new();
     let mut cpu_time_by_process_id: HashMap<u32, Option<u64>> = HashMap::new();
     for hwnd in handles {
         let Some(candidate) = build_window_candidate(hwnd, foreground, current_process_id)? else {
@@ -160,8 +301,18 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
         let is_active = candidate.is_active;
         let is_minimized = candidate.is_minimized;
         let process_id = candidate.process_id;
+        if is_active {
+            if let Some(process_path) = process_path.as_deref() {
+                notifications::clear_notifications_for_process_path(process_path);
+            }
+        }
         let notification_count =
             notifications::notification_count_for_process_path(process_path.as_deref(), None);
+        let attention_identity = attention_identity_for_hwnd(native_hwnd, process_id)?;
+        visible_attention_identities.push(attention_identity.clone());
+        if is_active {
+            attention::clear_taskbar_attention_if_matches(&attention_identity);
+        }
         let icon_data_url = window_icon_data_url(native_hwnd, process_path.as_deref())
             .unwrap_or_else(|_| EMPTY_ICON_DATA_URL.to_string());
         let cpu_time_ticks = *cpu_time_by_process_id
@@ -180,9 +331,12 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
             is_minimized,
             activity_state,
             notification_count,
+            attention_state: attention::attention_state_for(&attention_identity),
+            toast_count: notification_count,
         });
     }
 
+    attention::reconcile_taskbar_attention(&visible_attention_identities);
     sort_windows_stably(&mut windows);
     retain_activity_snapshots(windows.iter().map(|window| window.hwnd.as_str()));
     let sequence = TASKBAR_SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
@@ -290,7 +444,11 @@ fn launch_task_window_helper(
     Ok(())
 }
 
-fn shell_execute_runas_wait(executable: &Path, arguments: &str, operation: &str) -> Result<HANDLE, String> {
+fn shell_execute_runas_wait(
+    executable: &Path,
+    arguments: &str,
+    operation: &str,
+) -> Result<HANDLE, String> {
     let mut execute_info = SHELLEXECUTEINFOW::default();
     execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
     execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
@@ -301,9 +459,12 @@ fn shell_execute_runas_wait(executable: &Path, arguments: &str, operation: &str)
     execute_info.lpFile = windows::core::PCWSTR(executable_wide.as_ptr());
     execute_info.lpParameters = windows::core::PCWSTR(arguments_wide.as_ptr());
     execute_info.nShow = windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0 as i32;
-    unsafe { ShellExecuteExW(&mut execute_info) }.map_err(|error| shell_execute_error_for_operation(operation, error))?;
+    unsafe { ShellExecuteExW(&mut execute_info) }
+        .map_err(|error| shell_execute_error_for_operation(operation, error))?;
     if execute_info.hProcess.0.is_null() {
-        return Err(format!("Failed to launch {operation}: process handle unavailable"));
+        return Err(format!(
+            "Failed to launch {operation}: process handle unavailable"
+        ));
     }
     Ok(execute_info.hProcess)
 }
@@ -312,15 +473,19 @@ fn wait_for_process_exit(handle: HANDLE, timeout: std::time::Duration) -> Result
     struct ProcessHandleGuard(HANDLE);
     impl Drop for ProcessHandleGuard {
         fn drop(&mut self) {
-            unsafe { let _ = CloseHandle(self.0); }
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
         }
     }
     let _guard = ProcessHandleGuard(handle);
-    let wait = unsafe { WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128) as u32) };
+    let wait =
+        unsafe { WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128) as u32) };
     match wait {
         WAIT_OBJECT_0 => {
             let mut exit_code = 0u32;
-            unsafe { GetExitCodeProcess(handle, &mut exit_code) }.map_err(|error| format!("Failed to read helper exit code: {error}"))?;
+            unsafe { GetExitCodeProcess(handle, &mut exit_code) }
+                .map_err(|error| format!("Failed to read helper exit code: {error}"))?;
             Ok(exit_code)
         }
         WAIT_TIMEOUT => Err("Task window helper timed out".to_string()),
@@ -336,7 +501,10 @@ fn shell_execute_error_for_operation(operation: &str, error: windows::core::Erro
 }
 
 #[derive(PartialEq, Eq)]
-enum ShellExecuteStatus { UacCanceled, Other }
+enum ShellExecuteStatus {
+    UacCanceled,
+    Other,
+}
 
 fn shell_execute_status_for_error(hr: windows::core::HRESULT) -> ShellExecuteStatus {
     if super::helper::is_uac_canceled_shell_execute_code(hr.0 as u32) {
@@ -346,7 +514,9 @@ fn shell_execute_status_for_error(hr: windows::core::HRESULT) -> ShellExecuteSta
     }
 }
 
-fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> { value.encode_wide().chain(std::iter::once(0)).collect() }
+fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
+    value.encode_wide().chain(std::iter::once(0)).collect()
+}
 
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
     let handles = &mut *(lparam.0 as *mut Vec<HWND>);
@@ -373,19 +543,53 @@ mod tests {
     #[test]
     fn shell_execute_error_maps_uac_cancel_before_context() {
         let error = windows::core::Error::from(windows::core::HRESULT(1223));
-        assert_eq!(shell_execute_error_for_operation("task window helper", error), "UAC canceled");
+        assert_eq!(
+            shell_execute_error_for_operation("task window helper", error),
+            "UAC canceled"
+        );
     }
 
     #[test]
     fn shell_execute_error_maps_hresult_from_win32_uac_cancel() {
         let error = windows::core::Error::from(windows::core::HRESULT(0x8007_04C7u32 as i32));
-        assert_eq!(shell_execute_error_for_operation("task window helper", error), "UAC canceled");
+        assert_eq!(
+            shell_execute_error_for_operation("task window helper", error),
+            "UAC canceled"
+        );
     }
 
     #[test]
     fn shell_execute_error_does_not_map_arbitrary_hresult() {
         let error = windows::core::Error::from(windows::core::HRESULT(0x8007_0005u32 as i32));
-        assert_ne!(shell_execute_error_for_operation("task window helper", error), "UAC canceled");
+        assert_ne!(
+            shell_execute_error_for_operation("task window helper", error),
+            "UAC canceled"
+        );
+    }
+
+    #[test]
+    fn native_and_manual_refresh_due_rules_hold() {
+        let base = Instant::now();
+        let native = TaskbarRefreshRequest {
+            reason: TaskbarRefreshReason::Native,
+            requested_at: base,
+        };
+        let manual = TaskbarRefreshRequest {
+            reason: TaskbarRefreshReason::Manual,
+            requested_at: base,
+        };
+        assert_eq!(
+            request_due_at(native),
+            base + TASKBAR_REFRESH_NATIVE_COALESCE
+        );
+        assert_eq!(
+            request_due_at(manual),
+            base + TASKBAR_REFRESH_MANUAL_COALESCE
+        );
+        assert_eq!(
+            request_due_at(coalesce_request(manual, native)),
+            base + TASKBAR_REFRESH_NATIVE_COALESCE
+        );
     }
 }
 
@@ -745,4 +949,29 @@ fn from_wide_buffer(buffer: &[u16]) -> String {
         .trim_matches('\0')
         .trim()
         .to_string()
+}
+
+pub(super) fn attention_identity_for_hwnd(
+    hwnd: HWND,
+    process_id: u32,
+) -> Result<attention::TaskbarAttentionIdentity, String> {
+    let resolved_root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+    let root_owner = if resolved_root.0.is_null() {
+        hwnd
+    } else {
+        resolved_root
+    };
+    let root_identity = actions::current_task_window_identity(root_owner).ok();
+    Ok(attention::TaskbarAttentionIdentity {
+        root_owner_hwnd: root_owner.0 as isize,
+        process_id: root_identity
+            .as_ref()
+            .map(|identity| identity.process_id)
+            .unwrap_or(process_id),
+        creation_time: root_identity.map(|identity| identity.creation_time),
+    })
+}
+
+pub(super) fn remove_root_owner_taskbar_attention(root_owner_hwnd: isize) {
+    attention::remove_root_owner_taskbar_attention(root_owner_hwnd);
 }

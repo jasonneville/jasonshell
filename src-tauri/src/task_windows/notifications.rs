@@ -32,36 +32,50 @@ fn state() -> &'static Mutex<NotificationState> {
 }
 
 pub(super) fn start_notification_tracking() {
+    super::diagnostics::initialize_package_identity_diagnostics();
+    super::diagnostics::note_listener_start();
     thread::spawn(|| {
         let Ok(listener) = UserNotificationListener::Current() else {
+            super::diagnostics::note_listener_status(super::ToastListenerStatus::Unavailable);
             return;
         };
         let Ok(access) = listener
             .RequestAccessAsync()
             .and_then(|operation| operation.get())
         else {
+            super::diagnostics::note_listener_status(super::ToastListenerStatus::Error);
             return;
         };
-        if access != UserNotificationListenerAccessStatus::Allowed {
+        if access == UserNotificationListenerAccessStatus::Denied {
+            super::diagnostics::note_denied_request();
             return;
         }
+        if access != UserNotificationListenerAccessStatus::Allowed {
+            super::diagnostics::note_listener_status(super::ToastListenerStatus::Unavailable);
+            return;
+        }
+        super::diagnostics::note_listener_status(super::ToastListenerStatus::Allowed);
 
         loop {
             let Ok(notifications) = listener
                 .GetNotificationsAsync(NotificationKinds::Toast)
                 .and_then(|operation| operation.get())
             else {
+                super::diagnostics::note_listener_poll_failure("GetNotificationsAsync failed");
                 thread::sleep(NOTIFICATION_POLL_INTERVAL);
                 continue;
             };
+            super::diagnostics::note_listener_poll_success();
 
             for notification in notifications {
                 let (Ok(id), Ok(app_info)) = (notification.Id(), notification.AppInfo()) else {
                     continue;
                 };
                 let Ok(app_id) = app_info.AppUserModelId() else {
+                    super::diagnostics::note_unresolved_app_id("<missing-app-id>");
                     continue;
                 };
+                super::diagnostics::note_resolved_app_id(&app_id.to_string_lossy());
                 record_notification(&app_id.to_string_lossy(), id);
             }
             thread::sleep(NOTIFICATION_POLL_INTERVAL);
@@ -140,6 +154,11 @@ fn app_install_path_cached(app_id: &str) -> Option<PathBuf> {
                 state.install_path_cache.remove(&expired_app_id);
             }
         }
+    }
+    if resolved.is_some() {
+        super::diagnostics::note_resolved_app_id(&app_id.to_string_lossy());
+    } else {
+        super::diagnostics::note_unresolved_app_id(&app_id.to_string_lossy());
     }
     resolved
 }

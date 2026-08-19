@@ -4,12 +4,10 @@ use crate::stack_popup::models::{
     StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackGitTree, StackGitTreeEntry,
     StackGitTreeRequest,
 };
-use crate::stack_popup::process_runner::{
-    run_process, ProcessRunError, ProcessRunSpec,
-};
+use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use std::collections::HashSet;
 
 const DEFAULT_LOG_LIMIT: usize = 40;
 const MAX_LOG_LIMIT: usize = 200;
@@ -19,7 +17,12 @@ const GIT_REMOTE_TIMEOUT_SECS: u64 = 90;
 const GIT_TIMEOUT_ENV_VAR: &str = "JASONSHELL_GIT_TIMEOUT_MS";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GitRunMode { OptionalProbe, Read, LocalMutation, Remote }
+enum GitRunMode {
+    OptionalProbe,
+    Read,
+    LocalMutation,
+    Remote,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum GitCommandError {
@@ -507,7 +510,10 @@ fn git_status_relative_paths(repo_root: &Path) -> Result<HashSet<String>, String
 
 fn parse_git_status_paths(repo_root: &Path, porcelain: &[u8]) -> HashSet<String> {
     let mut paths = HashSet::new();
-    let fields = porcelain.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect::<Vec<_>>();
+    let fields = porcelain
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .collect::<Vec<_>>();
     let mut index = 0usize;
     while index < fields.len() {
         let field = String::from_utf8_lossy(fields[index]);
@@ -517,7 +523,10 @@ fn parse_git_status_paths(repo_root: &Path, porcelain: &[u8]) -> HashSet<String>
             paths.insert(absolute_git_status_path(repo_root, &relative_path));
             if matches!(xy.as_bytes().first(), Some(b'R' | b'C')) {
                 if let Some(next) = fields.get(index + 1) {
-                    paths.insert(absolute_git_status_path(repo_root, &String::from_utf8_lossy(next).replace('/', "\\")));
+                    paths.insert(absolute_git_status_path(
+                        repo_root,
+                        &String::from_utf8_lossy(next).replace('/', "\\"),
+                    ));
                     index += 1;
                 }
             }
@@ -527,9 +536,14 @@ fn parse_git_status_paths(repo_root: &Path, porcelain: &[u8]) -> HashSet<String>
     paths
 }
 
-fn normalize_repo_relative_existing_path(repo_root: &Path, candidate: &Path) -> Result<String, String> {
-    let canonical = canonicalize_existing_path(candidate).map_err(|_| "Git path is outside the repository".to_string())?;
-    let canonical_root = canonicalize_existing_path(repo_root).map_err(|_| "Git path is outside the repository".to_string())?;
+fn normalize_repo_relative_existing_path(
+    repo_root: &Path,
+    candidate: &Path,
+) -> Result<String, String> {
+    let canonical = canonicalize_existing_path(candidate)
+        .map_err(|_| "Git path is outside the repository".to_string())?;
+    let canonical_root = canonicalize_existing_path(repo_root)
+        .map_err(|_| "Git path is outside the repository".to_string())?;
     if !path_within_root(&canonical_root, &canonical) {
         return Err("Git path is outside the repository".to_string());
     }
@@ -552,7 +566,9 @@ fn validate_missing_repo_relative_path(path: &str) -> Result<(), String> {
     if path.is_empty() || path.contains(':') || path.contains('\\') || path.contains('\0') {
         return Err("Git path is invalid".to_string());
     }
-    if path.split('/').any(|segment| segment.is_empty() || segment == "." || segment == ".." || segment.starts_with('~')) {
+    if path.split('/').any(|segment| {
+        segment.is_empty() || segment == "." || segment == ".." || segment.starts_with('~')
+    }) {
         return Err("Git path is invalid".to_string());
     }
     Ok(())
@@ -645,7 +661,12 @@ fn git_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(system_root).join("System32").join("git.exe"));
     }
     if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        candidates.push(PathBuf::from(program_files).join("Git").join("cmd").join("git.exe"));
+        candidates.push(
+            PathBuf::from(program_files)
+                .join("Git")
+                .join("cmd")
+                .join("git.exe"),
+        );
     }
     candidates.push(PathBuf::from(r"C:\Windows\System32\git.exe"));
     candidates.push(PathBuf::from(r"C:\Program Files\Git\cmd\git.exe"));
@@ -656,7 +677,9 @@ fn classify_git_run_mode(args: &[&str]) -> GitRunMode {
     match args.first().copied() {
         Some("fetch" | "pull" | "push") => GitRunMode::Remote,
         Some("add" | "commit" | "switch") => GitRunMode::LocalMutation,
-        Some("branch") if args.get(1).is_some_and(|arg| !arg.starts_with('-')) => GitRunMode::LocalMutation,
+        Some("branch") if args.get(1).is_some_and(|arg| !arg.starts_with('-')) => {
+            GitRunMode::LocalMutation
+        }
         Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch") => GitRunMode::Read,
         _ => GitRunMode::OptionalProbe,
     }
@@ -681,12 +704,19 @@ fn env_timeout_override_ms() -> Option<u64> {
 
 fn map_git_process_error(error: ProcessRunError) -> GitCommandError {
     match error {
-        ProcessRunError::Spawn(error) => GitCommandError::Spawn(format!("Failed to run git: {error}")),
-        ProcessRunError::Timeout { .. } => GitCommandError::Timeout("Git timed out".to_string()),
-        ProcessRunError::CleanupIncomplete { reason, .. } => GitCommandError::Internal(format!("Git internal error: {reason}")),
-        ProcessRunError::NonZero { status, stdout, stderr, .. } => {
-            classify_git_nonzero(status, stdout, stderr)
+        ProcessRunError::Spawn(error) => {
+            GitCommandError::Spawn(format!("Failed to run git: {error}"))
         }
+        ProcessRunError::Timeout { .. } => GitCommandError::Timeout("Git timed out".to_string()),
+        ProcessRunError::CleanupIncomplete { reason, .. } => {
+            GitCommandError::Internal(format!("Git internal error: {reason}"))
+        }
+        ProcessRunError::NonZero {
+            status,
+            stdout,
+            stderr,
+            ..
+        } => classify_git_nonzero(status, stdout, stderr),
     }
 }
 
@@ -695,20 +725,31 @@ fn classify_git_nonzero(status: Option<i32>, stdout: Vec<u8>, stderr: Vec<u8>) -
     let fallback = String::from_utf8_lossy(&stdout).trim().to_string();
     let text = if text.is_empty() { fallback } else { text };
     let lower = text.to_ascii_lowercase();
-    if lower.contains("not a git repository") || lower.contains("fatal: unable to read current working directory") {
+    if lower.contains("not a git repository")
+        || lower.contains("fatal: unable to read current working directory")
+    {
         return GitCommandError::NotRepository(bound_msg("Git repository unavailable", &text));
     }
-    if lower.contains("authentication failed") || lower.contains("could not read username") || lower.contains("terminal prompts disabled") {
+    if lower.contains("authentication failed")
+        || lower.contains("could not read username")
+        || lower.contains("terminal prompts disabled")
+    {
         return GitCommandError::AuthRequired(bound_msg("Git authentication required", &text));
     }
-    if lower.contains("merge conflict") || lower.contains("would be overwritten by merge") || lower.contains("conflict") {
+    if lower.contains("merge conflict")
+        || lower.contains("would be overwritten by merge")
+        || lower.contains("conflict")
+    {
         return GitCommandError::Conflict(bound_msg("Git conflict", &text));
     }
     if lower.contains("non-fast-forward") || lower.contains("fetch first") {
         return GitCommandError::NonFastForward(bound_msg("Git non-fast-forward", &text));
     }
     if text.is_empty() {
-        GitCommandError::NonZero(format!("Git failed with status {}", status.map_or("unknown".to_string(), |s| s.to_string())))
+        GitCommandError::NonZero(format!(
+            "Git failed with status {}",
+            status.map_or("unknown".to_string(), |s| s.to_string())
+        ))
     } else {
         GitCommandError::NonZero(bound_msg("Git failed", &text))
     }
@@ -716,7 +757,11 @@ fn classify_git_nonzero(status: Option<i32>, stdout: Vec<u8>, stderr: Vec<u8>) -
 
 fn bound_msg(prefix: &str, detail: &str) -> String {
     let detail = detail.trim();
-    if detail.is_empty() { prefix.to_string() } else { format!("{prefix}: {detail}") }
+    if detail.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}: {detail}")
+    }
 }
 
 fn parse_git_log_output(output: &str) -> Vec<StackGitLogEntry> {
@@ -938,11 +983,11 @@ fn git_status_has_staged_change(xy: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_git_run_mode, git_pathspecs_for_paths,
-        git_relative_path_for_request, git_status_kind, git_timeout_for_mode,
-        normalize_git_remote_url, nul_joined_pathspecs, parse_git_branch_output,
-        parse_git_log_output, parse_git_tree_output, stack_git_status_from_porcelain,
-        validate_git_branch_name, validate_treeish, GitCommandError, GitRunMode,
+        classify_git_run_mode, git_pathspecs_for_paths, git_relative_path_for_request,
+        git_status_kind, git_timeout_for_mode, normalize_git_remote_url, nul_joined_pathspecs,
+        parse_git_branch_output, parse_git_log_output, parse_git_tree_output,
+        stack_git_status_from_porcelain, validate_git_branch_name, validate_treeish,
+        GitCommandError, GitRunMode,
     };
     use crate::stack_popup::models::StackGitFileStatusKind;
     use std::path::Path;
@@ -1063,7 +1108,11 @@ mod tests {
             &repo_root.join("..").join("other").join("file.rs")
         )
         .is_err());
-        assert!(super::normalize_repo_relative_existing_path(&repo_root, &repo_root.join("missing")).is_err());
+        assert!(super::normalize_repo_relative_existing_path(
+            &repo_root,
+            &repo_root.join("missing")
+        )
+        .is_err());
         std::fs::remove_dir_all(&repo_root).ok();
     }
 
@@ -1080,19 +1129,32 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(repo_root.join("nested")).unwrap();
-        let init = Command::new("git").arg("init").arg(&repo_root).output().unwrap();
+        let init = Command::new("git")
+            .arg("init")
+            .arg(&repo_root)
+            .output()
+            .unwrap();
         if !init.status.success() {
             let _ = std::fs::remove_dir_all(&repo_root);
             return;
         }
         let file = repo_root.join("nested").join("file.txt");
         std::fs::write(&file, b"hello").unwrap();
-        let _ = Command::new("git").arg("-C").arg(&repo_root).arg("add").arg("nested/file.txt").output();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("add")
+            .arg("nested/file.txt")
+            .output();
         std::fs::write(&file, b"changed").unwrap();
         let canonical_root = std::fs::canonicalize(&repo_root).unwrap();
         let absolute_file = std::fs::canonicalize(&file).unwrap();
 
-        let pathspecs = git_pathspecs_for_paths(&canonical_root, &[absolute_file.to_string_lossy().to_string()]).unwrap();
+        let pathspecs = git_pathspecs_for_paths(
+            &canonical_root,
+            &[absolute_file.to_string_lossy().to_string()],
+        )
+        .unwrap();
 
         assert_eq!(pathspecs, vec!["nested/file.txt".to_string()]);
         let _ = std::fs::remove_dir_all(&repo_root);
@@ -1125,14 +1187,20 @@ mod tests {
 
     #[test]
     fn git_run_mode_classifies_remote_and_read_commands() {
-        assert_eq!(classify_git_run_mode(&["fetch", "--prune"]), GitRunMode::Remote);
+        assert_eq!(
+            classify_git_run_mode(&["fetch", "--prune"]),
+            GitRunMode::Remote
+        );
         assert_eq!(classify_git_run_mode(&["status"]), GitRunMode::Read);
         assert_eq!(classify_git_run_mode(&["add"]), GitRunMode::LocalMutation);
     }
 
     #[test]
     fn git_timeout_override_clamps_to_bounds() {
-        assert_eq!(git_timeout_for_mode(GitRunMode::Read), Duration::from_secs(10));
+        assert_eq!(
+            git_timeout_for_mode(GitRunMode::Read),
+            Duration::from_secs(10)
+        );
         assert_eq!(super::env_timeout_override_ms(), None);
     }
 
