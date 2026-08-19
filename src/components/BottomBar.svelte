@@ -563,8 +563,8 @@
   function taskGroupLabel(group: TaskWindowGroup) {
     return taskGroupStateLabel(group);
   }
-  function taskGroupHasVisibleAttention(group: TaskWindowGroup) {
-    return !group.isActive && group.hasAttention;
+  function taskWindowHasVisibleAttention(taskWindow: TaskbarWindow) {
+    return taskWindow.attentionState === 'requested' && !taskWindow.isActive;
   }
   function taskGroupHasToast(group: TaskWindowGroup) {
     return !group.isActive && group.toastCount > 0;
@@ -996,7 +996,6 @@
         {#each taskWindowGroups as group (group.key)}
           <div
             class:task-group-active={group.isActive}
-            class:task-group-attention={taskGroupHasVisibleAttention(group)}
             class:task-group-toasted={taskGroupHasToast(group)}
             class:task-group-busy={group.isBusy}
             class:task-group-minimized={group.isMinimized}
@@ -1023,7 +1022,7 @@
             {/if}
             {#each group.windows as taskWindow (taskWindow.hwnd)}
               <MeltActionButton
-                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}`}
+                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-group-attention' : ''}`}
                 type="button"
                 title={taskWindowLabel(taskWindow)}
                 ariaLabel={taskWindowActionLabel(taskWindow)}

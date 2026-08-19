@@ -20,6 +20,8 @@ const nativeHooksSource = readSourceOrEmpty('../src-tauri/src/task_windows/nativ
 const flashFixtureSource = readSourceOrEmpty('../src-tauri/src/task_windows/flash_fixture.rs');
 const attentionSource = readSourceOrEmpty('../src-tauri/src/task_windows/attention.rs');
 const windowsSource = readSourceOrEmpty('../src-tauri/src/task_windows/windows.rs');
+const bottomBarSource = readSourceOrEmpty('../src/components/BottomBar.svelte');
+const taskbarGroupsSource = readSourceOrEmpty('../src/lib/taskbarGroups.ts');
 
 test('phase 0 native attention contract stays independent from phase 2/4 fields', () => {
   assert.match(contractsSource, /TASKBAR_WINDOW/);
@@ -85,4 +87,11 @@ test('task_windows facade wrappers stay exposed and native hooks module stays pr
   assert.match(taskWindowsModSource, /pub toast_count: u32,/);
   assert.match(attentionSource, /clear_taskbar_attention_if_matches/);
   assert.match(windowsSource, /pub\(super\) fn attention_identity_for_hwnd/);
+});
+
+test('bottom bar binds attention only on the requesting tile, not the whole group', () => {
+  assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-group-attention' : ''/);
+  assert.match(bottomBarSource, /return taskWindow\.attentionState === 'requested' && !taskWindow\.isActive;/);
+  assert.doesNotMatch(bottomBarSource, /class:task-group-attention=\{taskGroupHasVisibleAttention\(group\)\}/);
+  assert.match(taskbarGroupsSource, /group\.hasAttention \|\|= taskWindow\.attentionState === 'requested'/);
 });

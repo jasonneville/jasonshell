@@ -1,5 +1,8 @@
 ## Change Ledger
 
+- 2026-08-19 `[CODE]` DOCS: Clarified Bottom bar requested-attention styling scope: amber attention cue applies only to the individual requesting window tile, never the app group wrapper or sibling windows.
+- 2026-08-19 `[TOOL]` REVIEWED: Docs-only pass; inspected `CHANGELOG_POLICY.md`, Bottom bar master spec section, current changelog style, and current diff. No source/tests edited or executed.
+
 - 2026-08-18 `[CODE]` FIXED: Enabled native taskbar flash attention by default so ordinary `FlashWindowEx` requests reach JasonShell's bottom-bar attention cue; `JASONSHELL_TASKBAR_NATIVE_HOOKS=0` remains an explicit kill switch while Explorer suppression v2 stays default-off.
 - 2026-08-18 `[CODE]` IMPLEMENTED: Added native taskbar attention, independent toast/CPU activity UI states, bounded taskbar runtime diagnostics, deterministic flash smoke tooling, and default-off identity-safe multi-monitor Explorer taskbar suppression/recreation handling while preserving the legacy primary-taskbar path.
 - 2026-08-18 `[TOOL]` VALIDATED: Windows 10 current-host visible/hidden Explorer flash spikes correlated visible and minimized fixture requests to native events within the 250 ms bound; focused Node/Rust/Svelte/Cargo validation passed during phased gates. Full Windows 10/11 release matrix remains pending for Explorer suppression v2, which stays default-off.
