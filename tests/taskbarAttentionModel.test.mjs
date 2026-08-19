@@ -89,8 +89,15 @@ test('task_windows facade wrappers stay exposed and native hooks module stays pr
   assert.match(windowsSource, /pub\(super\) fn attention_identity_for_hwnd/);
 });
 
+test('attention survives missing creation time until a window snapshot resolves it', () => {
+  assert.match(attentionSource, /fn creation_times_match/);
+  assert.match(attentionSource, /\(Some\(left\), Some\(right\)\) => left == right/);
+  assert.match(attentionSource, /reconcile_keeps_none_creation_time_request_when_visible_snapshot_gains_creation_time/);
+  assert.match(attentionSource, /clear_with_known_creation_time_clears_provisional_request/);
+});
+
 test('bottom bar binds attention only on the requesting tile, not the whole group', () => {
-  assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-group-attention' : ''/);
+  assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''/);
   assert.match(bottomBarSource, /return taskWindow\.attentionState === 'requested' && !taskWindow\.isActive;/);
   assert.doesNotMatch(bottomBarSource, /class:task-group-attention=\{taskGroupHasVisibleAttention\(group\)\}/);
   assert.match(taskbarGroupsSource, /group\.hasAttention \|\|= taskWindow\.attentionState === 'requested'/);

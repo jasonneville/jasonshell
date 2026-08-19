@@ -62,12 +62,12 @@ test('summarizes inactive attention and toast state with combined labels', () =>
 });
 
 test('renders attentive task groups with toast badge, amber cue, and active suppression', () => {
-  assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-group-attention' : ''/);
+  assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''/);
   assert.match(bottomBarSource, /return taskWindow\.attentionState === 'requested' && !taskWindow\.isActive;/);
   assert.match(bottomBarSource, /class:task-group-toasted=\{taskGroupHasToast\(group\)\}/);
   assert.match(bottomBarSource, /aria-label=\{`\$\{group\.toastCount\} \$\{group\.toastCount === 1 \? 'toast' : 'toasts'\}`\}/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-group-attention,\s*\.bottom-bar \.task-group-toasted \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-warning-border\);/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-group-attention \{\s*box-shadow: inset 0 3px 0 #7e610b;\s*\}/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-window-attention,\s*\.bottom-bar \.task-group-toasted \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-warning-border\);/);
+  assert.match(bottomBarCss, /\.bottom-bar \.task-button\.task-window-attention \{\s*box-shadow: inset 0 4px 0 #ffd54f;\s*\}/);
   assert.doesNotMatch(bottomBarCss, /taskbar-attention-flash/);
   assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-warning\);[\s\S]*color: var\(--js-color-text-strong\);/);
   assert.match(bottomBarCss, /\.bottom-bar \.task-group-toasted \.task-count \{[\s\S]*box-shadow: 0 0 0 1px var\(--js-color-warning-border\), 0 0 0\.55rem rgba\(245, 191, 92, 0\.28\);/);

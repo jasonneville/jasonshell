@@ -1022,7 +1022,7 @@
             {/if}
             {#each group.windows as taskWindow (taskWindow.hwnd)}
               <MeltActionButton
-                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-group-attention' : ''}`}
+                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}`}
                 type="button"
                 title={taskWindowLabel(taskWindow)}
                 ariaLabel={taskWindowActionLabel(taskWindow)}

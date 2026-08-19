@@ -1,5 +1,11 @@
 ## Change Ledger
 
+- 2026-08-19 `[CODE]` FIXED: Per-window task attention is visible again. Exact notified tiles now use dedicated `.task-button.task-window-attention`; its direct selector outranks the base task-button shadow and restores the bright amber warning without styling sibling windows or reusing group-level visual state.
+- 2026-08-19 `[TOOL]` VALIDATED: Reproduced the regression with the exact `FlashWindowEx` P/Invoke against a real PowerShell HWND, proved native `HSHELL_FLASH` delivery, observed identical pre-fix captures, then passed 12 focused tests, `svelte-check`, production frontend build, Rust build, and a post-fix live replay with changed rendered pixels.
+
+- 2026-08-19 `[CODE]` FIXED: Native `FlashWindowEx` attention now survives the hook-to-snapshot process-creation-time race for the same root-owner HWND/PID, while known unequal creation times remain isolated and foreground clearing removes provisional records.
+- 2026-08-19 `[TOOL]` VALIDATED: `cargo test task_windows::attention`, `cargo fmt --check`, test TypeScript compile, and focused taskbar attention/UX tests passed (12 Node, 8 Rust).
+
 - 2026-08-19 `[CODE]` DOCS: Clarified Bottom bar requested-attention styling scope: amber attention cue applies only to the individual requesting window tile, never the app group wrapper or sibling windows.
 - 2026-08-19 `[TOOL]` REVIEWED: Docs-only pass; inspected `CHANGELOG_POLICY.md`, Bottom bar master spec section, current changelog style, and current diff. No source/tests edited or executed.
 

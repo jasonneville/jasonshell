@@ -46,6 +46,29 @@ impl Default for AttentionStore {
 }
 
 impl AttentionStore {
+    fn creation_times_match(
+        record_creation_time: Option<u64>,
+        identity_creation_time: Option<u64>,
+    ) -> bool {
+        match (record_creation_time, identity_creation_time) {
+            (Some(left), Some(right)) => left == right,
+            _ => true,
+        }
+    }
+
+    fn identities_match(record: &TaskbarAttentionKey, identity: &TaskbarAttentionIdentity) -> bool {
+        record.root_owner_hwnd == identity.root_owner_hwnd
+            && record.process_id == identity.process_id
+            && Self::creation_times_match(record.creation_time, identity.creation_time)
+    }
+
+    fn visible_identity_matches(
+        record: &TaskbarAttentionKey,
+        identity: &TaskbarAttentionIdentity,
+    ) -> bool {
+        Self::identities_match(record, identity)
+    }
+
     pub fn request(&mut self, identity: TaskbarAttentionIdentity) {
         self.records
             .entry(TaskbarAttentionKey::from(&identity))
@@ -56,8 +79,10 @@ impl AttentionStore {
     }
 
     pub fn clear(&mut self, identity: &TaskbarAttentionIdentity) {
-        if let Some(record) = self.records.get_mut(&TaskbarAttentionKey::from(identity)) {
-            record.attention_state = TaskbarWindowAttentionState::Idle;
+        for (key, record) in &mut self.records {
+            if Self::identities_match(key, identity) {
+                record.attention_state = TaskbarWindowAttentionState::Idle;
+            }
         }
     }
 
@@ -71,14 +96,31 @@ impl AttentionStore {
     }
 
     pub fn reconcile(&mut self, visible: &[TaskbarAttentionIdentity]) {
-        let visible: std::collections::HashSet<_> =
-            visible.iter().map(TaskbarAttentionKey::from).collect();
-        self.records.retain(|key, _| visible.contains(key));
+        self.records.retain(|key, _| {
+            visible
+                .iter()
+                .any(|identity| Self::visible_identity_matches(key, identity))
+        });
     }
 
     pub fn state_for(&self, identity: &TaskbarAttentionIdentity) -> TaskbarWindowAttentionState {
         self.records
             .get(&TaskbarAttentionKey::from(identity))
+            .or_else(|| {
+                if identity.creation_time.is_some() {
+                    self.records
+                        .iter()
+                        .find(|(key, _)| {
+                            key.root_owner_hwnd == identity.root_owner_hwnd
+                                && key.process_id == identity.process_id
+                                && key.creation_time.is_none()
+                                && Self::identities_match(key, identity)
+                        })
+                        .map(|(_, record)| record)
+                } else {
+                    None
+                }
+            })
             .map(|record| record.attention_state)
             .unwrap_or(TaskbarWindowAttentionState::Idle)
     }
@@ -230,5 +272,55 @@ mod tests {
             TaskbarWindowAttentionState::Requested
         );
         assert_eq!(store.state_for(&remove), TaskbarWindowAttentionState::Idle);
+    }
+
+    #[test]
+    fn reconcile_keeps_none_creation_time_request_when_visible_snapshot_gains_creation_time() {
+        let requested = identity(7, 8, None);
+        let visible = identity(7, 8, Some(99));
+        let mut store = AttentionStore::default();
+        store.request(requested.clone());
+
+        store.reconcile(std::slice::from_ref(&visible));
+
+        assert_eq!(
+            store.state_for(&requested),
+            TaskbarWindowAttentionState::Requested
+        );
+        assert_eq!(
+            store.state_for(&visible),
+            TaskbarWindowAttentionState::Requested
+        );
+    }
+
+    #[test]
+    fn unequal_known_creation_times_do_not_match() {
+        let earlier = identity(9, 10, Some(1));
+        let later = identity(9, 10, Some(2));
+        let mut store = AttentionStore::default();
+        store.request(earlier.clone());
+
+        assert_eq!(store.state_for(&later), TaskbarWindowAttentionState::Idle);
+        store.reconcile(std::slice::from_ref(&later));
+        assert_eq!(store.state_for(&earlier), TaskbarWindowAttentionState::Idle);
+    }
+
+    #[test]
+    fn clear_with_known_creation_time_clears_provisional_request() {
+        let requested = identity(11, 12, None);
+        let foreground = identity(11, 12, Some(123));
+        let mut store = AttentionStore::default();
+        store.request(requested.clone());
+
+        store.clear(&foreground);
+
+        assert_eq!(
+            store.state_for(&requested),
+            TaskbarWindowAttentionState::Idle
+        );
+        assert_eq!(
+            store.state_for(&foreground),
+            TaskbarWindowAttentionState::Idle
+        );
     }
 }
