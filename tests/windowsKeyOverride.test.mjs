@@ -44,6 +44,10 @@ test('top and bottom shell surfaces catch Ctrl+Space when their webviews have fo
   const topBar = readSource('../src/components/TopBar.svelte');
   const bottomBar = readSource('../src/components/BottomBar.svelte');
   const searchPanel = readSource('../src/components/SearchPanelSurface.svelte');
+  const quickLaunchPanel = readSource('../src/components/QuickLaunchPanelSurface.svelte');
+  const stackPopup = readSource('../src/components/StackPopupSurface.svelte');
+  const terminalPanel = readSource('../src/components/TerminalPanelSurface.svelte');
+  const commandPanel = readSource('../src/components/CommandPanelSurface.svelte');
 
   assert.match(topBar, /window\.addEventListener\('keydown', keydownHandler, true\)/);
   assert.match(topBar, /function isSpaceKey\(event: KeyboardEvent\)/);
@@ -59,6 +63,30 @@ test('top and bottom shell surfaces catch Ctrl+Space when their webviews have fo
   assert.match(searchPanel, /hideCenteredPanelImmediately\(\);/);
   assert.match(searchPanel, /if \(isCtrlSpaceHotkey\(event\)\) \{/);
   assert.doesNotMatch(searchPanel, /emitTo\(topBarTarget, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+  assert.match(quickLaunchPanel, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
+  assert.match(quickLaunchPanel, /function handleSearchHotkeyKeydown\(event: KeyboardEvent\)/);
+  assert.match(quickLaunchPanel, /window\.addEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
+  assert.match(quickLaunchPanel, /window\.removeEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
+  assert.doesNotMatch(quickLaunchPanel, /window\.addEventListener\('keydown', handleKeydown, true\)/);
+  assert.match(quickLaunchPanel, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+  assert.match(quickLaunchPanel, /event\.code !== 'Space' \|\| !shellSurfaceHotkeyHandled/);
+  assert.match(stackPopup, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
+  assert.match(stackPopup, /function handleSearchHotkeyKeydown\(event: KeyboardEvent\)/);
+  assert.match(stackPopup, /window\.addEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
+  assert.match(stackPopup, /window\.removeEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
+  assert.doesNotMatch(stackPopup, /window\.addEventListener\('keydown', handleKeydown, true\)/);
+  assert.match(stackPopup, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+  assert.match(stackPopup, /event\.code !== 'Space' \|\| !shellSurfaceHotkeyHandled/);
+  assert.match(terminalPanel, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
+  assert.match(terminalPanel, /window\.addEventListener\('keydown', keydownHandler, true\)/);
+  assert.match(terminalPanel, /window\.removeEventListener\('keydown', keydownHandler, true\)/);
+  assert.match(terminalPanel, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+  assert.match(terminalPanel, /event\.code === 'Space' && shellSurfaceHotkeyHandled/);
+  assert.match(commandPanel, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
+  assert.match(commandPanel, /window\.addEventListener\('keydown', keydownHandler, true\)/);
+  assert.match(commandPanel, /window\.removeEventListener\('keydown', keydownHandler, true\)/);
+  assert.match(commandPanel, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+  assert.match(commandPanel, /event\.code === 'Space' && shellSurfaceHotkeyHandled/);
 });
 
 test('Alt+Backquote terminal hotkey emits and shell surfaces toggle terminal panel', () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { listen } from '@tauri-apps/api/event';
+  import { emitTo, listen } from '@tauri-apps/api/event';
   import './CommandPanelSurface.css';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import {
@@ -28,11 +28,14 @@
   } from '../lib/quickCommands';
   import { IPC_EVENTS } from '../ipc/events.js';
   import { hideCommandPanel } from '../lib/commandPanel';
+  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
 
   type CommandEditorModel = { id: string | null; label: string; mode: QuickCommandMode; targetPath: string; cwd: string; argsText: string; commandsText: string };
   type CommandPanelTab = 'configuration' | 'previousRuns';
 
   const modeLabels: Record<QuickCommandMode, string> = { direct: 'Program', commandBlock: 'Command block' };
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
 
   let entries: QuickCommandEntry[] = [];
   let loading = true;
@@ -73,6 +76,7 @@
   let lastLiveHistoryUpdateAtByRun = new Map<string, number>();
   let transcriptSegmentCache = new Map<string, TranscriptSegment[]>();
   let transcriptSegmentCacheOrder: string[] = [];
+  let shellSurfaceHotkeyHandled = false;
 
   type TranscriptTokenKind = 'prompt' | 'path' | 'url' | 'level-error' | 'level-warning' | 'level-success' | 'level-info';
   type TranscriptSegment = { text: string; kind: TranscriptTokenKind | null };
@@ -268,6 +272,16 @@
   }
   function normalizeDraftLength(value: string, maxLength: number): string { return Array.from(value).slice(0, maxLength).join(''); }
   function currentPendingInputMaxLength(): number { return pendingInputRequest?.maxLength ?? 4096; }
+  function isCtrlSpaceHotkey(event: KeyboardEvent) { return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey; }
+  function handleCtrlSpaceHotkey(event: KeyboardEvent) {
+    if (!isCtrlSpaceHotkey(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!shellSurfaceHotkeyHandled && !event.repeat) {
+      shellSurfaceHotkeyHandled = true;
+      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
+    }
+  }
 
   function transcriptLineClass(kind: string): string {
     if (kind === 'stderr') return 'command-transcript-line--stderr';
@@ -375,8 +389,18 @@
     void refreshEntries();
     void refreshHistory();
     const unlistenPromise = listen(IPC_EVENTS.quickCommandRunUpdated, (event: { payload: unknown }) => handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent));
+    const keydownHandler = (event: KeyboardEvent) => handleCtrlSpaceHotkey(event);
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (event.code === 'Space' && shellSurfaceHotkeyHandled) {
+        event.preventDefault();
+        event.stopPropagation();
+        shellSurfaceHotkeyHandled = false;
+      }
+    };
+    window.addEventListener('keydown', keydownHandler, true);
+    window.addEventListener('keyup', keyupHandler, true);
     historyPollTimer = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
-    return () => { if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; void unlistenPromise.then((unlisten: () => void) => unlisten()).catch(() => undefined); };
+    return () => { if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); void unlistenPromise.then((unlisten: () => void) => unlisten()).catch(() => undefined); };
   });
 </script>
 

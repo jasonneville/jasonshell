@@ -151,17 +151,84 @@ const SETTINGS_ROWS: &[SettingsProviderRow] = &[
     },
     SettingsProviderRow {
         id: "setting:apps",
-        title: "Apps Settings",
-        subtitle: "Open installed apps settings",
+        title: "Installed Apps",
+        subtitle: "Open installed apps and features settings",
         path: "ms-settings:appsfeatures",
         category: "apps",
         priority: 900,
-        keywords: &["apps", "installed apps", "programs", "features"],
-        aliases: &["apps settings", "app settings", "programs settings"],
+        keywords: &[
+            "apps",
+            "installed apps",
+            "add or remove programs",
+            "programs",
+            "features",
+        ],
+        aliases: &[
+            "apps settings",
+            "app settings",
+            "programs settings",
+            "add or remove programs",
+        ],
         control_panel_args: &[],
         windows_min_build: Some(10_240),
         windows_max_build: None,
         icon_glyph: Some("package"),
+    },
+    SettingsProviderRow {
+        id: "setting:night-light",
+        title: "Night light",
+        subtitle: "Open night light settings",
+        path: "ms-settings:nightlight",
+        category: "system",
+        priority: 915,
+        keywords: &["night light", "night mode", "blue light"],
+        aliases: &["night light settings", "blue light settings"],
+        control_panel_args: &[],
+        windows_min_build: Some(10_240),
+        windows_max_build: None,
+        icon_glyph: Some("moon"),
+    },
+    SettingsProviderRow {
+        id: "setting:default-apps",
+        title: "Default apps",
+        subtitle: "Open default apps settings",
+        path: "ms-settings:defaultapps",
+        category: "apps",
+        priority: 915,
+        keywords: &["default apps", "file associations", "default programs"],
+        aliases: &["default apps settings", "default programs"],
+        control_panel_args: &[],
+        windows_min_build: Some(10_240),
+        windows_max_build: None,
+        icon_glyph: Some("app-window"),
+    },
+    SettingsProviderRow {
+        id: "setting:startup-apps",
+        title: "Startup apps",
+        subtitle: "Open startup apps settings",
+        path: "ms-settings:startupapps",
+        category: "apps",
+        priority: 915,
+        keywords: &["startup apps", "startup", "startup programs"],
+        aliases: &["startup apps settings", "startup programs"],
+        control_panel_args: &[],
+        windows_min_build: Some(10_240),
+        windows_max_build: None,
+        icon_glyph: Some("rocket"),
+    },
+    SettingsProviderRow {
+        id: "setting:optional-features",
+        title: "Optional features",
+        subtitle: "Open optional features settings",
+        path: "ms-settings:optionalfeatures",
+        category: "apps",
+        priority: 915,
+        keywords: &["optional features", "windows features", "features"],
+        aliases: &["optional features settings", "windows features"],
+        control_panel_args: &[],
+        windows_min_build: Some(10_240),
+        windows_max_build: None,
+        icon_glyph: Some("plus-square"),
     },
     SettingsProviderRow {
         id: "setting:privacy",
@@ -665,6 +732,12 @@ mod tests {
             "storage settings",
             "windows security",
             "personalization settings",
+            "installed apps",
+            "add or remove programs",
+            "night light",
+            "default apps",
+            "startup apps",
+            "optional features",
         ] {
             let result = search_settings(query, 1)
                 .pop()
@@ -736,6 +809,46 @@ mod tests {
             first_id("personalization settings").as_deref(),
             Some("setting:personalization")
         );
+        assert_eq!(first_id("night light").as_deref(), Some("setting:night-light"));
+        assert_eq!(first_id("default apps").as_deref(), Some("setting:default-apps"));
+        assert_eq!(first_id("startup apps").as_deref(), Some("setting:startup-apps"));
+        assert_eq!(
+            first_id("optional features").as_deref(),
+            Some("setting:optional-features")
+        );
+    }
+
+    #[test]
+    fn installed_apps_row_covers_add_or_remove_programs_and_appsfeatures_uri() {
+        assert_eq!(first_id("installed apps").as_deref(), Some("setting:apps"));
+        assert_eq!(first_id("appsfeatures").as_deref(), Some("setting:apps"));
+        assert_eq!(
+            first_id("add or remove programs").as_deref(),
+            Some("setting:apps")
+        );
+        let result = search_settings("add or remove programs", 1)
+            .pop()
+            .expect("installed apps result");
+        assert_eq!(
+            result.action,
+            SearchResultAction::OpenSetting {
+                uri: "ms-settings:appsfeatures".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn new_catalog_rows_rank_intended_settings_top_for_exact_and_alias_queries() {
+        for (query, expected) in [
+            ("installed apps", "setting:apps"),
+            ("add or remove programs", "setting:apps"),
+            ("night light", "setting:night-light"),
+            ("default apps", "setting:default-apps"),
+            ("startup apps", "setting:startup-apps"),
+            ("optional features", "setting:optional-features"),
+        ] {
+            assert_eq!(first_id(query).as_deref(), Some(expected), "{query}");
+        }
     }
 
     #[test]

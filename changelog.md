@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-08-20 `[CODE]` IMPROVED: Centered search now keeps at most four leading application results ahead of mixed non-app results, preserves the remaining tail order and backend result identities, keeps app-only result sets complete, and expands safe Windows Settings coverage for Installed apps/Add or remove programs, Night light, Default apps, Startup apps, and Optional features.
+- 2026-08-20 `[CODE]` FIXED: `Ctrl+Space` now forwards centered-search toggle intent from Quick Launch, Stack Browser, Terminal, and Quick Commands popup webviews. Quick Launch uses a dedicated capture handler for only the search chord so Arrow/Enter/Escape navigation is not registered twice.
+- 2026-08-20 `[TOOL]` VALIDATED: RED-first visible-order and popup-hotkey contracts passed with 27 search UX tests and 10 Windows hotkey tests; expanded settings provider tests passed 21/21; `npm run check` passed with zero diagnostics.
+
 - 2026-08-20 `[CODE]` TESTED: Updated stale Melt migration coverage for Phase 5 folder pinning to assert the input-owned `Ctrl+Enter` path and reject interactive pin controls inside listbox options.
 - 2026-08-20 `[TOOL]` VALIDATED: Search pin migration test and centered-search panel tests passed. Full Node failures dropped from 10 to 9 (`723/735` passed, 3 historical todos); every remaining failure is outside the search Phase 0-5 touched surfaces.
 

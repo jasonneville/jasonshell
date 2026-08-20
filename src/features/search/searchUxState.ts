@@ -142,15 +142,17 @@ export function buildVisibleSearchRows(
   results: readonly SearchPanelResult[],
   options: SearchVisibleRowsBuildOptions = {}
 ): SearchVisibleRow[] {
+  const orderedResults = reorderVisibleSearchResults(results);
+
   void options;
 
-  return results.map((result, index) => ({
-    id: result.id,
-    rowKey: visibleRowKey(result.id, index),
-    domId: visibleRowDomId(index),
-    result,
-    resultIndex: index,
-    visibleIndex: index,
+  return orderedResults.map((entry, visibleIndex) => ({
+    result: entry.result,
+    resultIndex: entry.index,
+    id: entry.result.id,
+    rowKey: visibleRowKey(entry.result.id, entry.index),
+    domId: visibleRowDomId(entry.index),
+    visibleIndex,
     groupId: 'bestMatch',
     groupLabel: visibleGroupLabel('bestMatch'),
     showGroupLabel: false
@@ -515,4 +517,27 @@ function visibleRowKey(resultId: string, resultIndex: number): string {
 
 function visibleRowDomId(resultIndex: number): string {
   return `search-result-${resultIndex}`;
+}
+
+function reorderVisibleSearchResults(results: readonly SearchPanelResult[]): GroupedSearchResult[] {
+  const leadingApps: GroupedSearchResult[] = [];
+  let tailStartIndex = results.length;
+
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index];
+    if (result.kind === 'app' && tailStartIndex === results.length) {
+      leadingApps.push({ result, index });
+      continue;
+    }
+    tailStartIndex = index;
+    break;
+  }
+
+  const tail = results.slice(tailStartIndex).map((result, index) => ({ result, index: tailStartIndex + index }));
+
+  if (!tail.length || leadingApps.length <= 4) {
+    return results.map((result, index) => ({ result, index }));
+  }
+
+  return leadingApps.slice(0, 4).concat(tail, leadingApps.slice(4));
 }

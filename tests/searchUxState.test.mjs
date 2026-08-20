@@ -76,23 +76,78 @@ test('best match removes top backend rows from later groups while preserving gro
   const visibleRows = buildVisibleSearchRows([
     { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'System display preferences', terms: 'display settings', priority: 980 },
     { id: 'folder:c-dev', kind: 'folder', title: 'C:\\dev', subtitle: 'Folder', terms: 'dev folder', priority: 920, path: 'C:\\dev' },
-    { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'Application', terms: 'spotify app', priority: 960 },
-    { id: 'app:code', kind: 'app', title: 'Code', subtitle: 'Application', terms: 'code app', priority: 800 },
     { id: 'folder:downloads', kind: 'folder', title: 'Downloads', subtitle: 'Folder', terms: 'downloads folder', priority: 780, path: 'shell:Downloads' },
     { id: 'file:notes', kind: 'file', title: 'notes.txt', subtitle: 'File', terms: 'notes file', priority: 760 },
     { id: 'window:editor', kind: 'window', title: 'Editor', subtitle: 'Code', terms: 'editor code', priority: 740 },
-    { id: 'command:refresh-search', kind: 'command', title: 'Refresh', subtitle: 'Reload', terms: 'refresh', priority: 720 }
+    { id: 'command:refresh-search', kind: 'command', title: 'Refresh', subtitle: 'Reload', terms: 'refresh', priority: 720 },
+    { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'Application', terms: 'spotify app', priority: 700 },
+    { id: 'app:code', kind: 'app', title: 'Code', subtitle: 'Application', terms: 'code app', priority: 690 }
   ]);
 
   assert.deepEqual(
     visibleRows.map((row) => row.result.title),
-    ['Display Settings', 'C:\\dev', 'Spotify', 'Code', 'Downloads', 'notes.txt', 'Editor', 'Refresh']
+    ['Display Settings', 'C:\\dev', 'Downloads', 'notes.txt', 'Editor', 'Refresh', 'Spotify', 'Code']
   );
   assert.deepEqual(
     visibleRows.map((row) => row.groupLabel),
     ['Best match', 'Best match', 'Best match', 'Best match', 'Best match', 'Best match', 'Best match', 'Best match']
   );
   assert.equal(new Set(visibleRows.map((row) => row.rowKey)).size, visibleRows.length);
+});
+
+test('caps only leading consecutive apps at four and preserves tail order with interleaved apps', () => {
+  const visibleRows = buildVisibleSearchRows([
+    { id: 'app:1', kind: 'app', title: 'App 1', subtitle: 'App', terms: 'app 1', priority: 1000 },
+    { id: 'app:2', kind: 'app', title: 'App 2', subtitle: 'App', terms: 'app 2', priority: 999 },
+    { id: 'app:3', kind: 'app', title: 'App 3', subtitle: 'App', terms: 'app 3', priority: 998 },
+    { id: 'app:4', kind: 'app', title: 'App 4', subtitle: 'App', terms: 'app 4', priority: 997 },
+    { id: 'app:5', kind: 'app', title: 'App 5', subtitle: 'App', terms: 'app 5', priority: 996 },
+    { id: 'folder:docs', kind: 'folder', title: 'Docs', subtitle: 'Folder', terms: 'docs', priority: 995, path: 'C:\\Docs' },
+    { id: 'app:tail', kind: 'app', title: 'Tail App', subtitle: 'App', terms: 'tail app', priority: 994 },
+    { id: 'file:notes', kind: 'file', title: 'notes.txt', subtitle: 'File', terms: 'notes', priority: 993 },
+    { id: 'window:editor', kind: 'window', title: 'Editor', subtitle: 'Window', terms: 'editor', priority: 992 }
+  ]);
+
+  assert.deepEqual(
+    visibleRows.map((row) => row.result.title),
+    ['App 1', 'App 2', 'App 3', 'App 4', 'Docs', 'Tail App', 'notes.txt', 'Editor', 'App 5']
+  );
+  assert.deepEqual(visibleRows.map((row) => row.resultIndex), [0, 1, 2, 3, 5, 6, 7, 8, 4]);
+  assert.deepEqual(visibleRows.map((row) => row.rowKey), [
+    '0:app:1',
+    '1:app:2',
+    '2:app:3',
+    '3:app:4',
+    '5:folder:docs',
+    '6:app:tail',
+    '7:file:notes',
+    '8:window:editor',
+    '4:app:5'
+  ]);
+  assert.deepEqual(visibleRows.map((row) => row.domId), [
+    'search-result-0',
+    'search-result-1',
+    'search-result-2',
+    'search-result-3',
+    'search-result-5',
+    'search-result-6',
+    'search-result-7',
+    'search-result-8',
+    'search-result-4'
+  ]);
+});
+
+test('keeps all app rows visible when results are app-only', () => {
+  const visibleRows = buildVisibleSearchRows([
+    { id: 'app:1', kind: 'app', title: 'App 1', subtitle: 'App', terms: 'app 1', priority: 1000 },
+    { id: 'app:2', kind: 'app', title: 'App 2', subtitle: 'App', terms: 'app 2', priority: 999 },
+    { id: 'app:3', kind: 'app', title: 'App 3', subtitle: 'App', terms: 'app 3', priority: 998 },
+    { id: 'app:4', kind: 'app', title: 'App 4', subtitle: 'App', terms: 'app 4', priority: 997 },
+    { id: 'app:5', kind: 'app', title: 'App 5', subtitle: 'App', terms: 'app 5', priority: 996 }
+  ]);
+
+  assert.deepEqual(visibleRows.map((row) => row.result.title), ['App 1', 'App 2', 'App 3', 'App 4', 'App 5']);
+  assert.deepEqual(visibleRows.map((row) => row.resultIndex), [0, 1, 2, 3, 4]);
 });
 
 test('labels primary and secondary actions by result kind', () => {
@@ -386,30 +441,34 @@ test('visible rows preserve fuzzy highlight span data for panel rendering', () =
 
 test('top-bar keyboard traversal can map visible-row movement back to backend result indices', () => {
   const visibleRows = buildVisibleSearchRows([
+    { id: 'app:alpha', kind: 'app', title: 'Alpha', subtitle: 'App', terms: 'alpha', priority: 100 },
+    { id: 'app:beta', kind: 'app', title: 'Beta', subtitle: 'App', terms: 'beta', priority: 99 },
+    { id: 'app:gamma', kind: 'app', title: 'Gamma', subtitle: 'App', terms: 'gamma', priority: 98 },
+    { id: 'app:delta', kind: 'app', title: 'Delta', subtitle: 'App', terms: 'delta', priority: 97 },
+    { id: 'app:overflow', kind: 'app', title: 'Overflow', subtitle: 'App', terms: 'overflow', priority: 96 },
     { id: 'setting:display', kind: 'setting', title: 'Display Settings', subtitle: 'Setting', terms: 'display settings', priority: 100 },
     { id: 'folder:dev', kind: 'folder', title: 'C:\\dev', subtitle: 'Folder', terms: 'dev folder', priority: 99, path: 'C:\\dev' },
-    { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'App', terms: 'spotify app', priority: 98 },
-    { id: 'app:code', kind: 'app', title: 'Code', subtitle: 'App', terms: 'code app', priority: 97 },
-    { id: 'file:notes', kind: 'file', title: 'notes.txt', subtitle: 'File', terms: 'notes file', priority: 96 },
-    { id: 'setting:sound', kind: 'setting', title: 'Sound Settings', subtitle: 'Setting', terms: 'sound settings', priority: 95 }
+    { id: 'file:notes', kind: 'file', title: 'notes.txt', subtitle: 'File', terms: 'notes file', priority: 95 },
+    { id: 'setting:sound', kind: 'setting', title: 'Sound Settings', subtitle: 'Setting', terms: 'sound settings', priority: 94 },
+    { id: 'app:spotify', kind: 'app', title: 'Spotify', subtitle: 'App', terms: 'spotify app', priority: 1 }
   ]);
 
-  let selectedIndex = 3;
+  let selectedIndex = 4;
   let selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
-  assert.equal(selectedVisibleIndex, 3);
-  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'Code');
+  assert.equal(selectedVisibleIndex, 9);
+  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'Overflow');
 
-  selectedIndex = visibleRows[nextVisibleRowIndex(visibleRows, selectedVisibleIndex, 1)].resultIndex;
+  selectedIndex = visibleRows[nextVisibleRowIndex(visibleRows, selectedVisibleIndex, -1)].resultIndex;
   selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
-  assert.equal(selectedVisibleIndex, 4);
-  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'notes.txt');
-  assert.equal(selectedIndex, 4);
+  assert.equal(selectedVisibleIndex, 8);
+  assert.equal(visibleRows[selectedVisibleIndex].result.title, 'Spotify');
+  assert.equal(selectedIndex, 9);
 
-  selectedIndex = visibleRows[nextVisibleRowIndex(visibleRows, selectedVisibleIndex, 1)].resultIndex;
+  selectedIndex = visibleRows[nextVisibleRowIndex(visibleRows, selectedVisibleIndex, -1)].resultIndex;
   selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
-  assert.equal(selectedVisibleIndex, 5);
+  assert.equal(selectedVisibleIndex, 7);
   assert.equal(visibleRows[selectedVisibleIndex].result.title, 'Sound Settings');
-  assert.equal(selectedIndex, 5);
+  assert.equal(selectedIndex, 8);
 });
 
 test('ranking accepts injected usage so frequent results can outrank equal matches', () => {

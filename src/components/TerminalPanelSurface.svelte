@@ -112,6 +112,8 @@
   const TERMINAL_PANEL_MIN_FONT_SIZE = 9;
   const TERMINAL_PANEL_MAX_FONT_SIZE = 28;
   const TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000;
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
 
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
@@ -161,6 +163,7 @@
   let idlePrewarmTimer: number | null = null;
   let terminalStartPromise: Promise<void> | null = null;
   let terminalSessionCreationInFlight = false;
+  let shellSurfaceHotkeyHandled = false;
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -200,6 +203,20 @@
   function nextTerminalRuntimeId() {
     terminalRuntimeCounter += 1;
     return `terminal-runtime-${terminalRuntimeCounter.toString(36)}`;
+  }
+
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+
+  function handleCtrlSpaceHotkey(event: KeyboardEvent) {
+    if (!isCtrlSpaceHotkey(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!shellSurfaceHotkeyHandled && !event.repeat) {
+      shellSurfaceHotkeyHandled = true;
+      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
+    }
   }
 
   function paneDomKey(pane: TerminalPaneModel) {
@@ -442,14 +459,26 @@
 
   onMount(() => {
     listenersDisposed = false;
+    const keydownHandler = (event: KeyboardEvent) => handleCtrlSpaceHotkey(event);
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (event.code === 'Space' && shellSurfaceHotkeyHandled) {
+        event.preventDefault();
+        event.stopPropagation();
+        shellSurfaceHotkeyHandled = false;
+      }
+    };
     document.addEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
     window.addEventListener('focus', handlePanelOpen);
+    window.addEventListener('keydown', keydownHandler, true);
+    window.addEventListener('keyup', keyupHandler, true);
     void initializeTerminalListeners();
     scheduleIdlePrewarm();
     return () => {
       listenersDisposed = true;
       document.removeEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
       window.removeEventListener('focus', handlePanelOpen);
+      window.removeEventListener('keydown', keydownHandler, true);
+      window.removeEventListener('keyup', keyupHandler, true);
       cancelIdlePrewarm();
       terminalStartPromise = null;
       for (const runtime of paneRuntimes.values()) {
@@ -1002,6 +1031,10 @@
     });
     registerShellIntegrationParser(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && isCtrlSpaceHotkey(event)) {
+        handleCtrlSpaceHotkey(event);
+        return false;
+      }
       if (event.type === 'keydown' && isAltBackquoteHotkey(event)) {
         closeFromTerminalHotkey(event);
         return false;

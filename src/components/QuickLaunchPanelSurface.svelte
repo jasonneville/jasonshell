@@ -1,12 +1,16 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { emitTo } from '@tauri-apps/api/event';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, tick } from 'svelte';
   import { hideQuickLaunchPanel, showQuickLaunchPanelContextMenu } from '../lib/quickLaunchPanel';
+  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import { type PinnedTaskbarLauncher } from '../lib/taskbarLaunchers';
 
   const QUICK_LAUNCH_OPEN_EVENT = 'quick-launch-panel:open';
   const QUICK_LAUNCH_CLOSED_EVENT = 'quick-launch-panel:closed';
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
 
   let launchers: PinnedTaskbarLauncher[] = [];
   let sortedLaunchers: PinnedTaskbarLauncher[] = [];
@@ -16,6 +20,7 @@
   let quickLaunchNonce: string | null = null;
   let quickLaunchSelectionInFlight = false;
   let suppressNextRowClick = false;
+  let shellSurfaceHotkeyHandled = false;
 
   $: sortedLaunchers = [...launchers].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -59,12 +64,26 @@
   function handlePanelPointerDown(_event: PointerEvent) {
   }
 
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+
   async function openQuickLaunchNativeMenu(launcher: PinnedTaskbarLauncher, event: MouseEvent) {
     if (!quickLaunchNonce) return;
     try {
       await showQuickLaunchPanelContextMenu({ nonce: quickLaunchNonce, shortcutPath: launcher.shortcutPath, x: event.clientX, y: event.clientY });
     } catch (error) {
       console.error('Failed to show quick launch native menu', error);
+    }
+  }
+
+  function handleSearchHotkeyKeydown(event: KeyboardEvent) {
+    if (!isCtrlSpaceHotkey(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!shellSurfaceHotkeyHandled && !event.repeat) {
+      shellSurfaceHotkeyHandled = true;
+      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
     }
   }
 
@@ -96,12 +115,22 @@
   }
 
   onMount(() => {
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || !shellSurfaceHotkeyHandled) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      shellSurfaceHotkeyHandled = false;
+    };
     const blurHandler = () => {
       if (!quickLaunchSelectionInFlight) {
         void invoke('hide_quick_launch_panel_on_focus_loss');
       }
     };
     window.addEventListener('blur', blurHandler);
+    window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
+    window.addEventListener('keyup', keyupHandler, true);
     const unlistenOpen = listen<{ nonce: string; rows: PinnedTaskbarLauncher[] }>(QUICK_LAUNCH_OPEN_EVENT, async (event) => {
       quickLaunchNonce = event.payload.nonce;
       applyLaunchers([...event.payload.rows].sort((a, b) => a.name.localeCompare(b.name)));
@@ -120,6 +149,8 @@
     return () => {
       disposed = true;
       window.removeEventListener('blur', blurHandler);
+      window.removeEventListener('keydown', handleSearchHotkeyKeydown, true);
+      window.removeEventListener('keyup', keyupHandler, true);
       void unlistenOpen.then((fn) => fn()).catch(() => undefined);
       void unlisten.then((fn) => fn()).catch(() => undefined);
     };

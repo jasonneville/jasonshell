@@ -1,6 +1,6 @@
 <script lang="ts">
   import './StackPopupSurface.css';
-  import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { emit, emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
@@ -115,6 +115,7 @@
     type StackBrowserMarqueePoint,
     type StackBrowserMarqueeRect
   } from '../features/stack-browser/viewModel';
+  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
   const STACK_POPUP_MIN_WIDTH = 560;
@@ -122,6 +123,8 @@
   const STACK_ICON_RESOLVE_BATCH_SIZE = 24;
   const STACK_ICON_RESOLVE_MAX_CONCURRENCY = 2;
   const STACK_CONTEXT_MENU_VIEWPORT_PADDING = 8;
+  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
+  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
   type StackContextMenuPlacement = {
     x: number;
     y: number;
@@ -238,6 +241,7 @@
   let stackBrowserViewMode: StackBrowserViewMode = 'files';
   let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
   let stackTerminalPane: StackTerminalPane | null = null;
+  let shellSurfaceHotkeyHandled = false;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
 
@@ -267,12 +271,20 @@
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     let disposed = false;
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || !shellSurfaceHotkeyHandled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      shellSurfaceHotkeyHandled = false;
+    };
     const latestRequestTimer = window.setInterval(() => {
       void reconcileLatestStackPopupRequest();
     }, 250);
 
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
     void loadStackTerminalProfile();
+    window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
+    window.addEventListener('keyup', keyupHandler, true);
     void getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
         void pasteDroppedPaths(event.payload.paths, currentPath, false);
@@ -294,6 +306,8 @@
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
+      window.removeEventListener('keydown', handleSearchHotkeyKeydown, true);
+      window.removeEventListener('keyup', keyupHandler, true);
       stopMarqueeAutoscroll();
       const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
       void terminalPaneForCleanup?.stopTerminal();
@@ -1913,6 +1927,7 @@
     updateMarqueeSelection();
   }
 
+
   function isStackMarqueeScrollbarTarget(event: PointerEvent) {
     if (!detailsBody || event.target !== detailsBody) {
       return false;
@@ -2227,6 +2242,20 @@
     if (entry) {
       stackState = selectStackEntry(stackState, entry.path);
       scrollEntryIndexIntoView(next);
+    }
+  }
+
+  function isCtrlSpaceHotkey(event: KeyboardEvent) {
+    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  }
+
+  function handleSearchHotkeyKeydown(event: KeyboardEvent) {
+    if (!isCtrlSpaceHotkey(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!shellSurfaceHotkeyHandled && !event.repeat) {
+      shellSurfaceHotkeyHandled = true;
+      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
     }
   }
 
