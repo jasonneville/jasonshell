@@ -370,7 +370,7 @@
 }
 
 .bottom-bar .task-button-active {
-  background: var(--js-bg-active);
+  background: (--js-bg-active);
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
 }

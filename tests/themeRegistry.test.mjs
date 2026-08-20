@@ -15,30 +15,173 @@ import {
 const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
 const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 
+const EXPECTED_THEME_IDS = [
+  'base-dark',
+  'base-light',
+  'monokai',
+  'atom-one-dark',
+  'atom-one-light',
+  'nord',
+  'dracula',
+  'solarized-dark',
+  'solarized-light',
+  'github-dark',
+  'github-light',
+  'gruvbox-dark',
+  'gruvbox-light',
+  'tokyo-night',
+  'catppuccin-mocha',
+  'ayu-dark',
+  'night-owl',
+  'palenight',
+  'one-dark-pro',
+  'material-ocean',
+  'everforest-dark',
+  'rose-pine-moon',
+  'oceanic-next',
+  'shades-of-purple',
+  'kanagawa-wave',
+  'vitesse-dark',
+  'aura-dark',
+  'horizon',
+  'moonlight-ii',
+  'synthwave-84',
+  'github-dark-dimmed',
+  'tomorrow-night',
+  'noctis',
+  'andromeda'
+];
+
+const NEW_THEME_IDS = EXPECTED_THEME_IDS.slice(24);
+
+const REQUIRED_THEME_TOKENS = [
+  '--js-color-bg',
+  '--js-color-text',
+  '--js-color-text-strong',
+  '--js-color-text-muted',
+  '--js-color-text-subtle',
+  '--js-color-surface',
+  '--js-color-surface-raised',
+  '--js-color-surface-sunken',
+  '--js-color-surface-overlay',
+  '--js-color-control',
+  '--js-color-control-hover',
+  '--js-color-control-active',
+  '--js-color-border',
+  '--js-color-border-soft',
+  '--js-color-accent',
+  '--js-color-accent-soft',
+  '--js-color-accent-border',
+  '--js-color-selected',
+  '--js-color-success',
+  '--js-color-success-border',
+  '--js-color-info',
+  '--js-color-warning',
+  '--js-color-warning-border',
+  '--js-color-error',
+  '--js-color-error-border',
+  '--js-color-error-text',
+  '--js-shadow-raised',
+  '--js-shadow-panel',
+  '--js-focus-ring',
+  '--js-inset-highlight',
+  '--js-scrollbar-thumb',
+  '--js-scrollbar-track',
+  '--js-bg-surface',
+  '--js-bg-bar',
+  '--js-bg-control',
+  '--js-bg-active'
+];
+
+const COLOR_LIKE_TOKEN_NAMES = new Set([
+  '--js-color-bg',
+  '--js-color-text',
+  '--js-color-text-strong',
+  '--js-color-text-muted',
+  '--js-color-text-subtle',
+  '--js-color-surface',
+  '--js-color-surface-raised',
+  '--js-color-surface-sunken',
+  '--js-color-surface-overlay',
+  '--js-color-control',
+  '--js-color-control-hover',
+  '--js-color-control-active',
+  '--js-color-border',
+  '--js-color-border-soft',
+  '--js-color-accent',
+  '--js-color-accent-soft',
+  '--js-color-accent-border',
+  '--js-color-selected',
+  '--js-color-success',
+  '--js-color-success-border',
+  '--js-color-info',
+  '--js-color-warning',
+  '--js-color-warning-border',
+  '--js-color-error',
+  '--js-color-error-border',
+  '--js-color-error-text',
+  '--js-scrollbar-thumb',
+  '--js-scrollbar-track',
+  '--js-bg-surface',
+  '--js-bg-bar',
+  '--js-bg-control',
+  '--js-bg-active'
+]);
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function themeSelector(themeId) {
+  return `:root[data-theme='${themeId}']`;
+}
+
+function themeBlock(themeId) {
+  const selector = themeSelector(themeId);
+  const pattern = new RegExp(`${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\n\\}`, 'm');
+  const match = appCss.match(pattern);
+  assert.ok(match, `missing block for ${themeId}`);
+  return match[1];
+}
+
+function selectorCount(themeId) {
+  const pattern = new RegExp(escapeRegExp(themeSelector(themeId)), 'g');
+  return [...appCss.matchAll(pattern)].length;
+}
+
+function tokenValue(themeBlockText, tokenName) {
+  const pattern = new RegExp(`^\\s*${escapeRegExp(tokenName)}:\\s*([^;]+);$`, 'm');
+  const match = themeBlockText.match(pattern);
+  assert.ok(match, `missing token ${tokenName}`);
+  return match[1].trim();
+}
+
+function isPracticalColorValue(value) {
+  return /^(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|var\([^)]*\)|Canvas|CanvasText|Highlight|transparent)$/.test(value);
+}
+
 test('theme registry exposes base themes and popular editor palettes', () => {
   assert.equal(defaultShellThemeId, 'base-dark');
-  assert.ok(SHELL_THEMES.length >= 15);
+  assert.equal(SHELL_THEMES.length, EXPECTED_THEME_IDS.length);
+  assert.deepEqual(
+    SHELL_THEMES.map((theme) => theme.id),
+    EXPECTED_THEME_IDS
+  );
 
-  for (const id of [
-    'base-dark',
-    'base-light',
-    'monokai',
-    'atom-one-dark',
-    'atom-one-light',
-    'nord',
-    'dracula',
-    'solarized-dark',
-    'solarized-light',
-    'github-dark',
-    'github-light',
-    'gruvbox-dark',
-    'gruvbox-light',
-    'tokyo-night',
-    'catppuccin-mocha',
-    'ayu-dark'
-  ]) {
+  for (const id of EXPECTED_THEME_IDS) {
     assert.ok(SHELL_THEMES.some((theme) => theme.id === id), `missing ${id}`);
-    assert.match(appCss, new RegExp(`data-theme=['"]${id}['"]`));
+    assert.equal(selectorCount(id), 1, `selector count mismatch for ${id}`);
+  }
+
+  for (const id of NEW_THEME_IDS) {
+    const block = themeBlock(id);
+    for (const tokenName of REQUIRED_THEME_TOKENS) {
+      assert.match(block, new RegExp(`^\\s*${escapeRegExp(tokenName)}:\\s*`, 'm'));
+    }
+
+    for (const tokenName of COLOR_LIKE_TOKEN_NAMES) {
+      assert.ok(isPracticalColorValue(tokenValue(block, tokenName)), `${id} ${tokenName}`);
+    }
   }
 
   assert.equal(new Set(SHELL_THEMES.map((theme) => theme.id)).size, SHELL_THEMES.length);

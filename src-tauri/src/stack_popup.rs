@@ -653,6 +653,12 @@ pub fn open_stack_item(window: WebviewWindow, path: String) -> Result<(), String
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let path = paths::normalize_existing_path(&path)?;
+    if shell_paths::classify_stack_item_open_route(Path::new(&path))
+        == shell_paths::StackItemOpenRoute::AuditedApp
+    {
+        return shell_paths::launch_app_path(path);
+    }
     shell_paths::open_shell_path(path)
 }
 

@@ -39,7 +39,25 @@ export const SHELL_THEMES = [
   { id: 'gruvbox-light', label: 'Gruvbox Light', family: 'Editor', mode: 'light', accent: '#b57614' },
   { id: 'tokyo-night', label: 'Tokyo Night', family: 'Editor', mode: 'dark', accent: '#7aa2f7' },
   { id: 'catppuccin-mocha', label: 'Catppuccin Mocha', family: 'Editor', mode: 'dark', accent: '#cba6f7' },
-  { id: 'ayu-dark', label: 'Ayu Dark', family: 'Editor', mode: 'dark', accent: '#ffcc66' }
+  { id: 'ayu-dark', label: 'Ayu Dark', family: 'Editor', mode: 'dark', accent: '#ffcc66' },
+  { id: 'night-owl', label: 'Night Owl', family: 'Editor', mode: 'dark', accent: '#82aaff' },
+  { id: 'palenight', label: 'Palenight', family: 'Editor', mode: 'dark', accent: '#c792ea' },
+  { id: 'one-dark-pro', label: 'One Dark Pro', family: 'Editor', mode: 'dark', accent: '#61afef' },
+  { id: 'material-ocean', label: 'Material Ocean', family: 'Editor', mode: 'dark', accent: '#80cbc4' },
+  { id: 'everforest-dark', label: 'Everforest Dark', family: 'Editor', mode: 'dark', accent: '#a7c080' },
+  { id: 'rose-pine-moon', label: 'Rose Pine Moon', family: 'Editor', mode: 'dark', accent: '#ebbcba' },
+  { id: 'oceanic-next', label: 'Oceanic Next', family: 'Editor', mode: 'dark', accent: '#74b9ff' },
+  { id: 'shades-of-purple', label: 'Shades of Purple', family: 'Editor', mode: 'dark', accent: '#a599e9' },
+  { id: 'kanagawa-wave', label: 'Kanagawa Wave', family: 'Editor', mode: 'dark', accent: '#7e9cd8' },
+  { id: 'vitesse-dark', label: 'Vitesse Dark', family: 'Editor', mode: 'dark', accent: '#e2b776' },
+  { id: 'aura-dark', label: 'Aura Dark', family: 'Editor', mode: 'dark', accent: '#a277ff' },
+  { id: 'horizon', label: 'Horizon', family: 'Editor', mode: 'dark', accent: '#e95678' },
+  { id: 'moonlight-ii', label: 'Moonlight II', family: 'Editor', mode: 'dark', accent: '#82aaff' },
+  { id: 'synthwave-84', label: "SynthWave '84", family: 'Editor', mode: 'dark', accent: '#ff7edb' },
+  { id: 'github-dark-dimmed', label: 'GitHub Dark Dimmed', family: 'Application', mode: 'dark', accent: '#539bf5' },
+  { id: 'tomorrow-night', label: 'Tomorrow Night', family: 'Editor', mode: 'dark', accent: '#81a2be' },
+  { id: 'noctis', label: 'Noctis', family: 'Editor', mode: 'dark', accent: '#7f9cff' },
+  { id: 'andromeda', label: 'Andromeda', family: 'Editor', mode: 'dark', accent: '#04d9c4' }
 ] as const satisfies readonly ShellTheme[];
 
 export type ShellThemeId = (typeof SHELL_THEMES)[number]['id'];

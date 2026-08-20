@@ -135,7 +135,7 @@ fn is_executable_shell_path(path: &Path) -> bool {
         })
 }
 
-fn is_audited_app_launch_path(path: &Path) -> bool {
+pub(crate) fn is_audited_app_launch_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -144,6 +144,20 @@ fn is_audited_app_launch_path(path: &Path) -> bool {
                 "exe" | "lnk" | "appref-ms"
             )
         })
+}
+
+pub(crate) fn classify_stack_item_open_route(path: &Path) -> StackItemOpenRoute {
+    if is_audited_app_launch_path(path) {
+        StackItemOpenRoute::AuditedApp
+    } else {
+        StackItemOpenRoute::ShellOpen
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StackItemOpenRoute {
+    AuditedApp,
+    ShellOpen,
 }
 
 #[tauri::command]
@@ -374,8 +388,9 @@ fn to_wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_app_launch_target, classify_shell_open_target, is_safe_control_panel_arg,
-        resolve_vscode_executable_with, ShellOpenTarget,
+        classify_app_launch_target, classify_shell_open_target, classify_stack_item_open_route,
+        is_safe_control_panel_arg, resolve_vscode_executable_with, ShellOpenTarget,
+        StackItemOpenRoute,
     };
     use std::path::PathBuf;
 
@@ -469,9 +484,37 @@ mod tests {
     }
 
     #[test]
+    fn audited_app_launch_boundary_accepts_executables_for_stack_browser_activation() {
+        let root = std::env::temp_dir().join(format!(
+            "jasonshell-app-launch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let app = root.join("tool.exe");
+        std::fs::write(&app, b"app").unwrap();
+
+        assert_eq!(
+            classify_stack_item_open_route(&app),
+            StackItemOpenRoute::AuditedApp
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn audited_app_launch_boundary_allows_apps_without_weakening_generic_shell_open() {
-        let root =
-            std::env::temp_dir().join(format!("jasonshell-app-launch-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "jasonshell-app-launch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let app = root.join("code.exe");
         let shortcut = root.join("spotify.lnk");
@@ -480,14 +523,21 @@ mod tests {
         std::fs::write(&shortcut, b"shortcut").unwrap();
         std::fs::write(&text, b"text").unwrap();
 
-        assert!(classify_shell_open_target(&app.to_string_lossy()).is_err());
         assert_eq!(
-            classify_app_launch_target(&app.to_string_lossy()).unwrap(),
-            app.to_string_lossy()
+            classify_stack_item_open_route(&app),
+            StackItemOpenRoute::AuditedApp
         );
         assert_eq!(
-            classify_app_launch_target(&shortcut.to_string_lossy()).unwrap(),
-            shortcut.to_string_lossy()
+            classify_stack_item_open_route(&shortcut),
+            StackItemOpenRoute::AuditedApp
+        );
+        assert_eq!(
+            classify_stack_item_open_route(&root),
+            StackItemOpenRoute::ShellOpen
+        );
+        assert_eq!(
+            classify_stack_item_open_route(&text),
+            StackItemOpenRoute::ShellOpen
         );
         assert!(classify_app_launch_target(&text.to_string_lossy()).is_err());
         assert!(classify_app_launch_target("http://example.com/app.exe").is_err());
