@@ -5,6 +5,8 @@ use crate::search::contracts::{
 use crate::search::matcher::{
     best_match, full_highlight, query_tokens as match_query_tokens, MatchData, MatchField,
 };
+#[cfg(test)]
+use crate::search::test_observer::{record, SearchOperation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SettingsProviderRow {
@@ -283,6 +285,8 @@ pub(crate) fn settings_provider_health() -> SearchProviderHealth {
 }
 
 pub(crate) fn search_settings(query: &str, limit: usize) -> Vec<SearchResult> {
+    #[cfg(test)]
+    record(SearchOperation::Settings);
     search_settings_for_build(query, limit, None)
 }
 
@@ -291,16 +295,22 @@ fn search_settings_for_build(
     limit: usize,
     windows_build: Option<u32>,
 ) -> Vec<SearchResult> {
+    if is_path_like_settings_query(query) {
+        return Vec::new();
+    }
     let tokens = query_tokens(query);
-    if tokens.is_empty() || tokens.iter().any(|token| token.len() < 2) {
+    if tokens.is_empty() {
         return Vec::new();
     }
 
     let mut results = SETTINGS_ROWS
         .iter()
         .filter(|row| row_supported_on_build(row, windows_build))
+        .filter(|row| short_settings_tokens_are_allowed_for_row(row, &tokens))
         .filter_map(|row| {
-            score_row(row, &tokens).map(|(score, matched)| row_to_result(row, score, matched))
+            score_row(row, &tokens).map(|(score, matched)| {
+                row_to_result(row, score + phase1_prefix_boost(row, &tokens), matched)
+            })
         })
         .collect::<Vec<_>>();
 
@@ -311,8 +321,73 @@ fn search_settings_for_build(
             .then(left.title.cmp(&right.title))
             .then(left.id.cmp(&right.id))
     });
-    results.truncate(limit);
+    results.truncate(limit.min(short_prefix_settings_limit(&tokens)));
     results
+}
+
+fn is_path_like_settings_query(query: &str) -> bool {
+    query.contains(['*', '/', '\\', ':'])
+}
+
+fn short_settings_tokens_are_allowed_for_row(row: &SettingsProviderRow, tokens: &[String]) -> bool {
+    if tokens.iter().all(|token| token.len() >= 2) {
+        return true;
+    }
+    if tokens.len() == 1 && tokens[0].len() == 1 {
+        return is_canonical_windows_root_prefix(row, &tokens[0]);
+    }
+    row_has_ordered_static_token_prefix(row, tokens)
+}
+
+fn short_prefix_settings_limit(tokens: &[String]) -> usize {
+    if tokens.iter().any(|token| {
+        token.len() <= 2 || token == "windows" || token == "control" || token == "display"
+    }) {
+        3
+    } else {
+        usize::MAX
+    }
+}
+
+fn phase1_prefix_boost(row: &SettingsProviderRow, tokens: &[String]) -> i32 {
+    if row.path == "ms-settings:" && row_has_ordered_static_token_prefix(row, tokens) {
+        350
+    } else {
+        0
+    }
+}
+
+fn is_canonical_windows_root_prefix(row: &SettingsProviderRow, token: &str) -> bool {
+    row.path == "ms-settings:"
+        && static_row_phrases(row).iter().any(|phrase| {
+            phrase == "windows settings"
+                && phrase_token_prefix_matches(phrase, &[token.to_string()])
+        })
+}
+
+fn row_has_ordered_static_token_prefix(row: &SettingsProviderRow, tokens: &[String]) -> bool {
+    static_row_phrases(row)
+        .iter()
+        .any(|phrase| phrase_token_prefix_matches(phrase, tokens))
+}
+
+fn static_row_phrases(row: &SettingsProviderRow) -> Vec<String> {
+    let mut phrases = Vec::with_capacity(2 + row.keywords.len() + row.aliases.len());
+    phrases.push(row.title.to_string());
+    phrases.extend(row.keywords.iter().map(|value| (*value).to_string()));
+    phrases.extend(row.aliases.iter().map(|value| (*value).to_string()));
+    phrases
+}
+
+fn phrase_token_prefix_matches(phrase: &str, tokens: &[String]) -> bool {
+    let phrase_tokens = query_tokens(phrase);
+    if tokens.is_empty() || tokens.len() > phrase_tokens.len() {
+        return false;
+    }
+    tokens
+        .iter()
+        .zip(phrase_tokens.iter())
+        .all(|(token, phrase_token)| phrase_token.starts_with(token))
 }
 
 fn row_to_result(row: &SettingsProviderRow, score: i32, matched: MatchData) -> SearchResult {
@@ -335,6 +410,7 @@ fn row_to_result(row: &SettingsProviderRow, score: i32, matched: MatchData) -> S
             .map(|alias| (*alias).to_string())
             .collect(),
         score,
+        provider_signal: 0,
         match_reason: matched.reason.to_string(),
         record_key: row.id.to_string(),
         title_highlight_data: match matched.field {
@@ -434,6 +510,13 @@ mod tests {
         search_settings(query, 5)
             .first()
             .map(|result| result.id.clone())
+    }
+
+    fn result_ids(query: &str, limit: usize) -> Vec<String> {
+        search_settings(query, limit)
+            .into_iter()
+            .map(|result| result.id)
+            .collect()
     }
 
     #[test]
@@ -653,6 +736,66 @@ mod tests {
             first_id("personalization settings").as_deref(),
             Some("setting:personalization")
         );
+    }
+
+    #[test]
+    fn phase1_short_prefix_corpus_returns_expected_top_settings_without_flooding() {
+        for (query, expected_top_id, max_settings_rows) in [
+            ("w", "setting:windows-settings", 3usize),
+            ("wi", "setting:windows-settings", 3usize),
+            ("windows s", "setting:windows-settings", 3usize),
+            ("control p", "setting:control-panel", 3usize),
+            ("display s", "setting:display", 1usize),
+        ] {
+            let ids = result_ids(query, 10);
+            assert_eq!(
+                ids.first().map(String::as_str),
+                Some(expected_top_id),
+                "{query} top result"
+            );
+            assert!(
+                ids.len() <= max_settings_rows,
+                "{query} returns at most {max_settings_rows} settings rows, got {ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn phase1_short_prefix_corpus_rejects_broad_or_pathlike_settings_noise() {
+        for query in ["", "   ", "a", "*", r"c:\", "src/"] {
+            assert!(
+                search_settings(query, 10).is_empty(),
+                "{query:?} returns zero settings rows"
+            );
+        }
+    }
+
+    #[test]
+    fn phase1_short_token_policy_is_static_row_ordered_prefix_not_exact_query_allowlist() {
+        let network = search_settings("network s", 3)
+            .pop()
+            .expect("network settings short phrase");
+        assert_eq!(network.id, "setting:network");
+
+        let sound_control = search_settings("sound c", 3)
+            .into_iter()
+            .find(|result| result.id == "setting:control-panel-sound")
+            .expect("sound control panel short phrase");
+        assert_eq!(sound_control.path.as_deref(), Some("control.exe"));
+
+        assert!(search_settings("network a", 10).is_empty());
+        assert!(search_settings("control x", 10).is_empty());
+    }
+
+    #[test]
+    fn phase1_one_character_policy_is_limited_to_canonical_windows_root_intent() {
+        assert_eq!(first_id("w").as_deref(), Some("setting:windows-settings"));
+        for query in ["a", "p", "s", "c"] {
+            assert!(
+                search_settings(query, 10).is_empty(),
+                "{query} remains conservative"
+            );
+        }
     }
 
     #[test]

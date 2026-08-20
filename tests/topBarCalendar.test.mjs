@@ -63,6 +63,8 @@ test('top bar time pill owns an Explorer-like scrollable calendar flyout', () =>
   assert.match(topBarSource, /showCalendarPanel\(\{/);
   assert.match(topBarSource, /hideCalendarPanel\(\)/);
   assert.match(topBarSource, /CALENDAR_PANEL_CLOSED_EVENT/);
+  assert.match(topBarCss, /\.top-bar \.time-control \{[\s\S]*flex: 0 0 10\.5rem;/);
+  assert.match(topBarCss, /\.top-bar \.time-pill \{[\s\S]*width: 100%;/);
   assert.match(calendarPanelSource, /id="calendar-panel"[\s\S]*role="dialog"/);
   assert.match(calendarPanelSource, /on:wheel=\{handleCalendarWheel\}/);
   assert.match(calendarPanelSource, /jumpCalendarMonths\(-12\)/);
@@ -70,6 +72,8 @@ test('top bar time pill owns an Explorer-like scrollable calendar flyout', () =>
   assert.match(calendarPanelSource, /formatCalendarTimezone/);
   assert.match(calendarPanelCss, /\.calendar-panel/);
   assert.match(calendarPanelCss, /overflow-y: auto/);
+  assert.match(topBarCss, /\.top-bar \.time-control \{[\s\S]*flex: 0 0 10\.5rem;[\s\S]*width: 10\.5rem;/);
+  assert.match(topBarCss, /@media \(max-width: 520px\) \{[\s\S]*\.top-bar \.time-control \{[\s\S]*flex-basis: 4\.8rem;[\s\S]*width: 4\.8rem;/);
   assert.doesNotMatch(`${topBarCss}\n${calendarPanelCss}`, /linear-gradient|radial-gradient|conic-gradient/);
 });
 

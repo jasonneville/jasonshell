@@ -43,21 +43,33 @@ test('builds flat visible rows with Best match first and grouped remaining rows 
   assert.deepEqual(
     visibleRows.map((row) => [row.groupLabel, row.result.title, row.showGroupLabel]),
     [
-      ['Best match', 'Refresh', true],
+      ['Best match', 'Refresh', false],
       ['Best match', 'Editor', false],
       ['Best match', 'Downloads', false],
-      ['Apps', 'Code', true],
-      ['Files', 'notes.txt', true]
+      ['Best match', 'notes.txt', false],
+      ['Best match', 'Code', false]
     ]
   );
-  assert.deepEqual(visibleRows.map((row) => row.resultIndex), [0, 1, 2, 4, 3]);
+  assert.deepEqual(visibleRows.map((row) => row.resultIndex), [0, 1, 2, 3, 4]);
   assert.deepEqual(visibleRows.map((row) => row.domId), [
     'search-result-0',
     'search-result-1',
     'search-result-2',
-    'search-result-4',
-    'search-result-3'
+    'search-result-3',
+    'search-result-4'
   ]);
+});
+
+test('keeps backend canonical order across every visible row without grouped tail', () => {
+  const visibleRows = buildVisibleSearchRows(results);
+
+  assert.deepEqual(
+    visibleRows.map((row) => row.result.title),
+    ['Refresh', 'Editor', 'Downloads', 'notes.txt', 'Code']
+  );
+  assert.deepEqual(visibleRows.map((row) => row.resultIndex), [0, 1, 2, 3, 4]);
+  assert.deepEqual(visibleRows.map((row) => row.showGroupLabel), [false, false, false, false, false]);
+  assert.deepEqual(buildVisibleSearchGroupOverflows(results), []);
 });
 
 test('best match removes top backend rows from later groups while preserving group order inside remainder', () => {
@@ -78,7 +90,7 @@ test('best match removes top backend rows from later groups while preserving gro
   );
   assert.deepEqual(
     visibleRows.map((row) => row.groupLabel),
-    ['Best match', 'Best match', 'Best match', 'Apps', 'Folders', 'Files', 'Windows', 'Commands']
+    ['Best match', 'Best match', 'Best match', 'Best match', 'Best match', 'Best match', 'Best match', 'Best match']
   );
   assert.equal(new Set(visibleRows.map((row) => row.rowKey)).size, visibleRows.length);
 });
@@ -114,18 +126,9 @@ test('category rows default to seven visible items and advertise remaining rows'
   const overflows = buildVisibleSearchGroupOverflows(appResults);
 
   assert.equal(DEFAULT_VISIBLE_GROUP_LIMIT, 7);
-  assert.equal(rows.length, 10);
-  assert.equal(rows.filter((row) => row.groupId === 'bestMatch').length, 3);
-  assert.equal(rows.filter((row) => row.groupId === 'apps').length, 7);
-  assert.deepEqual(overflows, [
-    {
-      groupId: 'apps',
-      groupLabel: 'Apps',
-      totalCount: 9,
-      visibleCount: 7,
-      hiddenCount: 2
-    }
-  ]);
+  assert.equal(rows.length, 12);
+  assert.equal(rows.filter((row) => row.groupId === 'bestMatch').length, 12);
+  assert.deepEqual(overflows, []);
 });
 
 test('expanded groups reveal hidden rows and clear overflow state for that category', () => {
@@ -142,7 +145,7 @@ test('expanded groups reveal hidden rows and clear overflow state for that categ
   const overflows = buildVisibleSearchGroupOverflows(appResults, { expandedGroups: expanded });
 
   assert.equal(rows.length, 12);
-  assert.equal(rows.filter((row) => row.groupId === 'apps').length, 9);
+  assert.equal(rows.filter((row) => row.groupId === 'bestMatch').length, 12);
   assert.deepEqual(overflows, []);
 });
 
@@ -156,7 +159,7 @@ test('groups new Flow-like result kinds into settings and commands visible secti
 
   assert.deepEqual(
     visibleRows.map((row) => row.groupLabel),
-    ['Best match', 'Best match', 'Best match', 'Commands']
+    ['Best match', 'Best match', 'Best match', 'Best match']
   );
   assert.deepEqual(visibleRows.map((row) => row.result.kind), ['setting', 'calculator', 'web', 'bookmark']);
 });

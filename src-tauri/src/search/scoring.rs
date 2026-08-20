@@ -82,8 +82,13 @@ fn score_row(
     score.score += intent_boost(row.kind, intent);
     score.score += open_window_match_boost(row.kind, score.quality);
     score.score += important_folder_boost(row, query, tokens, intent);
+    score.score += provider_signal_bonus(row.provider_signal);
 
     Some(score)
+}
+
+fn provider_signal_bonus(provider_signal: i32) -> i32 {
+    provider_signal.clamp(0, 50)
 }
 
 fn match_quality_score(
@@ -395,6 +400,10 @@ fn normalize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::search::providers::{apps, everything};
+    use crate::search_sources::everything_ffi::EverythingSdkResultKind;
+    use serde::Serialize;
+    use std::{env, fs, path::PathBuf};
 
     fn row(
         id: &str,
@@ -437,12 +446,632 @@ mod tests {
             terms: vec![title.to_string()],
             aliases: Vec::new(),
             score: 99_999,
+            provider_signal: 0,
             match_reason: "fixture".to_string(),
             record_key: id.to_string(),
             title_highlight_data: Vec::new(),
             subtitle_highlight_data: Vec::new(),
             icon_data_url: None,
         }
+    }
+
+    #[derive(Clone, Serialize)]
+    struct ProviderSignalMetadata {
+        row_id: String,
+        provider_id: SearchProviderId,
+        title: String,
+        raw_provider_metadata: String,
+        derived_signal: i32,
+    }
+
+    #[derive(Clone)]
+    struct SignalRow {
+        row: SearchResult,
+        metadata: ProviderSignalMetadata,
+    }
+
+    fn with_signal_metadata(
+        row: SearchResult,
+        raw_provider_metadata: String,
+        derived_signal: i32,
+    ) -> SignalRow {
+        SignalRow {
+            metadata: ProviderSignalMetadata {
+                row_id: row.id.clone(),
+                provider_id: row.provider_id,
+                title: row.title.clone(),
+                raw_provider_metadata,
+                derived_signal,
+            },
+            row,
+        }
+    }
+
+    fn app_signal_row(title: &str, path: &str, source: &str, query: &str) -> SignalRow {
+        let row = apps::test_app_result_from_source(title, path, source, query);
+        let derived_signal = row.provider_signal;
+        with_signal_metadata(row, format!("apps.source={source}"), derived_signal)
+    }
+
+    fn everything_signal_row(
+        path: &str,
+        kind: EverythingSdkResultKind,
+        run_count: u32,
+        query: &str,
+    ) -> SignalRow {
+        let row = everything::test_everything_result_from_run_count(path, kind, run_count, query);
+        let derived_signal = row.provider_signal;
+        with_signal_metadata(
+            row,
+            format!("everything.kind={kind:?};everything.run_count={run_count}"),
+            derived_signal,
+        )
+    }
+
+    fn fixture_signal_row(row: SearchResult, raw_provider_metadata: &str) -> SignalRow {
+        with_signal_metadata(row, raw_provider_metadata.to_string(), 0)
+    }
+
+    fn rank_visible_results_with_signal_cap(
+        query: &str,
+        rows: Vec<SignalRow>,
+        limit: usize,
+        cap: i32,
+    ) -> Vec<SearchResult> {
+        let query_text = normalize(query);
+        let tokens = query_tokens(query);
+        if tokens.is_empty() {
+            return Vec::new();
+        }
+        let intent = classify_intent(query, &tokens);
+        let mut deduped: HashMap<String, SearchResult> = HashMap::new();
+
+        for signal_row in rows {
+            let mut row = signal_row.row;
+            let raw_signal = signal_row.metadata.derived_signal.max(0).min(cap.max(0));
+            row.provider_signal = 0;
+            let Some(mut score) = score_row(&row, &query_text, &tokens, intent) else {
+                continue;
+            };
+            score.score += raw_signal;
+            row.score = score.score;
+            row.match_reason = score.reason.to_string();
+            row.title_highlight_data = score.title_highlight_data;
+            row.subtitle_highlight_data = score.subtitle_highlight_data;
+            let key = duplicate_key(&row);
+            match deduped.get(&key) {
+                Some(existing) if compare_results(&row, existing).is_ge() => {}
+                _ => {
+                    deduped.insert(key, row);
+                }
+            }
+        }
+
+        let mut results = deduped.into_values().collect::<Vec<_>>();
+        results.sort_by(compare_results);
+        results.truncate(limit);
+        results
+    }
+
+    #[derive(Clone)]
+    struct ExperimentCase {
+        name: &'static str,
+        query: &'static str,
+        rows: Vec<SignalRow>,
+        relevant_ids: &'static [&'static str],
+        expected_top1: Option<&'static str>,
+        prefix_target: Option<&'static str>,
+    }
+
+    #[derive(Serialize)]
+    struct CaseRankingArtifact {
+        name: String,
+        query: String,
+        ranked_ids: Vec<String>,
+        top1: Option<String>,
+        relevant_found_at: Option<usize>,
+        prefix_acquired: bool,
+    }
+
+    #[derive(Serialize)]
+    struct CapArtifact {
+        cap: i32,
+        mrr_at_10: f64,
+        recall_at_10: f64,
+        prefix_acquisition: f64,
+        top1_stability: f64,
+        nonmatches_resurrected: bool,
+        dedupe_tie_unchanged: bool,
+        relevant_case_count: usize,
+        cases: Vec<CaseRankingArtifact>,
+    }
+
+    #[derive(Serialize)]
+    struct Phase2Artifact {
+        phase: &'static str,
+        method: &'static str,
+        candidate_caps: Vec<i32>,
+        recommendation: i32,
+        recommendation_reason: String,
+        provider_signals: Vec<ProviderSignalMetadata>,
+        caps: Vec<CapArtifact>,
+    }
+
+    fn recommend_phase2_cap(cap_artifacts: &[CapArtifact]) -> i32 {
+        let baseline = cap_artifacts
+            .iter()
+            .find(|cap| cap.cap == 0)
+            .expect("cap 0");
+        let mut improving = cap_artifacts
+            .iter()
+            .filter(|cap| {
+                cap.top1_stability == 1.0
+                    && !cap.nonmatches_resurrected
+                    && cap.dedupe_tie_unchanged
+                    && cap.mrr_at_10 > baseline.mrr_at_10
+            })
+            .collect::<Vec<_>>();
+        improving.sort_by(|left, right| {
+            right
+                .mrr_at_10
+                .partial_cmp(&left.mrr_at_10)
+                .expect("finite mrr")
+                .then_with(|| {
+                    right
+                        .recall_at_10
+                        .partial_cmp(&left.recall_at_10)
+                        .expect("finite recall")
+                })
+                .then_with(|| {
+                    right
+                        .prefix_acquisition
+                        .partial_cmp(&left.prefix_acquisition)
+                        .expect("finite prefix")
+                })
+                .then(left.cap.cmp(&right.cap))
+        });
+        improving.first().map_or(0, |cap| cap.cap)
+    }
+
+    fn phase2_experiment_cases() -> Vec<ExperimentCase> {
+        vec![
+            ExperimentCase {
+                name: "close call pinned app source priority acquisition",
+                query: "alpha",
+                rows: vec![
+                    app_signal_row("Alpha", r"C:\Apps\AAlpha.lnk", "windowsApps", "alpha"),
+                    app_signal_row(
+                        "Alpha",
+                        r"C:\Start Menu\ZAlpha.lnk",
+                        "pinnedTaskbar",
+                        "alpha",
+                    ),
+                ],
+                relevant_ids: &["app:c:\\start menu\\zalpha.lnk"],
+                expected_top1: None,
+                prefix_target: Some("app:c:\\start menu\\zalpha.lnk"),
+            },
+            ExperimentCase {
+                name: "pinned app beats lower-quality incidental row",
+                query: "spotify",
+                rows: vec![
+                    everything_signal_row(
+                        r"C:\Users\me\Music\Spotify Cache",
+                        EverythingSdkResultKind::Folder,
+                        20,
+                        "spotify",
+                    ),
+                    app_signal_row(
+                        "Spotify",
+                        r"C:\Start Menu\Spotify.lnk",
+                        "pinnedTaskbar",
+                        "spotify",
+                    ),
+                ],
+                relevant_ids: &["app:c:\\start menu\\spotify.lnk"],
+                expected_top1: Some("app:c:\\start menu\\spotify.lnk"),
+                prefix_target: Some("app:c:\\start menu\\spotify.lnk"),
+            },
+            ExperimentCase {
+                name: "exact setting beats high-signal unrelated everything row",
+                query: "display settings",
+                rows: vec![
+                    everything_signal_row(
+                        r"C:\Archive\Display Settings",
+                        EverythingSdkResultKind::Folder,
+                        20,
+                        "display settings",
+                    ),
+                    fixture_signal_row(
+                        row(
+                            "setting:display",
+                            SearchProviderId::Settings,
+                            SearchResultKind::Setting,
+                            "Display Settings",
+                            Some("ms-settings:display"),
+                        ),
+                        "settings.static_priority=not_provider_signal",
+                    ),
+                ],
+                relevant_ids: &["setting:display"],
+                expected_top1: Some("setting:display"),
+                prefix_target: Some("setting:display"),
+            },
+            ExperimentCase {
+                name: "exact app beats high-run-count unrelated everything app",
+                query: "code",
+                rows: vec![
+                    everything_signal_row(
+                        r"C:\Tools\CodeHelper.exe",
+                        EverythingSdkResultKind::File,
+                        20,
+                        "code",
+                    ),
+                    app_signal_row(
+                        "Code",
+                        r"C:\Start Menu\Code.lnk",
+                        "currentUserStartMenu",
+                        "code",
+                    ),
+                ],
+                relevant_ids: &["app:c:\\start menu\\code.lnk"],
+                expected_top1: Some("app:c:\\start menu\\code.lnk"),
+                prefix_target: Some("app:c:\\start menu\\code.lnk"),
+            },
+            ExperimentCase {
+                name: "nonmatching high-signal row never resurrects",
+                query: "spotify",
+                rows: vec![everything_signal_row(
+                    r"C:\Docs\Budget.xlsx",
+                    EverythingSdkResultKind::File,
+                    20,
+                    "spotify",
+                )],
+                relevant_ids: &[],
+                expected_top1: None,
+                prefix_target: None,
+            },
+            ExperimentCase {
+                name: "dedupe and tie order stable",
+                query: "dev",
+                rows: vec![
+                    everything_signal_row(r"C:\dev", EverythingSdkResultKind::Folder, 20, "dev"),
+                    fixture_signal_row(
+                        row(
+                            "local:folder:c-dev",
+                            SearchProviderId::LocalFolders,
+                            SearchResultKind::Folder,
+                            "C:\\dev",
+                            Some(r"C:\dev"),
+                        ),
+                        "local.static_priority=not_provider_signal",
+                    ),
+                ],
+                relevant_ids: &["local:folder:c-dev"],
+                expected_top1: Some("local:folder:c-dev"),
+                prefix_target: Some("local:folder:c-dev"),
+            },
+        ]
+    }
+
+    fn evaluate_phase2_caps(caps: &[i32]) -> Phase2Artifact {
+        let cases = phase2_experiment_cases();
+        let provider_signals = cases
+            .iter()
+            .flat_map(|case| case.rows.iter().map(|row| row.metadata.clone()))
+            .collect::<Vec<_>>();
+        let relevant_case_count = cases
+            .iter()
+            .filter(|case| !case.relevant_ids.is_empty())
+            .count();
+        let baseline_top1 = cases
+            .iter()
+            .map(|case| {
+                (
+                    case.name,
+                    rank_visible_results_with_signal_cap(case.query, case.rows.clone(), 10, 0)
+                        .first()
+                        .map(|row| row.id.clone()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let baseline_dedupe_len = rank_visible_results_with_signal_cap(
+            "dev",
+            cases
+                .iter()
+                .find(|case| case.name == "dedupe and tie order stable")
+                .expect("dedupe case")
+                .rows
+                .clone(),
+            10,
+            0,
+        )
+        .len();
+
+        let cap_artifacts = caps
+            .iter()
+            .map(|cap| {
+                let mut reciprocal_sum = 0.0;
+                let mut recall_sum = 0.0;
+                let mut top1_ok = 0usize;
+                let mut top1_expected_count = 0usize;
+                let mut prefix_hits = 0usize;
+                let mut prefix_count = 0usize;
+                let mut nonmatches_resurrected = false;
+                let mut case_artifacts = Vec::new();
+
+                for case in &cases {
+                    let ranked = rank_visible_results_with_signal_cap(
+                        case.query,
+                        case.rows.clone(),
+                        10,
+                        *cap,
+                    );
+                    let ranked_ids = ranked.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+                    let relevant_found_at = ranked_ids.iter().position(|id| {
+                        case.relevant_ids
+                            .iter()
+                            .any(|relevant| relevant == &id.as_str())
+                    });
+                    if !case.relevant_ids.is_empty() {
+                        if let Some(index) = relevant_found_at {
+                            reciprocal_sum += 1.0 / ((index + 1) as f64);
+                            recall_sum += 1.0;
+                        }
+                    }
+                    if case.relevant_ids.is_empty() && !ranked.is_empty() {
+                        nonmatches_resurrected = true;
+                    }
+                    if let Some(expected) = case.expected_top1 {
+                        top1_expected_count += 1;
+                        if ranked_ids.first().map(String::as_str) == Some(expected)
+                            && baseline_top1
+                                .get(case.name)
+                                .and_then(Clone::clone)
+                                .as_deref()
+                                == Some(expected)
+                        {
+                            top1_ok += 1;
+                        }
+                    }
+                    let prefix_acquired = case.prefix_target.map_or(false, |target| {
+                        ranked_ids.first().map(String::as_str) == Some(target)
+                    });
+                    if case.prefix_target.is_some() {
+                        prefix_count += 1;
+                        if prefix_acquired {
+                            prefix_hits += 1;
+                        }
+                    }
+                    case_artifacts.push(CaseRankingArtifact {
+                        name: case.name.to_string(),
+                        query: case.query.to_string(),
+                        ranked_ids,
+                        top1: ranked.first().map(|row| row.id.clone()),
+                        relevant_found_at: relevant_found_at.map(|index| index + 1),
+                        prefix_acquired,
+                    });
+                }
+
+                let dedupe_len = rank_visible_results_with_signal_cap(
+                    "dev",
+                    cases
+                        .iter()
+                        .find(|case| case.name == "dedupe and tie order stable")
+                        .expect("dedupe case")
+                        .rows
+                        .clone(),
+                    10,
+                    *cap,
+                )
+                .len();
+
+                CapArtifact {
+                    cap: *cap,
+                    mrr_at_10: reciprocal_sum / relevant_case_count as f64,
+                    recall_at_10: recall_sum / relevant_case_count as f64,
+                    prefix_acquisition: if prefix_count == 0 {
+                        0.0
+                    } else {
+                        prefix_hits as f64 / prefix_count as f64
+                    },
+                    top1_stability: if top1_expected_count == 0 {
+                        1.0
+                    } else {
+                        top1_ok as f64 / top1_expected_count as f64
+                    },
+                    nonmatches_resurrected,
+                    dedupe_tie_unchanged: dedupe_len == baseline_dedupe_len,
+                    relevant_case_count,
+                    cases: case_artifacts,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let recommendation = recommend_phase2_cap(&cap_artifacts);
+
+        Phase2Artifact {
+            phase: "Phase 2 provider-signal experiment only",
+            method: "candidate cap evaluation plus approved production cap50 provider_signal bonus",
+            candidate_caps: caps.to_vec(),
+            recommendation,
+            recommendation_reason: if recommendation == 0 {
+                "No candidate improved MRR@10 over cap0 while preserving 100% top1 stability, nonmatch filtering, and dedupe invariants; recommend cap0/no behavior change.".to_string()
+            } else {
+                format!("MRR-qualified safe cap selected by MRR, then Recall, then prefix acquisition, then smallest cap tie-break: {recommendation}")
+            },
+            provider_signals,
+            caps: cap_artifacts,
+        }
+    }
+
+    fn maybe_write_phase2_artifact(artifact: &Phase2Artifact) {
+        let Some(outdir) = env::var_os("JASONSHELL_PHASE2_OUTDIR") else {
+            return;
+        };
+        let outdir = PathBuf::from(outdir);
+        fs::create_dir_all(&outdir).expect("create phase2 artifact dir");
+        let json = serde_json::to_string_pretty(artifact).expect("serialize phase2 artifact");
+        fs::write(outdir.join("provider-signal-experiment.json"), json)
+            .expect("write phase2 artifact");
+    }
+
+    fn cap_fixture(cap: i32, mrr: f64, recall: f64, prefix: f64) -> CapArtifact {
+        CapArtifact {
+            cap,
+            mrr_at_10: mrr,
+            recall_at_10: recall,
+            prefix_acquisition: prefix,
+            top1_stability: 1.0,
+            nonmatches_resurrected: false,
+            dedupe_tie_unchanged: true,
+            relevant_case_count: 4,
+            cases: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn phase2_cap_recommendation_requires_mrr_gain_before_tie_breaks() {
+        let caps = vec![
+            cap_fixture(0, 0.75, 0.75, 0.50),
+            cap_fixture(50, 0.75, 1.00, 1.00),
+            cap_fixture(100, 0.80, 0.75, 0.50),
+            cap_fixture(150, 0.80, 1.00, 0.50),
+            cap_fixture(200, 0.80, 1.00, 1.00),
+        ];
+
+        assert_eq!(recommend_phase2_cap(&caps), 200);
+    }
+
+    #[test]
+    fn phase2_provider_signal_experiment_preserves_invariants_and_recommends_cap() {
+        let caps = [0, 50, 100, 150, 200, 300];
+        let artifact = evaluate_phase2_caps(&caps);
+
+        assert_eq!(artifact.recommendation, 50);
+        assert_eq!(artifact.caps[0].relevant_case_count, 5);
+        assert_eq!(artifact.caps[0].mrr_at_10, 0.9);
+        assert_eq!(artifact.caps[0].recall_at_10, 1.0);
+        let close_case_rank_at_cap0 = artifact.caps[0]
+            .cases
+            .iter()
+            .find(|case| case.name == "close call pinned app source priority acquisition")
+            .and_then(|case| case.relevant_found_at)
+            .expect("close call cap0 rank");
+        let recommended = artifact
+            .caps
+            .iter()
+            .find(|cap| cap.cap == artifact.recommendation)
+            .expect("recommended cap");
+        let close_case_rank_at_recommended = recommended
+            .cases
+            .iter()
+            .find(|case| case.name == "close call pinned app source priority acquisition")
+            .and_then(|case| case.relevant_found_at)
+            .expect("close call recommended rank");
+        assert!(close_case_rank_at_cap0 > 1);
+        assert_eq!(close_case_rank_at_recommended, 1);
+        assert!(recommended.mrr_at_10 > artifact.caps[0].mrr_at_10);
+        assert!(artifact
+            .caps
+            .iter()
+            .filter(|cap| cap.cap >= artifact.recommendation)
+            .all(|cap| cap.top1_stability == 1.0));
+        assert!(artifact.caps.iter().all(|cap| !cap.nonmatches_resurrected));
+        assert!(artifact.caps.iter().all(|cap| cap.dedupe_tie_unchanged));
+        assert!(artifact.provider_signals.iter().any(|signal| {
+            signal.raw_provider_metadata == "apps.source=pinnedTaskbar" && signal.derived_signal > 0
+        }));
+        assert!(artifact.provider_signals.iter().any(|signal| {
+            signal.raw_provider_metadata == "settings.static_priority=not_provider_signal"
+                && signal.derived_signal == 0
+        }));
+        assert!(artifact.provider_signals.iter().any(|signal| {
+            signal.raw_provider_metadata == "everything.kind=Folder;everything.run_count=20"
+                && signal.derived_signal == 50
+        }));
+        maybe_write_phase2_artifact(&artifact);
+    }
+
+    fn row_with_provider_signal(
+        id: &str,
+        provider_id: SearchProviderId,
+        kind: SearchResultKind,
+        title: &str,
+        path: Option<&str>,
+        provider_signal: i32,
+    ) -> SearchResult {
+        let mut result = row(id, provider_id, kind, title, path);
+        result.provider_signal = provider_signal;
+        result
+    }
+
+    #[test]
+    fn phase2_provider_signal_cap50_acquires_source_priority_close_call() {
+        let rows = vec![
+            row_with_provider_signal(
+                "app:c-apps-aalpha",
+                SearchProviderId::Apps,
+                SearchResultKind::App,
+                "Alpha",
+                Some(r"C:\Apps\AAlpha.lnk"),
+                0,
+            ),
+            row_with_provider_signal(
+                "app:c-start-menu-zalpha",
+                SearchProviderId::Apps,
+                SearchResultKind::App,
+                "Alpha",
+                Some(r"C:\Start Menu\ZAlpha.lnk"),
+                50,
+            ),
+        ];
+
+        let ranked = rank_visible_results("alpha", rows, 10);
+
+        assert_eq!(ranked[0].id, "app:c-start-menu-zalpha");
+    }
+
+    #[test]
+    fn phase2_provider_signal_is_clamped_and_never_resurrects_nonmatches() {
+        let ranked = rank_visible_results(
+            "alpha",
+            vec![
+                row_with_provider_signal(
+                    "app:negative",
+                    SearchProviderId::Apps,
+                    SearchResultKind::App,
+                    "Alpha",
+                    Some(r"C:\Apps\Negative.lnk"),
+                    -10,
+                ),
+                row_with_provider_signal(
+                    "app:huge",
+                    SearchProviderId::Apps,
+                    SearchResultKind::App,
+                    "Alpha",
+                    Some(r"C:\Apps\Huge.lnk"),
+                    999,
+                ),
+            ],
+            10,
+        );
+
+        assert_eq!(ranked[0].id, "app:huge");
+        assert_eq!(ranked[0].score - ranked[1].score, 50);
+        assert!(rank_visible_results(
+            "alpha",
+            vec![row_with_provider_signal(
+                "file:budget",
+                SearchProviderId::Everything,
+                SearchResultKind::File,
+                "Budget.xlsx",
+                Some(r"C:\Docs\Budget.xlsx"),
+                999,
+            )],
+            10,
+        )
+        .is_empty());
     }
 
     #[test]
@@ -532,6 +1161,7 @@ mod tests {
                 terms: vec!["control".to_string(), "panel".to_string()],
                 aliases: vec!["control panel".to_string()],
                 score: 0,
+                provider_signal: 0,
                 match_reason: "fixture".to_string(),
                 record_key: "setting:control-panel".to_string(),
                 title_highlight_data: Vec::new(),

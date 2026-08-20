@@ -195,7 +195,7 @@ export function searchEngineResponseToPanelPayload(
     query: response.query,
     results,
     selectedIndex: Math.min(selectedIndex, Math.max(results.length - 1, 0)),
-    statusMessage: results.length ? 'Showing search results' : 'No search results matched',
+    statusMessage: searchPanelStatusMessageFromResponse(response, results),
     presentation
   };
 }
@@ -210,11 +210,51 @@ export function searchEngineProgressToPanelPayload(
     query: payload.query,
     results,
     selectedIndex: Math.min(selectedIndex, Math.max(results.length - 1, 0)),
-    statusMessage: payload.statusMessage,
+    statusMessage: searchPanelStatusMessageFromProgress(payload, results),
     presentation,
     phase: payload.phase,
     sequence: payload.sequence
   };
+}
+
+export function searchPanelStatusMessageFromResponse(
+  response: Pick<SearchEngineResponse, 'health' | 'providerTimings'>,
+  results: readonly SearchPanelResult[]
+): string {
+  if (response.providerTimings.some((timing) => timing.providerId === 'apps' && timing.cache === 'indexing')) {
+    return 'Apps index warming — results may update';
+  }
+
+  const everythingHealth = response.health.find((health) => health.providerId === 'everything');
+  if (everythingHealth) {
+    return searchPanelEverythingStatusMessage(everythingHealth, results.length);
+  }
+
+  return results.length ? '' : 'No search results matched';
+}
+
+export function searchPanelStatusMessageFromProgress(
+  payload: Pick<SearchProgressPayload, 'statusMessage' | 'providerTimings'>,
+  results: readonly SearchPanelResult[]
+): string {
+  if (payload.providerTimings?.some((timing) => timing.providerId === 'apps' && timing.cache === 'indexing')) {
+    return 'Apps index warming — results may update';
+  }
+
+  const normalized = payload.statusMessage.trim();
+  if (!normalized) {
+    return results.length ? '' : 'No search results matched';
+  }
+  if (normalized === 'Showing search results' && results.length > 0) {
+    return '';
+  }
+
+  const sanitized = searchPanelEverythingStatusMessageFromText(normalized);
+  if (sanitized) {
+    return sanitized;
+  }
+
+  return normalized;
 }
 
 export function mergeSearchPanelResultsByStableKey(
@@ -562,6 +602,42 @@ function mergePanelResult(current: SearchPanelResult, incoming: SearchPanelResul
     titleHighlightData: incoming.titleHighlightData ?? current.titleHighlightData,
     subtitleHighlightData: incoming.subtitleHighlightData ?? current.subtitleHighlightData
   };
+}
+
+function searchPanelEverythingStatusMessage(
+  health: SearchProviderHealth,
+  resultCount: number
+): string {
+  switch (health.reasonCode) {
+    case 'sdkMissing':
+      return 'Everything unavailable — showing local results';
+    case 'ipcUnavailable':
+      return health.state === 'unavailable'
+        ? 'Everything not running — showing local results'
+        : 'Everything unavailable — showing local results';
+    case 'providerError':
+      return 'Everything query failed — showing local results';
+    default:
+      return resultCount > 0 ? '' : 'No search results matched';
+  }
+}
+
+function searchPanelEverythingStatusMessageFromText(statusMessage: string): string {
+  if (/everything .*query failed/i.test(statusMessage) || /queryfailed/i.test(statusMessage)) {
+    return 'Everything query failed — showing local results';
+  }
+  if (/everything .*not running/i.test(statusMessage) || /process is not running/i.test(statusMessage)) {
+    return 'Everything not running — showing local results';
+  }
+  if (
+    /everything .*unavailable/i.test(statusMessage) ||
+    /sdk missing/i.test(statusMessage) ||
+    /sdk unavailable/i.test(statusMessage) ||
+    /ipc unavailable/i.test(statusMessage)
+  ) {
+    return 'Everything unavailable — showing local results';
+  }
+  return '';
 }
 
 function isOptionalHighlightData(value: unknown): value is number[] | undefined {

@@ -4,6 +4,8 @@ use crate::search::contracts::{
     SearchResultKind,
 };
 use crate::search::icons::icon_data_url_for_path;
+#[cfg(test)]
+use crate::search::test_observer::boundary_for;
 use crate::search_sources::everything_ffi::{
     self, EverythingSdkError, EverythingSdkRawResult, EverythingSdkRequest, EverythingSdkResultKind,
 };
@@ -69,8 +71,66 @@ pub(crate) struct EverythingSearchRun {
     sdk_latency_ms: Option<f64>,
 }
 
+#[cfg(test)]
+pub(crate) fn test_everything_run(
+    results: Vec<SearchResult>,
+    timing: SearchProviderTiming,
+    health: SearchProviderHealth,
+    sdk_latency_ms: Option<f64>,
+) -> EverythingSearchRun {
+    EverythingSearchRun {
+        results,
+        timing,
+        health,
+        sdk_latency_ms,
+    }
+}
+
 pub(crate) fn search_everything(query: &str, limit: usize) -> EverythingSearchRun {
     search_everything_with(query, limit, detect_everything, run_everything_query)
+}
+
+pub(crate) fn search_everything_latest_only(
+    query: &str,
+    limit: usize,
+    sequence: u64,
+    is_latest: fn(u64) -> bool,
+) -> EverythingSearchRun {
+    search_everything_with_latest_gate(
+        query,
+        limit,
+        sequence,
+        detect_everything,
+        run_everything_query,
+        is_latest,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_search_everything_with_latest_gate<R, L>(
+    query: &str,
+    limit: usize,
+    sequence: u64,
+    run_query: R,
+    is_latest: L,
+) -> EverythingSearchRun
+where
+    R: Fn(&Path, &EverythingSdkRequest) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError>,
+    L: Fn(u64) -> bool,
+{
+    search_everything_with_latest_gate(
+        query,
+        limit,
+        sequence,
+        || EverythingDetection {
+            dll_path: Some(PathBuf::from(r"C:\Everything64.dll")),
+            installed_exe_path: Some(PathBuf::from(r"C:\Everything.exe")),
+            process_running: true,
+            service_running: true,
+        },
+        run_query,
+        is_latest,
+    )
 }
 
 fn search_everything_with<D, R>(
@@ -83,6 +143,22 @@ where
     D: FnOnce() -> EverythingDetection,
     R: Fn(&Path, &EverythingSdkRequest) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError>,
 {
+    search_everything_with_latest_gate(query, limit, u64::MAX, detect, run_query, |_| true)
+}
+
+fn search_everything_with_latest_gate<D, R, L>(
+    query: &str,
+    limit: usize,
+    sequence: u64,
+    detect: D,
+    run_query: R,
+    is_latest: L,
+) -> EverythingSearchRun
+where
+    D: FnOnce() -> EverythingDetection,
+    R: Fn(&Path, &EverythingSdkRequest) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError>,
+    L: Fn(u64) -> bool,
+{
     let started_at = crate::search::contracts::iso_now();
     let started = Instant::now();
     let normalized_query = query.trim();
@@ -91,24 +167,34 @@ where
     let mut health = state.health.clone();
     let mut results = Vec::new();
     let mut sdk_latency_ms = None;
+    let mut discarded_as_stale = false;
     if !normalized_query.is_empty() {
         if let Some(dll_path) = state.dll_path.clone() {
-            let mode = classify_everything_query(normalized_query);
-            let request = everything_request_for_mode(normalized_query, limit, mode);
-            let sdk_started = Instant::now();
-            match run_query(&dll_path, &request) {
-                Ok(raw_results) => {
-                    results = raw_results
-                        .iter()
-                        .map(|result| map_sdk_result_for_mode(result, mode, normalized_query))
-                        .take(limit)
-                        .collect();
+            if !is_latest(sequence) {
+                discarded_as_stale = true;
+            } else {
+                let mode = classify_everything_query(normalized_query);
+                let request = everything_request_for_mode(normalized_query, limit, mode);
+                let sdk_started = Instant::now();
+                match run_query_with_latest_gate(
+                    &dll_path, &request, sequence, &run_query, &is_latest,
+                ) {
+                    Ok(raw_results) => {
+                        results = raw_results
+                            .iter()
+                            .take(request.max_results)
+                            .map(|result| map_sdk_result_for_mode(result, mode, normalized_query))
+                            .collect();
+                    }
+                    Err(EverythingQueryOutcome::Provider(error)) => {
+                        health = health_for_error(&error);
+                    }
+                    Err(EverythingQueryOutcome::Stale) => {
+                        discarded_as_stale = true;
+                    }
                 }
-                Err(error) => {
-                    health = health_for_error(&error);
-                }
+                sdk_latency_ms = Some(sdk_started.elapsed().as_secs_f64() * 1000.0);
             }
-            sdk_latency_ms = Some(sdk_started.elapsed().as_secs_f64() * 1000.0);
         }
     }
 
@@ -124,11 +210,53 @@ where
             cache_age_ms: None,
             result_count,
             applied: true,
-            discarded_as_stale: false,
+            discarded_as_stale,
         },
         health,
         sdk_latency_ms,
     }
+}
+
+enum EverythingQueryOutcome {
+    Provider(EverythingSdkError),
+    Stale,
+}
+
+fn run_query_with_latest_gate<R, L>(
+    dll_path: &Path,
+    request: &EverythingSdkRequest,
+    sequence: u64,
+    run_query: &R,
+    is_latest: &L,
+) -> Result<Vec<EverythingSdkRawResult>, EverythingQueryOutcome>
+where
+    R: Fn(&Path, &EverythingSdkRequest) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError>,
+    L: Fn(u64) -> bool,
+{
+    if !is_latest(sequence) {
+        return Err(EverythingQueryOutcome::Stale);
+    }
+    let _guard = EVERYTHING_QUERY_LOCK.lock().map_err(|_| {
+        EverythingQueryOutcome::Provider(EverythingSdkError::QueryFailed(
+            "Everything provider lock failed".to_string(),
+        ))
+    })?;
+    if !is_latest(sequence) {
+        return Err(EverythingQueryOutcome::Stale);
+    }
+    if request.query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    if request.content_search_enabled {
+        return Err(EverythingQueryOutcome::Provider(
+            EverythingSdkError::QueryFailed(
+                "Everything content search is disabled for realtime search".to_string(),
+            ),
+        ));
+    }
+    #[cfg(test)]
+    boundary_for(SearchProviderId::Everything);
+    run_query(dll_path, request).map_err(EverythingQueryOutcome::Provider)
 }
 
 fn cached_everything_state<D>(
@@ -210,17 +338,6 @@ fn run_everything_query(
     dll_path: &Path,
     request: &EverythingSdkRequest,
 ) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError> {
-    let _guard = EVERYTHING_QUERY_LOCK.lock().map_err(|_| {
-        EverythingSdkError::QueryFailed("Everything provider lock failed".to_string())
-    })?;
-    if request.query.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    if request.content_search_enabled {
-        return Err(EverythingSdkError::QueryFailed(
-            "Everything content search is disabled for realtime search".to_string(),
-        ));
-    }
     everything_ffi::query_everything_sdk(dll_path, request)
 }
 
@@ -385,6 +502,7 @@ fn map_sdk_result_for_mode(
         )),
         aliases: Vec::new(),
         score: score_everything_result(result, kind, mode, query),
+        provider_signal: everything_run_count_signal(result.run_count),
         match_reason: "everythingName".to_string(),
         record_key: format!("everything:{legacy_kind}:{}", normalize_record_key(&path)),
         title_highlight_data: result
@@ -411,6 +529,32 @@ fn score_everything_result(
     base + result.run_count.min(20) as i32
         + folder_navigation_boost(result, kind, mode, query)
         + app_like_boost(kind, mode)
+}
+
+#[cfg(test)]
+pub(crate) fn test_everything_result_from_run_count(
+    path: &str,
+    kind: EverythingSdkResultKind,
+    run_count: u32,
+    query: &str,
+) -> SearchResult {
+    let raw = EverythingSdkRawResult {
+        full_path: PathBuf::from(path),
+        kind,
+        run_count,
+        highlighted_file_name: None,
+    };
+    let mode = classify_everything_query(query);
+    map_sdk_result_for_mode(&raw, mode, query)
+}
+
+#[cfg(test)]
+pub(crate) fn test_everything_run_count_signal(run_count: u32) -> i32 {
+    everything_run_count_signal(run_count)
+}
+
+fn everything_run_count_signal(run_count: u32) -> i32 {
+    ((run_count.min(20) as i32) * 50) / 20
 }
 
 fn folder_navigation_boost(
@@ -604,7 +748,7 @@ fn normalize(value: &str) -> String {
 }
 
 #[cfg(test)]
-fn clear_everything_cache_for_test() {
+pub(crate) fn clear_everything_cache_for_test() {
     if let Some(cache) = EVERYTHING_STATE.get() {
         if let Ok(mut guard) = cache.lock() {
             *guard = None;
@@ -616,7 +760,87 @@ fn clear_everything_cache_for_test() {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn phase3_stale_sequence_does_not_enter_everything_sdk_boundary() {
+        clear_everything_cache_for_test();
+        let sdk_entries = AtomicUsize::new(0);
+        let run = search_everything_with_latest_gate(
+            "spotify",
+            10,
+            90,
+            || EverythingDetection {
+                dll_path: Some(PathBuf::from(r"C:\Everything64.dll")),
+                installed_exe_path: Some(PathBuf::from(r"C:\Everything.exe")),
+                process_running: true,
+                service_running: true,
+            },
+            |_, _| {
+                sdk_entries.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            },
+            |_| false,
+        );
+
+        assert_eq!(sdk_entries.load(Ordering::SeqCst), 0);
+        assert!(run.timing.discarded_as_stale);
+        assert!(run.results.is_empty());
+    }
+
+    #[test]
+    fn phase3_sequence_is_checked_again_after_everything_lock_wait() {
+        clear_everything_cache_for_test();
+        let checks = Arc::new(AtomicUsize::new(0));
+        let sdk_entries = Arc::new(AtomicUsize::new(0));
+        let latest = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let lock_holder = EVERYTHING_QUERY_LOCK.lock().expect("hold Everything lock");
+
+        let checks_for_worker = Arc::clone(&checks);
+        let sdk_entries_for_worker = Arc::clone(&sdk_entries);
+        let latest_for_worker = Arc::clone(&latest);
+        let worker = std::thread::spawn(move || {
+            search_everything_with_latest_gate(
+                "spotify",
+                10,
+                90,
+                || EverythingDetection {
+                    dll_path: Some(PathBuf::from(r"C:\Everything64.dll")),
+                    installed_exe_path: Some(PathBuf::from(r"C:\Everything.exe")),
+                    process_running: true,
+                    service_running: true,
+                },
+                |_, _| {
+                    sdk_entries_for_worker.fetch_add(1, Ordering::SeqCst);
+                    Ok(Vec::new())
+                },
+                |_| {
+                    checks_for_worker.fetch_add(1, Ordering::SeqCst);
+                    latest_for_worker.load(Ordering::SeqCst)
+                },
+            )
+        });
+
+        while checks.load(Ordering::SeqCst) < 2 {
+            std::thread::yield_now();
+        }
+        latest.store(false, Ordering::SeqCst);
+        drop(lock_holder);
+        let run = worker.join().expect("Everything worker completes");
+
+        assert_eq!(checks.load(Ordering::SeqCst), 3);
+        assert_eq!(sdk_entries.load(Ordering::SeqCst), 0);
+        assert!(run.timing.discarded_as_stale);
+    }
+
+    #[test]
+    fn phase2_everything_run_count_signal_matches_approved_cap_scale() {
+        assert_eq!(test_everything_run_count_signal(0), 0);
+        assert_eq!(test_everything_run_count_signal(10), 25);
+        assert_eq!(test_everything_run_count_signal(20), 50);
+        assert_eq!(test_everything_run_count_signal(100), 50);
+    }
 
     #[test]
     fn cached_health_has_explicit_ttl() {
@@ -860,6 +1084,65 @@ mod tests {
             SearchResultAction::OpenFolder { .. }
         ));
         assert!(result.score >= 880);
+    }
+
+    #[test]
+    fn phase4_everything_keeps_overfetch_rows_for_canonical_rerank() {
+        clear_everything_cache_for_test();
+        let run = test_search_everything_with_latest_gate(
+            "dev",
+            50,
+            120,
+            |_, request| {
+                assert_eq!(request.max_results, 75);
+                let mut rows = (0..60)
+                    .map(|index| EverythingSdkRawResult {
+                        full_path: PathBuf::from(format!(r"C:\noise\dev-noise-{index}.txt")),
+                        kind: EverythingSdkResultKind::File,
+                        run_count: 1,
+                        highlighted_file_name: None,
+                    })
+                    .collect::<Vec<_>>();
+                rows.push(EverythingSdkRawResult {
+                    full_path: PathBuf::from(r"C:\dev"),
+                    kind: EverythingSdkResultKind::Folder,
+                    run_count: 20,
+                    highlighted_file_name: None,
+                });
+                Ok(rows)
+            },
+            |_| true,
+        );
+
+        assert!(run
+            .results
+            .iter()
+            .any(|row| row.record_key == "everything:folder:c:\\dev"));
+        assert!(run.results.len() > 50);
+    }
+
+    #[test]
+    fn phase4_everything_mapping_stays_bounded_to_approved_overfetch_cap() {
+        clear_everything_cache_for_test();
+        let run = test_search_everything_with_latest_gate(
+            "dev",
+            50,
+            120,
+            |_, request| {
+                assert_eq!(request.max_results, 75);
+                Ok((0..250)
+                    .map(|index| EverythingSdkRawResult {
+                        full_path: PathBuf::from(format!(r"C:\dev\bounded-{index}.txt")),
+                        kind: EverythingSdkResultKind::File,
+                        run_count: 1,
+                        highlighted_file_name: None,
+                    })
+                    .collect())
+            },
+            |_| true,
+        );
+
+        assert_eq!(run.results.len(), 75);
     }
 
     #[test]

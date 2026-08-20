@@ -1,5 +1,43 @@
 ## Change Ledger
 
+- 2026-08-20 `[CODE]` TESTED: Updated stale Melt migration coverage for Phase 5 folder pinning to assert the input-owned `Ctrl+Enter` path and reject interactive pin controls inside listbox options.
+- 2026-08-20 `[TOOL]` VALIDATED: Search pin migration test and centered-search panel tests passed. Full Node failures dropped from 10 to 9 (`723/735` passed, 3 historical todos); every remaining failure is outside the search Phase 0-5 touched surfaces.
+
+- 2026-08-20 `[CODE]` DOCS: Reconciled search plan metadata with completed owner-approved Phases 0-5; Phase 6 remains explicitly deferred and unauthorized.
+- 2026-08-20 `[TOOL]` VALIDATED: Current focused search gate passed 178/181 Node tests with 3 historical todos and 99/101 Rust search tests with 2 expected artifact-writer ignores; `npm run check` and `npm run build` passed. Release-live Phase 0 and runtime DOM Phase 5B evidence remain explicitly absent/waived rather than fabricated.
+
+- 2026-08-20 `[CODE]` FIXED: Phase 5 folder pinning now uses the combobox shortcut `Ctrl+Enter` on the centered input with a visible noninteractive hint, removing the interactive Pin button from inside listbox options and keeping the input the sole focus/activation owner.
+- 2026-08-20 `[TOOL]` VALIDATED: Focused centered-search and search-panel source tests reject interactive descendants inside options and prove the pin shortcut/focus path; `npm run check` and `npm run build` passed. Runtime DOM capture was waived by the user after `wmux` hung; no runtime evidence was fabricated.
+
+- 2026-08-20 `[CODE]` FIXED: Phase 5 centered search ARIA ownership is now single-source only; the listbox no longer carries `aria-activedescendant`, and source tests structurally inspect the isolated input/listbox tags to reject duplicate ownership.
+- 2026-08-20 `[TOOL]` VALIDATED: Focused centered-search and search-panel state Node tests passed after the ownership cleanup; `npm run check` and `npm run build` stayed green.
+
+- 2026-08-20 `[CODE]` IMPLEMENTED: Phase 5 search UI now renders centered results in strict backend canonical order with no grouped tail, uses an input-owned combobox/listbox focus model, keeps pointer selection focused on the query input, and shows sanitized compact degraded-status text for Everything/app-index states while hiding generic ready text when rows exist.
+- 2026-08-20 `[TOOL]` VALIDATED: Focused Node tests for search row order, centered search ARIA/focus/source contracts, search engine status mapping, and search panel state passed; `npm run check` and `npm run build` passed. No runtime browser trace captured, so artifact bundle is source/unit evidence only.
+
+- 2026-08-20 `[CODE]` FIXED: Search Phase 4 Everything overfetch now preserves provider rows up to the approved SDK request bound (`limit + 25`, max `200`) instead of truncating mapped Everything rows to the visible limit before canonical rerank, allowing stronger overfetch rows such as `C:\dev` beyond raw index 50 to surface through `rank_visible_results`.
+- 2026-08-20 `[CODE]` TESTED: Added RED-first Phase 4 Everything coverage for an overfetch row at raw index 60, bounded mapping to the approved request count, and a deterministic 30-sample artifact writer with observed canonical ranking metrics plus live in-process Phase 3 stale/latest/recursive regression evidence.
+- 2026-08-20 `[TOOL]` VALIDATED: Final focused search gate passed 178/181 Node tests with 3 historical todos and 99/101 Rust search tests with 2 expected artifact-writer ignores. A Phase 3 post-lock test race was fixed by waiting until the worker completed both pre-lock freshness checks before flipping freshness; focused and full parallel search reruns passed. Full `npm run validate` remains blocked by unrelated pre-existing task-preview/taskbar source-contract failures outside search scope.
+
+- 2026-08-20 `[CODE]` IMPLEMENTED: Search Phase 3 backend latest-only cutoff now publishes a monotonic Rust latest-sequence registry at `search_engine` command entry before `spawn_blocking`, routes production Everything through request-sequence gates, and double-checks staleness before and after the Everything provider mutex before entering the SDK boundary; no cancellation claim was added.
+- 2026-08-20 `[CODE]` TESTED: Added Phase 3 Rust coverage for stale Everything boundary suppression, post-lock stale suppression, monotonic non-regressing registry behavior, and a deterministic ignored 30x4 artifact harness that exercises the coordinator/latest-registry/provider-lock/fake-SDK seam and derives metrics from observed boundary/SDK/completion events with explicit limitations.
+
+- 2026-08-20 `[CODE]` ADDED: Search scoring now has a test-only Phase 2 provider-signal cap experiment over canonical ranker components, evaluating caps `[0, 50, 100, 150, 200, 300]` without changing production `rank_visible_results` behavior.
+- 2026-08-20 `[CODE]` FIXED: Phase 2 experiment now derives provider signals through test-only app source-priority and Everything run-count production mapping helpers, records raw provider metadata plus derived signal, excludes nonmatch cases from relevant MRR/Recall denominators, requires MRR improvement before Recall/prefix tie-breaks, and includes a discriminating app source-priority close-call corpus where cap0 ranks the relevant pinned app below rank1 but safe capped signal acquires it.
+- 2026-08-20 `[CODE]` IMPLEMENTED: Approved Phase 2 production cap50 now flows through internal-only `SearchResult.provider_signal`, with Apps source-priority and Everything run-count signals added only after canonical match success; commands/events/frontend JSON shape remain unchanged.
+- 2026-08-20 `[TOOL]` VALIDATED: Phase 2 artifact recommends/applies cap `50`; focused Rust scoring/search tests, `cargo fmt --check`, and `cargo check` passed with pre-existing warnings only.
+
+- 2026-08-20 `[CODE]` FIXED: Search settings provider now supports approved Phase 1 short prefixes through a general anchored static-row short-token policy instead of exact query-shape allowlists, without broad one-letter/path-like settings noise, while preserving safe `ms-settings:` and `control.exe` actions.
+- 2026-08-20 `[TOOL]` VALIDATED: RED Rust provider corpus tests failed on old blanket short-token policy; focused GREEN settings/provider, action-safety, Node source-contract, cargo fmt/check, and Phase 1 artifact validation passed.
+
+- 2026-08-19 `[CODE]` FIXED: Top-bar right-side controls now reserve a fixed-width time slot so the clock can change without nudging terminal/command/tray/sound buttons.
+- 2026-08-19 `[TOOL]` VALIDATED: Added focused top-bar source-contract coverage, reproduced the red test, then passed `node --test tests/topBarCalendar.test.mjs` and `npm run check`.
+
+- 2026-08-19 `[CODE]` DOCS: Added focused search-functionality investigation covering short-query failures, ranking/display behavior, performance risks, accessibility, provider coverage, and prioritized validation-backed recommendations.
+- 2026-08-19 `[TOOL]` VALIDATED: Focused search Node suite passed 169/169; latest focused Rust search rerun passed 77/77 after one earlier non-reproduced app-cache-state failure; adversarial factual review completed.
+- 2026-08-19 `[CODE]` DOCS: Added draft implementation-ready phased search improvement plan with RED-first tests, exact work scopes, non-regression invariants, measurable acceptance gates, rollback boundaries, and approval blockers; no product behavior changed.
+- 2026-08-19 `[TOOL]` REVIEWED: Plan scored 98/100 under strict spec validation, passed whitespace validation, and completed adversarial readiness review with all material findings resolved; implementation remains unauthorized pending owner approval.
+
 - 2026-08-19 `[CODE]` FIXED: Per-window task attention is visible again. Exact notified tiles now use dedicated `.task-button.task-window-attention`; its direct selector outranks the base task-button shadow and restores the bright amber warning without styling sibling windows or reusing group-level visual state.
 - 2026-08-19 `[TOOL]` VALIDATED: Reproduced the regression with the exact `FlashWindowEx` P/Invoke against a real PowerShell HWND, proved native `HSHELL_FLASH` delivery, observed identical pre-fix captures, then passed 12 focused tests, `svelte-check`, production frontend build, Rust build, and a post-fix live replay with changed rendered pixels.
 

@@ -4,6 +4,8 @@ use crate::search::contracts::{
     SearchResultAction, SearchResultKind,
 };
 use crate::search::icons::icon_data_url_for_path;
+#[cfg(test)]
+use crate::search::test_observer::{record, SearchOperation};
 use std::path::Path;
 use std::time::Instant;
 
@@ -19,6 +21,8 @@ pub(crate) fn search_open_windows(
     limit: usize,
     windows: &[SearchOpenWindowContext],
 ) -> OpenWindowsSearchRun {
+    #[cfg(test)]
+    record(SearchOperation::OpenWindows);
     let started_at = iso_now();
     let started = Instant::now();
     let results = rank_open_windows(query, windows, limit);
@@ -116,6 +120,7 @@ fn window_result(
             vec![app_name]
         },
         score,
+        provider_signal: 0,
         match_reason: reason.to_string(),
         record_key: format!("window:{}", window.id),
         title_highlight_data: Vec::new(),

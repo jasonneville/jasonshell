@@ -31,11 +31,8 @@
   import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
     buildVisibleSearchRows,
-    buildVisibleSearchGroupOverflows,
-    DEFAULT_VISIBLE_GROUP_LIMIT,
     nextSearchPanelFallbackDelay,
     nextVisibleRowIndex,
-    type SearchExpandableGroupId,
     selectedVisibleRowIndex,
     searchVisibleRowIdentity,
     searchResultActionHints,
@@ -48,7 +45,6 @@
   let resultRows: Array<HTMLDivElement | undefined> = [];
   let queryInput: HTMLInputElement | null = null;
   let lastRevealedSelection = '';
-  let expandedVisibleGroups = new Set<SearchExpandableGroupId>();
   let fallbackTimer: number | null = null;
   let fallbackAttempt = 0;
   let fallbackGeneration = 0;
@@ -66,30 +62,16 @@
   $: selectedIndex = panelState.selectedIndex;
   $: statusMessage = panelState.statusMessage;
   $: presentation = panelState.presentation;
-  $: visibleRows = buildVisibleSearchRows(results, {
-    expandedGroups: expandedVisibleGroups,
-    perGroupLimit: DEFAULT_VISIBLE_GROUP_LIMIT
-  });
-  $: visibleGroupOverflows = buildVisibleSearchGroupOverflows(results, {
-    expandedGroups: expandedVisibleGroups,
-    perGroupLimit: DEFAULT_VISIBLE_GROUP_LIMIT
-  });
-  $: overflowByGroup = new Map(visibleGroupOverflows.map((overflow) => [overflow.groupId, overflow]));
-  $: lastVisibleIndexByGroup = visibleRows.reduce((lookup, row, index) => {
-    lookup.set(row.groupId, index);
-    return lookup;
-  }, new Map<string, number>());
+  $: visibleRows = buildVisibleSearchRows(results);
   $: selectedRowIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
   $: selectedRow = selectedRowIndex >= 0 ? visibleRows[selectedRowIndex] : null;
   $: void revealSelectedResult(selectedRowIndex, visibleRows.length);
+  $: visibleStatusMessage = searchPanelStatusMessage(statusMessage, results.length);
   const topBarTarget = topBarWebviewWindowEventTarget();
 
   function applyPayload(payload: SearchPanelPayload | null) {
     const previousQuery = panelState.query;
     panelState = applySearchPanelPayload(panelState, payload);
-    if (panelState.query !== previousQuery) {
-      expandedVisibleGroups = new Set<SearchExpandableGroupId>();
-    }
     if (panelState.query === '' || optimisticQueryDraft === panelState.query) {
       optimisticQueryDraft = null;
     }
@@ -218,6 +200,11 @@
       closeCenteredPanelFromHotkey();
       return;
     }
+    if (isCtrlEnterHotkey(event)) {
+      event.preventDefault();
+      pinSelectedFolder();
+      return;
+    }
     if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
       return;
     }
@@ -247,6 +234,7 @@
   function selectRow(row: SearchVisibleRow) {
     markPanelInteraction();
     void emitTo(topBarTarget, SEARCH_PANEL_SELECT_EVENT, searchVisibleRowIdentity(row));
+    void focusQueryInput();
   }
 
   function markPanelInteraction() {
@@ -257,46 +245,16 @@
     void emitTo(topBarTarget, SEARCH_PANEL_INTERACTION_EVENT, null);
   }
 
-  function pinFolderResult(event: MouseEvent, result: SearchPanelResult) {
-    event.preventDefault();
-    event.stopPropagation();
-    markPanelInteraction();
-    if (result.kind === 'folder' && result.path) {
-      void emitTo(topBarTarget, SEARCH_PANEL_PIN_FOLDER_EVENT, result.path);
-    }
+  function isCtrlEnterHotkey(event: KeyboardEvent) {
+    return event.key === 'Enter' && event.ctrlKey && !event.altKey && !event.metaKey;
   }
 
-  function expandGroup(groupId: SearchExpandableGroupId) {
-    markPanelInteraction();
-    expandedVisibleGroups = new Set([...expandedVisibleGroups, groupId]);
-    void emitTo(topBarTarget, SEARCH_PANEL_EXPAND_GROUP_EVENT, groupId);
-  }
-
-  function handleResultKeydown(event: KeyboardEvent, row: SearchVisibleRow) {
-    if (isCtrlSpaceHotkey(event)) {
-      event.preventDefault();
-      closeCenteredPanelFromHotkey();
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      activateRow(row);
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      selectVisibleOffset(1);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      selectVisibleOffset(-1);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      if (presentation === 'centered') {
-        hideCenteredPanelImmediately();
-        return;
-      }
-      announcePanelInteraction();
-      void emitTo(topBarTarget, SEARCH_PANEL_KEY_EVENT, event.key);
-    } else if (event.key === ' ') {
-      event.preventDefault();
-      selectRow(row);
+  function pinSelectedFolder() {
+    if (!selectedRow?.result.path || selectedRow.result.kind !== 'folder') {
+      return;
     }
+    markPanelInteraction();
+    void emitTo(topBarTarget, SEARCH_PANEL_PIN_FOLDER_EVENT, selectedRow.result.path);
   }
 
   function selectVisibleOffset(direction: -1 | 1) {
@@ -305,6 +263,13 @@
       return;
     }
     selectRow(visibleRows[nextIndex]);
+  }
+
+  function handleOptionKeydown(event: KeyboardEvent, row: SearchVisibleRow) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      activateRow(row);
+    }
   }
 
   function startFolderDrag(event: DragEvent, result: SearchPanelResult) {
@@ -430,6 +395,17 @@
       highlighted: selected.has(index)
     }));
   }
+
+  function searchPanelStatusMessage(message: string, resultCount: number) {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return '';
+    }
+    if (resultCount > 0 && (trimmed === 'Showing search results' || trimmed === 'Search is ready')) {
+      return '';
+    }
+    return trimmed;
+  }
 </script>
 
 <svelte:window on:mousedown={markPanelInteraction} />
@@ -443,6 +419,12 @@
     {#if presentation === 'centered'}
       <input
         bind:this={queryInput}
+        aria-activedescendant={selectedRow?.domId}
+        aria-autocomplete="list"
+        aria-controls="search-results"
+        aria-describedby="search-status"
+        aria-expanded={true}
+        role="combobox"
         aria-label="Search Everything"
         autocomplete="off"
         class="search-panel-query"
@@ -468,26 +450,39 @@
     <kbd>Enter opens</kbd>
   </header>
 
-  {#if results.length}
-    <div class="result-list" role="listbox" tabindex="0" aria-label="Search results" aria-activedescendant={selectedRow?.domId}>
+  <div
+    id="search-status"
+    class="search-panel-status"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+  >
+    {visibleStatusMessage}
+  </div>
+
+  <div
+    id="search-results"
+    class="result-list"
+    role="listbox"
+    tabindex="-1"
+    aria-label="Search results"
+  >
+    {#if results.length}
       {#each visibleRows as row, index (row.rowKey)}
         {@const result = row.result}
         {@const hints = searchResultActionHints(result)}
-        {#if row.showGroupLabel}
-          <div class="result-group-label">{row.groupLabel}</div>
-        {/if}
         <div
           id={row.domId}
           class:result-selected={index === selectedRowIndex}
           class="result-row"
           role="option"
-          tabindex="0"
+          tabindex="-1"
           draggable={result.kind === 'folder' && !!result.path}
           aria-selected={index === selectedRowIndex}
           use:trackVisibleRow={index}
           on:click={() => selectRow(row)}
           on:dblclick={() => activateRow(row)}
-          on:keydown={(event) => handleResultKeydown(event, row)}
+          on:keydown={(event) => handleOptionKeydown(event, row)}
           on:dragstart={(event) => startFolderDrag(event, result)}
         >
           <span class="result-icon" aria-hidden="true">
@@ -512,13 +507,8 @@
           <span class="result-actions">
             <span class="result-action-primary">{hints.primary}</span>
             {#if hints.secondary === 'Pin' && result.kind === 'folder' && result.path}
-              <MeltActionButton
-                class="pin-folder"
-                ariaLabel={`Pin ${result.title} to the top bar`}
-                onClick={(event) => pinFolderResult(event, result)}
-              >
-                Pin
-              </MeltActionButton>
+              <span class="pin-folder" aria-hidden="true">Pin</span>
+              <span class="pin-folder-shortcut">Ctrl+Enter</span>
             {:else if hints.secondary}
               <span class="result-kind">{hints.secondary}</span>
             {:else}
@@ -526,21 +516,11 @@
             {/if}
           </span>
         </div>
-        {@const overflow = overflowByGroup.get(row.groupId as SearchExpandableGroupId)}
-        {#if overflow && lastVisibleIndexByGroup.get(row.groupId) === index}
-          <button
-            type="button"
-            class="result-show-more"
-            on:click={() => expandGroup(overflow.groupId)}
-          >
-            Show {overflow.hiddenCount} more {overflow.groupLabel.toLowerCase()}
-          </button>
-        {/if}
       {/each}
-    </div>
-  {:else}
-    <div class="empty-state surface-state info" role="status">{statusMessage}</div>
-  {/if}
+    {:else}
+      <div class="empty-state surface-state info">{visibleStatusMessage ? '' : 'No search results matched'}</div>
+    {/if}
+  </div>
   {#if presentation === 'centered'}
     <button
       type="button"

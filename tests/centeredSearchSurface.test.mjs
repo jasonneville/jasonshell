@@ -81,6 +81,54 @@ test('search panel surface owns centered input and resize grip wiring', () => {
   assert.match(source, /writeCenteredSearchPanelSize/);
 });
 
+test('centered search surface input owns combobox popup and status description', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  const inputTag = source.match(/<input\b[\s\S]*?class="search-panel-query"[\s\S]*?\/>/)?.[0] ?? '';
+  const listboxTag = source.match(/<div\b[\s\S]*?id="search-results"[\s\S]*?role="listbox"[\s\S]*?>/)?.[0] ?? '';
+
+  assert.match(inputTag, /role="combobox"/);
+  assert.match(inputTag, /aria-autocomplete="list"/);
+  assert.match(inputTag, /aria-expanded=\{true\}/);
+  assert.match(inputTag, /aria-controls="search-results"/);
+  assert.match(inputTag, /aria-activedescendant=\{selectedRow\?\.domId\}/);
+  assert.match(inputTag, /aria-describedby="search-status"/);
+  assert.match(source, /id="search-results"/);
+  assert.match(source, /id="search-status"/);
+  assert.match(listboxTag, /role="listbox"/);
+  assert.match(listboxTag, /tabindex="-1"/);
+  assert.doesNotMatch(listboxTag, /aria-activedescendant=/);
+  assert.equal((inputTag.match(/aria-activedescendant=/g) ?? []).length, 1);
+  assert.equal((listboxTag.match(/aria-activedescendant=/g) ?? []).length, 0);
+});
+
+test('centered search surface keeps listbox options non-tabbable and pin control out of tab flow', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  const optionTag = source.match(/<div\b[\s\S]*?role="option"[\s\S]*?>/)?.[0] ?? '';
+
+  assert.match(optionTag, /role="option"/);
+  assert.match(optionTag, /tabindex="-1"/);
+  assert.match(optionTag, /aria-selected=\{index === selectedRowIndex\}/);
+  assert.doesNotMatch(optionTag, /<button|MeltActionButton|on:click=\{\(event\) => pinFolderResult/);
+  assert.doesNotMatch(optionTag, /tabindex="0"/);
+});
+
+test('centered search surface keeps selection and activation focus on the input', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  const queryHandler = source.match(/function handleQueryKeydown\(event: KeyboardEvent\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+
+  assert.match(source, /function focusQueryInput\(\)/);
+  assert.match(source, /selectRow\(row\)/);
+  assert.match(source, /activateRow\(row\)/);
+  assert.match(source, /isCtrlEnterHotkey\(event\)/);
+  assert.match(source, /pinSelectedFolder\(\)/);
+  assert.match(source, /void focusQueryInput\(\);/);
+  assert.match(queryHandler, /if \(isCtrlEnterHotkey\(event\)\) \{/);
+  assert.match(queryHandler, /if \(event\.key === 'ArrowDown'\)/);
+  assert.match(queryHandler, /if \(event\.key === 'ArrowUp'\)/);
+  assert.match(queryHandler, /if \(event\.key === 'Enter'\)/);
+  assert.match(queryHandler, /if \(event\.key === 'Escape' && presentation === 'centered'\)/);
+});
+
 test('centered search surface targets top-bar explicitly for cross-window search intents', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
   const queryEmit = source.match(/function queueQueryEmit\(value: string\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
@@ -118,13 +166,11 @@ test('centered search surface keeps a local optimistic query draft while backend
 
 test('centered search surface hides immediately on escape and only refocuses when panel focus is elsewhere', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  const hideHandler = source.match(/function hideCenteredPanelImmediately\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
   assert.match(source, /import \{\s*getSearchPanelPayload,\s*hideSearchPanel,/);
-  assert.match(source, /function hideCenteredPanelImmediately\(\) \{/);
-  assert.match(source, /queryInput\?\.blur\(\);/);
-  assert.match(source, /void hideSearchPanel\(\)\.catch\(\(\) => undefined\);/);
+  assert.match(hideHandler, /queryInput\?\.blur\(\);/);
+  assert.match(hideHandler, /void hideSearchPanel\(\)\.catch\(\(\) => undefined\);/);
   assert.match(source, /emitTo\(topBarTarget, SEARCH_PANEL_KEY_EVENT, 'Escape'\)/);
-  assert.match(source, /if \(event\.key === 'Escape' && presentation === 'centered'\) \{/);
-  assert.match(source, /if \(presentation === 'centered'\) \{\s*hideCenteredPanelImmediately\(\);/);
   assert.match(source, /function shouldFocusCenteredQueryInput\(\) \{/);
   assert.match(source, /document\.activeElement === queryInput/);
   assert.match(source, /document\.activeElement instanceof HTMLElement && document\.activeElement\.closest\('\.search-panel'\)/);

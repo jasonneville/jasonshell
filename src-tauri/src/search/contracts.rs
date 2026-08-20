@@ -124,6 +124,8 @@ pub(crate) struct SearchResult {
     #[serde(default)]
     pub aliases: Vec<String>,
     pub score: i32,
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub provider_signal: i32,
     pub match_reason: String,
     pub record_key: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -390,6 +392,26 @@ mod tests {
         assert_eq!(timing.result_count, 2);
         assert_eq!(timing.cache_age_ms, Some(25));
         assert_eq!(health.state, SearchProviderHealthState::Ready);
+    }
+
+    #[test]
+    fn provider_signal_is_internal_and_defaults_from_old_json() {
+        let old_json = serde_json::json!({
+            "id": "app:test",
+            "providerId": "apps",
+            "kind": "app",
+            "title": "Test App",
+            "action": { "kind": "openApp", "path": "C:\\Apps\\Test.lnk" },
+            "score": 100,
+            "matchReason": "exactTitle",
+            "recordKey": "app:test"
+        });
+        let mut result: SearchResult = serde_json::from_value(old_json).expect("old result json");
+        assert_eq!(result.provider_signal, 0);
+
+        result.provider_signal = 50;
+        let serialized = serde_json::to_value(result).expect("result serializes");
+        assert!(serialized.get("providerSignal").is_none());
     }
 
     #[test]

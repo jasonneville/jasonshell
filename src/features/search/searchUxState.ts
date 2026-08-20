@@ -142,94 +142,29 @@ export function buildVisibleSearchRows(
   results: readonly SearchPanelResult[],
   options: SearchVisibleRowsBuildOptions = {}
 ): SearchVisibleRow[] {
-  const visibleRows: SearchVisibleRow[] = [];
-  const bestMatchCount = Math.min(results.length, 3);
-  const remainingGroups = new Map<SearchVisibleGroupId, GroupedSearchResult[]>();
-  const perGroupLimit = Math.max(1, options.perGroupLimit ?? DEFAULT_VISIBLE_GROUP_LIMIT);
-  const expandedGroups = options.expandedGroups;
+  void options;
 
-  results.slice(0, bestMatchCount).forEach((result, index) => {
-    visibleRows.push({
-      id: result.id,
-      rowKey: visibleRowKey(result.id, index),
-      domId: visibleRowDomId(index),
-      result,
-      resultIndex: index,
-      visibleIndex: visibleRows.length,
-      groupId: 'bestMatch',
-      groupLabel: visibleGroupLabel('bestMatch'),
-      showGroupLabel: index === 0
-    });
-  });
-
-  results.slice(bestMatchCount).forEach((result, offset) => {
-    const resultIndex = bestMatchCount + offset;
-    const groupId = searchVisibleGroupId(result);
-    const items = remainingGroups.get(groupId) ?? [];
-    items.push({ result, index: resultIndex });
-    remainingGroups.set(groupId, items);
-  });
-
-  for (const groupId of VISIBLE_GROUP_ORDER) {
-    const items = remainingGroups.get(groupId);
-    if (!items?.length) {
-      continue;
-    }
-    const visibleItems = expandedGroups?.has(groupId) ? items : items.slice(0, perGroupLimit);
-    visibleItems.forEach((item, itemIndex) => {
-      visibleRows.push({
-        id: item.result.id,
-        rowKey: visibleRowKey(item.result.id, item.index),
-        domId: visibleRowDomId(item.index),
-        result: item.result,
-        resultIndex: item.index,
-        visibleIndex: visibleRows.length,
-        groupId,
-        groupLabel: visibleGroupLabel(groupId),
-        showGroupLabel: itemIndex === 0
-      });
-    });
-  }
-
-  return visibleRows;
+  return results.map((result, index) => ({
+    id: result.id,
+    rowKey: visibleRowKey(result.id, index),
+    domId: visibleRowDomId(index),
+    result,
+    resultIndex: index,
+    visibleIndex: index,
+    groupId: 'bestMatch',
+    groupLabel: visibleGroupLabel('bestMatch'),
+    showGroupLabel: false
+  }));
 }
 
 export function buildVisibleSearchGroupOverflows(
   results: readonly SearchPanelResult[],
   options: SearchVisibleRowsBuildOptions = {}
 ): SearchVisibleGroupOverflow[] {
-  const bestMatchCount = Math.min(results.length, 3);
-  const remainingGroups = new Map<SearchVisibleGroupId, GroupedSearchResult[]>();
-  const expandedGroups = options.expandedGroups;
-  const perGroupLimit = Math.max(1, options.perGroupLimit ?? DEFAULT_VISIBLE_GROUP_LIMIT);
-  const overflows: SearchVisibleGroupOverflow[] = [];
+  void results;
+  void options;
 
-  results.slice(bestMatchCount).forEach((result, offset) => {
-    const resultIndex = bestMatchCount + offset;
-    const groupId = searchVisibleGroupId(result);
-    const items = remainingGroups.get(groupId) ?? [];
-    items.push({ result, index: resultIndex });
-    remainingGroups.set(groupId, items);
-  });
-
-  for (const groupId of VISIBLE_GROUP_ORDER) {
-    const items = remainingGroups.get(groupId);
-    if (!items?.length || expandedGroups?.has(groupId)) {
-      continue;
-    }
-    if (items.length <= perGroupLimit) {
-      continue;
-    }
-    overflows.push({
-      groupId,
-      groupLabel: visibleGroupLabel(groupId),
-      totalCount: items.length,
-      visibleCount: perGroupLimit,
-      hiddenCount: items.length - perGroupLimit
-    });
-  }
-
-  return overflows;
+  return [];
 }
 
 export function selectedVisibleRowIndex(

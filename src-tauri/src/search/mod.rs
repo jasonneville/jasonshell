@@ -9,8 +9,48 @@
 pub(crate) mod contracts;
 pub(crate) mod icons;
 pub(crate) mod matcher;
+#[cfg(test)]
+pub(crate) mod phase0_harness;
+#[cfg(test)]
+pub(crate) mod phase3_harness;
+#[cfg(test)]
+pub(crate) mod phase4_harness;
 pub(crate) mod providers;
 pub(crate) mod scoring;
+
+#[cfg(test)]
+pub(crate) mod test_observer {
+    use super::contracts::SearchProviderId;
+    use std::cell::RefCell;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) enum SearchOperation {
+        Settings,
+        Apps,
+        Local,
+        OpenWindows,
+        RecursiveFilesystemScan,
+        EverythingBoundary,
+    }
+
+    thread_local! {
+        static EVENTS: RefCell<Vec<SearchOperation>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(crate) fn record(operation: SearchOperation) {
+        EVENTS.with(|events| events.borrow_mut().push(operation));
+    }
+
+    pub(crate) fn take() -> Vec<SearchOperation> {
+        EVENTS.with(|events| events.replace(Vec::new()))
+    }
+
+    pub(crate) fn boundary_for(provider_id: SearchProviderId) {
+        if provider_id == SearchProviderId::Everything {
+            record(SearchOperation::EverythingBoundary);
+        }
+    }
+}
 
 use contracts::{
     iso_now, SearchDiagnostics, SearchEngineResponse, SearchProgressPayload, SearchProgressPhase,
@@ -18,24 +58,31 @@ use contracts::{
     SearchQueryRequest, SearchResult,
 };
 use providers::apps::search_apps;
-use providers::everything::search_everything;
+use providers::everything::{search_everything, search_everything_latest_only};
 use providers::local::search_local;
 use providers::open_windows::search_open_windows;
 use providers::settings::{search_settings, settings_provider_health};
 use scoring::rank_visible_results;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
 const SEARCH_ENGINE_PROGRESS_EVENT: &str = "search-engine:progress";
+static LATEST_SEARCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static PHASE3_REGISTRY_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[tauri::command]
 pub(crate) async fn search_engine(
     app_handle: AppHandle,
     request: SearchQueryRequest,
 ) -> Result<SearchEngineResponse, String> {
+    begin_search_engine_request(&request);
     tauri::async_runtime::spawn_blocking(move || {
-        run_search_engine(request, |payload| {
+        run_search_engine_latest_only(request, |payload| {
             let _ = app_handle.emit(SEARCH_ENGINE_PROGRESS_EVENT, payload);
         })
     })
@@ -43,9 +90,91 @@ pub(crate) async fn search_engine(
     .map_err(|error| format!("search engine worker failed: {error}"))
 }
 
+#[cfg(test)]
+pub(crate) fn run_published_search_engine_latest_only_with_everything(
+    request: SearchQueryRequest,
+    on_progress: impl FnMut(SearchProgressPayload),
+    search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
+) -> SearchEngineResponse {
+    begin_search_engine_request(&request);
+    run_search_engine_latest_only_with_everything(request, on_progress, search_everything_impl)
+}
+
 fn run_search_engine(
     request: SearchQueryRequest,
+    on_progress: impl FnMut(SearchProgressPayload),
+) -> SearchEngineResponse {
+    run_search_engine_with_everything(request, on_progress, search_everything)
+}
+
+fn run_search_engine_latest_only(
+    request: SearchQueryRequest,
+    on_progress: impl FnMut(SearchProgressPayload),
+) -> SearchEngineResponse {
+    let sequence = request.sequence;
+    run_search_engine_latest_only_with_everything(request, on_progress, move |query, limit| {
+        search_everything_latest_only(query, limit, sequence, search_sequence_is_latest)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn run_search_engine_latest_only_with_everything(
+    request: SearchQueryRequest,
+    on_progress: impl FnMut(SearchProgressPayload),
+    search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
+) -> SearchEngineResponse {
+    run_search_engine_with_everything(request, on_progress, search_everything_impl)
+}
+
+#[cfg(not(test))]
+fn run_search_engine_latest_only_with_everything(
+    request: SearchQueryRequest,
+    on_progress: impl FnMut(SearchProgressPayload),
+    search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
+) -> SearchEngineResponse {
+    run_search_engine_with_everything(request, on_progress, search_everything_impl)
+}
+
+pub(crate) fn begin_search_engine_request(request: &SearchQueryRequest) {
+    publish_latest_search_sequence(request.sequence);
+}
+
+pub(crate) fn publish_latest_search_sequence(sequence: u64) {
+    let mut current = LATEST_SEARCH_SEQUENCE.load(Ordering::Acquire);
+    while sequence > current {
+        match LATEST_SEARCH_SEQUENCE.compare_exchange(
+            current,
+            sequence,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return,
+            Err(next) => current = next,
+        }
+    }
+}
+
+pub(crate) fn search_sequence_is_latest(sequence: u64) -> bool {
+    sequence >= LATEST_SEARCH_SEQUENCE.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+fn reset_latest_search_sequence_for_test(sequence: u64) {
+    LATEST_SEARCH_SEQUENCE.store(sequence, Ordering::Release);
+}
+
+#[cfg(test)]
+pub(crate) fn phase3_registry_test_guard() -> MutexGuard<'static, ()> {
+    PHASE3_REGISTRY_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("phase3 registry test lock")
+}
+
+fn run_search_engine_with_everything(
+    request: SearchQueryRequest,
     mut on_progress: impl FnMut(SearchProgressPayload),
+    search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
 ) -> SearchEngineResponse {
     let query = request.query.trim().to_string();
     let limit = request.limit.clamp(1, 50);
@@ -96,7 +225,7 @@ fn run_search_engine(
         false,
     ));
 
-    let everything_run = search_everything(&query, limit);
+    let everything_run = search_everything_impl(&query, limit);
     provider_timings.push(everything_run.timing.clone());
     let everything_health = everything_run.health.clone();
     let everything_results = everything_run.results;
@@ -244,7 +373,19 @@ fn stable_result_key(result: &SearchResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::contracts::{SearchEngineResponse, SearchQueryRequest};
-    use super::{run_search_engine, stable_result_key};
+    use super::{run_search_engine, run_search_engine_with_everything, stable_result_key};
+
+    #[test]
+    fn phase3_latest_registry_is_monotonic_and_older_sequences_become_stale() {
+        let _guard = super::phase3_registry_test_guard();
+        super::reset_latest_search_sequence_for_test(0);
+
+        super::publish_latest_search_sequence(90);
+        super::publish_latest_search_sequence(30);
+
+        assert!(super::search_sequence_is_latest(90));
+        assert!(!super::search_sequence_is_latest(89));
+    }
 
     #[test]
     fn empty_response_preserves_query_identity() {
@@ -335,7 +476,33 @@ mod tests {
     fn progressive_search_emits_local_then_provider_then_complete() {
         let request = SearchQueryRequest::new("display settings", 46);
         let mut phases = Vec::new();
-        let response = run_search_engine(request, |payload| phases.push(payload));
+        let response = run_search_engine_with_everything(
+            request,
+            |payload| phases.push(payload),
+            |_, _| {
+                super::providers::everything::test_everything_run(
+                    Vec::new(),
+                    super::contracts::SearchProviderTiming {
+                        provider_id: super::contracts::SearchProviderId::Everything,
+                        started_at: super::contracts::iso_now(),
+                        ended_at: Some(super::contracts::iso_now()),
+                        duration_ms: 0.0,
+                        cache: super::contracts::SearchProviderCacheState::Miss,
+                        cache_age_ms: None,
+                        result_count: 0,
+                        applied: true,
+                        discarded_as_stale: false,
+                    },
+                    super::contracts::SearchProviderHealth {
+                        provider_id: super::contracts::SearchProviderId::Everything,
+                        state: super::contracts::SearchProviderHealthState::Ready,
+                        reason_code: None,
+                        message: Some("deterministic fake".to_string()),
+                    },
+                    None,
+                )
+            },
+        );
 
         assert_eq!(
             phases.first().map(|payload| payload.phase),
@@ -365,6 +532,49 @@ mod tests {
     }
 
     #[test]
+    fn search_engine_preserves_local_results_when_everything_is_unavailable() {
+        let request = SearchQueryRequest::new("display settings", 47);
+        let response = run_search_engine_with_everything(
+            request,
+            |_| {},
+            |_, _| {
+                super::providers::everything::test_everything_run(
+                    Vec::new(),
+                    super::contracts::SearchProviderTiming {
+                        provider_id: super::contracts::SearchProviderId::Everything,
+                        started_at: super::contracts::iso_now(),
+                        ended_at: Some(super::contracts::iso_now()),
+                        duration_ms: 0.0,
+                        cache: super::contracts::SearchProviderCacheState::Miss,
+                        cache_age_ms: None,
+                        result_count: 0,
+                        applied: true,
+                        discarded_as_stale: false,
+                    },
+                    super::contracts::SearchProviderHealth {
+                        provider_id: super::contracts::SearchProviderId::Everything,
+                        state: super::contracts::SearchProviderHealthState::Unavailable,
+                        reason_code: Some(
+                            super::contracts::SearchProviderReasonCode::IpcUnavailable,
+                        ),
+                        message: Some("Everything unavailable".to_string()),
+                    },
+                    None,
+                )
+            },
+        );
+
+        assert_eq!(
+            response.results.first().map(|result| result.id.as_str()),
+            Some("setting:display")
+        );
+        assert!(response
+            .health
+            .iter()
+            .any(|health| health.provider_id == super::contracts::SearchProviderId::Everything));
+    }
+
+    #[test]
     fn stable_result_key_prefers_record_key() {
         let result = super::contracts::SearchResult {
             id: "everything:file:c:/dev/test.txt".to_string(),
@@ -379,6 +589,7 @@ mod tests {
             terms: Vec::new(),
             aliases: Vec::new(),
             score: 0,
+            provider_signal: 0,
             match_reason: "token".to_string(),
             record_key: "file:c:\\dev\\test.txt".to_string(),
             title_highlight_data: Vec::new(),

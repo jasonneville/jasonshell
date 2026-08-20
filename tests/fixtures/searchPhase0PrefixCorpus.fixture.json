@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "measurementRounds": 30,
+  "providerStates": [
+    "sdkMissing",
+    "ipcUnavailable",
+    "queryError",
+    "timeout"
+  ],
+  "queries": [
+    { "query": "w", "expectedTop": { "kind": "setting", "titleContains": "Windows" } },
+    { "query": "wi", "expectedTop": { "kind": "setting", "titleContains": "Windows" } },
+    { "query": "win", "expectedTop": { "kind": "setting", "titleContains": "Windows" } },
+    { "query": "windows s", "expectedTop": { "kind": "setting", "titleContains": "Settings" } },
+    { "query": "control p", "expectedTop": { "kind": "setting", "titleContains": "Control Panel" } },
+    { "query": "display s", "expectedTop": { "kind": "setting", "titleContains": "Display" } }
+  ],
+  "requiredSignals": [
+    "queue wait",
+    "renderer cost",
+    "shared latest sequence",
+    "boundary lock hold",
+    "cold app",
+    "warm app",
+    "cold Everything",
+    "warm Everything"
+  ]
+}

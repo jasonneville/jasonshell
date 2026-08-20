@@ -220,10 +220,15 @@ test('phase 1 rapid Firefox input keeps final draft current and only latest prov
 
 test('phase 1 Rust search command runs coordinator behind async blocking boundary', () => {
   const source = readFileSync(new URL('../src-tauri/src/search/mod.rs', import.meta.url), 'utf8');
+  const commandBody = source.slice(
+    source.indexOf('pub(crate) async fn search_engine('),
+    source.indexOf('\n#[cfg(test)]', source.indexOf('pub(crate) async fn search_engine('))
+  );
 
   assert.match(source, /pub\(crate\) async fn search_engine\(/);
+  assert.ok(commandBody.indexOf('begin_search_engine_request(&request);') < commandBody.indexOf('tauri::async_runtime::spawn_blocking'));
   assert.match(source, /tauri::async_runtime::spawn_blocking\(move \|\| \{/);
-  assert.match(source, /run_search_engine\(request, \|payload\| \{/);
+  assert.match(source, /run_search_engine_latest_only\(request, \|payload\| \{/);
   assert.match(source, /\.await\s*\.map_err\(/);
 });
 

@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { test } from 'node:test';
 import { shouldApplySystemSearchResponse } from '../dist-tests/lib/systemSearchState.js';
+import { validatePhase0HarnessSamples } from '../scripts/measure-search-performance.core.mjs';
 
 const repoRoot = new URL('..', import.meta.url);
 const queryFixture = readJson('tests/fixtures/searchOverhaulQueries.fixture.json');
+const prefixCorpusFixture = readJson('tests/fixtures/searchPhase0PrefixCorpus.fixture.json');
 const performanceFixture = readJson('tests/fixtures/searchOverhaulPerformance.fixture.json');
 const legacyFixture = readJson('tests/fixtures/searchOverhaulLegacyRemnants.fixture.json');
 
@@ -84,6 +86,19 @@ function extractFunction(source, functionName) {
   assert.fail(`${functionName} body closes`);
 }
 
+function extractFunctionByPattern(source, pattern) {
+  const start = source.search(pattern);
+  assert.notEqual(start, -1, `function ${pattern} exists`);
+  const braceStart = source.indexOf('{', start);
+  let depth = 0;
+  for (let index = braceStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    else if (char === '}' && --depth === 0) return source.slice(start, index + 1);
+  }
+  assert.fail(`function ${pattern} body closes`);
+}
+
 test('phase 0 query fixture covers requested baseline problem queries', () => {
   const queries = queryFixture.queries.map((entry) => entry.query);
   assert.deepEqual(queries, [
@@ -105,6 +120,25 @@ test('phase 0 query fixture covers requested baseline problem queries', () => {
   }
 });
 
+test('phase 0 prefix corpus is deterministic and bounded for baseline measurement', () => {
+  assert.equal(prefixCorpusFixture.measurementRounds >= 30, true);
+  assert.deepEqual(prefixCorpusFixture.providerStates, [
+    'sdkMissing',
+    'ipcUnavailable',
+    'queryError',
+    'timeout'
+  ]);
+  assert.ok(prefixCorpusFixture.queries.length >= 5);
+  for (const entry of prefixCorpusFixture.queries) {
+    assert.equal(typeof entry.query, 'string');
+    assert.equal(typeof entry.expectedTop.kind, 'string');
+  }
+  assert.equal(prefixCorpusFixture.requiredSignals.includes('queue wait'), true);
+  assert.equal(prefixCorpusFixture.requiredSignals.includes('renderer cost'), true);
+  assert.equal(prefixCorpusFixture.requiredSignals.includes('shared latest sequence'), true);
+  assert.equal(prefixCorpusFixture.requiredSignals.includes('boundary lock hold'), true);
+});
+
 test('phase 0 performance fixture documents forbidden input-handler dependencies', () => {
   assert.equal(performanceFixture.inputEchoBudget.includes('Input value'), true);
   assert.equal(performanceFixture.firstVisiblePayloadBudgetMs, 50);
@@ -116,6 +150,118 @@ test('phase 0 performance fixture documents forbidden input-handler dependencies
     'deferred provider dispatch',
     'latest-only response application'
   ]);
+});
+
+test('phase 0 performance script exists and writes ignored artifacts', () => {
+  const script = readSource('scripts/measure-search-performance.mjs');
+  assert.match(script, /JASONSHELL_PHASE0_OUTDIR/);
+  assert.match(script, /spawnSync\('cargo'/);
+  assert.match(script, /performance\.now\(\)/);
+  assert.match(script, /phase0_harness/);
+  assert.match(script, /approvedPhaseFiles/);
+  assert.match(script, /metadata\.json/);
+  assert.match(script, /raw-benchmark\.json/);
+  assert.match(script, /derived-tables\.json/);
+  assert.match(script, /command-output\.txt/);
+  assert.match(script, /redaction-report\.json/);
+  assert.match(script, /live-dogfood-notes\.md/);
+  assert.match(script, /validateRedactions/);
+  assert.match(script, /approvedPhaseStatus/);
+  assert.match(script, /approvedPhaseStatus = spawnSync\('git', \['status', '--short', '--', \.\.\.approvedPhaseFiles\]/);
+  assert.match(script, /phase_diff_hash/);
+  assert.match(script, /createHash\('sha256'\)\.update\(approvedPhaseStatus\)/);
+  assert.match(script, /bytes: output\.length/);
+});
+
+test('phase 0 performance script derives no-scan guard from harness and source', () => {
+  const script = readSource('scripts/measure-search-performance.mjs');
+  assert.match(script, /no_scan_guard/);
+  assert.match(script, /runtime_sample_count/);
+  assert.match(script, /recursive_scan_sample_count/);
+  assert.match(script, /source_guard/);
+  assert.match(script, /RecursiveFilesystemScan/);
+  assert.match(script, /boundary_count/);
+  assert.match(script, /throw new Error\(`no-scan guard failed/);
+
+  const searchMod = readSource('src-tauri/src/search/mod.rs');
+  const everything = readSource('src-tauri/src/search/providers/everything.rs');
+  const settings = readSource('src-tauri/src/search/providers/settings.rs');
+  const apps = readSource('src-tauri/src/search/providers/apps.rs');
+  const local = readSource('src-tauri/src/search/providers/local.rs');
+  const openWindows = readSource('src-tauri/src/search/providers/open_windows.rs');
+
+  const hotPathBodies = [
+    extractFunctionByPattern(searchMod, /fn run_search_engine\b/),
+    extractFunctionByPattern(settings, /pub\(crate\) fn search_settings\b/),
+    extractFunctionByPattern(apps, /pub\(crate\) fn search_apps\b/),
+    extractFunctionByPattern(local, /pub\(crate\) fn search_local\b/),
+    extractFunctionByPattern(openWindows, /pub\(crate\) fn search_open_windows\b/),
+    extractFunctionByPattern(everything, /pub\(crate\) fn search_everything\b/),
+    extractFunctionByPattern(everything, /fn search_everything_with\b/)
+  ];
+
+  for (const body of hotPathBodies) {
+    assert.equal(/WalkDir\b/.test(body), false);
+    assert.equal(/recursive\s+traversal/i.test(body), false);
+    assert.equal(/recursive_scan/i.test(body), false);
+  }
+  assert.match(searchMod, /search_everything_impl\(&query, limit\)/);
+  assert.match(apps, /build_app_index\(/);
+});
+
+test('phase 0 harness validator rejects malformed scan and boundary samples', () => {
+  assert.throws(() => validatePhase0HarnessSamples([]), /missing/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['RecursiveFilesystemScan'], boundary_trace: ['start', 'end'], stale_count: 0, latest_count: 0, stale_entries: [], latest_entries: [] }
+  ]), /RecursiveFilesystemScan/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['EverythingBoundary'], boundary_trace: ['only-one'], stale_count: 0, latest_count: 0, stale_entries: [], latest_entries: [] }
+  ]), /boundary_trace invalid/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['NotBoundary'], boundary_trace: ['start', 'end'], stale_count: 0, latest_count: 0, stale_entries: [], latest_entries: [] }
+  ]), /EverythingBoundary count invalid/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['EverythingBoundary', 'EverythingBoundary'], boundary_trace: ['start', 'end'], stale_count: 0, latest_count: 0, stale_entries: [], latest_entries: [] }
+  ]), /EverythingBoundary count invalid/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['EverythingBoundary'], boundary_trace: ['start', 'end'], stale_count: 0, latest_count: '0', stale_entries: [], latest_entries: [] }
+  ]), /latest_count invalid/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['EverythingBoundary'], boundary_trace: ['start', 'end'], stale_count: '0', latest_count: 0, stale_entries: [], latest_entries: [] }
+  ]), /stale_count invalid/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['EverythingBoundary'], boundary_trace: ['start', 'end'], stale_count: 0, latest_count: 0, stale_entries: 'bad', latest_entries: [] }
+  ]), /stale_entries invalid/);
+  assert.throws(() => validatePhase0HarnessSamples([
+    { observed_operations: ['EverythingBoundary'], boundary_trace: ['start', 'end'], stale_count: 0, latest_count: 0, stale_entries: [], latest_entries: 'bad' }
+  ]), /latest_entries invalid/);
+});
+
+test('phase 0 harness exists and preserves local progress on unavailable provider states', () => {
+  const harness = readSource('src-tauri/src/search/phase0_harness.rs');
+  assert.match(harness, /sdkMissing|ipcUnavailable|queryError|timeout/);
+  assert.match(harness, /run_search_engine_with_everything/);
+  assert.match(harness, /phase0_harness_produces_progress_and_health_traces/);
+  assert.match(harness, /SearchProviderHealthState/);
+  assert.match(harness, /input_to_local_ms/);
+  assert.match(harness, /input_to_final_ms/);
+  assert.match(harness, /queue_wait_ms/);
+  assert.match(harness, /fake_provider_duration_ms/);
+  assert.match(harness, /stale_count/);
+  assert.match(harness, /latest_count/);
+  assert.match(harness, /stale_entries/);
+  assert.match(harness, /latest_entries/);
+  assert.match(harness, /boundary_trace/);
+  assert.match(harness, /provider_boundary_event/);
+  assert.match(harness, /observed_operations/);
+  assert.match(harness, /open_window_result_count/);
+  assert.match(harness, /open_window_result_ids/);
+  assert.match(harness, /window_context/);
+  assert.match(harness, /cold app|warm app/);
+  assert.match(harness, /cold Everything|warm Everything/);
+  assert.match(harness, /latest_count/);
+  assert.match(harness, /phase_count == 3/);
+  assert.match(harness, /Brave|Firefox|terminal|Settings/);
 });
 
 test('phase 0 legacy-remnant checklist covers old search interference files', () => {
@@ -256,6 +402,18 @@ test('rapid typing publishes pending or current-best payload before provider res
   assert.equal(shouldApplySystemSearchResponse('display', 4, 'display', 4), true);
 });
 
+test('phase 0 script parses Rust JSON and keeps scenario p50/p95 on raw samples', () => {
+  const script = readSource('scripts/measure-search-performance.mjs');
+  assert.match(script, /phase0-samples\.json/);
+  assert.match(script, /rawScenarioSamples/);
+  assert.match(script, /input_to_final_ms/);
+  assert.match(script, /percentile\(rawSamplesMs, 50\)/);
+  assert.match(script, /percentile\(rawSamplesMs, 95\)/);
+  assert.match(script, /Node transform\/serialization proxy/);
+  assert.match(script, /rowCounts: \[0, 5, 50\]/);
+  assert.match(script, /length: 30/);
+});
+
 test('phase 6 removes TypeScript hot path legacy imports recorded by phase 0', () => {
   const topBar = readSource('src/components/TopBar.svelte');
   const legacyImports = [
@@ -375,5 +533,5 @@ test('phase 4 app and local providers use cached bounded indexes instead of per-
   assert.match(local, /Documents/);
   assert.match(coordinator, /search_apps\(&query, limit\)/);
   assert.match(coordinator, /search_local\(&query, limit, &request\.context\)/);
-  assert.match(coordinator, /search_everything\(&query, limit\)/);
+  assert.match(coordinator, /search_everything_impl\(&query, limit\)|search_everything\(query, limit\)/);
 });

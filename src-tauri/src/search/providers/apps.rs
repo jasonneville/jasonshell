@@ -6,6 +6,8 @@ use crate::search::icons::icon_data_url_for_path;
 use crate::search::matcher::{
     best_match, full_highlight, query_tokens as match_query_tokens, MatchData, MatchField,
 };
+#[cfg(test)]
+use crate::search::test_observer::{record, SearchOperation};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -118,6 +120,8 @@ struct CachedAppEntriesSnapshot {
 }
 
 pub(crate) fn search_apps(query: &str, limit: usize) -> AppsSearchRun {
+    #[cfg(test)]
+    record(SearchOperation::Apps);
     let started_at = crate::search::contracts::iso_now();
     let started = Instant::now();
     let snapshot = cached_app_entries(current_epoch_secs());
@@ -558,6 +562,7 @@ fn app_result(entry: &AppIndexEntry, score: i32, matched: MatchData) -> SearchRe
         terms: token_terms(&format!("{} {}", entry.title, entry.path.display())),
         aliases: entry.aliases.clone(),
         score,
+        provider_signal: app_source_priority_signal(&entry.source),
         match_reason: matched.reason.to_string(),
         record_key,
         title_highlight_data: match matched.field {
@@ -580,6 +585,34 @@ fn score_app(entry: &AppIndexEntry, tokens: &[String]) -> Option<(i32, MatchData
         .collect::<Vec<_>>();
     let matched = best_match(&entry.title, None, &hidden, &query, tokens, true)?;
     Some((entry.priority + matched.score, matched))
+}
+
+#[cfg(test)]
+pub(crate) fn test_app_result_from_source(
+    title: &str,
+    path: &str,
+    source: &str,
+    query: &str,
+) -> SearchResult {
+    let entry = AppIndexEntry {
+        title: title.to_string(),
+        path: PathBuf::from(path),
+        source: source.to_string(),
+        aliases: app_aliases(title, Path::new(path)),
+        priority: source_rank(source) * 100,
+    };
+    let tokens = query_tokens(query);
+    let (score, matched) = score_app(&entry, &tokens).expect("test app fixture must match query");
+    app_result(&entry, score, matched)
+}
+
+#[cfg(test)]
+pub(crate) fn test_app_source_priority_signal(source: &str) -> i32 {
+    app_source_priority_signal(source)
+}
+
+fn app_source_priority_signal(source: &str) -> i32 {
+    (source_rank(source).max(0) * 50) / 4
 }
 
 fn app_aliases(title: &str, path: &Path) -> Vec<String> {
@@ -813,6 +846,37 @@ mod tests {
     use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static APP_INDEX_REFRESH_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct AppIndexRefreshTestGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl AppIndexRefreshTestGuard {
+        fn acquire() -> Self {
+            let lock = APP_INDEX_REFRESH_TEST_LOCK.get_or_init(|| Mutex::new(()));
+            let lock = lock.lock().unwrap();
+            APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for AppIndexRefreshTestGuard {
+        fn drop(&mut self) {
+            APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn phase2_app_source_priority_signals_match_approved_cap_scale() {
+        assert_eq!(test_app_source_priority_signal("pinnedTaskbar"), 50);
+        assert_eq!(test_app_source_priority_signal("currentUserStartMenu"), 37);
+        assert_eq!(test_app_source_priority_signal("allUsersStartMenu"), 25);
+        assert_eq!(test_app_source_priority_signal("programs"), 12);
+        assert_eq!(test_app_source_priority_signal("windowsApps"), 0);
+        assert_eq!(test_app_source_priority_signal("unknown"), 0);
+    }
+
     #[test]
     fn app_index_cache_freshness_is_bounded_by_ttl() {
         let cache = CachedAppIndex {
@@ -853,6 +917,7 @@ mod tests {
 
     #[test]
     fn cold_query_path_returns_cache_miss_without_scanning() {
+        let _guard = AppIndexRefreshTestGuard::acquire();
         APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
         let snapshot = cached_app_entries_from_cache(None, 100);
 
@@ -863,6 +928,7 @@ mod tests {
 
     #[test]
     fn stale_app_cache_returns_existing_rows_while_refresh_is_deferred() {
+        let _guard = AppIndexRefreshTestGuard::acquire();
         let cached = CachedAppIndex {
             indexed_at_epoch_secs: 100,
             entries: vec![AppIndexEntry {
@@ -883,6 +949,7 @@ mod tests {
 
     #[test]
     fn empty_cache_reports_indexing_while_refresh_is_running() {
+        let _guard = AppIndexRefreshTestGuard::acquire();
         APP_INDEX_REFRESH_IN_FLIGHT.store(true, Ordering::Release);
 
         let snapshot = cached_app_entries_from_cache(None, 100);
@@ -895,6 +962,7 @@ mod tests {
 
     #[test]
     fn fresh_cache_reports_refresh_while_startup_warm_is_running() {
+        let _guard = AppIndexRefreshTestGuard::acquire();
         let cached = CachedAppIndex {
             indexed_at_epoch_secs: 99,
             entries: vec![AppIndexEntry {

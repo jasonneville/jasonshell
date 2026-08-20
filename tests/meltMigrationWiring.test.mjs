@@ -126,14 +126,17 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.doesNotMatch(processManagerSource, /<button[\s\S]*class="kill-button"/);
 });
 
-test('search panel and task-preview safe action buttons use Melt-backed real buttons', () => {
+test('search panel keeps pinning input-owned while safe buttons use Melt-backed controls', () => {
   assert.match(searchPanelSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
-  assert.match(searchPanelSource, /<MeltActionButton[\s\S]*class="pin-folder"[\s\S]*ariaLabel=\{`Pin \$\{result\.title\} to the top bar`\}[\s\S]*onClick=\{\(event\) => pinFolderResult\(event, result\)\}/);
+  assert.match(searchPanelSource, /function isCtrlEnterHotkey\(event: KeyboardEvent\)[\s\S]*event\.key === 'Enter' && event\.ctrlKey/);
+  assert.match(searchPanelSource, /if \(isCtrlEnterHotkey\(event\)\)[\s\S]*pinSelectedFolder\(\)[\s\S]*return/);
+  assert.match(searchPanelSource, /function pinSelectedFolder\(\)[\s\S]*SEARCH_PANEL_PIN_FOLDER_EVENT/);
+  assert.match(searchPanelSource, /<span class="pin-folder" aria-hidden="true">Pin<\/span>[\s\S]*<span class="pin-folder-shortcut">Ctrl\+Enter<\/span>/);
   assert.match(searchPanelSource, /role="option"/);
   assert.match(searchPanelSource, /on:dblclick=\{\(\) => activateRow\(row\)\}/);
-  assert.match(searchPanelSource, /on:keydown=\{\(event\) => handleResultKeydown\(event, row\)\}/);
+  assert.match(searchPanelSource, /on:keydown=\{\(event\) => handleOptionKeydown\(event, row\)\}/);
   assert.match(searchPanelSource, /on:dragstart=\{\(event\) => startFolderDrag\(event, result\)\}/);
-  assert.doesNotMatch(searchPanelSource, /<button[\s\S]*class="pin-folder"/);
+  assert.doesNotMatch(searchPanelSource, /<(?:button|MeltActionButton)[^>]*class="pin-folder"/);
 
   assert.match(taskPreviewSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
   assert.match(taskPreviewSource, /previewSurfaceClass = `surface preview-surface/);

@@ -4,6 +4,8 @@ use crate::search::contracts::{
 };
 use crate::search::icons::icon_data_url_for_path;
 use crate::search::matcher::{best_match, query_tokens as match_query_tokens};
+#[cfg(test)]
+use crate::search::test_observer::{record, SearchOperation};
 use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -33,6 +35,8 @@ pub(crate) fn search_local(
     limit: usize,
     context: &SearchQueryContext,
 ) -> LocalSearchRun {
+    #[cfg(test)]
+    record(SearchOperation::Local);
     let started_at = crate::search::contracts::iso_now();
     let started = Instant::now();
     let rows = local_rows(context);
@@ -232,6 +236,7 @@ fn local_result(row: &LocalRow, score: i32, reason: &'static str) -> SearchResul
         )),
         aliases: row.aliases.clone(),
         score,
+        provider_signal: 0,
         match_reason: reason.to_string(),
         record_key: row
             .path

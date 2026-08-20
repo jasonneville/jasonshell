@@ -13,6 +13,7 @@ import {
   isSearchQueryRequest,
   mergeSearchPanelResultsByStableKey,
   isSearchResult,
+  searchEngineResponseToPanelPayload,
   searchEngineProgressToPanelPayload,
   searchEngineResultToPanelResult,
   validateSearchResultActionSafety
@@ -320,6 +321,86 @@ test('provider timing accepts persistent app-cache indexing state and cache age'
       generatedAt
     }),
     true
+  );
+});
+
+test('search engine response maps degraded Everything health into concise local-results status lines', () => {
+  const baseResponse = {
+    query: 'spotify',
+    sequence: 30,
+    results: [displaySettingsResult()],
+    providerTimings: [providerTiming({ providerId: 'everything', resultCount: 1 })],
+    generatedAt
+  };
+
+  assert.equal(
+    searchEngineResponseToPanelPayload({
+      ...baseResponse,
+      health: [
+        {
+          providerId: 'everything',
+          state: 'unavailable',
+          reasonCode: 'sdkMissing',
+          message: 'Everything SDK unavailable'
+        }
+      ]
+    }).statusMessage,
+    'Everything unavailable — showing local results'
+  );
+  assert.equal(
+    searchEngineResponseToPanelPayload({
+      ...baseResponse,
+      health: [
+        {
+          providerId: 'everything',
+          state: 'unavailable',
+          reasonCode: 'ipcUnavailable',
+          message: 'Everything process is not running'
+        }
+      ]
+    }).statusMessage,
+    'Everything not running — showing local results'
+  );
+  assert.equal(
+    searchEngineResponseToPanelPayload({
+      ...baseResponse,
+      health: [
+        {
+          providerId: 'everything',
+          state: 'degraded',
+          reasonCode: 'providerError',
+          message: 'Everything query failed: QueryFailed'
+        }
+      ]
+    }).statusMessage,
+    'Everything query failed — showing local results'
+  );
+  assert.equal(
+    searchEngineResponseToPanelPayload({
+      ...baseResponse,
+      health: [
+        {
+          providerId: 'everything',
+          state: 'ready',
+          message: 'ready'
+        }
+      ],
+      providerTimings: [providerTiming({ providerId: 'apps', cache: 'indexing', resultCount: 0 })]
+    }).statusMessage,
+    'Apps index warming — results may update'
+  );
+  assert.equal(
+    searchEngineResponseToPanelPayload({
+      ...baseResponse,
+      health: [
+        {
+          providerId: 'everything',
+          state: 'ready',
+          message: 'ready'
+        }
+      ]
+    }).statusMessage,
+    ''
   );
 });
 

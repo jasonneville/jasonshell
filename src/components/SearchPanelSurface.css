@@ -24,6 +24,19 @@
   padding: 0 var(--js-space-1) var(--js-space-3);
 }
 
+.search-panel-status {
+  color: var(--js-color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 650;
+  line-height: 1.2;
+  min-height: 0.9rem;
+  padding: 0 var(--js-space-1);
+}
+
+.search-panel-status:empty {
+  display: none;
+}
+
 .search-panel-header strong {
   font-size: 0.9rem;
   font-weight: 800;
@@ -99,7 +112,7 @@
   align-content: start;
   display: grid;
   flex: 1 1 auto;
-  gap: var(--js-space-3);
+  gap: var(--js-space-2);
   grid-auto-rows: minmax(2.55rem, max-content);
   min-height: 0;
   overflow-y: auto;
@@ -131,6 +144,7 @@
   padding: 0.34rem 0.45rem;
   text-align: left;
   user-select: none;
+  cursor: pointer;
 }
 
 .result-row:hover,
@@ -212,6 +226,14 @@
   font-size: 0.58rem;
   font-weight: 800;
   padding: 0.12rem 0.36rem;
+}
+
+.pin-folder-shortcut {
+  color: var(--js-color-text-muted);
+  font-size: 0.54rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .pin-folder:hover,

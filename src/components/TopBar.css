@@ -198,7 +198,8 @@
 }
 
 .top-bar .time-control {
-  flex: 0 0 auto;
+  flex: 0 0 10.5rem;
+  width: 10.5rem;
 }
 
 .top-bar .time-pill {
@@ -212,6 +213,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.08rem;
+  width: 100%;
   min-width: 5.6rem;
   padding: 0.12rem 0.46rem;
   text-align: right;
@@ -436,6 +438,11 @@
   .top-bar.surface {
     gap: var(--js-space-1);
     padding: 0 var(--js-space-2);
+  }
+
+  .top-bar .time-control {
+    flex-basis: 4.8rem;
+    width: 4.8rem;
   }
 
   .top-bar .time-pill {
