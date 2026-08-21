@@ -88,6 +88,7 @@ pub struct ResizeShellBarResponse {
 pub struct ShellRuntimeState {
     pub cleaned_up: bool,
     pub hidden_explorer_taskbars: Vec<explorer::ExplorerTaskbarSnapshot>,
+    pub legacy_taskbar_guard_owned: Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>>,
     pub hidden_explorer_taskbars_v2: Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>>,
     pub baseline_work_area: Option<RECT>,
     pub registered_appbars: Vec<isize>,
@@ -215,6 +216,7 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
     state.cleaned_up = false;
     state.baseline_work_area = None;
     state.hidden_explorer_taskbars.clear();
+    state.legacy_taskbar_guard_owned = None;
     state.hidden_explorer_taskbars_v2 = None;
     state.shell_layout = None;
     state.fullscreen_state = FullscreenAppBarState::Reserved;
@@ -1029,17 +1031,30 @@ where
     }
 
     let hidden_taskbars = if let Some(v2) = state.hidden_explorer_taskbars_v2.take() {
-        v2.lock().expect("taskbar v2 state poisoned").clone()
+        let hidden_taskbars = v2.lock().expect("taskbar v2 state poisoned").clone();
+        for taskbar_snapshot in hidden_taskbars {
+            match restore_taskbar(taskbar_snapshot) {
+                Ok(true) => {}
+                Ok(false) => cleanup_errors.push(
+                    "Explorer taskbar remained hidden after repeated restore attempts".to_string(),
+                ),
+                Err(error) => cleanup_errors.push(error.to_string()),
+            }
+        }
+        Vec::new()
     } else {
+        state.legacy_taskbar_guard_owned = None;
         state.hidden_explorer_taskbars.drain(..).collect()
     };
-    for taskbar_snapshot in hidden_taskbars {
-        match restore_taskbar(taskbar_snapshot) {
-            Ok(true) => {}
-            Ok(false) => cleanup_errors.push(
-                "Explorer taskbar remained hidden after repeated restore attempts".to_string(),
-            ),
-            Err(error) => cleanup_errors.push(error.to_string()),
+    if !hidden_taskbars.is_empty() {
+        for taskbar_snapshot in hidden_taskbars {
+            match restore_taskbar(taskbar_snapshot) {
+                Ok(true) => {}
+                Ok(false) => cleanup_errors.push(
+                    "Explorer taskbar remained hidden after repeated restore attempts".to_string(),
+                ),
+                Err(error) => cleanup_errors.push(error.to_string()),
+            }
         }
     }
 
@@ -1514,15 +1529,20 @@ fn rect_has_area(rect: RECT) -> bool {
 fn start_taskbar_guard(state: &mut ShellRuntimeState) {
     stop_taskbar_guard(state);
 
-    let Some(snapshot) = state.hidden_explorer_taskbars.first().copied() else {
+    let Some(owned) = (!state.hidden_explorer_taskbars.is_empty())
+        .then(|| Arc::new(Mutex::new(state.hidden_explorer_taskbars.clone())))
+    else {
         return;
     };
+    state.legacy_taskbar_guard_owned = Some(Arc::clone(&owned));
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_signal = Arc::clone(&stop);
     let guard = thread::spawn(move || {
         while !stop_signal.load(Ordering::Relaxed) {
-            let _ = explorer::enforce_hidden_taskbars(&[snapshot]);
+            if let Ok(mut snapshots) = owned.lock() {
+                let _ = explorer::reconcile_owned_taskbars(&mut snapshots);
+            }
             thread::sleep(Duration::from_millis(100));
         }
     });
@@ -1567,6 +1587,12 @@ fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
     if let Some(guard) = state.taskbar_guard.take() {
         let _ = guard.join();
     }
+
+    if let Some(legacy_owned) = state.legacy_taskbar_guard_owned.take() {
+        if let Ok(snapshots) = legacy_owned.lock() {
+            state.hidden_explorer_taskbars = snapshots.clone();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1579,11 +1605,13 @@ mod tests {
         prepare_fullscreen_restore_retry_with, rect_covers_target, register_tracked_appbar,
         reserved_work_area, resolve_baseline_work_area, restored_shell_surface_layout,
         should_hide_shell_for_fullscreen_window, stabilize_runtime_window_rect_with,
-        sync_work_area_best_effort_with, unregister_tracked_appbars_with, FullscreenAppBarState,
-        FullscreenGuardTarget, FullscreenSyncAction, FullscreenWindowCandidate, GuardRetryState,
-        ShellRuntimeState, ShellSurfaceLayout, WindowRectSnapshot, WorkAreaSyncResult,
+        stop_taskbar_guard, sync_work_area_best_effort_with, unregister_tracked_appbars_with,
+        FullscreenAppBarState, FullscreenGuardTarget, FullscreenSyncAction,
+        FullscreenWindowCandidate, GuardRetryState, ShellRuntimeState, ShellSurfaceLayout,
+        WindowRectSnapshot, WorkAreaSyncResult,
     };
     use crate::explorer::ExplorerTaskbarSnapshot;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use windows::Win32::Foundation::{HWND, RECT};
 
@@ -1647,6 +1675,7 @@ mod tests {
         let mut state = ShellRuntimeState {
             cleaned_up: false,
             hidden_explorer_taskbars: vec![hidden_taskbar],
+            legacy_taskbar_guard_owned: None,
             hidden_explorer_taskbars_v2: None,
             baseline_work_area: Some(baseline_work_area),
             registered_appbars: Vec::new(),
@@ -1737,6 +1766,101 @@ mod tests {
 
         assert_eq!(removal_attempts, vec![22, 11]);
         assert!(tracked_appbars.is_empty());
+    }
+
+    #[test]
+    fn cleanup_runtime_state_with_v2_restores_exact_snapshots_without_replacement_planning() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let hidden_taskbar = crate::explorer::ExplorerTaskbarSnapshot {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 41,
+                process_id: 11,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 0,
+                top: 1032,
+                right: 1920,
+                bottom: 1080,
+            },
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
+        };
+        let mut state = ShellRuntimeState {
+            legacy_taskbar_guard_owned: None,
+            hidden_explorer_taskbars_v2: Some(Arc::new(Mutex::new(vec![hidden_taskbar]))),
+            hidden_explorer_taskbars: Vec::new(),
+            ..Default::default()
+        };
+        let mut restored_taskbars = Vec::new();
+
+        cleanup_runtime_state_with(
+            &mut state,
+            |_| Ok(()),
+            |_, _| Ok(()),
+            |snapshot| {
+                restored_taskbars.push(snapshot.identity.hwnd);
+                assert_eq!(snapshot.identity.hwnd, 41);
+                Ok(true)
+            },
+        )
+        .expect("v2 cleanup should restore exact owned snapshots");
+
+        assert_eq!(restored_taskbars, vec![41]);
+        assert!(state.hidden_explorer_taskbars_v2.is_none());
+    }
+
+    #[test]
+    fn legacy_taskbar_guard_cleanup_uses_latest_owned_snapshots() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let hidden_taskbar = crate::explorer::ExplorerTaskbarSnapshot {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 41,
+                process_id: 11,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 0,
+                top: 1032,
+                right: 1920,
+                bottom: 1080,
+            },
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
+        };
+        let replacement = crate::explorer::ExplorerTaskbarSnapshot {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 77,
+                process_id: 22,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            ..hidden_taskbar
+        };
+        let legacy_owned = Arc::new(Mutex::new(vec![replacement]));
+        let mut state = ShellRuntimeState {
+            hidden_explorer_taskbars: vec![hidden_taskbar],
+            legacy_taskbar_guard_owned: Some(Arc::clone(&legacy_owned)),
+            ..Default::default()
+        };
+
+        stop_taskbar_guard(&mut state);
+
+        assert_eq!(state.hidden_explorer_taskbars, vec![replacement]);
+        assert!(state.legacy_taskbar_guard_owned.is_none());
     }
 
     #[test]

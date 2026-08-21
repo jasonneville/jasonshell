@@ -157,3 +157,14 @@ test('fullscreen guard instrumentation tracks duration and wake counts', () => {
   assert.match(rust, /fullscreen guard summary duration_ms=/);
   assert.match(rust, /wake_count=/);
 });
+
+test('legacy taskbar guard refreshes exact owned snapshots through reconcile', () => {
+  const rust = readSource('../src-tauri/src/appbar.rs');
+  const start = rust.indexOf('fn start_taskbar_guard(state: &mut ShellRuntimeState)');
+  const end = rust.indexOf('fn start_taskbar_guard_v2(', start);
+  const guard = rust.slice(start, end);
+
+  assert.match(guard, /explorer::reconcile_owned_taskbars\(&mut snapshots\)/);
+  assert.match(guard, /legacy_taskbar_guard_owned/);
+  assert.doesNotMatch(guard, /enforce_primary_taskbar_hidden\(snapshot\.monitor_rect\)/);
+});

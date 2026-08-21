@@ -792,6 +792,53 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_owned_taskbars_skips_prehidden_replacement_and_keeps_exact_ownership() {
+        let monitor = RECT {
+            left: 100,
+            top: 200,
+            right: 2100,
+            bottom: 1400,
+        };
+        let stale = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 41,
+                process_id: 1,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 100,
+                top: 1350,
+                right: 2100,
+                bottom: 1400,
+            },
+            edge: TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
+        };
+        let nonmatching = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 77,
+                process_id: 2,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 100,
+                top: 1350,
+                right: 2100,
+                bottom: 1400,
+            },
+            edge: TaskbarEdge::Bottom,
+            originally_visible: false,
+            hidden_by_jasonshell: false,
+        };
+        let (next, ops) = reconcile_owned_taskbars_for_test(vec![stale], vec![nonmatching], true);
+        assert_eq!(ops, vec![]);
+        assert_eq!(next, vec![stale]);
+    }
+
+    #[test]
     fn reconcile_owned_taskbars_replaces_same_hwnd_with_new_pid_identity() {
         let monitor = RECT {
             left: 100,
@@ -827,6 +874,7 @@ mod tests {
         let (next, ops) = reconcile_owned_taskbars_for_test(vec![owned], vec![replacement], true);
         assert_eq!(ops, vec![ExplorerTaskbarFakeOp::Hide(42)]);
         assert_eq!(next[0].identity.process_id, 2);
+        assert!(next[0].hidden_by_jasonshell);
     }
 
     #[test]
@@ -866,6 +914,7 @@ mod tests {
         assert_eq!(ops, vec![ExplorerTaskbarFakeOp::Hide(43)]);
         assert_eq!(next[0].identity.hwnd, 43);
         assert_eq!(next[0].identity.process_id, 2);
+        assert!(next[0].hidden_by_jasonshell);
     }
 
     fn snapshots_to_hide_for_test(
