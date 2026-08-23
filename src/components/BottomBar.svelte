@@ -1024,7 +1024,6 @@
               <MeltActionButton
                 class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}`}
                 type="button"
-                title={taskWindowLabel(taskWindow)}
                 ariaLabel={taskWindowActionLabel(taskWindow)}
                 disabled={activatingHwnd === taskWindow.hwnd}
                 onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}

@@ -102,11 +102,7 @@
   <slot />
 </button>
 
-{#if tooltipText}
-  <div {...actionTooltip.content} class="melt-action-button-tooltip">
-    {tooltipText}
-  </div>
-{/if}
+
 
 <style>
   .melt-action-button-tooltip {
