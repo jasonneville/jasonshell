@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-08-23 `[CODE]` FIXED: Pinned launcher icon extraction now reads `IShellLinkW::GetArguments` first for safe exact `shell:AppsFolder\...` shortcuts, resolves those through `SHCreateItemFromParsingName` + `IShellItemImageFactory`, and only then falls back to the target icon path; the new `should_extract_target_icon(...)` contract stays positive for ordinary shortcuts, negative only for exact safe `AppsFolder` explorer proxies, and treats unreadable arguments as ordinary target fallback so real app icons render instead of the red fallback pixel.
+- 2026-08-23 `[CODE]` FIXED: Legacy Explorer taskbar suppression now keeps originally-visible primary snapshots in the owned retry list even when the first hide attempt fails, so later reconcile passes can retry ownership without restoring snapshots JasonShell never hid.
+- 2026-08-23 `[TOOL]` VALIDATED: Focused launcher Node tests, focused Rust launcher/explorer/appbar tests, `cargo check`, and `git diff --check` were run for this fix set; live Spotify/Windows Terminal icon smoke and full suite were not run here.
+
 - 2026-08-23 `[CODE]` FIXED: Stack Browser now starts Git status detection before typed folder listing completes, so repo row highlighting can appear with the first rendered rows, and marquee selection starts from the stack-popup surface blank area instead of only the details-table.
 - 2026-08-23 `[CODE]` FIXED: Stack Browser Git status now preserves the newest in-flight folder response until its matching rows commit, applies Git highlights on first render when status wins the race, and keeps the previous folder's visible highlights on failed typed navigation.
 - 2026-08-23 `[CODE]` FIXED: Stack Browser Git row coloring now strips Windows canonical/verbatim path prefixes before matching backend status entries to visible files and parent folders.

@@ -42,6 +42,30 @@ test('Explorer taskbar pin listing does not hide shortcuts just because Resolve 
   assert.match(listBody, /fallback_launcher_icon_data_url/);
 });
 
+test('launcher icon extraction never falls back to the .lnk file association icon', () => {
+  const iconBody = extractFunction(launchersRs, 'extract_icon_data_url');
+
+  assert.match(iconBody, /explicit_icon_location\(&shell_link\)/);
+  assert.match(iconBody, /apps_folder_shell_item_icon_data_url\(&shell_link\)/);
+  assert.match(iconBody, /resolved_shortcut_target\(&shell_link\)/);
+  assert.doesNotMatch(iconBody, /extract_file_icon_data_url\(shortcut_path\)/);
+  assert.doesNotMatch(iconBody, /PKEY_AppUserModel_RelaunchIconResource|SHGetPropertyStoreFromParsingName|IPropertyStore/);
+});
+
+test('target icon stage only skips exact safe AppsFolder explorer proxies', () => {
+  const iconBody = extractFunction(launchersRs, 'extract_icon_data_url');
+  assert(iconBody.includes('should_extract_target_icon(arguments(&shell_link), target_path.as_path())'));
+});
+
+test('target icon decision contract stays positive for ordinary shortcuts and negative only for safe AppsFolder explorer proxies', () => {
+  const helperBody = extractFunction(launchersRs, 'should_extract_target_icon');
+
+  assert(helperBody.includes('Err(_) => true'));
+  assert(helperBody.includes('Ok(arguments) => !is_apps_folder_proxy(&arguments, target_path)'));
+  assert.doesNotMatch(helperBody, /!should_fallback_to_target_icon_for_apps_folder_proxy/);
+  assert.match(launchersRs, /target_icon_stage_only_blocks_exact_apps_folder_explorer_proxies/);
+});
+
 test('Explorer taskbar pin launch ShellExecutes the shortcut path without Resolve preflight', () => {
   assert.doesNotMatch(launchersRs, /shortcut_resolves/);
   assert.match(launchersRs, /shell_execute_shortcut\(\s*shortcut_path\.clone\(\),\s*None,\s*&\[SE_ERR_ACCESSDENIED\],\s*"launch pinned shortcut"/);

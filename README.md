@@ -1,104 +1,232 @@
 # JasonShell
 
-JasonShell is a Windows shell-foundation prototype built with Tauri 2, Svelte 5, TypeScript, Rust, and Win32 APIs. It behaves like a small native shell rather than a single-page web app: six Tauri webview windows cooperate through explicit commands and events.
+JasonShell is a Windows shell prototype built with Tauri 2, Svelte 5, TypeScript, Rust, and Win32.
 
-## Current Product
+It aims to feel like a native shell layer, not a normal app window.
 
-- `top-bar`: primary-monitor top AppBar with pinned folder stacks, date/time, and search entry.
-- `bottom-bar`: primary-monitor bottom AppBar with Explorer taskbar `.lnk` launchers, grouped open-window task tiles, previews, menus, reorder gestures, and a process-manager button.
-- `search-panel`: hidden auxiliary webview for richer search results from pinned apps, open windows, static commands, and indexed system app/file/folder sources.
-- `stack-popup`: hidden auxiliary folder browser with navigation, sorting, selection, file operations, inline rename/new-folder, drag/drop, context menus, and pin updates.
-- `task-preview`: hidden auxiliary preview webview for open-window hover previews.
-- `process-manager`: hidden auxiliary process table with sortable process metadata and guarded kill actions.
+## At a glance
 
-The top and bottom bars reserve primary-monitor edge space through the Windows AppBar API while the app is running. Multi-monitor parity is not complete.
+Current shell surfaces:
 
-## Documentation Authority
+- top and bottom app bars
+- Quick Launch
+- task tiles and previews
+- Stack Browser
+- persistent terminal panel
+- Quick Commands
+- search panel
+- process manager
+- audio, calendar, settings, and tray surfaces
 
-1. `master_spec.md` is the canonical current architecture, behavior, invariants, risks, and validation reference.
-2. Current source code and tests are authoritative for implemented behavior when docs are stale.
-3. `README.md` is the setup and product overview.
-4. `action_plan.md` and `future_enhancements.md` describe roadmap sequencing.
-5. `features.md`, `plan.md`, `wave_*.md`, and `stack_browser.md` may contain historical or aspirational notes unless explicitly marked current.
+Core shell rule: the top and bottom bars reserve primary-monitor AppBar work area.
+
+## What this repo is for
+
+This repo is a prototype of a Windows-native shell foundation.
+
+It explores:
+
+- pinned taskbar launchers as shell launch source
+- taskbar tiles with previews and window actions
+- folder and Git browsing inside Stack Browser
+- persistent terminal sessions with ConPTY and xterm
+- saved commands with live output history
+- centered search across apps, windows, settings, folders, commands, and Everything results where available
+- process management with guarded end-process actions
+- shell-adjacent surfaces like audio, calendar, settings, and tray
 
 ## Requirements
 
 - Windows
 - Node.js 20+
-- Rust toolchain
+- Rust stable MSVC
+- Visual Studio Build Tools
 - Microsoft WebView2 runtime
+- Git optional for workbench and repo workflows
 
-## Install
+## First run bootstrap
 
-First run: bootstrap rather than `npm install`.
+Use this exact PowerShell bootstrap on first run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
 ```
 
-That script installs missing Rust, Node.js/npm, MSVC build tools, and WebView2 with winget when needed, imports MSVC dev env, then runs the lockfile-safe repo install step (`npm ci`) before launching JasonShell.
+On managed machines, review the script first. It can request UAC elevation to install missing Node.js, Rust, Visual Studio Build Tools, or WebView2.
 
-## Run
+What it does:
+
+- checks prereqs
+- installs missing prereqs
+- installs repo dependencies
+- launches JasonShell
+
+Expected first-start result:
+
+- app opens as a native Windows shell window
+- top bar and bottom bar reserve screen edge space on primary monitor
+- shell panels become available from the bars
+
+## Later runs
+
+After prereqs and deps are ready, run:
 
 ```powershell
 npm run tauri dev
 ```
 
-If prerequisites are already installed and repo deps are present, you can also run the app directly with the dev command above.
-
-During `npm run tauri dev`, the primary shell surfaces report live runtime metrics to the terminal. Use those metrics to catch zero-height WebView/native-window regressions.
-
-## Notification Badges
-
-Bottom-bar badges use Windows toast deliveries since each app was last focused. This is not a Teams unread count. Windows notification history requires package identity, so register the local development sparse package before testing badges:
+Manual alternative only when prereqs are already done:
 
 ```powershell
-cargo build --manifest-path src-tauri/Cargo.toml
-powershell -ExecutionPolicy Bypass -File .\scripts\register-notification-identity.ps1
+npm ci
+npm run tauri dev
 ```
 
-The script creates a Current User development certificate, trusts it only for Current User, copies the debug executable into an untracked local loose package, registers it, then launches JasonShell through that package identity. Close any `npm run tauri dev` instance first. Re-run it after rebuilding the executable.
+## Practical workflows
 
-Toast counts, native taskbar attention, CPU/title activity, and Explorer taskbar suppression are independent signals. Attention renders amber, toast delivery count renders a red badge, and busy activity keeps its existing treatment.
+### Open a terminal
 
-## Taskbar Controls
+1. Start JasonShell.
+2. Use the top bar terminal button.
+3. Reuse tabs or splits in the persistent terminal panel.
 
-Native taskbar attention is enabled by default so ordinary `FlashWindowEx` requests appear as amber attention cues. Set its kill switch to `0` only to disable the receiver. Multi-monitor Explorer taskbar suppression remains default-off pending the full Windows 10/11 release matrix:
+### Launch a taskbar app
 
-```powershell
-$env:JASONSHELL_TASKBAR_NATIVE_HOOKS = '0' # optional attention kill switch
-$env:JASONSHELL_EXPLORER_SUPPRESSION_V2 = '1'
-```
+1. Open the bottom bar.
+2. Pick a pinned Explorer taskbar launcher.
+3. Launch the app from Quick Launch or task tiles.
 
-Attention hooks listen for native shell flash/foreground events unless explicitly disabled with exact `0`. Explorer suppression v2 activates only with exact `1`; it owns only taskbars it successfully hides, reconciles Explorer recreation/display changes, and identity-checks taskbars before restore.
+### Browse a Git repo
 
-Read bounded runtime health without opening UI through Tauri command `get_taskbar_runtime_diagnostics`. It reports native-hook health/last signal, snapshot sequence/reason/latency, attention count, toast listener/package identity/poll state, unresolved app-ID counts, and Explorer suppression counters. Exported strings are path-redacted and samples are bounded.
+1. Open Stack Browser from a pinned folder.
+2. Enter a repo folder.
+3. Use Git Changes, Log, Tree, or Branches.
+4. Fetch, pull, push, checkout, or create branches from the Git workbench.
 
-Troubleshooting:
+### Run a saved command
 
-- Missing toast badges: run the package-identity registration script, then inspect `toastListenerStatus`, `packageIdentityStatus`, and unresolved app-ID diagnostics.
-- Missing attention: confirm `JASONSHELL_TASKBAR_NATIVE_HOOKS` is not `0`, restart JasonShell, inspect native-hook health, then run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke-taskbar-attention.ps1` against a built debug executable.
-- Legacy `NotifyIcon` balloon tips may lack a resolvable app identity, so their red toast badge is not guaranteed; a paired `FlashWindowEx` request still produces the amber attention cue.
-- Explorer taskbar remains visible/reappears: confirm v2 switch, inspect tracked/hidden/recreation/hide-failure diagnostics, then disable the switch if identity or restore errors appear.
-- Unsupported until release matrix passes: any general Windows 11 support claim, protected/elevated cross-integrity windows, and guaranteed toast identity resolution for every unpackaged app.
+1. Open Quick Commands.
+2. Pick a saved command.
+3. Run it and review the live transcript/history.
+
+### Search for something
+
+1. Use the centered search surface.
+2. Search apps, windows, settings, folders, commands, or Everything results when available.
+3. Open the result directly.
+
+## Feature overview
+
+### Top bar
+
+- hosts shell controls and search entry
+- opens settings, search, Stack Browser, terminal, Quick Commands, tray, audio, and calendar
+- reserves AppBar work area on the primary monitor
+
+### Bottom bar
+
+- shows Explorer taskbar pins as the launcher source
+- shows open-window task tiles and previews
+- includes process manager access
+- reserves AppBar work area on the primary monitor
+
+### Quick Launch
+
+- uses current Explorer taskbar pins
+- launches pinned apps from the native panel
+- stays tied to the bottom bar launcher source of truth
+
+### Stack Browser
+
+- browse folders
+- file operations
+- Git Changes, Log, Tree, and Branches views
+- fetch / pull / push / checkout / create branch actions
+
+### Persistent terminal panel
+
+- ConPTY-backed terminal sessions
+- xterm rendering
+- tabs and splits
+- profiles: Windows Terminal, Git Bash, PowerShell
+- command/output history and shell integration support
+
+### Quick Commands
+
+- saved commands
+- live transcript
+- run history
+- direct command replay
+
+### Search
+
+- centered search UI
+- apps, windows, settings, folders, commands
+- Everything results when available
+
+### Process manager
+
+- sortable process metrics
+- guarded end-process action
+- live process inspection
+
+### Other surfaces
+
+- audio
+- calendar
+- settings
+- tray
+
+## Project layout
+
+Verified paths in this repo:
+
+- `src/` - frontend app code
+- `src-tauri/` - Rust backend and Tauri integration
+- `scripts/` - bootstrap and smoke scripts
+- `tests/` - automated tests
+- `docs/` - repo documentation
+
+## Config and environment notes
+
+- `JASONSHELL_TERMINAL_SHELL_INTEGRATION=0` disables terminal shell integration
+- `JASONSHELL_TERMINAL_SHELL_INTEGRATION=false` also disables it
+- `JASONSHELL_TASKBAR_NATIVE_HOOKS=0` disables native taskbar hooks
 
 ## Validation
 
+Exact package scripts:
+
 ```powershell
-npm run check
+npm run dev
 npm run build
+npm run preview
+npm run check
 npm run test:node
-npm run cargo:test
+npm run test:search
 npm run cargo:check
+npm run cargo:test
+npm run smoke:fullscreen
 npm run validate
+npm run tauri
 ```
 
-`npm run test:search` remains as a compatibility alias for `npm run test:node`; the Node harness now covers more than search helpers.
+Validation note:
 
-Live Windows behavior still needs smoke testing for WebView2 delivery, exact AppBar/popup geometry, Explorer drag/drop cursor behavior, native menus, process-manager focus-loss behavior, and mouse XButton delivery. See `docs/smoke-test-windows.md`.
+- Windows native behavior still needs manual smoke
+- `npm run smoke:fullscreen` is part of the expected Windows smoke path
 
-## Current Caveats
+## Caveats
 
-- Primary-monitor AppBar behavior is the active target; multi-monitor parity is future work.
-- System tray integration is parked/experimental until a visible surface and registered command path are confirmed.
-- Historical Cairo-derived docs may describe future direction rather than shipped JasonShell behavior.
+- prototype, not final shell product
+- primary-monitor target is the current focus
+- multi-monitor support is incomplete
+- tray behavior needs caution
+- native Windows behaviors require manual smoke
+
+## Documentation links
+
+- `master_spec.md` - canonical behavior and architecture
+- `package.json` - exact scripts and toolchain entrypoints
+- `scripts/bootstrap-windows.ps1` - first-run bootstrap path
+- `docs/` - repo docs and smoke references

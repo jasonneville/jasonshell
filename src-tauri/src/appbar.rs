@@ -248,12 +248,11 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
         } else {
             state.hidden_explorer_taskbars =
                 explorer::hide_primary_taskbar_if_needed(monitor_rect)?
-                    .filter(|snapshot| snapshot.hidden_by_jasonshell)
                     .into_iter()
                     .collect();
 
+            start_taskbar_guard(&mut state, monitor_rect);
             if !state.hidden_explorer_taskbars.is_empty() {
-                start_taskbar_guard(&mut state);
                 set_work_area_with_retry_or_warn(
                     monitor_rect,
                     "monitor work area while Explorer taskbar is hidden",
@@ -1526,14 +1525,10 @@ fn rect_has_area(rect: RECT) -> bool {
     rect.right > rect.left && rect.bottom > rect.top
 }
 
-fn start_taskbar_guard(state: &mut ShellRuntimeState) {
+fn start_taskbar_guard(state: &mut ShellRuntimeState, monitor_rect: RECT) {
     stop_taskbar_guard(state);
 
-    let Some(owned) = (!state.hidden_explorer_taskbars.is_empty())
-        .then(|| Arc::new(Mutex::new(state.hidden_explorer_taskbars.clone())))
-    else {
-        return;
-    };
+    let owned = Arc::new(Mutex::new(state.hidden_explorer_taskbars.clone()));
     state.legacy_taskbar_guard_owned = Some(Arc::clone(&owned));
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1541,7 +1536,7 @@ fn start_taskbar_guard(state: &mut ShellRuntimeState) {
     let guard = thread::spawn(move || {
         while !stop_signal.load(Ordering::Relaxed) {
             if let Ok(mut snapshots) = owned.lock() {
-                let _ = explorer::reconcile_owned_taskbars(&mut snapshots);
+                let _ = explorer::reconcile_primary_taskbar_ownership(&mut snapshots, monitor_rect);
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -1605,10 +1600,10 @@ mod tests {
         prepare_fullscreen_restore_retry_with, rect_covers_target, register_tracked_appbar,
         reserved_work_area, resolve_baseline_work_area, restored_shell_surface_layout,
         should_hide_shell_for_fullscreen_window, stabilize_runtime_window_rect_with,
-        stop_taskbar_guard, sync_work_area_best_effort_with, unregister_tracked_appbars_with,
-        FullscreenAppBarState, FullscreenGuardTarget, FullscreenSyncAction,
-        FullscreenWindowCandidate, GuardRetryState, ShellRuntimeState, ShellSurfaceLayout,
-        WindowRectSnapshot, WorkAreaSyncResult,
+        start_taskbar_guard, stop_taskbar_guard, sync_work_area_best_effort_with,
+        unregister_tracked_appbars_with, FullscreenAppBarState, FullscreenGuardTarget,
+        FullscreenSyncAction, FullscreenWindowCandidate, GuardRetryState, ShellRuntimeState,
+        ShellSurfaceLayout, WindowRectSnapshot, WorkAreaSyncResult,
     };
     use crate::explorer::ExplorerTaskbarSnapshot;
     use std::sync::{Arc, Mutex};
@@ -1861,6 +1856,27 @@ mod tests {
 
         assert_eq!(state.hidden_explorer_taskbars, vec![replacement]);
         assert!(state.legacy_taskbar_guard_owned.is_none());
+    }
+
+    #[test]
+    fn legacy_taskbar_guard_starts_even_with_empty_owned_snapshot_list() {
+        let mut state = ShellRuntimeState::default();
+
+        start_taskbar_guard(
+            &mut state,
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080,
+            },
+        );
+
+        assert!(state.taskbar_guard.is_some());
+        assert!(state.taskbar_guard_stop.is_some());
+        assert!(state.legacy_taskbar_guard_owned.is_some());
+
+        stop_taskbar_guard(&mut state);
     }
 
     #[test]

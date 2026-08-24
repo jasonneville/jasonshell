@@ -274,26 +274,56 @@ pub fn reconcile_owned_taskbars(
     Ok(())
 }
 
-fn reconcile_owned_taskbars_core(
+pub fn reconcile_primary_taskbar_ownership(
+    owned: &mut Vec<ExplorerTaskbarSnapshot>,
+    primary_monitor_rect: RECT,
+) -> Result<(), WindowsError> {
+    let current = primary_taskbar_snapshots(primary_monitor_rect)?;
+    let mut hide = |snapshot: ExplorerTaskbarSnapshot| -> Result<bool, WindowsError> {
+        set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
+    };
+    let (next, _, _) = reconcile_primary_taskbar_ownership_core(
+        owned.clone(),
+        current,
+        primary_monitor_rect,
+        &mut hide,
+    )?;
+    *owned = next;
+    Ok(())
+}
+
+fn reconcile_primary_taskbar_ownership_core(
     mut owned: Vec<ExplorerTaskbarSnapshot>,
     current: Vec<ExplorerTaskbarSnapshot>,
+    primary_monitor_rect: RECT,
     hide_taskbar: &mut impl FnMut(ExplorerTaskbarSnapshot) -> Result<bool, WindowsError>,
 ) -> Result<(Vec<ExplorerTaskbarSnapshot>, u64, u64), WindowsError> {
     let mut hide_failures = 0_u64;
     let mut recreations = 0_u64;
     for snapshot in current {
+        if snapshot.monitor_rect != primary_monitor_rect
+            || snapshot.identity.class_name != ExplorerTaskbarClass::Primary
+        {
+            continue;
+        }
         if let Some(existing_index) = owned
             .iter()
             .position(|existing| existing.identity.hwnd == snapshot.identity.hwnd)
         {
             let existing = owned[existing_index];
             if existing.identity == snapshot.identity {
-                if existing.hidden_by_jasonshell && snapshot.originally_visible {
-                    if !hide_taskbar(snapshot)? {
+                if should_retry_owned_taskbar_hide(&existing) && snapshot.originally_visible {
+                    if hide_taskbar(snapshot)? {
+                        owned[existing_index] = ExplorerTaskbarSnapshot {
+                            hidden_by_jasonshell: true,
+                            ..snapshot
+                        };
+                        recreations = recreations.saturating_add(1);
+                    } else {
                         hide_failures = hide_failures.saturating_add(1);
                     }
                 }
-            } else if existing.hidden_by_jasonshell
+            } else if should_retry_owned_taskbar_hide(&existing)
                 && snapshot.originally_visible
                 && existing.identity.class_name == snapshot.identity.class_name
                 && existing.monitor_rect == snapshot.monitor_rect
@@ -312,17 +342,28 @@ fn reconcile_owned_taskbars_core(
             continue;
         }
         let replaces_owned = owned.iter().any(|existing| {
-            existing.hidden_by_jasonshell
+            should_retry_owned_taskbar_hide(existing)
                 && existing.identity.class_name == snapshot.identity.class_name
                 && existing.monitor_rect == snapshot.monitor_rect
                 && existing.edge == snapshot.edge
         });
         if !replaces_owned || !snapshot.originally_visible {
+            if owned.is_empty() {
+                if snapshot.originally_visible && hide_taskbar(snapshot)? {
+                    owned.push(ExplorerTaskbarSnapshot {
+                        hidden_by_jasonshell: true,
+                        ..snapshot
+                    });
+                    recreations = recreations.saturating_add(1);
+                } else {
+                    hide_failures = hide_failures.saturating_add(1);
+                }
+            }
             continue;
         }
         if hide_taskbar(snapshot)? {
             if let Some(existing_index) = owned.iter().position(|existing| {
-                existing.hidden_by_jasonshell
+                should_retry_owned_taskbar_hide(existing)
                     && existing.identity.class_name == snapshot.identity.class_name
                     && existing.monitor_rect == snapshot.monitor_rect
                     && existing.edge == snapshot.edge
@@ -343,6 +384,87 @@ fn reconcile_owned_taskbars_core(
         }
     }
     Ok((owned, recreations, hide_failures))
+}
+
+fn reconcile_owned_taskbars_core(
+    mut owned: Vec<ExplorerTaskbarSnapshot>,
+    current: Vec<ExplorerTaskbarSnapshot>,
+    hide_taskbar: &mut impl FnMut(ExplorerTaskbarSnapshot) -> Result<bool, WindowsError>,
+) -> Result<(Vec<ExplorerTaskbarSnapshot>, u64, u64), WindowsError> {
+    let mut hide_failures = 0_u64;
+    let mut recreations = 0_u64;
+    for snapshot in current {
+        if let Some(existing_index) = owned
+            .iter()
+            .position(|existing| existing.identity.hwnd == snapshot.identity.hwnd)
+        {
+            let existing = owned[existing_index];
+            if existing.identity == snapshot.identity {
+                if should_retry_owned_taskbar_hide(&existing) && snapshot.originally_visible {
+                    if hide_taskbar(snapshot)? {
+                        owned[existing_index] = ExplorerTaskbarSnapshot {
+                            hidden_by_jasonshell: true,
+                            ..snapshot
+                        };
+                        recreations = recreations.saturating_add(1);
+                    } else {
+                        hide_failures = hide_failures.saturating_add(1);
+                    }
+                }
+            } else if should_retry_owned_taskbar_hide(&existing)
+                && snapshot.originally_visible
+                && existing.identity.class_name == snapshot.identity.class_name
+                && existing.monitor_rect == snapshot.monitor_rect
+                && existing.edge == snapshot.edge
+            {
+                if hide_taskbar(snapshot)? {
+                    owned[existing_index] = ExplorerTaskbarSnapshot {
+                        hidden_by_jasonshell: true,
+                        ..snapshot
+                    };
+                    recreations = recreations.saturating_add(1);
+                } else {
+                    hide_failures = hide_failures.saturating_add(1);
+                }
+            }
+            continue;
+        }
+        let replaces_owned = owned.iter().any(|existing| {
+            should_retry_owned_taskbar_hide(existing)
+                && existing.identity.class_name == snapshot.identity.class_name
+                && existing.monitor_rect == snapshot.monitor_rect
+                && existing.edge == snapshot.edge
+        });
+        if !replaces_owned || !snapshot.originally_visible {
+            continue;
+        }
+        if hide_taskbar(snapshot)? {
+            if let Some(existing_index) = owned.iter().position(|existing| {
+                should_retry_owned_taskbar_hide(existing)
+                    && existing.identity.class_name == snapshot.identity.class_name
+                    && existing.monitor_rect == snapshot.monitor_rect
+                    && existing.edge == snapshot.edge
+            }) {
+                owned[existing_index] = ExplorerTaskbarSnapshot {
+                    hidden_by_jasonshell: true,
+                    ..snapshot
+                };
+            } else {
+                owned.push(ExplorerTaskbarSnapshot {
+                    hidden_by_jasonshell: true,
+                    ..snapshot
+                });
+            }
+            recreations = recreations.saturating_add(1);
+        } else {
+            hide_failures = hide_failures.saturating_add(1);
+        }
+    }
+    Ok((owned, recreations, hide_failures))
+}
+
+fn should_retry_owned_taskbar_hide(snapshot: &ExplorerTaskbarSnapshot) -> bool {
+    snapshot.originally_visible
 }
 
 fn hide_taskbars_core(
@@ -839,6 +961,83 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_owned_taskbars_retries_initial_hide_failure_for_originally_visible_owned_taskbars()
+    {
+        let monitor = RECT {
+            left: 100,
+            top: 200,
+            right: 2100,
+            bottom: 1400,
+        };
+        let owned = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 42,
+                process_id: 1,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 100,
+                top: 1350,
+                right: 2100,
+                bottom: 1400,
+            },
+            edge: TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: false,
+        };
+        let replacement = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 42,
+                process_id: 2,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            ..owned
+        };
+        let (next, ops) = reconcile_owned_taskbars_for_test(vec![owned], vec![replacement], true);
+
+        assert_eq!(ops, vec![ExplorerTaskbarFakeOp::Hide(42)]);
+        assert_eq!(next[0].identity.process_id, 2);
+        assert!(next[0].hidden_by_jasonshell);
+    }
+
+    #[test]
+    fn reconcile_owned_taskbars_updates_same_identity_retry_after_successful_hide() {
+        let monitor = RECT {
+            left: 100,
+            top: 200,
+            right: 2100,
+            bottom: 1400,
+        };
+        let owned = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 42,
+                process_id: 1,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 100,
+                top: 1350,
+                right: 2100,
+                bottom: 1400,
+            },
+            edge: TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: false,
+        };
+        let replacement = ExplorerTaskbarSnapshot {
+            identity: owned.identity,
+            ..owned
+        };
+        let (next, ops) = reconcile_owned_taskbars_for_test(vec![owned], vec![replacement], true);
+
+        assert_eq!(ops, vec![ExplorerTaskbarFakeOp::Hide(42)]);
+        assert_eq!(next[0].identity.process_id, 1);
+        assert!(next[0].hidden_by_jasonshell);
+    }
+
+    #[test]
     fn reconcile_owned_taskbars_replaces_same_hwnd_with_new_pid_identity() {
         let monitor = RECT {
             left: 100,
@@ -915,6 +1114,102 @@ mod tests {
         assert_eq!(next[0].identity.hwnd, 43);
         assert_eq!(next[0].identity.process_id, 2);
         assert!(next[0].hidden_by_jasonshell);
+    }
+
+    #[test]
+    fn primary_ownership_reconcile_hides_late_visible_primary_and_records_ownership() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let visible = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 61,
+                process_id: 21,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 0,
+                top: 1032,
+                right: 1920,
+                bottom: 1080,
+            },
+            edge: TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: false,
+        };
+        let mut hides = Vec::new();
+        let (next, _, _) = reconcile_primary_taskbar_ownership_core(
+            Vec::new(),
+            vec![visible],
+            monitor,
+            &mut |snapshot| {
+                hides.push(snapshot.identity.hwnd);
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert_eq!(hides, vec![61]);
+        assert_eq!(
+            next,
+            vec![ExplorerTaskbarSnapshot {
+                hidden_by_jasonshell: true,
+                ..visible
+            }]
+        );
+    }
+
+    #[test]
+    fn primary_ownership_reconcile_ignores_prehidden_and_other_monitor_primary() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let other_monitor = RECT {
+            left: 1920,
+            top: 0,
+            right: 3840,
+            bottom: 1080,
+        };
+        let hidden_primary = ExplorerTaskbarSnapshot {
+            identity: ExplorerTaskbarIdentity {
+                hwnd: 62,
+                process_id: 22,
+                class_name: ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 0,
+                top: 1032,
+                right: 1920,
+                bottom: 1080,
+            },
+            edge: TaskbarEdge::Bottom,
+            originally_visible: false,
+            hidden_by_jasonshell: false,
+        };
+        let other = ExplorerTaskbarSnapshot {
+            monitor_rect: other_monitor,
+            ..hidden_primary
+        };
+        let mut hides = Vec::new();
+        let (next, _, _) = reconcile_primary_taskbar_ownership_core(
+            Vec::new(),
+            vec![hidden_primary, other],
+            monitor,
+            &mut |snapshot| {
+                hides.push(snapshot.identity.hwnd);
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert!(hides.is_empty());
+        assert!(next.is_empty());
     }
 
     fn snapshots_to_hide_for_test(

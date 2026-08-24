@@ -96,7 +96,8 @@ mod imp {
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
     use windows::Win32::UI::Shell::{
-        ExtractIconExW, IShellLinkW, SHGetFileInfoW, ShellExecuteW, SHFILEINFOW, SHGFI_ICON,
+        ExtractIconExW, IShellItem, IShellItemImageFactory, IShellLinkW,
+        SHCreateItemFromParsingName, SHGetFileInfoW, ShellExecuteW, SHFILEINFOW, SHGFI_ICON,
         SHGFI_SMALLICON,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -645,19 +646,103 @@ mod imp {
             }
         }
 
-        if let Some(target_path) = resolved_shortcut_target(&shell_link)? {
-            if let Ok(icon_data_url) = extract_file_icon_data_url(&target_path) {
-                return Ok(icon_data_url);
+        if let Some(icon_data_url) =
+            continue_after_apps_folder_stage(apps_folder_shell_item_icon_data_url(&shell_link))
+        {
+            return Ok(icon_data_url);
+        }
+
+        let target_path = resolved_shortcut_target(&shell_link)?;
+        if let Some(target_path) = target_path {
+            if should_extract_target_icon(arguments(&shell_link), target_path.as_path()) {
+                if let Ok(icon_data_url) = extract_target_icon_data_url(&target_path) {
+                    return Ok(icon_data_url);
+                }
             }
         }
 
-        extract_file_icon_data_url(shortcut_path)
+        Err(format!(
+            "Failed to resolve launcher icon for {}",
+            shortcut_path.display()
+        ))
     }
 
     fn resolved_shortcut_target_path(shortcut_path: &Path) -> Option<String> {
         let shell_link = load_shell_link(shortcut_path).ok()?;
         let target = resolved_shortcut_target(&shell_link).ok()??;
         Some(target.to_string_lossy().into_owned())
+    }
+
+    fn should_extract_target_icon(
+        arguments_result: Result<String, String>,
+        target_path: &Path,
+    ) -> bool {
+        match arguments_result {
+            Ok(arguments) => !is_apps_folder_proxy(&arguments, target_path),
+            Err(_) => true,
+        }
+    }
+
+    fn continue_after_apps_folder_stage(stage: Result<Option<String>, String>) -> Option<String> {
+        stage.ok().flatten()
+    }
+
+    fn is_apps_folder_proxy(arguments: &str, target_path: &Path) -> bool {
+        let Some(exact) = arguments.strip_prefix("shell:AppsFolder\\") else {
+            return false;
+        };
+        if exact.is_empty() || exact.contains(['"', ' ', '\t', '\r', '\n', ';', '&', '|']) {
+            return false;
+        }
+        matches!(target_path.file_name().and_then(|name| name.to_str()), Some(name) if name.eq_ignore_ascii_case("explorer.exe"))
+    }
+
+    fn apps_folder_shell_item_icon_data_url(
+        shell_link: &IShellLinkW,
+    ) -> Result<Option<String>, String> {
+        let arguments = arguments(shell_link)?;
+        let Some(apps_folder_path) = safe_apps_folder_parsing_name(&arguments) else {
+            return Ok(None);
+        };
+
+        let shell_item: IShellItem =
+            unsafe { SHCreateItemFromParsingName(PCWSTR(apps_folder_path.as_ptr()), None) }
+                .map_err(|error| {
+                    format!("Failed to create shell item from shortcut arguments: {error}")
+                })?;
+        let factory: IShellItemImageFactory = shell_item
+            .cast()
+            .map_err(|error| format!("Failed to bind shell item image factory: {error}"))?;
+        let size = windows::Win32::Foundation::SIZE { cx: 256, cy: 256 };
+        let bitmap = unsafe { factory.GetImage(size, windows::Win32::UI::Shell::SIIGBF(0)) }
+            .map_err(|error| format!("Failed to get shortcut shell item image: {error}"))?;
+        if bitmap.0.is_null() {
+            return Ok(None);
+        }
+        let png_result = hbitmap_to_png_bytes(bitmap);
+        unsafe {
+            delete_bitmap(bitmap);
+        }
+        Ok(Some(format!(
+            "data:image/png;base64,{}",
+            BASE64.encode(png_result?)
+        )))
+    }
+
+    fn arguments(shell_link: &IShellLinkW) -> Result<String, String> {
+        let mut arguments = vec![0_u16; 32768];
+        unsafe { shell_link.GetArguments(&mut arguments) }
+            .map_err(|error| format!("Failed to read shortcut arguments: {error}"))?;
+        Ok(trim_wide_buffer(&arguments))
+    }
+
+    fn safe_apps_folder_parsing_name(arguments: &str) -> Option<Vec<u16>> {
+        let prefix = "shell:AppsFolder\\";
+        let exact = arguments.strip_prefix(prefix)?;
+        if exact.is_empty() || exact.contains(['"', ' ', '\t', '\r', '\n', ';', '&', '|']) {
+            return None;
+        }
+        Some(to_wide(arguments))
     }
 
     fn explicit_icon_location(shell_link: &IShellLinkW) -> Result<Option<(PathBuf, i32)>, String> {
@@ -692,6 +777,83 @@ mod imp {
         }
 
         Ok(Some(PathBuf::from(path)))
+    }
+
+    fn extract_target_icon_data_url(path: &Path) -> Result<String, String> {
+        extract_file_icon_data_url(path)
+    }
+
+    fn hbitmap_to_png_bytes(bitmap: HBITMAP) -> Result<Vec<u8>, String> {
+        let (width, height, pixels) = hbitmap_to_rgba(bitmap)?;
+        let mut png_bytes = Vec::new();
+        let mut encoder = Encoder::new(&mut png_bytes, width, height);
+        encoder.set_color(ColorType::Rgba);
+        encoder.set_depth(BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|error| format!("Failed to start PNG encoding: {error}"))?;
+        writer
+            .write_image_data(&pixels)
+            .map_err(|error| format!("Failed to encode launcher icon: {error}"))?;
+        drop(writer);
+        Ok(png_bytes)
+    }
+
+    fn hbitmap_to_rgba(bitmap_handle: HBITMAP) -> Result<(u32, u32, Vec<u8>), String> {
+        let mut bitmap = BITMAP::default();
+        let object_size = unsafe {
+            GetObjectW(
+                bitmap_handle.into(),
+                size_of::<BITMAP>() as i32,
+                Some((&mut bitmap as *mut BITMAP).cast()),
+            )
+        };
+        if object_size == 0 {
+            return Err("Failed to inspect launcher icon bitmap".to_string());
+        }
+        let width = bitmap.bmWidth as i32;
+        let height = bitmap.bmHeight as i32;
+        if width <= 0 || height <= 0 {
+            return Err("Launcher icon bitmap dimensions are invalid".to_string());
+        }
+        let mut pixels = vec![0_u8; (width * height * 4) as usize];
+        let mut bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let dc = unsafe { CreateCompatibleDC(Some(HDC::default())) };
+        if dc.0.is_null() {
+            return Err("Failed to create icon bitmap device context".to_string());
+        }
+        let scanlines = unsafe {
+            GetDIBits(
+                dc,
+                bitmap_handle,
+                0,
+                height as u32,
+                Some(pixels.as_mut_ptr().cast()),
+                &mut bitmap_info,
+                DIB_RGB_COLORS,
+            )
+        };
+        unsafe {
+            let _ = DeleteDC(dc);
+        }
+        if scanlines == 0 {
+            return Err("Failed to read launcher icon pixels".to_string());
+        }
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        Ok((width as u32, height as u32, pixels))
     }
 
     fn extract_file_icon_data_url(path: &Path) -> Result<String, String> {
@@ -891,8 +1053,9 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::{
-            fallback_launcher_icon_data_url, has_lnk_extension, launcher_name,
-            sanitize_shortcut_name, trim_wide_buffer,
+            continue_after_apps_folder_stage, fallback_launcher_icon_data_url, has_lnk_extension,
+            is_apps_folder_proxy, launcher_name, safe_apps_folder_parsing_name,
+            sanitize_shortcut_name, should_extract_target_icon, trim_wide_buffer,
         };
         use std::path::Path;
 
@@ -936,6 +1099,90 @@ mod imp {
         #[test]
         fn sanitizes_shortcut_names() {
             assert_eq!(sanitize_shortcut_name("Bad:Name*"), "Bad_Name_");
+        }
+
+        #[test]
+        fn shell_item_icon_stage_replaces_relaunch_property_path() {
+            let icon_body = std::fs::read_to_string(file!()).unwrap();
+            assert!(icon_body.contains("apps_folder_shell_item_icon_data_url"));
+            assert!(icon_body.contains("GetArguments"));
+            assert!(icon_body.contains("SHCreateItemFromParsingName"));
+        }
+
+        #[test]
+        fn apps_folder_arguments_require_exact_safe_parsing_name() {
+            assert!(safe_apps_folder_parsing_name(
+                "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"
+            )
+            .is_some());
+            assert!(safe_apps_folder_parsing_name(
+                "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify /prefetch:1"
+            )
+            .is_none());
+            assert!(safe_apps_folder_parsing_name(
+                "\"shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify\""
+            )
+            .is_none());
+        }
+
+        #[test]
+        fn apps_folder_proxy_avoids_explorer_target_icon() {
+            assert!(is_apps_folder_proxy(
+                "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify",
+                Path::new("C:\\Windows\\explorer.exe")
+            ));
+            assert!(!is_apps_folder_proxy(
+                "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify /prefetch:1",
+                Path::new("C:\\Windows\\explorer.exe")
+            ));
+            assert!(!is_apps_folder_proxy(
+                "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify",
+                Path::new("C:\\Windows\\System32\\notepad.exe")
+            ));
+        }
+
+        #[test]
+        fn target_icon_stage_only_blocks_exact_apps_folder_explorer_proxies() {
+            assert!(should_extract_target_icon(
+                Ok("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe".to_string()),
+                Path::new("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe")
+            ));
+            assert!(should_extract_target_icon(
+                Ok("C:\\Users\\jane\\AppData\\Local\\Programs\\Ableton\\Ableton Live 12 Suite.exe".to_string()),
+                Path::new("C:\\Users\\jane\\AppData\\Local\\Programs\\Ableton\\Ableton Live 12 Suite.exe")
+            ));
+            assert!(!should_extract_target_icon(
+                Ok("shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify".to_string()),
+                Path::new("C:\\Windows\\explorer.exe")
+            ));
+            assert!(!should_extract_target_icon(
+                Ok("shell:AppsFolder\\WindowsTerminal_8wekyb3d8bbwe!App".to_string()),
+                Path::new("C:\\Windows\\explorer.exe")
+            ));
+            assert!(should_extract_target_icon(
+                Ok(
+                    "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify /prefetch:1"
+                        .to_string()
+                ),
+                Path::new("C:\\Windows\\explorer.exe")
+            ));
+            assert!(should_extract_target_icon(
+                Err("arguments unavailable".to_string()),
+                Path::new("C:\\Windows\\explorer.exe")
+            ));
+        }
+
+        #[test]
+        fn apps_folder_stage_errors_do_not_produce_icons() {
+            assert_eq!(
+                continue_after_apps_folder_stage(Err("stage failed".to_string())),
+                None
+            );
+            assert_eq!(continue_after_apps_folder_stage(Ok(None)), None);
+            assert_eq!(
+                continue_after_apps_folder_stage(Ok(Some("icon".to_string()))),
+                Some("icon".to_string())
+            );
         }
     }
 }
