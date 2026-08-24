@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-08-23 `[CODE]` FIXED: Quick Commands completed previous runs now open/collapse through native details toggles while idle; running runs stay forced open.
+- 2026-08-23 `[CODE]` TESTED: Added command-panel source-contract coverage requiring native summary mouse/keyboard disclosure behavior without click or keydown prevention.
+- 2026-08-23 `[TOOL]` VALIDATED: `node --test tests/commandPanelWiring.test.mjs`, `npm run check`, and `git diff --check` passed; check retains one pre-existing Svelte accessibility warning for section event listeners.
+
 - 2026-08-23 `[CODE]` FIXED: Quick Commands transcript shell now keeps text selection/copy affordances in the live view, only suppresses contextmenu bubbling for selected transcript text, and statefully strips split ANSI CSI/OSC sequences across streamed output chunks before live/persisted transcript emission.
 - 2026-08-23 `[CODE]` TESTED: Added focused source-contract coverage for command-panel transcript selection/copy wiring plus split-ANSI Rust regressions for CSI and OSC/ST chunk splits.
 - 2026-08-23 `[TOOL]` VALIDATED: Targeted command-panel and quick-command validation requested next; full validation pending until focused runs complete.

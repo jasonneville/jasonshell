@@ -150,6 +150,8 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /historyRunStatus/);
   assert.match(commandPanelSource, /activeTab === 'previousRuns'/);
   assert.match(commandPanelSource, /command-history-run/);
+  assert.match(commandPanelSource, /<details class="command-history-run" open=\{run\.running \|\| isRunExpanded\(run\)\} on:toggle=\{\(event\) => handleHistoryRunToggle\(event, run\)\}><summary class:running=\{run\.running\} aria-label=\{historyRunSummary\(run\)\}\s*>\s*<div class="command-history-meta">/);
+  assert.doesNotMatch(commandPanelSource, /<summary[^>]*on:(?:click|keydown)=/);
   assert.match(commandPanelSource, /command-transcript-shell/);
   assert.match(commandPanelSource, /command-transcript-line/);
   assert.match(commandPanelCss, /user-select:\s*text/);
