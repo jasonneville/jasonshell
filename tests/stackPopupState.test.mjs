@@ -13,6 +13,7 @@ import {
   mergeStackFolderListings,
   navigateStackHistory,
   normalizeStackDisplayPath,
+  normalizeStackPathKey,
   openStackFolder,
   parentStackPath,
   selectAllStackEntries,
@@ -24,6 +25,7 @@ import {
   stackOpenWithSuggestions,
   stackSortHeaderState,
   stackBreadcrumbSegments,
+  stackGitStatusPathMatchesEntry,
   stackPopupHasRetainedRows,
   stackListingStatus,
   stackPopupOpenPath,
@@ -144,6 +146,35 @@ test('retains previous entries while a different folder is loading', () => {
   assert.equal(state.selectedPath, null);
   assert.equal(state.statusMessage, 'Loading folder...');
   assert.equal(stackPopupHasRetainedRows(state), true);
+});
+
+test('matches canonical git status paths to stack entry paths', () => {
+  const folderPath = normalizeStackPathKey('C:\\dev\\jasonshell\\src');
+  const filePath = normalizeStackPathKey('\\\\?\\C:\\dev\\jasonshell\\src\\main.ts');
+
+  assert.equal(
+    normalizeStackPathKey('\\\\?\\C:\\dev\\jasonshell\\README.md'),
+    normalizeStackPathKey('C:\\dev\\jasonshell\\README.md')
+  );
+  assert.equal(filePath.startsWith(`${folderPath}\\`), true);
+  assert.equal(
+    stackGitStatusPathMatchesEntry(
+      'C:\\dev\\jasonshell\\README.md',
+      '\\\\?\\C:\\dev\\jasonshell\\README.md',
+      false
+    ),
+    true
+  );
+  assert.equal(
+    stackGitStatusPathMatchesEntry('C:\\dev\\jasonshell\\src', '\\??\\C:\\dev\\jasonshell\\src\\main.ts', true),
+    true
+  );
+  assert.equal(
+    stackGitStatusPathMatchesEntry('\\\\server\\share\\src', '\\\\?\\UNC\\server\\share\\src\\main.ts', true),
+    true
+  );
+  assert.equal(stackGitStatusPathMatchesEntry('/repo/src', '/repo/src/main.ts', true), true);
+  assert.equal(stackGitStatusPathMatchesEntry('/repo/src', '/repo/src-old/main.ts', true), false);
 });
 
 test('typed path validation success commits current path history and listing together', () => {

@@ -92,10 +92,14 @@ test('stack popup loads git status outside folder listing and guards stale respo
   assert.match(stackPopupSurface, /getStackGitStatus/);
   assert.match(stackPopupSurface, /let gitStatus: StackGitStatus \| null = null;/);
   assert.match(stackPopupSurface, /let gitStatusRequestSequence = 0;/);
+  assert.match(stackPopupSurface, /let gitStatusPending: StackGitStatus \| null \| undefined = undefined;/);
+  assert.match(stackPopupSurface, /let gitStatusPendingPath = '';/);
   assert.match(stackPopupSurface, /void refreshStackGitStatus\(folderPath,\s*loadSequence\);/);
   assert.match(stackPopupSurface, /async function refreshStackGitStatus\(folderPath: string,\s*loadSequence: number\)/);
   assert.match(stackPopupSurface, /requestSequence !== gitStatusRequestSequence/);
   assert.match(stackPopupSurface, /loadSequence !== folderLoadSequence/);
+  assert.match(stackPopupSurface, /folderPath !== gitStatusPendingPath/);
+  assert.match(stackPopupSurface, /gitStatusPending === undefined/);
 
   const loadFolderBody = stackPopupSurface.slice(
     stackPopupSurface.indexOf('async function loadFolder'),
@@ -103,15 +107,44 @@ test('stack popup loads git status outside folder listing and guards stale respo
   );
   assert.match(loadFolderBody, /void refreshStackGitStatus\(folderPath,\s*loadSequence\);/);
   assert.match(loadFolderBody, /const listing = await listStackFolder/);
+  assert.match(loadFolderBody, /promotePendingGitStatus\(folderPath\);/);
+  const submitPathBody = stackPopupSurface.slice(
+    stackPopupSurface.indexOf('async function submitPathDraft'),
+    stackPopupSurface.indexOf('function resetPathDraft')
+  );
+  assert.match(submitPathBody, /void refreshStackGitStatus\(folderPath,\s*loadSequence\);[\s\S]*const listing = await listStackFolder/);
+  assert.match(submitPathBody, /prepareGitStateForFolderCommit\(folderPath\);\s*stackState = commitValidatedStackFolderListing/);
+  assert.match(submitPathBody, /promotePendingGitStatus\(folderPath\);/);
+  assert.doesNotMatch(submitPathBody, /gitStatus = null;/);
+  assert.doesNotMatch(submitPathBody, /gitStatusPath = '';/);
+
+  const refreshBody = stackPopupSurface.slice(
+    stackPopupSurface.indexOf('async function refreshStackGitStatus'),
+    stackPopupSurface.indexOf('function startNewIconHydrationSession')
+  );
+  assert.match(refreshBody, /if \(folderPath === stackState\.currentPath\) \{/);
+  assert.match(refreshBody, /const requestSequence = \+\+gitStatusRequestSequence;\s*gitStatusPending = undefined;\s*gitStatusPendingPath = folderPath;/);
+  assert.match(refreshBody, /gitStatus = status;/);
+  assert.match(refreshBody, /gitStatusPending = status;/);
+  assert.match(refreshBody, /gitStatusPendingPath = '';/);
+
+  assert.match(stackPopupSurface, /function prepareGitStateForFolderCommit\(folderPath: string\)[\s\S]*folderPath === currentPath[\s\S]*gitStatusPopupOpen = false;[\s\S]*pendingGitMutation = null;/);
+  assert.match(stackPopupSurface, /prepareGitStateForFolderCommit\(folderPath\);\s*stackState = openStackFolder/);
+  assert.match(stackPopupSurface, /prepareGitStateForFolderCommit\(nextState\.currentPath\);\s*stackState = nextState;/);
+  assert.match(loadFolderBody, /prepareGitStateForFolderCommit\(folderPath\);\s*stackState = applyStackFolderListing/g);
+  assert.match(refreshBody, /gitStatusPending = undefined;/);
 
   const typedSubmitBody = stackPopupSurface.slice(
     stackPopupSurface.indexOf('async function submitPathDraft'),
     stackPopupSurface.indexOf('function resetPathDraft')
   );
-  assert.match(typedSubmitBody, /stackState = commitValidatedStackFolderListing\(stackState, folderPath, listing\);[\s\S]*void refreshStackGitStatus\(folderPath,\s*loadSequence\);/);
+  assert.doesNotMatch(typedSubmitBody, /stackState = commitValidatedStackFolderListing\(stackState, folderPath, listing\);[\s\S]*void refreshStackGitStatus\(folderPath,\s*loadSequence\);/);
 });
 
 test('stack popup renders branch summary and minimal row git badges', () => {
+  assert.match(stackPopupSurface, /stackGitStatusPathMatchesEntry/);
+  assert.match(stackPopupSurface, /\{#if gitStatus && gitStatusPath === currentPath\}[\s\S]*stack-git-summary/);
+  assert.match(stackPopupSurface, /\{#if gitStatusPopupOpen && gitStatus && gitStatusPath === currentPath\}/);
   assert.match(stackPopupSurface, /stack-git-summary/);
   assert.match(stackPopupSurface, /openGitRemoteRepository\(url: string \| null \| undefined\)/);
   assert.match(stackPopupSurface, /await openStackGitRemoteUrl\(url\)/);
@@ -138,7 +171,7 @@ test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackPopupSurface, /Add selected/);
   assert.match(stackPopupSurface, /Commit message/);
   assert.match(stackPopupSurface, /stackGitSummaryParts\(gitStatus\)/);
-  assert.match(stackPopupSurface, /stackGitStatusForEntry\(entry\)/);
+  assert.match(stackPopupSurface, /stackGitStatusForEntry\(entry, gitStatus, gitStatusPath, currentPath\)/);
   assert.match(stackPopupSurface, /data-git-status=\{gitEntryStatus \?\? undefined\}/);
   assert.match(stackPopupSurface, /git-status-badge/);
   assert.match(stackPopupSurface, /stackGitStatusLabel\(gitEntryStatus\)/);

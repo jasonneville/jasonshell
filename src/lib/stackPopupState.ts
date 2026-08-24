@@ -135,15 +135,28 @@ export function normalizeStackDisplayPath(path: string) {
     return `\\\\${normalized.slice(8)}`;
   }
   if (normalized.startsWith('\\??\\UNC\\')) {
-    return `\\\\${normalized.slice(7)}`;
+    return `\\\\${normalized.slice(8)}`;
   }
   if (normalized.startsWith('\\\\?\\')) {
     return normalized.slice(4);
   }
   if (normalized.startsWith('\\??\\')) {
-    return normalized.slice(3);
+    return normalized.slice(4);
   }
   return normalized;
+}
+
+export function normalizeStackPathKey(path: string) {
+  return normalizeStackDisplayPath(path)
+    .replace(/\//g, '\\')
+    .replace(/\\+$/, '')
+    .toLocaleLowerCase();
+}
+
+export function stackGitStatusPathMatchesEntry(entryPath: string, statusPath: string, isFolder: boolean) {
+  const entryKey = normalizeStackPathKey(entryPath);
+  const statusKey = normalizeStackPathKey(statusPath);
+  return statusKey === entryKey || (isFolder && statusKey.startsWith(`${entryKey}\\`));
 }
 
 export function stackBreadcrumbSegments(path: string): StackBreadcrumbSegment[] {

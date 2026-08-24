@@ -1,5 +1,11 @@
 ## Change Ledger
 
+- 2026-08-23 `[CODE]` FIXED: Stack Browser now starts Git status detection before typed folder listing completes, so repo row highlighting can appear with the first rendered rows, and marquee selection starts from the stack-popup surface blank area instead of only the details-table.
+- 2026-08-23 `[CODE]` FIXED: Stack Browser Git status now preserves the newest in-flight folder response until its matching rows commit, applies Git highlights on first render when status wins the race, and keeps the previous folder's visible highlights on failed typed navigation.
+- 2026-08-23 `[CODE]` FIXED: Stack Browser Git row coloring now strips Windows canonical/verbatim path prefixes before matching backend status entries to visible files and parent folders.
+- 2026-08-23 `[CODE]` FIXED: Newly opened Stack Browser subfolders now invalidate row Git badges as soon as async status arrives, instead of waiting for a later row click to trigger rendering.
+- 2026-08-23 `[TOOL]` VALIDATED: RED-first canonical-path matching coverage, focused Git source tests, and `npm run check` passed. Shared Stack Popup state run retained two known unrelated sort-test failures; full suite not claimed.
+
 - 2026-08-20 `[CODE]` IMPROVED: Centered search now keeps at most four leading application results ahead of mixed non-app results, preserves the remaining tail order and backend result identities, keeps app-only result sets complete, and expands safe Windows Settings coverage for Installed apps/Add or remove programs, Night light, Default apps, Startup apps, and Optional features.
 - 2026-08-20 `[CODE]` FIXED: `Ctrl+Space` now forwards centered-search toggle intent from Quick Launch, Stack Browser, Terminal, and Quick Commands popup webviews. Quick Launch uses a dedicated capture handler for only the search chord so Arrow/Enter/Escape navigation is not registered twice.
 - 2026-08-20 `[TOOL]` VALIDATED: RED-first visible-order and popup-hotkey contracts passed with 27 search UX tests and 10 Windows hotkey tests; expanded settings provider tests passed 21/21; `npm run check` passed with zero diagnostics.

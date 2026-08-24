@@ -86,6 +86,7 @@
     stackBreadcrumbSegments,
     stackPopupOpenPath,
     stackPopupRequestKey,
+    stackGitStatusPathMatchesEntry,
     stackOpenWithSuggestions,
     stackSortHeaderState,
     updateStackSort,
@@ -215,6 +216,8 @@
   let stackSortLockedByUser = false;
   let gitStatus: StackGitStatus | null = null;
   let gitStatusPath = '';
+  let gitStatusPending: StackGitStatus | null | undefined = undefined;
+  let gitStatusPendingPath = '';
   let gitStatusRequestSequence = 0;
   let gitStatusPopupOpen = false;
   let gitStatusPopupFilter: StackGitFileStatusKind | 'all' = 'all';
@@ -241,6 +244,7 @@
   let stackBrowserViewMode: StackBrowserViewMode = 'files';
   let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
   let stackTerminalPane: StackTerminalPane | null = null;
+  let stackPopupSurface: HTMLElement | null = null;
   let shellSurfaceHotkeyHandled = false;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
@@ -373,6 +377,7 @@
 
   async function openFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
     closeMenus();
+    prepareGitStateForFolderCommit(folderPath);
     stackState = openStackFolder(stackState, folderPath);
     await loadFolder(stackState.currentPath);
   }
@@ -389,6 +394,7 @@
     const loadSequence = ++folderLoadSequence;
     stackSortLockedByUser = false;
     startNewIconHydrationSession(folderPath);
+    void refreshStackGitStatus(folderPath, loadSequence);
     const listingStartedAt = performance.now();
     let firstPaintDurationMs = 0;
     loadingPath = folderPath;
@@ -412,8 +418,9 @@
       iconDiagnosticsPath = folderPath;
       iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
       iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
+      prepareGitStateForFolderCommit(folderPath);
       stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
-      void refreshStackGitStatus(folderPath, loadSequence);
+      promotePendingGitStatus(folderPath);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       pathDraft = stackState.currentPath;
       pathDraftBase = stackState.currentPath;
@@ -576,7 +583,9 @@
         if (!firstPaintDurationMs && mergedListing.entries.length > 0) {
           firstPaintDurationMs = Math.max(0, performance.now() - listingStartedAt);
         }
+        prepareGitStateForFolderCommit(folderPath);
         stackState = applyStackFolderListing(stackState, folderPath, mergedListing);
+        promotePendingGitStatus(folderPath);
         scheduleVisibleIconHydration(folderPath, loadSequence);
         updateDetailsViewport();
         maybeFocusDetailsGridAfterPageAppend();
@@ -587,7 +596,9 @@
       iconDiagnosticsPath = folderPath;
       iconDiagnosticsFirstPaintDurationMs = firstPaintDurationMs || Math.max(0, performance.now() - listingStartedAt);
       iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
+      prepareGitStateForFolderCommit(folderPath);
       stackState = applyStackFolderListing(stackState, folderPath, mergedListing ?? listing);
+      promotePendingGitStatus(folderPath);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       updateDetailsViewport();
       maybeFocusDetailsGridAfterPageAppend();
@@ -605,27 +616,53 @@
 
   async function refreshStackGitStatus(folderPath: string, loadSequence: number) {
     const requestSequence = ++gitStatusRequestSequence;
-    gitStatusPath = folderPath;
-    gitStatus = null;
+    gitStatusPending = undefined;
+    gitStatusPendingPath = folderPath;
     try {
       const status = await getStackGitStatus(folderPath);
       if (
         requestSequence !== gitStatusRequestSequence
         || loadSequence !== folderLoadSequence
-        || folderPath !== stackState.currentPath
+        || folderPath !== gitStatusPendingPath
       ) {
         return;
       }
-      gitStatus = status;
+      if (folderPath === stackState.currentPath) {
+        gitStatus = status;
+        gitStatusPath = folderPath;
+        gitStatusPending = undefined;
+        gitStatusPendingPath = '';
+      } else {
+        gitStatusPending = status;
+      }
       if (status && gitStatusPopupOpen) {
         void refreshGitWorkbenchData(gitWorkbenchView, folderPath);
       }
     } catch (error) {
       if (requestSequence === gitStatusRequestSequence && loadSequence === folderLoadSequence) {
         console.debug('Stack git status unavailable', error);
-        gitStatus = null;
+        gitStatusPending = undefined;
+        gitStatusPendingPath = '';
       }
     }
+  }
+
+  function promotePendingGitStatus(folderPath: string) {
+    if (folderPath !== gitStatusPendingPath || gitStatusPending === undefined) {
+      return;
+    }
+    gitStatus = gitStatusPending;
+    gitStatusPath = folderPath;
+    gitStatusPending = undefined;
+    gitStatusPendingPath = '';
+  }
+
+  function prepareGitStateForFolderCommit(folderPath: string) {
+    if (folderPath === currentPath) {
+      return;
+    }
+    gitStatusPopupOpen = false;
+    pendingGitMutation = null;
   }
 
   function startNewIconHydrationSession(folderPath: string) {
@@ -864,7 +901,9 @@
   }
 
   async function navigateHistory(direction: -1 | 1) {
-    stackState = navigateStackHistory(stackState, direction);
+    const nextState = navigateStackHistory(stackState, direction);
+    prepareGitStateForFolderCommit(nextState.currentPath);
+    stackState = nextState;
     await loadFolder(stackState.currentPath);
   }
 
@@ -1861,26 +1900,25 @@
     }
   }
 
-  function stackGitStatusForEntry(entry: StackEntry) {
-    if (!gitStatus || gitStatusPath !== currentPath) {
+  function stackGitStatusForEntry(
+    entry: StackEntry,
+    status: StackGitStatus | null,
+    statusPath: string,
+    folderPath: string
+  ) {
+    if (!status || statusPath !== folderPath) {
       return null;
     }
-    const entryPath = normalizeStackPathKey(entry.path);
     let nestedStatus: StackGitFileStatusKind | null = null;
-    for (const item of gitStatus.entries) {
-      const statusPath = normalizeStackPathKey(item.path);
-      if (statusPath === entryPath) {
+    for (const item of status.entries) {
+      if (stackGitStatusPathMatchesEntry(entry.path, item.path, false)) {
         return item.status;
       }
-      if (entry.entryType === 'Folder' && statusPath.startsWith(`${entryPath}\\`)) {
+      if (entry.entryType === 'Folder' && stackGitStatusPathMatchesEntry(entry.path, item.path, true)) {
         nestedStatus = stackGitStatusPriority(nestedStatus, item.status);
       }
     }
     return nestedStatus;
-  }
-
-  function normalizeStackPathKey(path: string) {
-    return path.replace(/\//g, '\\').replace(/\\+$/, '').toLocaleLowerCase();
   }
 
   function stackGitStatusPriority(current: StackGitFileStatusKind | null, next: StackGitFileStatusKind) {
@@ -1943,7 +1981,7 @@
       return false;
     }
     return classifyStackMarqueeStartTarget({
-      self: target === detailsBody,
+      self: target === detailsBody || target === stackPopupSurface,
       closest: (selector) => Boolean(target.closest(selector))
     }) !== 'blocked';
   }
@@ -2440,12 +2478,14 @@
 />
 
 <section
+  bind:this={stackPopupSurface}
   class:resizing={!!resizeDrag}
   class:terminal-mode={stackBrowserViewMode === 'terminal'}
   class="stack-popup"
   aria-label="Stack browser"
   aria-busy={loadingPath ? 'true' : 'false'}
   on:contextmenu={handleBackgroundContextMenu}
+  on:pointerdown={beginMarqueeSelection}
 >
   <MeltActionButton
     class="stack-browser-close-button"
@@ -2506,7 +2546,7 @@
             {/each}
           </nav>
         {/if}
-        {#if gitStatus}
+        {#if gitStatus && gitStatusPath === currentPath}
           <div class="stack-git-summary" aria-label={`Git ${gitStatus.branch} ${stackGitSummaryParts(gitStatus).map((part) => part.title).join(', ') || 'clean'}`}>
             <button type="button" class="stack-git-branch" on:click={() => openGitStatusPopup('all')}>{gitStatus.branch}</button>
             {#if stackGitSummaryParts(gitStatus).length}
@@ -2590,7 +2630,7 @@
     </form>
   {/if}
 
-  {#if gitStatusPopupOpen && gitStatus}
+  {#if gitStatusPopupOpen && gitStatus && gitStatusPath === currentPath}
     <dialog
       open
       class="stack-git-popup"
@@ -2771,7 +2811,6 @@
     tabindex="0"
     bind:this={detailsGrid}
     on:contextmenu={handleBackgroundContextMenu}
-    on:pointerdown={beginMarqueeSelection}
     on:dragover={(event) => handleDropOver(event)}
     on:drop={(event) => void handleDrop(event, currentPath)}
   >
@@ -2797,7 +2836,7 @@
         {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
           {@const entry = virtualRow.item}
           {@const fileIcon = stackFileIconForEntry(entry)}
-          {@const gitEntryStatus = stackGitStatusForEntry(entry)}
+          {@const gitEntryStatus = stackGitStatusForEntry(entry, gitStatus, gitStatusPath, currentPath)}
           <button
             class:selected={stackState.selectedPaths.includes(entry.path)}
             class:subdued={entry.isHidden || entry.isSystem}

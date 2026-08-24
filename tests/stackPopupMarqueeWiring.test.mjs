@@ -14,7 +14,7 @@ const stackPopupCssSource = readFileSync(
 test('stack browser marquee starts only from details background and spacer surfaces', () => {
   assert.match(stackPopupSurfaceSource, /function beginMarqueeSelection\(event: PointerEvent\)/);
   assert.match(stackPopupSurfaceSource, /isStackMarqueeStartTarget\(event\.target\)/);
-  assert.match(stackPopupSurfaceSource, /class="details-table"[\s\S]*on:pointerdown=\{beginMarqueeSelection\}/);
+  assert.match(stackPopupSurfaceSource, /class="stack-popup"[\s\S]*on:pointerdown=\{beginMarqueeSelection\}/);
   assert.match(stackPopupSurfaceSource, /data-stack-marquee-start="body"/);
   assert.match(stackPopupSurfaceSource, /data-stack-marquee-start="spacer"/);
   assert.doesNotMatch(stackPopupSurfaceSource, /on:pointerdown=\{\(event\) => beginMarqueeSelection\(event, entry\)\}/);
