@@ -273,6 +273,13 @@ test('quick command backend history and transcript payload order stay stable und
   assert.match(quickCommandsSource, /push_back\(/);
 });
 
+test('quick command backend decodes terminal bytes and strips ansi controls before transcript storage', () => {
+  assert.match(quickCommandsSource, /decode_terminal_bytes\(/);
+  assert.match(quickCommandsSource, /sanitize_terminal_text\(/);
+  assert.match(quickCommandsSource, /GetOEMCP/);
+  assert.match(quickCommandsSource, /MultiByteToWideChar/);
+});
+
 test('quick command duplicate labels stay unique case-insensitively', () => {
   assert.equal(nextDuplicateQuickCommandLabel('Build', ['Build', 'build (1)', 'BUILD (2)']), 'Build (3)');
   assert.equal(nextUniqueQuickCommandId('Build', ['build', 'build-1']), 'build-2');

@@ -134,7 +134,7 @@
 .command-history-live { color: var(--js-color-success-border); font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .command-history-body { display: grid; gap: var(--js-space-2); padding-top: var(--js-space-2); }
 .command-list-state { font-size: 0.7rem; margin: 0; }
-.command-transcript-shell { background: var(--js-color-surface); border-left: 2px solid var(--js-color-accent-border); color: var(--js-color-text); font: 0.67rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace; margin: 0; max-height: 12rem; overflow: auto; padding: 0.45rem; white-space: pre-wrap; }
+.command-transcript-shell { background: var(--js-color-surface); border-left: 2px solid var(--js-color-accent-border); color: var(--js-color-text); font: 0.67rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace; margin: 0; max-height: 12rem; overflow: auto; padding: 0.45rem; user-select: text; white-space: pre-wrap; cursor: text; }
 .command-transcript-line { color: var(--js-color-text); display: block; margin: 0 0 0.15rem; white-space: pre-wrap; }
 .command-transcript-line:last-child { margin-bottom: 0; }
 .command-transcript-line[data-kind='stderr'] { color: var(--js-color-error-text); }

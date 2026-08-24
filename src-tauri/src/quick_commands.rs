@@ -83,6 +83,8 @@ struct QuickCommandRunState {
     transcript: VecDeque<QuickCommandTranscriptEntry>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    stdout_carry: AnsiCarry,
+    stderr_carry: AnsiCarry,
     stdout_truncated: bool,
     stderr_truncated: bool,
     finished_at_epoch_ms: Option<u64>,
@@ -98,6 +100,12 @@ struct QuickCommandPendingInput {
 
 #[derive(Default)]
 struct MarkerCarry {
+    bytes: Vec<u8>,
+    text_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct AnsiCarry {
     bytes: Vec<u8>,
 }
 
@@ -438,6 +446,8 @@ fn spawn_quick_command(
                 transcript: VecDeque::new(),
                 stdout: vec![],
                 stderr: vec![],
+                stdout_carry: AnsiCarry::default(),
+                stderr_carry: AnsiCarry::default(),
                 stdout_truncated: false,
                 stderr_truncated: false,
                 finished_at_epoch_ms: None,
@@ -491,8 +501,8 @@ fn spawn_quick_command(
                 finished_at_epoch_ms,
                 process_id,
                 exit_code,
-                stdout: String::from_utf8_lossy(&stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                stdout: sanitize_terminal_text(&decode_terminal_bytes(&stdout)),
+                stderr: sanitize_terminal_text(&decode_terminal_bytes(&stderr)),
                 transcript: transcript.into_iter().collect(),
                 stdout_truncated: stdout_truncated || state.stdout_truncated,
                 stderr_truncated: stderr_truncated || state.stderr_truncated,
@@ -563,10 +573,8 @@ fn feed(carry: &mut MarkerCarry, bytes: &[u8], eof: bool) -> Vec<QuickCommandOut
     while let Some(pos) = find_bytes(&carry.bytes[i..], marker_prefix) {
         let start = i + pos;
         if start > i {
-            out.push(QuickCommandOutputChunk {
-                text: String::from_utf8_lossy(&carry.bytes[i..start]).into_owned(),
-                marker: None,
-            });
+            let segment = carry.bytes[i..start].to_vec();
+            push_text_chunk(&mut out, carry, &segment, false);
         }
         let after_prefix = start + marker_prefix.len();
         if let Some(end_rel) = carry.bytes[after_prefix..]
@@ -598,10 +606,8 @@ fn feed(carry: &mut MarkerCarry, bytes: &[u8], eof: bool) -> Vec<QuickCommandOut
                 i = end + 1;
                 continue;
             }
-            out.push(QuickCommandOutputChunk {
-                text: String::from_utf8_lossy(&carry.bytes[start..=end]).into_owned(),
-                marker: None,
-            });
+            let segment = carry.bytes[start..=end].to_vec();
+            push_text_chunk(&mut out, carry, &segment, false);
             i = end + 1;
             continue;
         }
@@ -609,12 +615,17 @@ fn feed(carry: &mut MarkerCarry, bytes: &[u8], eof: bool) -> Vec<QuickCommandOut
     }
     if eof {
         if i < carry.bytes.len() {
-            out.push(QuickCommandOutputChunk {
-                text: String::from_utf8_lossy(&carry.bytes[i..]).into_owned(),
-                marker: None,
-            });
+            let segment = carry.bytes[i..].to_vec();
+            push_text_chunk(&mut out, carry, &segment, true);
         }
         carry.bytes.clear();
+        if !carry.text_bytes.is_empty() {
+            out.push(QuickCommandOutputChunk {
+                text: decode_terminal_bytes(&carry.text_bytes),
+                marker: None,
+            });
+            carry.text_bytes.clear();
+        }
     } else {
         let unprocessed = &carry.bytes[i..];
         let hold_from = if let Some(marker_start) = find_bytes(unprocessed, marker_prefix) {
@@ -624,22 +635,56 @@ fn feed(carry: &mut MarkerCarry, bytes: &[u8], eof: bool) -> Vec<QuickCommandOut
             carry.bytes.len().saturating_sub(suffix_len)
         };
         if carry.bytes.len().saturating_sub(hold_from) > marker_prefix.len() + MAX_ENCODED_MARKER {
-            out.push(QuickCommandOutputChunk {
-                text: String::from_utf8_lossy(&carry.bytes[i..]).into_owned(),
-                marker: None,
-            });
+            let segment = carry.bytes[i..].to_vec();
+            push_text_chunk(&mut out, carry, &segment, true);
             carry.bytes.clear();
             return out;
         }
         if i < hold_from {
-            out.push(QuickCommandOutputChunk {
-                text: String::from_utf8_lossy(&carry.bytes[i..hold_from]).into_owned(),
-                marker: None,
-            });
+            let segment = carry.bytes[i..hold_from].to_vec();
+            push_text_chunk(&mut out, carry, &segment, false);
         }
         carry.bytes = carry.bytes[hold_from..].to_vec();
     }
     out
+}
+
+fn push_text_chunk(
+    out: &mut Vec<QuickCommandOutputChunk>,
+    carry: &mut MarkerCarry,
+    bytes: &[u8],
+    eof: bool,
+) {
+    carry.text_bytes.extend_from_slice(bytes);
+    let flush_len = text_flush_len(&carry.text_bytes, eof);
+    if flush_len > 0 {
+        let decoded = decode_terminal_bytes(&carry.text_bytes[..flush_len]);
+        out.push(QuickCommandOutputChunk {
+            text: decoded,
+            marker: None,
+        });
+        carry.text_bytes.drain(..flush_len);
+    }
+}
+
+fn text_flush_len(bytes: &[u8], eof: bool) -> usize {
+    if eof || bytes.is_empty() {
+        return bytes.len();
+    }
+    if let Err(error) = std::str::from_utf8(bytes) {
+        if error.error_len().is_none() {
+            return error.valid_up_to();
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Globalization::{GetOEMCP, IsDBCSLeadByteEx};
+        let cp = unsafe { GetOEMCP() };
+        if unsafe { IsDBCSLeadByteEx(cp, *bytes.last().unwrap()) }.is_ok() {
+            return bytes.len() - 1;
+        }
+    }
+    bytes.len()
 }
 
 fn longest_marker_prefix_suffix(bytes: &[u8], marker_prefix: &[u8]) -> usize {
@@ -729,8 +774,15 @@ fn append_running_output(
 ) -> Option<QuickCommandRunUpdatedPayload> {
     if let Ok(mut runs) = runs().lock() {
         if let Some(run) = runs.get_mut(run_id) {
-            let text = String::from_utf8_lossy(chunk);
-            let body = text.to_string();
+            let body = decode_terminal_text_stateful(
+                chunk,
+                if is_stdout {
+                    &mut run.stdout_carry
+                } else {
+                    &mut run.stderr_carry
+                },
+                false,
+            );
             let sequence = next_sequence();
             let at_epoch_ms = current_epoch_ms();
             let kind = if is_stdout { "stdout" } else { "stderr" }.to_string();
@@ -740,7 +792,7 @@ fn append_running_output(
                 &mut run.stderr
             };
             if target.len() < OUTPUT_LIMIT {
-                target.extend_from_slice(text.as_bytes());
+                target.extend_from_slice(body.as_bytes());
                 if target.len() > OUTPUT_LIMIT {
                     target.truncate(OUTPUT_LIMIT);
                     if is_stdout {
@@ -856,8 +908,8 @@ fn state_to_history(state: &QuickCommandRunState) -> settings::QuickCommandRunHi
             .unwrap_or(state.started_at_epoch_ms),
         process_id: state.process_id,
         exit_code: state.exit_code,
-        stdout: String::from_utf8_lossy(&state.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&state.stderr).into_owned(),
+        stdout: decode_terminal_bytes(&state.stdout),
+        stderr: decode_terminal_bytes(&state.stderr),
         transcript: state.transcript.iter().cloned().collect(),
         stdout_truncated: state.stdout_truncated,
         stderr_truncated: state.stderr_truncated,
@@ -1000,8 +1052,8 @@ fn stop_running_quick_command(
                 finished_at_epoch_ms,
                 process_id: state.process_id,
                 exit_code: None,
-                stdout: String::from_utf8_lossy(&state.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&state.stderr).into_owned(),
+                stdout: sanitize_terminal_text(&decode_terminal_bytes(&state.stdout)),
+                stderr: sanitize_terminal_text(&decode_terminal_bytes(&state.stderr)),
                 transcript: state.transcript.iter().cloned().collect(),
                 stdout_truncated: state.stdout_truncated,
                 stderr_truncated: state.stderr_truncated,
@@ -1031,6 +1083,158 @@ fn stop_running_quick_command(
     );
     Ok(())
 }
+fn decode_terminal_bytes(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Globalization::{
+            GetOEMCP, MultiByteToWideChar, CP_UTF8, MB_ERR_INVALID_CHARS,
+        };
+        let cp = unsafe { GetOEMCP() };
+        let wide_len = unsafe { MultiByteToWideChar(cp, MB_ERR_INVALID_CHARS, bytes, None) };
+        if wide_len > 0 {
+            let mut wide = vec![0u16; wide_len as usize];
+            let written =
+                unsafe { MultiByteToWideChar(cp, MB_ERR_INVALID_CHARS, bytes, Some(&mut wide)) };
+            if written > 0 {
+                return String::from_utf16_lossy(&wide[..written as usize]);
+            }
+        }
+        let wide_len = unsafe { MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes, None) };
+        if wide_len > 0 {
+            let mut wide = vec![0u16; wide_len as usize];
+            let written = unsafe {
+                MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes, Some(&mut wide))
+            };
+            if written > 0 {
+                return String::from_utf16_lossy(&wide[..written as usize]);
+            }
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn sanitize_terminal_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\x1b' => match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\x07' {
+                            break;
+                        }
+                        if next == '\x1b' && matches!(chars.peek(), Some('\\')) {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some('P' | '^' | '_') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\x07' {
+                            break;
+                        }
+                        if next == '\x1b' && matches!(chars.peek(), Some('\\')) {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some('(' | ')' | '*' | '+' | '-' | '.' | '/') => {
+                    chars.next();
+                    let _ = chars.next();
+                }
+                Some('7' | '8' | 'c') => {
+                    chars.next();
+                }
+                _ => {}
+            },
+            '\r' | '\n' | '\t' => out.push(ch),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn decode_terminal_text_stateful(chunk: &[u8], carry: &mut AnsiCarry, eof: bool) -> String {
+    carry.bytes.extend_from_slice(chunk);
+    let mut out = Vec::with_capacity(carry.bytes.len());
+    let mut i = 0usize;
+    while i < carry.bytes.len() {
+        let b = carry.bytes[i];
+        if b != 0x1b {
+            out.push(b);
+            i += 1;
+            continue;
+        }
+        let escape_start = i;
+        if i + 1 >= carry.bytes.len() {
+            break;
+        }
+        match carry.bytes[i + 1] {
+            b'[' => {
+                i += 2;
+                while i < carry.bytes.len() {
+                    let c = carry.bytes[i];
+                    i += 1;
+                    if (b'@'..=b'~').contains(&c) {
+                        break;
+                    }
+                }
+                if i >= carry.bytes.len() && !matches!(carry.bytes.last(), Some(b'@'..=b'~')) { i = escape_start; break; }
+            }
+            b']' | b'P' | b'^' | b'_' => {
+                i += 2;
+                while i < carry.bytes.len() {
+                    let c = carry.bytes[i];
+                    if c == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if c == 0x1b && i + 1 < carry.bytes.len() && carry.bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                if i >= carry.bytes.len() { i = escape_start; break; }
+            }
+            b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => {
+                if i + 2 >= carry.bytes.len() { i = escape_start; break; }
+                i += 3;
+            }
+            b'7' | b'8' | b'c' => {
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    let keep_from = i.min(carry.bytes.len());
+    carry.bytes.drain(..keep_from);
+    if eof { carry.bytes.clear(); }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn quote_command_part(value: &str) -> String {
     if value.contains([' ', '\t', '"']) {
         format!("\"{}\"", value.replace('"', "\\\""))
@@ -1099,6 +1303,64 @@ mod tests {
             .chain(second.iter())
             .any(|c| c.marker.is_some()));
     }
+
+    #[test]
+    fn split_utf8_stream_keeps_text_intact_across_chunks() {
+        let mut carry = MarkerCarry::default();
+        let bytes = "ab🙂cd".as_bytes();
+        let first = feed(&mut carry, &bytes[..4], false);
+        assert_eq!(
+            first
+                .iter()
+                .map(|chunk| chunk.text.as_str())
+                .collect::<String>(),
+            "ab"
+        );
+        let second = feed(&mut carry, &bytes[4..], true);
+        assert_eq!(
+            first
+                .iter()
+                .chain(second.iter())
+                .map(|chunk| chunk.text.as_str())
+                .collect::<String>(),
+            "ab🙂cd"
+        );
+    }
+
+    #[test]
+    fn sanitize_terminal_text_consumes_common_escape_classes() {
+        let text = "a\x1bc\x1b[31mred\x1b]0;title\x07b\x1b7\x1b8\x1b(Be\r\nf\t\x1bPq\x1b\\g";
+        assert_eq!(sanitize_terminal_text(text), "aredbe\r\nf\tg");
+    }
+
+    #[test]
+    fn split_csi_sequence_is_removed_across_chunks() {
+        let mut carry = AnsiCarry::default();
+        let first = decode_terminal_text_stateful(b"a\x1b[3", &mut carry, false);
+        let second = decode_terminal_text_stateful(b"1mb", &mut carry, true);
+        assert_eq!(format!("{}{}", first, second), "ab");
+        assert!(!format!("{}{}", first, second).contains("31m"));
+    }
+
+    #[test]
+    fn split_osc_st_sequence_is_removed_across_chunks() {
+        let mut carry = AnsiCarry::default();
+        let first = decode_terminal_text_stateful(b"x\x1b]0;ti", &mut carry, false);
+        let second = decode_terminal_text_stateful(b"tle\x07y", &mut carry, true);
+        let combined = format!("{}{}", first, second);
+        assert_eq!(combined, "xy");
+        assert!(!combined.contains("title"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn split_oem_dbcs_bytes_flush_on_boundary() {
+        use windows::Win32::Globalization::GetOEMCP;
+        let cp = unsafe { GetOEMCP() };
+        if cp == 932 {
+            assert_eq!(decode_terminal_bytes(&[0x82, 0xA0]), "あ");
+        }
+    }
     #[test]
     fn split_marker_prefix_across_chunks() {
         let marker = serde_json::json!({"version":1,"requestId":"req-1","prompt":"p","kind":"text","secret":false,"maxLength":4096});
@@ -1136,6 +1398,8 @@ mod tests {
             transcript: VecDeque::new(),
             stdout: vec![],
             stderr: vec![],
+            stdout_carry: AnsiCarry::default(),
+            stderr_carry: AnsiCarry::default(),
             stdout_truncated: false,
             stderr_truncated: false,
             finished_at_epoch_ms: None,
@@ -1174,6 +1438,8 @@ mod tests {
             transcript: VecDeque::new(),
             stdout: vec![],
             stderr: vec![],
+            stdout_carry: AnsiCarry::default(),
+            stderr_carry: AnsiCarry::default(),
             stdout_truncated: false,
             stderr_truncated: false,
             finished_at_epoch_ms: None,
@@ -1298,6 +1564,8 @@ mod tests {
             transcript: VecDeque::new(),
             stdout: vec![1],
             stderr: vec![2],
+            stdout_carry: AnsiCarry::default(),
+            stderr_carry: AnsiCarry::default(),
             stdout_truncated: true,
             stderr_truncated: false,
             finished_at_epoch_ms: Some(99),

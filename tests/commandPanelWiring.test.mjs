@@ -152,6 +152,9 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /command-history-run/);
   assert.match(commandPanelSource, /command-transcript-shell/);
   assert.match(commandPanelSource, /command-transcript-line/);
+  assert.match(commandPanelCss, /user-select:\s*text/);
+  assert.match(commandPanelSource, /document\.execCommand\('copy'\)/);
+  assert.match(commandPanelSource, /handleTranscriptContextMenu/);
   assert.match(commandPanelSource, /Duplicate command/);
   assert.match(commandPanelSource, /nextDuplicateQuickCommandLabel/);
   assert.match(commandPanelSource, /nextUniqueQuickCommandId/);
