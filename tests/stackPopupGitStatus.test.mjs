@@ -196,7 +196,7 @@ test('stack git status dialog is upgraded into a dense developer workbench', () 
   assert.match(stackGitPanel, /class="stack-git-repository-menu"/);
   assert.match(stackGitPanel, /class="stack-git-panel-content"/);
   assert.match(stackGitPanel, /class="stack-git-panel-scroll"/);
-  assert.match(stackGitPanel, /class="stack-git-diff-panel"/);
+  assert.match(stackGitPanel, /class="stack-git-change-diff-drawer"/);
   for (const [view, label] of [['changes', 'Changes'], ['history', 'History'], ['stashes', 'Stashes'], ['branches', 'Branches']]) {
     assert.match(stackGitPanel, new RegExp(`handleTabChange\\('${view}'\\)[\\s\\S]*>${label}<`));
   }
@@ -234,7 +234,7 @@ test('stack git workbench rejects stale async data and confirms mutating git com
   assert.match(stackGitPanel, /const token = \+\+viewToken/);
   assert.match(stackGitPanel, /if \(token !== viewToken\)/);
   assert.match(stackGitPanel, /const token = \+\+diffToken/);
-  assert.match(stackGitPanel, /if \(token !== diffToken\)/);
+  assert.match(stackGitPanel, /token !== diffToken \|\| requestFolderPath !== folderPath/);
   assert.match(stackGitPanel, /viewLoading = false;/);
   assert.match(stackGitPanel, /class="stack-git-confirm-dialog"/);
   assert.match(stackGitPanel, /confirmStackGitDiscard\(entries\)/);
@@ -265,9 +265,9 @@ test('stack git workbench uses edge-to-edge OpenChamber geometry without card ne
   assert.match(stackGitPanel, /container-type: inline-size;/);
   assert.match(stackGitPanel, /\.stack-git-change-row \{[\s\S]*height: 34px;/);
   assert.match(stackGitPanel, /\.stack-git-icon-button \{[\s\S]*width: 32px;/);
-  assert.match(stackGitPanel, /\.stack-git-diff-panel pre/);
+  assert.match(stackGitPanel, /\.stack-git-change-diff-drawer pre/);
   assert.match(stackGitPanel, /class="stack-git-stream-row"/);
-  assert.match(stackGitPanel, /class="stack-git-diff-panel"/);
+  assert.match(stackGitPanel, /class="stack-git-change-diff-drawer"/);
   assert.match(stackGitPanel, /@container \(max-width: 42rem\)/);
   assert.match(stackGitPanel, /\.stack-git-branch-form/);
   assert.match(stackGitPanel, /\.stack-git-confirm-dialog/);

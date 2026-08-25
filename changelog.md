@@ -1,5 +1,19 @@
 ## Change Ledger
 
+- 2026-08-24 `[CODE]` FIXED: Aligned Stack Git header bulk stage/unstage glyph centers with individual file-row action glyphs using the same horizontal gutter.
+
+- 2026-08-24 `[CODE]` FIXED: Moved individual Stack Git file-row surface and hover styling onto the full row so stage, unstage, filename, and discard controls share one continuous background.
+
+- 2026-08-24 `[CODE]` CHANGED: Flattened Stack Git stage, unstage, and discard controls into bare glyph buttons with specificity-safe resets for border, fill, radius, minimum height, and hover color while preserving keyboard focus visibility.
+
+- 2026-08-24 `[CODE]` FIXED: Increased Stack Browser Git diff contrast with full semantic theme fills, wider status rails, and emphasized add/delete/hunk prefixes.
+- 2026-08-24 `[TEST]` Locked prominent theme-token diff coloring and rail width in Stack Git source contracts.
+
+- 2026-08-24 `[CODE]` FIXED: Removed explicit newline text nodes between Stack Git semantic diff rows so file lines render at normal density and consecutive addition/deletion backgrounds remain contiguous.
+
+- 2026-08-24 `[CODE]` FIXED: Stack Git diff drawers now use a restrained transcript-like shell with app-theme surfaces, semantic unified-diff line styling, readable addition/deletion/hunk/meta rails, compact-width padding, and a 4,000-line rich-render cap instead of a hardcoded dark block.
+- 2026-08-24 `[TOOL]` TESTED: Updated focused Stack Git contracts for themed semantic rendering, accessibility, stale-response guards, current drawer geometry, and large-diff bounding; verified check/build gates.
+
 - 2026-08-24 `[CODE]` CHANGED: Removed duplicate filename/status headers and close buttons from staged/unstaged diff drawers. Diff content now starts directly beneath the active file row; clicking that row again or pressing Escape closes the drawer.
 - 2026-08-24 `[CODE]` TESTED: Drawer source contract now rejects duplicate diff headers and close controls and requires the diff body as the drawer's first child.
 - 2026-08-24 `[TOOL]` VALIDATED: Drawer chrome contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning.

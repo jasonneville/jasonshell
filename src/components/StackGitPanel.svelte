@@ -29,6 +29,7 @@
 
   const stagedChangeGroupId = 'stack-git-staged-changes';
   const unstagedChangeGroupId = 'stack-git-unstaged-changes';
+  const maxRenderedDiffLines = 4_000;
 
   const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -46,6 +47,7 @@
   let selectedStashRef = '';
   let selectedBranchName = '';
   let diffText = '';
+  let diffLines: string[] = ['Loading diff...'];
   let diffTitle = '';
   let diffDrawerOpen = false;
   let diffDrawerStaged = false;
@@ -368,6 +370,57 @@
 
   function normalizeDiffResult(result: StackGitDiff | null | undefined) {
     return result?.content ?? '';
+  }
+
+  $: diffLines = getDiffLines(diffText || 'Loading diff...');
+
+  type DiffLineKind = 'meta' | 'hunk' | 'addition' | 'deletion' | 'context' | 'empty';
+
+  type DiffLineRender = {
+    kind: DiffLineKind;
+    text: string;
+    prefix: string;
+    body: string;
+  };
+
+  function classifyDiffLine(line: string): DiffLineKind {
+    if (!line) return 'empty';
+    if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('diff --git ') || line.startsWith('index ') || line.startsWith('new file mode') || line.startsWith('deleted file mode') || line.startsWith('similarity index') || line.startsWith('rename from') || line.startsWith('rename to') || line.startsWith('old mode') || line.startsWith('new mode') || line.startsWith('Binary files ')) {
+      return 'meta';
+    }
+    if (line.startsWith('@@')) return 'hunk';
+    if (line.startsWith('+')) return 'addition';
+    if (line.startsWith('-')) return 'deletion';
+    return 'context';
+  }
+
+  function renderDiffLineContent(line: string): DiffLineRender {
+    const kind = classifyDiffLine(line);
+    if (kind === 'meta') {
+      return { kind, text: line || ' ', prefix: '', body: '' };
+    }
+
+    if (kind === 'hunk') {
+      return {
+        kind,
+        text: line.length ? line : ' ',
+        prefix: line.slice(0, 2) || '@@',
+        body: line.slice(2) || ' '
+      };
+    }
+
+    const prefix = line.slice(0, 1) || ' ';
+    const body = line.slice(1) || ' ';
+    return { kind, text: line.length ? line : ' ', prefix, body };
+  }
+
+  function getDiffLines(text: string) {
+    const lines = text.split(/\r?\n/);
+    if (lines.length <= maxRenderedDiffLines) return lines;
+    return [
+      ...lines.slice(0, maxRenderedDiffLines),
+      `Diff truncated after ${maxRenderedDiffLines.toLocaleString()} lines (${lines.length.toLocaleString()} total).`
+    ];
   }
 
   async function stagePaths(paths: string[]) {
@@ -867,7 +920,6 @@
                     <button type="button" class="stack-git-change-row__action" aria-label="Unstage" title={changeRowActionLabel('staged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'staged')}>{changeRowActionSymbol('staged')}</button>
                     <button type="button" class="stack-git-change-row__content" aria-pressed={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} on:click={() => openChangeDiff(entry, true)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'staged')}>
                       <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
-                      <span class="stack-git-file-glyph" aria-hidden="true"></span>
                       <span class="stack-git-change-row__path" title={entry.relativePath}>
                         {#if entry.relativePath.includes('/')}
                           {@const lastSlash = entry.relativePath.lastIndexOf('/')}
@@ -880,7 +932,7 @@
                   </div>
                   {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && diffDrawerStaged}
                     <div class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
-                      <pre>{diffText || 'Loading diff...'}</pre>
+                      <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
                     </div>
                   {/if}
                 {/each}
@@ -907,7 +959,6 @@
                     <button type="button" class="stack-git-change-row__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
                     <button type="button" class="stack-git-change-row__content" aria-pressed={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')}>
                       <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
-                      <span class="stack-git-file-glyph" aria-hidden="true"></span>
                       <span class="stack-git-change-row__path" title={entry.relativePath}>
                         {#if entry.relativePath.includes('/')}
                           {@const lastSlash = entry.relativePath.lastIndexOf('/')}
@@ -923,7 +974,7 @@
                   </div>
                   {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && !diffDrawerStaged}
                     <div class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
-                      <pre>{diffText || 'Loading diff...'}</pre>
+                      <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
                     </div>
                   {/if}
                 {/each}
@@ -1133,7 +1184,7 @@
 
   .stack-git-panel button {
     background: color-mix(in srgb, var(--js-color-surface-overlay) 68%, transparent);
-    border: 1px solid color-mix(in srgb, var(--js-color-border) 84%, transparent);
+    border: none;
     border-radius: var(--js-radius-sm);
     color: var(--js-color-text);
     min-height: 32px;
@@ -1152,7 +1203,6 @@
     border-color: var(--js-color-accent-border);
     color: var(--js-color-text-strong);
     outline: 0;
-    box-shadow: var(--js-focus-ring);
   }
 
   .stack-git-panel-header {
@@ -1336,16 +1386,46 @@
     display: flex;
     gap: 8px;
     min-height: 32px;
-    padding: 8px 0;
+    padding: 8px;
     position: sticky;
     top: 0;
     z-index: 2;
   }
 
-  .stack-git-change-group-header__bulk {
+  .stack-git-panel button.stack-git-change-group-header__bulk,
+  .stack-git-panel button.stack-git-change-row__action,
+  .stack-git-panel button.stack-git-change-row__discard {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
     height: 20px;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    outline: none;
     padding: 0;
+    display: inline-flex;
     width: 20px;
+  }
+
+  .stack-git-panel button.stack-git-change-group-header__bulk:hover:not(:disabled),
+  .stack-git-panel button.stack-git-change-group-header__bulk:active:not(:disabled),
+  .stack-git-panel button.stack-git-change-row__action:hover:not(:disabled),
+  .stack-git-panel button.stack-git-change-row__action:active:not(:disabled),
+  .stack-git-panel button.stack-git-change-row__discard:hover:not(:disabled),
+  .stack-git-panel button.stack-git-change-row__discard:active:not(:disabled) {
+    background: transparent;
+    color: inherit;
+  }
+
+  .stack-git-panel button.stack-git-change-group-header__bulk:focus-visible,
+  .stack-git-panel button.stack-git-change-row__action:focus-visible,
+  .stack-git-panel button.stack-git-change-row__discard:focus-visible {
+    box-shadow: var(--js-focus-ring);
   }
 
   .stack-git-change-group-header__title {
@@ -1369,23 +1449,22 @@
 
   .stack-git-change-row {
     align-items: center;
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 68%, transparent);
     display: flex;
     gap: 8px;
     height: 34px;
     min-height: 34px;
+    padding: 0 8px;
   }
 
-  .stack-git-change-row__action,
-  .stack-git-change-row__discard {
-    align-items: center;
-    display: inline-flex;
-    height: 20px;
-    justify-content: center;
-    padding: 0;
-    width: 20px;
+  .stack-git-change-row:hover,
+  .stack-git-change-row:focus-within {
+    background: color-mix(in srgb, var(--js-color-control-hover) 84%, var(--js-color-accent-border));
   }
 
-  .stack-git-change-row__content {
+  .stack-git-panel button.stack-git-change-row__content,
+  .stack-git-panel button.stack-git-change-row__content:hover:not(:disabled),
+  .stack-git-panel button.stack-git-change-row__content:focus-visible {
     align-items: center;
     background: transparent;
     border: 0;
@@ -1396,7 +1475,8 @@
     gap: 8px;
     height: 34px;
     min-width: 0;
-    padding: 0 12px;
+    outline: 0;
+    padding: 0 4px;
     text-align: left;
   }
 
@@ -1512,12 +1592,18 @@
   }
 
   .stack-git-change-diff-drawer {
-    background: color-mix(in srgb, var(--js-color-surface-raised) 96%, #101827);
-    border-block: 1px solid color-mix(in srgb, var(--js-color-border) 72%, var(--js-color-accent-border));
+    background: var(--js-color-surface);
+    border-left: 2px solid var(--js-color-accent-border);
     box-sizing: border-box;
     display: grid;
     min-width: 0;
-    padding: 0 12px 12px 44px;
+    font: 0.67rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    margin: 0;
+    overflow: auto;
+    padding: 0.45rem;
+    user-select: text;
+    white-space: pre-wrap;
+    cursor: text;
     width: 100%;
     animation: stack-git-drawer-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
     transform-origin: top center;
@@ -1528,20 +1614,94 @@
   }
 
   .stack-git-change-diff-drawer pre {
-    background: #06080b;
-    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 90%, transparent);
-    border-radius: var(--js-radius-sm);
-    color: #d7e2f5;
-    font-family: var(--js-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
-    font-size: 0.72rem;
-    line-height: 1.45;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
     margin: 0;
     min-height: 0;
-    overflow-x: auto;
-    overflow-y: visible;
-    overscroll-behavior-x: contain;
-    padding: 12px;
-    white-space: pre;
+    overflow: auto;
+    padding: 0;
+    tab-size: 4;
+    white-space: inherit;
+  }
+
+  .stack-git-diff-view { color: var(--js-color-text); }
+
+  .stack-git-diff-line {
+    align-items: start;
+    border-left: 3px solid transparent;
+    display: grid;
+    grid-template-columns: 1.25ch minmax(0, 1fr);
+    gap: 0.25rem;
+    min-height: 1.45em;
+    margin: 0;
+    padding: 0.06rem 0.35rem 0.06rem 0.45rem;
+    white-space: pre-wrap;
+  }
+
+  .stack-git-diff-line__prefix {
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .stack-git-diff-line__body,
+  .stack-git-diff-line__meta {
+    min-width: 0;
+  }
+
+  .stack-git-diff-line--meta {
+    background: var(--js-color-accent-soft);
+    border-left-color: var(--js-color-accent-border);
+    color: var(--js-color-text);
+    display: block;
+    padding-inline: 0.45rem;
+  }
+
+  .stack-git-diff-line--meta .stack-git-diff-line__meta {
+    display: block;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .stack-git-diff-line--hunk {
+    background: var(--js-color-warning);
+    border-left-color: var(--js-color-warning-border);
+    color: var(--js-color-text-strong);
+    font-weight: 700;
+  }
+
+  .stack-git-diff-line--addition {
+    background: var(--js-color-success);
+    border-left-color: var(--js-color-success-border);
+    color: var(--js-color-text-strong);
+  }
+
+  .stack-git-diff-line--deletion {
+    background: var(--js-color-error);
+    border-left-color: var(--js-color-error-border);
+    color: var(--js-color-text-strong);
+  }
+
+  .stack-git-diff-line--addition .stack-git-diff-line__prefix {
+    color: color-mix(in srgb, var(--js-color-success-border) 75%, var(--js-color-text-strong));
+  }
+
+  .stack-git-diff-line--deletion .stack-git-diff-line__prefix {
+    color: color-mix(in srgb, var(--js-color-error-border) 75%, var(--js-color-text-strong));
+  }
+
+  .stack-git-diff-line--hunk .stack-git-diff-line__prefix {
+    color: color-mix(in srgb, var(--js-color-warning-border) 75%, var(--js-color-text-strong));
+  }
+
+  .stack-git-diff-line--context {
+    color: var(--js-color-text);
+  }
+
+  .stack-git-diff-line--empty {
+    color: transparent;
+    min-height: 0.9em;
   }
 
   .stack-git-commit {
@@ -1707,6 +1867,17 @@
 
     .stack-git-commit-actions__primary {
       margin-left: 0;
+    }
+  }
+
+  @container (max-width: 32rem) {
+    .stack-git-change-diff-drawer {
+      padding: 0.35rem;
+    }
+
+    .stack-git-diff-line {
+      gap: 0.2rem;
+      padding-inline: 0.3rem;
     }
   }
 
