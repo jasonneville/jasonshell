@@ -96,6 +96,7 @@ pub struct StackGitFileStatus {
     pub relative_path: String,
     pub status: StackGitFileStatusKind,
     pub staged: bool,
+    pub unstaged: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -104,6 +105,8 @@ pub struct StackGitStatus {
     pub repository_root: String,
     pub branch: String,
     pub remote_repository_url: Option<String>,
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
     pub modified: usize,
     pub added: usize,
     pub deleted: usize,
@@ -189,6 +192,7 @@ pub struct StackGitTree {
 #[serde(rename_all = "camelCase")]
 pub struct StackGitBranch {
     pub name: String,
+    pub ref_name: String,
     pub current: bool,
     pub remote: bool,
 }
@@ -207,6 +211,63 @@ pub struct StackGitBranchRequest {
     pub folder_path: String,
     pub branch_name: String,
     pub checkout: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitDiffRequest {
+    pub folder_path: String,
+    pub path: String,
+    pub staged: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitRevertRequest {
+    pub folder_path: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitDiff {
+    pub repository_root: String,
+    pub path: String,
+    pub staged: bool,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashRequest {
+    pub folder_path: String,
+    pub message: Option<String>,
+    pub include_untracked: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashEntry {
+    pub stash_ref: String,
+    #[serde(rename = "ref")]
+    pub ref_: String,
+    pub index: usize,
+    pub branch: Option<String>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashes {
+    pub repository_root: String,
+    pub entries: Vec<StackGitStashEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashRefRequest {
+    pub folder_path: String,
+    pub stash_ref: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

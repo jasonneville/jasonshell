@@ -36,12 +36,15 @@ export type StackGitFileStatus = {
   relativePath: string;
   status: StackGitFileStatusKind;
   staged: boolean;
+  unstaged: boolean;
 };
 
 export type StackGitStatus = {
   repositoryRoot: string;
   branch: string;
   remoteRepositoryUrl?: string | null;
+  ahead?: number | null;
+  behind?: number | null;
   modified: number;
   added: number;
   deleted: number;
@@ -56,6 +59,11 @@ export type StackGitOperationResult = {
 };
 
 export type StackGitBranchOperationResult = StackGitOperationResult;
+export type StackGitDiff = { repositoryRoot: string; path: string; staged: boolean; content: string };
+export type StackGitStashEntry = { stashRef: string; ref: string; index: number; branch?: string | null; message: string };
+export type StackGitStashes = { repositoryRoot: string; entries: StackGitStashEntry[] };
+export type StackGitStashRequest = { folderPath: string; message?: string; includeUntracked: boolean };
+export type StackGitRevertRequest = { folderPath: string; paths: string[] };
 
 export type StackGitLogEntry = {
   commitHash: string;
@@ -87,6 +95,7 @@ export type StackGitTree = {
 
 export type StackGitBranch = {
   name: string;
+  refName?: string;
   current: boolean;
   remote: boolean;
 };
@@ -695,6 +704,30 @@ function stackFolderListingPageFromPage(page: StackFolderPage): StackFolderListi
     sortDirection: page.sortDirection
   };
 }
+
+export function stackGitUnstagePaths(folderPath: string, paths: string[]): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitUnstagePaths, { request: { folderPath, paths } });
+}
+
+export function stackGitRevertPaths(request: StackGitRevertRequest): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitRevertPaths, { request });
+}
+
+export function stackGitDiff(folderPath: string, path: string, staged: boolean): Promise<StackGitDiff> {
+  return invoke<StackGitDiff>(IPC_COMMANDS.stackGitDiff, { request: { folderPath, path, staged } });
+}
+
+export function stackGitStashes(folderPath: string): Promise<StackGitStashes> {
+  return invoke<StackGitStashes>(IPC_COMMANDS.stackGitStashes, { folderPath });
+}
+
+export function stackGitStash(folderPath: string, message?: string, includeUntracked = false): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitStash, { request: { folderPath, ...(message === undefined ? {} : { message }), includeUntracked } });
+}
+
+export function stackGitStashApply(folderPath: string, stashRef: string): Promise<StackGitOperationResult> { return invoke(IPC_COMMANDS.stackGitStashApply, { request: { folderPath, stashRef } }); }
+export function stackGitStashPop(folderPath: string, stashRef: string): Promise<StackGitOperationResult> { return invoke(IPC_COMMANDS.stackGitStashPop, { request: { folderPath, stashRef } }); }
+export function stackGitStashDrop(folderPath: string, stashRef: string): Promise<StackGitOperationResult> { return invoke(IPC_COMMANDS.stackGitStashDrop, { request: { folderPath, stashRef } }); }
 
 export function emitStackFolderListingDiagnostics(diagnostics: StackFolderListingDiagnostics) {
   if (typeof console?.debug !== 'function') {

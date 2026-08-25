@@ -218,6 +218,38 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
         callers: &[contracts::surfaces::STACK_POPUP],
     },
     StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_UNSTAGE_PATHS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_REVERT_PATHS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_DIFF,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_STASHES,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_STASH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_STASH_APPLY,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_STASH_POP,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_STASH_DROP,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
         command: contracts::commands::STACK_GIT_COMMIT,
         callers: &[contracts::surfaces::STACK_POPUP],
     },

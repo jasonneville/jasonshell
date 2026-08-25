@@ -1,5 +1,22 @@
 ## Change Ledger
 
+- 2026-08-24 `[CODE]` CHANGED: Removed duplicate filename/status headers and close buttons from staged/unstaged diff drawers. Diff content now starts directly beneath the active file row; clicking that row again or pressing Escape closes the drawer.
+- 2026-08-24 `[CODE]` TESTED: Drawer source contract now rejects duplicate diff headers and close controls and requires the diff body as the drawer's first child.
+- 2026-08-24 `[TOOL]` VALIDATED: Drawer chrome contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning.
+
+- 2026-08-24 `[CODE]` FIXED: Git diff drawers no longer create a capped nested vertical scroller. Expanded diff content now flows through the Git panel's single contained vertical scroll surface, while long code retains independent horizontal scrolling and the panel scrollbar reserves stable space.
+- 2026-08-24 `[CODE]` TESTED: Added source-contract coverage for contained panel overscroll, uncapped diff height, and horizontal-only diff code scrolling.
+- 2026-08-24 `[TOOL]` VALIDATED: Scrolling contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; independent review found no remaining blocker, with live Tauri wheel/trackpad interaction as the residual smoke-test gap.
+
+- 2026-08-24 `[CODE]` CHANGED: Superseded the right-side modal Git diff overlay with OpenChamber-style in-flow drawers inserted directly beneath the clicked staged/unstaged file row and before the next row. Clicking the same row toggles it closed; opening another row moves the single drawer; partially staged paths retain the clicked staged/working-tree diff context.
+- 2026-08-24 `[CODE]` TESTED: Replaced modal drawer source contracts with RED-first coverage for row-local insertion, staged-context matching, same-row toggle, region semantics, Escape precedence, reduced motion, and removal of backdrop/modal behavior.
+- 2026-08-24 `[CODE]` FIXED: Hardened in-flow Git diff drawer lifecycle: status mutations close drawers whose staged/unstaged source row disappeared, folder changes reject stale async diff replies, and partially staged paths expose pressed state only on the active context row.
+- 2026-08-24 `[TOOL]` VALIDATED: Final in-flow drawer contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` non-interactive-section warning.
+
+- 2026-08-24 `[CODE]` FIXED: Stack Browser Git staged/unstaged file diffs now open only in an explicit right-side drawer overlay with backdrop, accessible dialog semantics, close button/backdrop/Escape dismissal, close-button focus on open, and best-effort row focus restore; status refresh/default selection and stage/unstage/discard actions no longer render or open inline diff below lists.
+- 2026-08-24 `[CODE]` TESTED: Added RED-first source-contract coverage for staged/unstaged diff drawer ownership, Escape precedence, responsive drawer geometry, action isolation, and removal of normal-flow diff aside.
+- 2026-08-24 `[TOOL]` VALIDATED: Independent final evidence: `node --test tests/stackGitPanelRedContract.test.mjs` passed 13/13; `npm run check` passed with 0 errors and 1 pre-existing `CommandPanelSurface.svelte` a11y warning; `npm run build` passed with the same warning; `git diff --check` could not pass due pre-existing unrelated trailing whitespace at `src/components/StackPopupSurface.svelte:2635`, untouched.
+
 - 2026-08-23 `[CODE]` FIXED: Quick Commands completed previous runs now open/collapse through native details toggles while idle; running runs stay forced open.
 - 2026-08-23 `[CODE]` TESTED: Added command-panel source-contract coverage requiring native summary mouse/keyboard disclosure behavior without click or keydown prevention.
 - 2026-08-23 `[TOOL]` VALIDATED: `node --test tests/commandPanelWiring.test.mjs`, `npm run check`, and `git diff --check` passed; check retains one pre-existing Svelte accessibility warning for section event listeners.
@@ -134,6 +151,14 @@
 
 - 2026-08-17 `[CODE]` DOCS: Documented current bottom-bar/task-preview task-window close behavior: normal WM_CLOSE/post/terminate ladder, AccessDenied-only one-shot same-exe `runas` helper, helper HWND/PID/creation-time/canonical-image identity checks, UAC cancellation/error mapping, internal JasonShell close rejection for all close callers, and no SeDebugPrivilege/taskkill/tree/full elevation.
 - 2026-08-17 `[TOOL]` REVIEWED: Docs-only pass after inspecting current `task_windows` implementation and taskbar/preview close source-contract tests; no validation commands run.
+- 2026-08-17 `[CODE]` FIXED: Stack Browser Git now replaces the file-grid region with an opaque in-flow surface; file rows no longer remain visible beneath it, and closing Git restores the file grid.
+
+- 2026-08-17 `[CODE]` REFINED/FIXED: Reworked Stack Browser Git surface to match OpenChamber's edge-to-edge branch-first display with compact repository/sync toolbar, flat staged/unstaged rows, inline diff, and compact commit footer while retaining no-AI History/Stashes/Branches workflows; editable controls now bypass popup navigation so Backspace edits commit text instead of opening the parent folder.
+- 2026-08-17 `[TOOL]` VALIDATED: `npm run check`, `npm run build`, focused 23-test Stack Browser Git suite, and `git diff --check` passed after adversarial UI/runtime review; status-filter wiring, untracked-diff messaging, dialog focus containment/restoration, and staged/unstaged diff-side handling were rechecked.
+
+- 2026-08-17 `[CODE]` IMPLEMENTED: Replaced inline Stack Browser Git workbench with dense extracted no-AI Git panel offering Changes, History, Stashes, and Branches; added independent staged/unstaged state, stage/unstage, confirmed tracked discard, file diff, commit/commit-and-push, sync, branch warnings, and stash create/apply/pop/drop.
+- 2026-08-17 `[CODE]` HARDENED: Added stack-popup-guarded fixed-argv Rust/IPC commands for unstage, tracked discard, diff, and stashes; path mutations use NUL stdin pathspecs, untracked deletion stays blocked, stash messages are bounded, and stash refs accept only `stash@{N}`.
+- 2026-08-17 `[TOOL]` VALIDATED: `npm run check`, `npm run build`, focused 19-test Git Node suite, `cargo check --manifest-path src-tauri/Cargo.toml`, focused stash Rust tests, and `git diff --check` passed. Full suites retain documented unrelated failures: two Stack Popup sort assertions and environment-dependent VS Code resolver discovery; repo-wide Rust format check remains blocked by pre-existing formatting drift outside this change.
 
 - 2026-08-17 `[CODE]` FIXED: Bottom-bar task clicks now apply predicted active/minimized highlighting immediately after native activation succeeds, then reconcile through the authoritative snapshot stream instead of overwriting UI with a fresh cached read.
 

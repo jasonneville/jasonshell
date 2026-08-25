@@ -1,8 +1,9 @@
 use crate::stack_popup::models::{
-    StackGitBranch, StackGitBranchRequest, StackGitBranches, StackGitCommitRequest,
-    StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry, StackGitLogRequest,
-    StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackGitTree, StackGitTreeEntry,
-    StackGitTreeRequest,
+    StackGitBranch, StackGitBranchRequest, StackGitBranches, StackGitCommitRequest, StackGitDiff,
+    StackGitDiffRequest, StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry,
+    StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest,
+    StackGitStashEntry, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
+    StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
 use std::collections::HashSet;
@@ -182,8 +183,24 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
         &repo_root,
         branch,
         remote_repository_url,
+        git_ahead_behind(&folder),
         &status_output,
     )))
+}
+
+fn git_ahead_behind(folder: &Path) -> (Option<usize>, Option<usize>) {
+    let Some(output) = git_stdout(
+        folder,
+        &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+    )
+    .ok()
+    .flatten() else {
+        return (None, None);
+    };
+    let mut parts = output.split_whitespace();
+    let behind = parts.next().and_then(|v| v.parse().ok());
+    let ahead = parts.next().and_then(|v| v.parse().ok());
+    (ahead, behind)
 }
 
 fn stack_git_add_paths(request: StackGitStageRequest) -> Result<StackGitOperationResult, String> {
@@ -207,7 +224,7 @@ fn stack_git_add_paths(request: StackGitStageRequest) -> Result<StackGitOperatio
 fn stack_git_commit(request: StackGitCommitRequest) -> Result<StackGitOperationResult, String> {
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
-    let message = request.message.trim();
+    let message = trim_bounded_git_commit_message(&request.message);
     if message.is_empty() {
         return Err("Commit message required".to_string());
     }
@@ -220,7 +237,7 @@ fn stack_git_commit(request: StackGitCommitRequest) -> Result<StackGitOperationR
         &[
             "commit",
             "-m",
-            message,
+            &message,
             "--pathspec-from-file=-",
             "--pathspec-file-nul",
         ],
@@ -328,7 +345,16 @@ fn stack_git_checkout_branch(
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let branch = validate_git_branch_name(&request.branch_name)?;
-    run_git(&repo_root, &["switch", "--", branch])?;
+    let args = if let Some(remote_ref) = branch.strip_prefix("remotes/") {
+        let local = remote_ref
+            .split_once('/')
+            .map(|(_, tail)| tail)
+            .unwrap_or(remote_ref);
+        vec!["switch", "--track", "-c", local, remote_ref]
+    } else {
+        vec!["switch", "--", branch]
+    };
+    run_git(&repo_root, &args)?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Checked out {branch}"),
@@ -463,14 +489,22 @@ fn git_relative_path_for_stage(
 ) -> Result<String, String> {
     let candidate = PathBuf::from(path);
     if candidate.is_absolute() {
+        if !candidate.exists() {
+            let relative = candidate
+                .strip_prefix(repo_root)
+                .map_err(|_| "Git path is outside the repository".to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let normalized = normalize_repo_relative_string(&relative)?;
+            if status_paths.contains(&normalized) {
+                return Ok(normalized);
+            }
+            return Err("Git path is not a changed repository path".to_string());
+        }
         let canonical = canonicalize_existing_path(&candidate)?;
         let canonical_root = canonicalize_existing_path(repo_root)?;
         if !path_within_root(&canonical_root, &canonical) {
             return Err("Git path is outside the repository".to_string());
-        }
-        let absolute = canonical.to_string_lossy().replace('\\', "\\");
-        if !status_paths.contains(&absolute) {
-            return Err("Git path is not tracked by status".to_string());
         }
         return Ok(canonical
             .strip_prefix(&canonical_root)
@@ -480,10 +514,12 @@ fn git_relative_path_for_stage(
     }
     validate_missing_repo_relative_path(path)?;
     let normalized = normalize_repo_relative_string(path)?;
-    if !status_paths.contains(&normalized) {
-        return Err("Git path is not tracked by status".to_string());
-    }
     Ok(normalized)
+}
+
+fn trim_bounded_git_commit_message(value: &str) -> String {
+    const MAX_GIT_COMMIT_MESSAGE: usize = 512;
+    value.trim().chars().take(MAX_GIT_COMMIT_MESSAGE).collect()
 }
 
 fn git_relative_path_for_tree_request(repo_root: &Path, path: &str) -> Result<String, String> {
@@ -676,11 +712,12 @@ fn git_candidates() -> Vec<PathBuf> {
 fn classify_git_run_mode(args: &[&str]) -> GitRunMode {
     match args.first().copied() {
         Some("fetch" | "pull" | "push") => GitRunMode::Remote,
-        Some("add" | "commit" | "switch") => GitRunMode::LocalMutation,
+        Some("add" | "commit" | "switch" | "restore" | "stash") => GitRunMode::LocalMutation,
         Some("branch") if args.get(1).is_some_and(|arg| !arg.starts_with('-')) => {
             GitRunMode::LocalMutation
         }
         Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch") => GitRunMode::Read,
+        Some("diff") => GitRunMode::Read,
         _ => GitRunMode::OptionalProbe,
     }
 }
@@ -823,6 +860,7 @@ fn parse_git_branch_output(output: &str) -> Vec<StackGitBranch> {
                 name: name.to_string(),
                 current: head.trim() == "*",
                 remote: name.starts_with("remotes/"),
+                ref_name: name.to_string(),
             })
         })
         .collect()
@@ -877,12 +915,15 @@ fn stack_git_status_from_porcelain(
     repo_root: &Path,
     branch: String,
     remote_repository_url: Option<String>,
+    ahead_behind: (Option<usize>, Option<usize>),
     porcelain: &[u8],
 ) -> StackGitStatus {
     let mut status = StackGitStatus {
         repository_root: repo_root.to_string_lossy().into_owned(),
         branch,
         remote_repository_url,
+        ahead: ahead_behind.0,
+        behind: ahead_behind.1,
         modified: 0,
         added: 0,
         deleted: 0,
@@ -913,6 +954,7 @@ fn stack_git_status_from_porcelain(
                 relative_path,
                 status: kind,
                 staged: git_status_has_staged_change(xy),
+                unstaged: git_status_has_unstaged_change(xy),
             });
             if matches!(xy.as_bytes().first(), Some(b'R' | b'C')) {
                 if let Some(next) = fields.get(index + 1) {
@@ -922,15 +964,17 @@ fn stack_git_status_from_porcelain(
                         relative_path: other_relative_path,
                         status: kind,
                         staged: git_status_has_staged_change(xy),
+                        unstaged: git_status_has_unstaged_change(xy),
                     });
                 }
             }
         }
 
-        if matches!(xy.as_bytes().first(), Some(b'R' | b'C')) {
-            index += 1;
-        }
-        index += 1;
+        index += if matches!(xy.as_bytes().first(), Some(b'R' | b'C')) {
+            2
+        } else {
+            1
+        };
     }
 
     status
@@ -980,14 +1024,251 @@ fn git_status_has_staged_change(xy: &str) -> bool {
         .is_some_and(|status| !matches!(status, b' ' | b'?'))
 }
 
+pub(crate) async fn stack_git_unstage_paths_async(
+    request: StackGitStageRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_unstage_paths(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git unstage task: {error}"))?
+}
+pub(crate) async fn stack_git_revert_paths_async(
+    request: StackGitRevertRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_revert_paths(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git revert task: {error}"))?
+}
+pub(crate) async fn stack_git_diff_async(
+    request: StackGitDiffRequest,
+) -> Result<StackGitDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_diff(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git diff task: {error}"))?
+}
+pub(crate) async fn stack_git_stashes_async(
+    folder_path: String,
+) -> Result<StackGitStashes, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stashes(&folder_path))
+        .await
+        .map_err(|error| format!("Failed to join stack git stashes task: {error}"))?
+}
+pub(crate) async fn stack_git_stash_async(
+    request: StackGitStashRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stash(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git stash task: {error}"))?
+}
+pub(crate) async fn stack_git_stash_apply_async(
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stash_apply(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git stash apply task: {error}"))?
+}
+pub(crate) async fn stack_git_stash_pop_async(
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stash_pop(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git stash pop task: {error}"))?
+}
+pub(crate) async fn stack_git_stash_drop_async(
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stash_drop(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git stash drop task: {error}"))?
+}
+
+fn stack_git_unstage_paths(
+    request: StackGitStageRequest,
+) -> Result<StackGitOperationResult, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let pathspecs = git_pathspecs_for_paths(&repo_root, &request.paths)?;
+    run_git_with_stdin(
+        &repo_root,
+        &[
+            "restore",
+            "--staged",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ],
+        nul_joined_pathspecs(&pathspecs),
+    )?;
+    Ok(StackGitOperationResult {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        summary: format!("Unstaged {} file(s)", pathspecs.len()),
+    })
+}
+fn stack_git_revert_paths(
+    request: StackGitRevertRequest,
+) -> Result<StackGitOperationResult, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    if request.paths.is_empty() {
+        return Err("Select at least one tracked file to discard".to_string());
+    }
+    let pathspecs = git_pathspecs_for_paths(&repo_root, &request.paths)?;
+    run_git_with_stdin(
+        &repo_root,
+        &[
+            "restore",
+            "--worktree",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ],
+        nul_joined_pathspecs(&pathspecs),
+    )?;
+    Ok(StackGitOperationResult {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        summary: format!("Discarded changes in {} file(s)", pathspecs.len()),
+    })
+}
+fn stack_git_diff(request: StackGitDiffRequest) -> Result<StackGitDiff, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let path = git_relative_path_for_stage(
+        &repo_root,
+        &request.path,
+        &git_status_relative_paths(&repo_root)?,
+    )?;
+    let mut args = vec!["diff"];
+    if request.staged {
+        args.push("--cached");
+    }
+    args.push("--");
+    args.push(&path);
+    let content = git_stdout(&repo_root, &args)?.unwrap_or_default();
+    Ok(StackGitDiff {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        path,
+        staged: request.staged,
+        content,
+    })
+}
+fn stack_git_stashes(folder_path: &str) -> Result<StackGitStashes, String> {
+    let repo_root = repo_root_for_folder(folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let output =
+        git_stdout(&repo_root, &["stash", "list", "--format=%gd%x1f%gs%x1e"])?.unwrap_or_default();
+    Ok(StackGitStashes {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        entries: parse_git_stash_list_output(&output),
+    })
+}
+fn stack_git_stash(request: StackGitStashRequest) -> Result<StackGitOperationResult, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let message = trim_git_stash_message(request.message.as_deref());
+    let mut args = vec!["stash", "push", "-m", message.as_str()];
+    if request.include_untracked {
+        args.push("--include-untracked");
+    }
+    run_git(&repo_root, &args)?;
+    Ok(StackGitOperationResult {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        summary: "Stash created".to_string(),
+    })
+}
+fn stack_git_stash_apply(
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_stash_mutation(request, "apply")
+}
+fn stack_git_stash_pop(
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_stash_mutation(request, "pop")
+}
+fn stack_git_stash_drop(
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    git_stash_mutation(request, "drop")
+}
+fn git_stash_mutation(
+    request: StackGitStashRefRequest,
+    op: &str,
+) -> Result<StackGitOperationResult, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
+    run_git(&repo_root, &["stash", op, &stash_ref])?;
+    Ok(StackGitOperationResult {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        summary: format!("Stash {op} done"),
+    })
+}
+fn trim_git_stash_message(value: Option<&str>) -> String {
+    const MAX_GIT_STASH_MESSAGE: usize = 200;
+    value
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(MAX_GIT_STASH_MESSAGE)
+        .collect()
+}
+fn validate_git_stash_ref(value: &str) -> Result<&str, String> {
+    let value = value.trim();
+    let index = value
+        .strip_prefix("stash@{")
+        .and_then(|rest| rest.strip_suffix('}'));
+    if index.is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+    {
+        Ok(value)
+    } else {
+        Err("Git stash ref is invalid".to_string())
+    }
+}
+// stash@{N}
+fn parse_git_stash_list_output(output: &str) -> Vec<StackGitStashEntry> {
+    output
+        .split('\x1e')
+        .filter_map(|entry| {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                return None;
+            }
+            let (stash_ref, message) = entry.split_once('\x1f')?;
+            let stash_ref = validate_git_stash_ref(stash_ref).ok()?.to_string();
+            let index = stash_ref
+                .strip_prefix("stash@{")?
+                .strip_suffix('}')?
+                .parse()
+                .ok()?;
+            let message = message.trim().to_string();
+            let branch = message
+                .strip_prefix("WIP on ")
+                .or_else(|| message.strip_prefix("On "))
+                .and_then(|rest| {
+                    rest.split_once(':')
+                        .map(|(name, _)| name.trim().to_string())
+                })
+                .filter(|name| !name.is_empty());
+            Some(StackGitStashEntry {
+                ref_: stash_ref.clone(),
+                stash_ref,
+                index,
+                branch,
+                message,
+            })
+        })
+        .collect()
+}
+
+fn git_status_has_unstaged_change(xy: &str) -> bool {
+    xy.as_bytes().get(1).is_some_and(|status| *status != b' ')
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         classify_git_run_mode, git_pathspecs_for_paths, git_relative_path_for_request,
         git_status_kind, git_timeout_for_mode, normalize_git_remote_url, nul_joined_pathspecs,
-        parse_git_branch_output, parse_git_log_output, parse_git_tree_output,
-        stack_git_status_from_porcelain, validate_git_branch_name, validate_treeish,
-        GitCommandError, GitRunMode,
+        parse_git_branch_output, parse_git_log_output, parse_git_stash_list_output,
+        parse_git_tree_output, stack_git_status_from_porcelain, validate_git_branch_name,
+        validate_git_stash_ref, validate_treeish, GitCommandError, GitRunMode,
     };
     use crate::stack_popup::models::StackGitFileStatusKind;
     use std::path::Path;
@@ -1048,6 +1329,7 @@ mod tests {
             Path::new(r"C:\repo"),
             "main".to_string(),
             Some("https://github.com/acme/repo".to_string()),
+            (None, None),
             b" M src/lib.rs\0A  app/main.rs\0?? notes/todo.md\0D  old.txt\0UU conflict.txt\0",
         );
 
@@ -1069,11 +1351,47 @@ mod tests {
     }
 
     #[test]
+    fn porcelain_parser_tracks_independent_staged_and_unstaged_sides() {
+        let status = stack_git_status_from_porcelain(
+            Path::new(r"C:\repo"),
+            "main".to_string(),
+            None,
+            (None, None),
+            b"MM both.rs\0M  staged.rs\0 M unstaged.rs\0?? new.txt\0",
+        );
+
+        let both = status
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == r"both.rs")
+            .expect("MM path present");
+        assert!(both.staged);
+        assert!(both.unstaged);
+
+        let staged = status
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == r"staged.rs")
+            .expect("index-only path present");
+        assert!(staged.staged);
+        assert!(!staged.unstaged);
+
+        let untracked = status
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == r"new.txt")
+            .expect("untracked path present");
+        assert!(!untracked.staged);
+        assert!(untracked.unstaged);
+    }
+
+    #[test]
     fn porcelain_parser_keeps_rename_old_and_new_paths() {
         let status = stack_git_status_from_porcelain(
             Path::new(r"C:\repo"),
             "main".to_string(),
             None,
+            (None, None),
             b"R  old.txt\0new.txt\0C  copy-old.txt\0copy-new.txt\0",
         );
 
@@ -1082,6 +1400,27 @@ mod tests {
         assert_eq!(status.entries[1].relative_path, r"new.txt");
         assert_eq!(status.entries[2].relative_path, r"copy-old.txt");
         assert_eq!(status.entries[3].relative_path, r"copy-new.txt");
+    }
+
+    #[test]
+    fn branch_parser_marks_remote_refs_and_checkout_tracks_remote() {
+        let branches = parse_git_branch_output("*\x1fmain\n \x1fremotes/origin/feature/x\n");
+        assert!(!branches[0].remote);
+        assert!(branches[1].remote);
+        assert_eq!(branches[1].ref_name, "remotes/origin/feature/x");
+    }
+
+    #[test]
+    fn classify_git_run_mode_treats_restore_and_stash_as_local_mutation_and_diff_as_read() {
+        assert_eq!(
+            classify_git_run_mode(&["restore", "--staged"]),
+            GitRunMode::LocalMutation
+        );
+        assert_eq!(
+            classify_git_run_mode(&["stash", "push"]),
+            GitRunMode::LocalMutation
+        );
+        assert_eq!(classify_git_run_mode(&["diff"]), GitRunMode::Read);
     }
 
     #[test]
@@ -1263,5 +1602,42 @@ mod tests {
         assert!(git_relative_path_for_request(repo, r"C:\repo\src\main.rs").is_ok());
         assert!(git_relative_path_for_request(repo, r"C:\other\main.rs").is_err());
         assert!(git_relative_path_for_request(repo, r"..\other").is_err());
+    }
+
+    #[test]
+    fn git_stash_ref_validation_only_accepts_conservative_stack_refs() {
+        assert_eq!(validate_git_stash_ref("stash@{0}").unwrap(), "stash@{0}");
+        assert_eq!(validate_git_stash_ref("stash@{42}").unwrap(), "stash@{42}");
+
+        for invalid in [
+            "stash@{-1}",
+            "stash@{0} --index",
+            "stash@{0};reset",
+            "refs/stash",
+            "stash@{0^{tree}}",
+            "stash@{abc}",
+            "stash@{}",
+            "--help",
+            "",
+        ] {
+            assert!(
+                validate_git_stash_ref(invalid).is_err(),
+                "rejected {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_stash_list_parser_returns_typed_entries() {
+        let entries = parse_git_stash_list_output(
+            "stash@{0}\x1fWIP on main: abc123 work\x1e\nstash@{1}\x1fOn feature/x: message\x1e",
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].stash_ref, "stash@{0}");
+        assert_eq!(entries[0].index, 0);
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert_eq!(entries[0].message, "WIP on main: abc123 work");
+        assert_eq!(entries[1].index, 1);
     }
 }

@@ -10,6 +10,7 @@ function readRepoFile(path) {
 const commandsSource = readRepoFile('src/ipc/commands.ts');
 const stackPopupApi = readRepoFile('src/lib/stackPopup.ts');
 const stackPopupSurface = readRepoFile('src/components/StackPopupSurface.svelte');
+const stackGitPanel = readRepoFile('src/components/StackGitPanel.svelte');
 const stackPopupCss = readRepoFile('src/components/StackPopupSurface.css');
 const rustStackPopup = readRepoFile('src-tauri/src/stack_popup.rs');
 const rustGitStatus = readRepoFile('src-tauri/src/stack_popup/git_status.rs');
@@ -45,6 +46,8 @@ test('stack git status backend is a separate non-listing command using git porce
   assert.match(productionRustGitStatus, /"--porcelain=v1"/);
   assert.match(productionRustGitStatus, /"-z"/);
   assert.match(productionRustGitStatus, /"rev-parse"/);
+  assert.match(productionRustGitStatus, /"restore"|"stash"/);
+  assert.match(productionRustGitStatus, /"diff"/);
   assert.doesNotMatch(productionRustGitStatus, /Command::new\("git"\)/);
   assert.match(productionRustGitStatus, /"--pathspec-from-file=-"/);
   assert.match(productionRustGitStatus, /"--pathspec-file-nul"/);
@@ -56,6 +59,7 @@ test('stack popup API exposes typed git branch counts and per-path status entrie
   assert.match(stackPopupApi, /export type StackGitFileStatusKind = 'modified' \| 'added' \| 'deleted' \| 'untracked' \| 'conflict';/);
   assert.match(stackPopupApi, /export type StackGitStatus = \{/);
   assert.match(stackPopupApi, /branch: string;/);
+  assert.match(stackPopupApi, /refName\?: string;/);
   assert.match(stackPopupApi, /remoteRepositoryUrl\?: string \| null;/);
   assert.match(commandsSource, /openStackGitRemoteUrl:\s*'open_stack_git_remote_url'/);
   assert.match(rustStackPopup, /pub fn open_stack_git_remote_url\(/);
@@ -86,6 +90,13 @@ test('stack popup API exposes typed git workbench command wrappers ahead of back
   assert.match(stackPopupApi, /export function stackGitCreateBranch\(folderPath: string, branchName: string, checkout = true\): Promise<StackGitBranchOperationResult>/);
   assert.match(stackPopupApi, /invoke<StackGitBranchOperationResult>\(IPC_COMMANDS\.stackGitCreateBranch/);
   assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout \}/);
+});
+
+test('stack git remote checkout preserves remote branch tail as local branch name', () => {
+  assert.match(rustGitStatus, /split_once\('/);
+  assert.match(rustGitStatus, /split_once\('\/'\)/);
+  assert.match(rustGitStatus, /vec!\["switch", "--track", "-c", local, remote_ref\]/);
+  assert.match(rustGitStatus, /feature\/x/);
 });
 
 test('stack popup loads git status outside folder listing and guards stale responses', () => {
@@ -156,20 +167,18 @@ test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackPopupCss, /\.stack-git-summary \.stack-git-remote-link/);
   assert.match(stackPopupSurface, /openGitStatusPopup\('all'\)/);
   assert.match(stackPopupSurface, /openGitStatusPopup\(part\.status\)/);
-  assert.match(stackPopupSurface, /class="stack-git-popup"/);
-  assert.match(stackPopupSurface, /stackGitAddPaths\(currentPath, paths\)/);
-  assert.match(stackPopupSurface, /stackGitCommit\(currentPath, message, paths\)/);
-  assert.match(stackPopupSurface, /entry\.staged \? 'Staged'/);
+  assert.match(stackPopupSurface, /<StackGitPanel\b/);
+  assert.match(stackGitPanel, /class="stack-git-panel"/);
+  assert.match(stackGitPanel, /await stackPopup\.stackGitAddPaths\(folderPath, paths\)/);
+  assert.match(stackGitPanel, /stackPopup\.stackGitCommit\(folderPath, commitMessage\.trim\(\), stagedEntries\.map\(\(entry\) => entry\.path\)\)/);
+  assert.match(stackGitPanel, /stagedEntries/);
   assert.doesNotMatch(stackPopupSurface, /role="tablist"/);
-  assert.match(stackPopupSurface, /<button type="button" disabled=\{!filteredGitStatusEntries\(\)\.length \|\| gitOperationPending\} on:click=\{\(\) => setAllGitPathsSelected\(true\)\}>Select all<\/button>/);
-  assert.match(stackPopupSurface, /<button type="button" disabled=\{!gitStatusSelectedPaths\.length \|\| gitOperationPending\} on:click=\{\(\) => setAllGitPathsSelected\(false\)\}>Clear<\/button>/);
-  assert.match(stackPopupSurface, /<button type="button" disabled=\{!gitStatusSelectedPaths\.length \|\| gitOperationPending\} on:click=\{\(\) => void addSelectedGitPaths\(\)\}>Add selected<\/button>/);
-  assert.match(stackPopupSurface, /<button type="submit" disabled=\{!gitCommitMessage\.trim\(\) \|\| gitOperationPending \|\| !stagedGitStatusEntries\(\)\.length\}>Commit<\/button>/);
-  assert.match(stackPopupSurface, /\{gitStatusSelectedPaths\.length\} selected/);
-  assert.match(stackPopupSurface, /<input type="checkbox" bind:group=\{gitStatusSelectedPaths\} value=\{entry\.path\} \/>/);
-  assert.doesNotMatch(stackPopupSurface, /checked=\{isGitPathSelected\(entry\.path\)\}/);
-  assert.match(stackPopupSurface, /Add selected/);
-  assert.match(stackPopupSurface, /Commit message/);
+  assert.match(stackGitPanel, /aria-label="Stage all unstaged files"[\s\S]*stagePaths\(unstagedEntries\.map\(\(entry\) => entry\.path\)\)/);
+  assert.match(stackGitPanel, /aria-label="Unstage all staged files"[\s\S]*unstagePaths\(stagedEntries\.map\(\(entry\) => entry\.path\)\)/);
+  assert.match(stackGitPanel, /aria-label="Stage"[\s\S]*handleChangeRowAction\(entry, 'unstaged'\)/);
+  assert.match(stackGitPanel, /aria-label="Unstage"[\s\S]*handleChangeRowAction\(entry, 'staged'\)/);
+  assert.match(stackGitPanel, /type="submit" class="stack-git-button--outline" disabled=\{!commitMessage\.trim\(\) \|\| !canCommit \|\| operationBusy\}>Commit<\/button>/);
+  assert.match(stackGitPanel, /Commit message/);
   assert.match(stackPopupSurface, /stackGitSummaryParts\(gitStatus\)/);
   assert.match(stackPopupSurface, /stackGitStatusForEntry\(entry, gitStatus, gitStatusPath, currentPath\)/);
   assert.match(stackPopupSurface, /data-git-status=\{gitEntryStatus \?\? undefined\}/);
@@ -178,61 +187,62 @@ test('stack popup renders branch summary and minimal row git badges', () => {
 });
 
 test('stack git status dialog is upgraded into a dense developer workbench', () => {
-  assert.match(stackPopupSurface, /type StackGitWorkbenchView = 'changes' \| 'log' \| 'tree' \| 'branches';/);
-  assert.match(stackPopupSurface, /let gitWorkbenchView: StackGitWorkbenchView = 'changes';/);
-  assert.match(stackPopupSurface, /let gitWorkbenchExpanded = false;/);
-  assert.match(stackPopupSurface, /class:expanded=\{gitWorkbenchExpanded\}/);
-  assert.match(stackPopupSurface, /aria-label=\{gitWorkbenchExpanded \? 'Restore git workbench' : 'Expand git workbench'\}/);
-  assert.match(stackPopupSurface, /class="stack-git-workbench"/);
-  assert.match(stackPopupSurface, /class="stack-git-workbench-sidebar"/);
-  assert.match(stackPopupSurface, /class="stack-git-workbench-main"/);
-  assert.match(stackPopupSurface, /class="stack-git-workbench-views"/);
-  for (const [view, label] of [['changes', 'Changes'], ['log', 'Log'], ['tree', 'Tree'], ['branches', 'Branches']]) {
-    assert.match(stackPopupSurface, new RegExp(`setGitWorkbenchView\\('${view}'\\)[\\s\\S]*>${label}<`));
+  assert.match(stackPopupSurface, /import StackGitPanel from '\.\/StackGitPanel\.svelte';/);
+  assert.match(stackPopupSurface, /<StackGitPanel\b/);
+  assert.match(stackGitPanel, /type StackGit\w*View = 'changes' \| 'history' \| 'stashes' \| 'branches';/);
+  assert.match(stackGitPanel, /let activeView: StackGit\w*View = 'changes';/);
+  assert.match(stackGitPanel, /class="stack-git-panel"/);
+  assert.match(stackGitPanel, /class="stack-git-branch-selector"/);
+  assert.match(stackGitPanel, /class="stack-git-repository-menu"/);
+  assert.match(stackGitPanel, /class="stack-git-panel-content"/);
+  assert.match(stackGitPanel, /class="stack-git-panel-scroll"/);
+  assert.match(stackGitPanel, /class="stack-git-diff-panel"/);
+  for (const [view, label] of [['changes', 'Changes'], ['history', 'History'], ['stashes', 'Stashes'], ['branches', 'Branches']]) {
+    assert.match(stackGitPanel, new RegExp(`handleTabChange\\('${view}'\\)[\\s\\S]*>${label}<`));
   }
-  assert.match(stackPopupSurface, /class="stack-git-remote-actions"/);
+  assert.match(stackGitPanel, /class="stack-git-sync-actions"/);
   for (const action of ['Fetch', 'Pull', 'Push']) {
-    assert.match(stackPopupSurface, new RegExp(`>${action}<`));
+    assert.match(stackGitPanel, new RegExp(`aria-label="${action}"`));
   }
-  assert.match(stackPopupSurface, /class="stack-git-branch-controls"/);
-  assert.match(stackPopupSurface, /Checkout branch/);
-  assert.match(stackPopupSurface, /Create branch/);
-  assert.match(stackPopupSurface, /stackGitFetch\(currentPath\)/);
-  assert.match(stackPopupSurface, /stackGitPull\(currentPath\)/);
-  assert.match(stackPopupSurface, /stackGitPush\(currentPath\)/);
-  assert.match(stackPopupSurface, /stackGitLog\(folderPath, 80\)/);
-  assert.match(stackPopupSurface, /stackGitTree\(folderPath, 'HEAD'\)/);
-  assert.match(stackPopupSurface, /stackGitBranches\(folderPath\)/);
-  assert.match(stackPopupSurface, /gitLog\.entries/);
-  assert.match(stackPopupSurface, /gitTree\.entries/);
-  assert.match(stackPopupSurface, /gitBranches\.branches/);
-  assert.match(stackPopupSurface, /stackGitCheckoutBranch\(currentPath, branchName\)/);
-  assert.match(stackPopupSurface, /stackGitCreateBranch\(currentPath, branchName, true\)/);
-  assert.match(stackPopupSurface, /stagedGitStatusEntries\(\)\.length/);
-  assert.match(stackPopupSurface, /filteredGitStatusEntries\(\)\.length/);
+  assert.match(stackGitPanel, /class="stack-git-branch-form"/);
+  assert.match(stackGitPanel, />Checkout<|placeholder="branch name"/);
+  assert.match(stackGitPanel, />Create<|placeholder="new branch"/);
+  assert.match(stackGitPanel, /stackGitFetch\(folderPath\)/);
+  assert.match(stackGitPanel, /stackGitPull\(folderPath\)/);
+  assert.match(stackGitPanel, /stackGitPush\(folderPath\)/);
+  assert.match(stackGitPanel, /stackGitLog\(folderPath, 80\)/);
+  assert.match(stackGitPanel, /stackPopup\.stackGitStashes\(folderPath\)/);
+  assert.match(stackGitPanel, /stackGitBranches\(folderPath\)/);
+  assert.match(stackGitPanel, /let history:\s*StackGitLog\['entries'\]/);
+  assert.match(stackGitPanel, /let stashes:\s*StackGitStashes\['entries'\]/);
+  assert.match(stackGitPanel, /let branches:\s*StackGitBranches\['branches'\]/);
+  assert.match(stackGitPanel, /stackGitCheckoutBranch\(folderPath, branch\)/);
+  assert.match(stackGitPanel, /stackGitCreateBranch\(folderPath, name, true\)/);
+  assert.match(stackGitPanel, /stagedEntries = groupedEntries\.staged/);
+  assert.match(stackGitPanel, /unstagedEntries = groupedEntries\.unstaged/);
 });
 
 test('stack git workbench rejects stale async data and confirms mutating git commands', () => {
-  assert.match(stackPopupSurface, /let pendingGitMutation:/);
-  assert.match(stackPopupSurface, /pendingGitMutation = \{ kind: 'remote', operation \};/);
-  assert.match(stackPopupSurface, /pendingGitMutation = \{ kind: 'add', paths: \[\.\.\.gitStatusSelectedPaths\] \};/);
-  assert.match(stackPopupSurface, /kind: 'commit'/);
-  assert.match(stackPopupSurface, /pendingGitMutation = \{ kind: 'checkout', branchName: gitBranchDraft\.trim\(\) \};/);
-  assert.match(stackPopupSurface, /pendingGitMutation = \{ kind: 'createBranch', branchName: gitNewBranchDraft\.trim\(\) \};/);
-  assert.match(stackPopupSurface, /function isCurrentGitWorkbenchResponse/);
-  assert.match(stackPopupSurface, /requestedLoadSequence === folderLoadSequence/);
-  assert.match(stackPopupSurface, /folderPath === stackState\.currentPath/);
-  assert.match(stackPopupSurface, /gitStatus\?\.repositoryRoot === repositoryRoot/);
-  assert.match(stackPopupSurface, /responseRepositoryRoot === repositoryRoot/);
-  assert.match(stackPopupSurface, /operationErrorMessage\(error, `Git \$\{view\} load failed`\)/);
-  assert.match(stackPopupSurface, /gitWorkbenchLoading = false;/);
-  assert.match(stackPopupSurface, /class="git-confirm-dialog"/);
-  assert.match(stackPopupSurface, /Confirm git/);
-  assert.match(stackPopupSurface, /Add stages/);
-  assert.match(stackPopupSurface, /Commit creates a new local commit/);
-  assert.match(stackPopupSurface, /Push sends local commits/);
-  assert.match(stackPopupSurface, /Pull updates files in this working tree/);
-  assert.match(stackPopupSurface, /void confirmGitMutation\(\)/);
+  assert.match(stackGitPanel, /let pendingConfirm:/);
+  assert.match(stackGitPanel, /title: confirmation\.title/);
+  assert.match(stackGitPanel, /kind: 'stash-pop'/);
+  assert.match(stackGitPanel, /kind: 'stash-drop'/);
+  assert.match(stackGitPanel, /kind: 'checkout'/);
+  assert.match(stackGitPanel, /kind: 'create-branch'/);
+  assert.match(stackGitPanel, /const token = \+\+statusToken/);
+  assert.match(stackGitPanel, /if \(token !== statusToken\)/);
+  assert.match(stackGitPanel, /const token = \+\+viewToken/);
+  assert.match(stackGitPanel, /if \(token !== viewToken\)/);
+  assert.match(stackGitPanel, /const token = \+\+diffToken/);
+  assert.match(stackGitPanel, /if \(token !== diffToken\)/);
+  assert.match(stackGitPanel, /viewLoading = false;/);
+  assert.match(stackGitPanel, /class="stack-git-confirm-dialog"/);
+  assert.match(stackGitPanel, /confirmStackGitDiscard\(entries\)/);
+  assert.match(readRepoFile('src/lib/stackGitPanelState.ts'), /This reverts working-tree changes and cannot be undone\./);
+  assert.match(stackGitPanel, /Pop applies the stash and removes it from the list\./);
+  assert.match(stackGitPanel, /Drop removes this stash permanently\./);
+  assert.match(stackGitPanel, /Dirty checkout warning/);
+  assert.match(stackGitPanel, /void confirmPendingAction\(\)/);
 });
 
 test('stack git badges have distinct compact colors without changing row layout columns', () => {
@@ -248,24 +258,22 @@ test('stack git badges have distinct compact colors without changing row layout 
   assert.match(stackPopupCss, /grid-template-columns: minmax\(10rem, 1fr\) 5\.5rem 5rem 8\.5rem;/);
 });
 
-test('stack git workbench can resize or expand inside the stack browser surface without card nesting', () => {
-  assert.match(stackPopupCss, /\.stack-git-popup \{/);
-  assert.match(stackPopupCss, /resize: both;/);
-  assert.match(stackPopupCss, /max-width: calc\(100% - 2rem\);/);
-  assert.match(stackPopupCss, /max-height: calc\(100% - 2rem\);/);
-  assert.match(stackPopupCss, /\.stack-git-popup\.expanded/);
-  assert.match(stackPopupCss, /\.stack-git-workbench \{/);
-  assert.match(stackPopupCss, /grid-template-columns: minmax\(11rem, 0\.34fr\) minmax\(0, 1fr\);/);
-  assert.match(stackPopupCss, /\.stack-git-workbench-main \{/);
-  assert.match(stackPopupCss, /\.stack-git-log-list/);
-  assert.match(stackPopupSurface, /class="stack-git-log-entry"/);
-  assert.match(stackPopupSurface, /class="stack-git-log-subject"/);
-  assert.match(stackPopupSurface, /class="stack-git-log-meta"/);
-  assert.match(stackPopupCss, /\.stack-git-workbench-main > \.stack-git-log-list/);
-  assert.match(stackPopupCss, /grid-template-columns: minmax\(0, 1fr\) minmax\(12rem, 0\.44fr\);/);
-  assert.match(stackPopupCss, /@container \(max-width: 42rem\)/);
-  assert.match(stackPopupCss, /\.stack-git-tree-list/);
-  assert.match(stackPopupCss, /\.stack-git-branch-panel/);
-  assert.doesNotMatch(stackPopupCss, /\.stack-git-workbench[\s\S]*box-shadow: var\(--js-shadow-panel\)/);
-  assert.doesNotMatch(stackPopupSurface, /class="stack-git-card"/);
+test('stack git workbench uses edge-to-edge OpenChamber geometry without card nesting', () => {
+  assert.match(stackGitPanel, /\.stack-git-panel \{/);
+  assert.match(stackGitPanel, /position: absolute;/);
+  assert.match(stackGitPanel, /inset: 0;/);
+  assert.match(stackGitPanel, /container-type: inline-size;/);
+  assert.match(stackGitPanel, /\.stack-git-change-row \{[\s\S]*height: 34px;/);
+  assert.match(stackGitPanel, /\.stack-git-icon-button \{[\s\S]*width: 32px;/);
+  assert.match(stackGitPanel, /\.stack-git-diff-panel pre/);
+  assert.match(stackGitPanel, /class="stack-git-stream-row"/);
+  assert.match(stackGitPanel, /class="stack-git-diff-panel"/);
+  assert.match(stackGitPanel, /@container \(max-width: 42rem\)/);
+  assert.match(stackGitPanel, /\.stack-git-branch-form/);
+  assert.match(stackGitPanel, /\.stack-git-confirm-dialog/);
+  assert.doesNotMatch(stackGitPanel, /resize: both;/);
+  assert.doesNotMatch(stackGitPanel, /class="stack-git-panel-tabs"/);
+  assert.doesNotMatch(stackGitPanel, /grid-template-columns: minmax\(0, 1\.15fr\) minmax\(15rem, 0\.85fr\);/);
+  assert.doesNotMatch(stackGitPanel, /class="stack-git-card"/);
+  assert.doesNotMatch(stackGitPanel, /class="stack-git-log-entry"/);
 });

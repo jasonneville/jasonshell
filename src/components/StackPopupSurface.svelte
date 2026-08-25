@@ -2,8 +2,10 @@
   import './StackPopupSurface.css';
   import { emit, emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import StackGitPanel from './StackGitPanel.svelte';
   import StackTerminalPane from './StackTerminalPane.svelte';
   import {
     beginStackPopupFocusLossHold,
@@ -289,11 +291,11 @@
     void loadStackTerminalProfile();
     window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
     window.addEventListener('keyup', keyupHandler, true);
-    void getCurrentWindow().onDragDropEvent((event) => {
+    void getCurrentWindow().onDragDropEvent((event: { payload: DragDropEvent }) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
         void pasteDroppedPaths(event.payload.paths, currentPath, false);
       }
-    }).then((unlisten) => {
+    }).then((unlisten: () => void) => {
       if (disposed) {
         unlisten();
       } else {
@@ -324,7 +326,7 @@
 
   async function initializeOpenRequestDelivery(unlisteners: Array<() => void>, isDisposed: () => boolean) {
     try {
-      const unlisten = await getCurrentWindow().listen<StackPopupOpenPayload>(STACK_POPUP_OPEN_EVENT, (event) => {
+      const unlisten = await getCurrentWindow().listen<StackPopupOpenPayload>(STACK_POPUP_OPEN_EVENT, (event: { payload: StackPopupOpenPayload }) => {
         void handleOpenRequest(event.payload);
       });
       if (isDisposed()) {
@@ -1421,8 +1423,6 @@
     gitStatusPopupFilter = filter;
     gitStatusPopupOpen = true;
     gitOperationMessage = '';
-    reconcileGitStatusSelection();
-    void refreshGitWorkbenchData(gitWorkbenchView, currentPath);
   }
 
   function closeGitStatusPopup() {
@@ -1431,10 +1431,6 @@
 
   function setGitWorkbenchView(view: StackGitWorkbenchView) {
     gitWorkbenchView = view;
-    if (view === 'changes') {
-      reconcileGitStatusSelection();
-    }
-    void refreshGitWorkbenchData(view, currentPath);
   }
 
   function cancelInlineEditor() {
@@ -2149,7 +2145,7 @@
   }
 
   function handleBackgroundContextMenu(event: MouseEvent) {
-    if (shouldIgnoreBackgroundContextMenu(event)) {
+    if (gitStatusPopupOpen || shouldIgnoreBackgroundContextMenu(event)) {
       return;
     }
     event.preventDefault();
@@ -2297,9 +2293,15 @@
     }
   }
 
+  function isEditableKeyTarget(target: EventTarget | null) {
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+      return true;
+    }
+    return target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest('.inline-editor, [contenteditable="true"]')));
+  }
+
   function handleKeydown(event: KeyboardEvent) {
-    const target = event.target instanceof HTMLElement ? event.target : null;
-    if (target?.closest('.inline-editor') && event.key !== 'Escape') {
+    if (gitStatusPopupOpen || isEditableKeyTarget(event.target)) {
       return;
     }
 
@@ -2629,7 +2631,8 @@
       <MeltActionButton onClick={cancelInlineEditor}>Cancel</MeltActionButton>
     </form>
   {/if}
-
+  <!-- Commenting out below, leave commented out-->
+<!-- 
   {#if gitStatusPopupOpen && gitStatus && gitStatusPath === currentPath}
     <dialog
       open
@@ -2785,7 +2788,7 @@
         </div>
       </div>
     </dialog>
-  {/if}
+  {/if} -->
 
   {#if pendingGitMutation}
     <div class="git-confirm-backdrop" role="presentation" on:click|stopPropagation>
@@ -2800,20 +2803,29 @@
     </div>
   {/if}
 
-  <div
-    class="details-table"
-    class:marquee-selecting={!!marqueeSelection}
-    role="grid"
-    aria-label="Folder details"
-    aria-busy={loadingPath ? 'true' : 'false'}
-    aria-rowcount={visibleEntries.length + 1}
-    aria-colcount="4"
-    tabindex="0"
-    bind:this={detailsGrid}
-    on:contextmenu={handleBackgroundContextMenu}
-    on:dragover={(event) => handleDropOver(event)}
-    on:drop={(event) => void handleDrop(event, currentPath)}
-  >
+  {#if gitStatusPopupOpen}
+    <StackGitPanel
+      folderPath={currentPath}
+      initialStatus={gitStatus}
+      initialChangeFilter={gitStatusPopupFilter}
+      onClose={closeGitStatusPopup}
+      onRefresh={() => void refreshStackGitStatus(currentPath, folderLoadSequence)}
+    />
+  {:else}
+    <div
+      class="details-table"
+      class:marquee-selecting={!!marqueeSelection}
+      role="grid"
+      aria-label="Folder details"
+      aria-busy={loadingPath ? 'true' : 'false'}
+      aria-rowcount={visibleEntries.length + 1}
+      aria-colcount="4"
+      tabindex="0"
+      bind:this={detailsGrid}
+      on:contextmenu={handleBackgroundContextMenu}
+      on:dragover={(event) => handleDropOver(event)}
+      on:drop={(event) => void handleDrop(event, currentPath)}
+    >
     <div class="details-header" role="row" aria-rowindex="1">
       <MeltActionButton class={sortHeader('name').className} role="columnheader" ariaColindex={1} ariaSort={sortHeader('name').ariaSort} onClick={() => sortBy('name')}><span>Name</span><span class="sort-indicator" aria-hidden="true">{sortHeader('name').indicator}</span></MeltActionButton>
       <MeltActionButton class={sortHeader('type').className} role="columnheader" ariaColindex={2} ariaSort={sortHeader('type').ariaSort} onClick={() => sortBy('type')}><span>Type</span><span class="sort-indicator" aria-hidden="true">{sortHeader('type').indicator}</span></MeltActionButton>
@@ -2907,7 +2919,8 @@
     {:else}
       <div class="empty-stack surface-state" class:loading={!!loadingPath} class:info={!loadingPath} role="status">{loadingPath ? 'Loading folder...' : stackState.statusMessage}</div>
     {/if}
-  </div>
+    </div>
+  {/if}
 
   {#if rowMenu}
     <div

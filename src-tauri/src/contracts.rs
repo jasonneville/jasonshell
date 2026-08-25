@@ -117,6 +117,14 @@ pub mod commands {
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
     pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
+    pub const STACK_GIT_UNSTAGE_PATHS: &str = "stack_git_unstage_paths";
+    pub const STACK_GIT_REVERT_PATHS: &str = "stack_git_revert_paths";
+    pub const STACK_GIT_DIFF: &str = "stack_git_diff";
+    pub const STACK_GIT_STASHES: &str = "stack_git_stashes";
+    pub const STACK_GIT_STASH: &str = "stack_git_stash";
+    pub const STACK_GIT_STASH_APPLY: &str = "stack_git_stash_apply";
+    pub const STACK_GIT_STASH_POP: &str = "stack_git_stash_pop";
+    pub const STACK_GIT_STASH_DROP: &str = "stack_git_stash_drop";
     pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
     pub const STACK_GIT_LOG: &str = "stack_git_log";
     pub const STACK_GIT_TREE: &str = "stack_git_tree";
@@ -263,6 +271,14 @@ pub mod commands {
         GET_STACK_GIT_STATUS,
         OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
+        STACK_GIT_UNSTAGE_PATHS,
+        STACK_GIT_REVERT_PATHS,
+        STACK_GIT_DIFF,
+        STACK_GIT_STASHES,
+        STACK_GIT_STASH,
+        STACK_GIT_STASH_APPLY,
+        STACK_GIT_STASH_POP,
+        STACK_GIT_STASH_DROP,
         STACK_GIT_COMMIT,
         STACK_GIT_LOG,
         STACK_GIT_TREE,
