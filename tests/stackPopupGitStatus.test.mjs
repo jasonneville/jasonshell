@@ -22,6 +22,8 @@ function stripRustTestBlocks(source) {
   return source.replace(/\n#\[cfg\(test\)\][\s\S]*$/m, '\n');
 }
 
+const productionRustGitStatus = stripRustTestBlocks(rustGitStatus);
+
 test('stack git status backend is a separate non-listing command using git porcelain', () => {
   const productionRustGitStatus = stripRustTestBlocks(rustGitStatus);
   assert.match(commandsSource, /getStackGitStatus:\s*'get_stack_git_status'/);
@@ -87,9 +89,35 @@ test('stack popup API exposes typed git workbench command wrappers ahead of back
   assert.match(stackPopupApi, /export function stackGitCheckoutBranch\(folderPath: string, branchName: string\): Promise<StackGitBranchOperationResult>/);
   assert.match(stackPopupApi, /invoke<StackGitBranchOperationResult>\(IPC_COMMANDS\.stackGitCheckoutBranch/);
   assert.match(stackPopupApi, /request: \{ folderPath, branchName \}/);
-  assert.match(stackPopupApi, /export function stackGitCreateBranch\(folderPath: string, branchName: string, checkout = true\): Promise<StackGitBranchOperationResult>/);
+  assert.match(stackPopupApi, /export function stackGitCreateBranch\(folderPath: string, branchName: string, checkout = true, sourceBranch\?: string\): Promise<StackGitBranchOperationResult>/);
   assert.match(stackPopupApi, /invoke<StackGitBranchOperationResult>\(IPC_COMMANDS\.stackGitCreateBranch/);
-  assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout \}/);
+  assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
+});
+
+test('stack git create branch contract accepts optional source branch and uses fixed source checkout argv', () => {
+  assert.match(stackPopupApi, /export function stackGitCreateBranch\(folderPath: string, branchName: string, checkout = true, sourceBranch\?: string\): Promise<StackGitBranchOperationResult>/);
+  assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
+  assert.match(readRepoFile('src-tauri/src/stack_popup/models.rs'), /pub struct StackGitBranchRequest \{[\s\S]*pub branch_name: String,[\s\S]*pub checkout: Option<bool>,[\s\S]*pub source_branch: Option<String>,[\s\S]*\}/);
+
+  const createBranchBody = productionRustGitStatus.match(/fn stack_git_create_branch\([\s\S]*?\n\}/)?.[0] ?? '';
+  const createBranchArgsBody = productionRustGitStatus.match(/fn create_branch_git_args[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(createBranchBody, /request\.source_branch\.as_deref\(\)/);
+  assert.match(createBranchArgsBody, /validate_git_branch_name\(source_branch\)/);
+  assert.match(createBranchArgsBody, /if source_branch == branch/);
+  assert.match(createBranchArgsBody, /return Err\("Git branch source is invalid"\.to_string\(\)\)/);
+  assert.match(createBranchArgsBody, /vec!\["switch", "-c", branch, source_branch\]/);
+  assert.match(createBranchArgsBody, /vec!\["branch", branch, source_branch\]/);
+  assert.doesNotMatch(createBranchArgsBody, /format!\([^\)]*switch|join\([^\)]*switch|Command::new\("git"\)/);
+});
+
+test('stack git delete branch contract is local-only, confirmed by UI, and uses safe fixed argv', () => {
+  assert.match(commandsSource, /stackGitDeleteBranch:\s*'stack_git_delete_branch'/);
+  assert.match(stackPopupApi, /export function stackGitDeleteBranch\(folderPath: string, branchName: string\): Promise<StackGitBranchOperationResult>/);
+  assert.match(stackPopupApi, /IPC_COMMANDS\.stackGitDeleteBranch/);
+  assert.match(stackPopupApi, /request: \{ folderPath, branchName \}/);
+  assert.match(rustGitStatus, /fn delete_branch_git_args[\s\S]*vec!\["branch", "-d", "--", branch\]/);
+  assert.match(rustGitStatus, /git_stdout\(&repo_root, &\["show-ref", "--verify", "--quiet", "--", &branch_ref\]\)/);
+  assert.match(rustGitStatus, /if current_branch\.as_deref\(\) == Some\(branch\)/);
 });
 
 test('stack git remote checkout preserves remote branch tail as local branch name', () => {
@@ -217,7 +245,7 @@ test('stack git status dialog is upgraded into a dense developer workbench', () 
   assert.match(stackGitPanel, /let stashes:\s*StackGitStashes\['entries'\]/);
   assert.match(stackGitPanel, /let branches:\s*StackGitBranches\['branches'\]/);
   assert.match(stackGitPanel, /stackGitCheckoutBranch\(folderPath, branch\)/);
-  assert.match(stackGitPanel, /stackGitCreateBranch\(folderPath, name, true\)/);
+  assert.match(stackGitPanel, /stackGitCreateBranch\(folderPath, name, true, newBranchSource \|\| undefined\)/);
   assert.match(stackGitPanel, /stagedEntries = groupedEntries\.staged/);
   assert.match(stackGitPanel, /unstagedEntries = groupedEntries\.unstaged/);
 });

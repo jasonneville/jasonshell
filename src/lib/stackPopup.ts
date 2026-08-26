@@ -603,9 +603,15 @@ export function stackGitCheckoutBranch(folderPath: string, branchName: string): 
   });
 }
 
-export function stackGitCreateBranch(folderPath: string, branchName: string, checkout = true): Promise<StackGitBranchOperationResult> {
+export function stackGitCreateBranch(folderPath: string, branchName: string, checkout = true, sourceBranch?: string): Promise<StackGitBranchOperationResult> {
   return invoke<StackGitBranchOperationResult>(IPC_COMMANDS.stackGitCreateBranch, {
-    request: { folderPath, branchName, checkout }
+    request: { folderPath, branchName, checkout, sourceBranch }
+  });
+}
+
+export function stackGitDeleteBranch(folderPath: string, branchName: string): Promise<StackGitBranchOperationResult> {
+  return invoke<StackGitBranchOperationResult>(IPC_COMMANDS.stackGitDeleteBranch, {
+    request: { folderPath, branchName }
   });
 }
 

@@ -1,5 +1,26 @@
 ## Change Ledger
 
+- 2026-08-25 `[CODE]` FIXED: Stack Git branch selector title now uses an explicit Svelte reactive value derived from `status.branch` and reconciles from post-checkout `currentBranch`; branch changes render immediately without reopening the view.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first contracts requiring reset branch refreshes to update `status.branch` and rendered labels to consume its reactive scalar directly rather than a hidden function dependency.
+
+- 2026-08-25 `[CODE]` ADDED: Stack Git branch picker now shows an accessible red trash action for non-current local branches, requires confirmation, and refreshes branch/status state after deletion.
+- 2026-08-25 `[CODE]` SECURED: Added authorized `stack_git_delete_branch` IPC with server-side local/current protections and fixed `git branch -d -- <branch>` argv, preserving Git's unmerged-branch safeguard; remote deletion remains unsupported.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first frontend/backend contracts plus Rust fixed-argv coverage for local branch deletion.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Stack Git contracts passed 32/32; focused Rust Git-status tests passed 23/23; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; final review confirmed exact local-ref verification and mutation timeout classification with no blockers.
+
+- 2026-08-25 `[CODE]` FIXED: Stack Git checkout/create now refreshes changed-file status and branch-list state together, resetting dropdown current markers and source selection to the newly checked-out branch before the surrounding browser refreshes.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first contract proving checkout awaits status refresh, branch refresh, dropdown reset, and parent file-list refresh in order.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Stack Git contracts passed 29/29; `npm run check` passed with zero errors and only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; adversarial review found no blocker (Branches view may issue one harmless token-guarded duplicate branch fetch).
+
+- 2026-08-25 `[CODE]` FIXED: Stack Git branch discovery now uses Git's supported `%09` tab escape and full refs instead of literal `%x1f`, restoring correctly classified local and remote rows in the header branch picker while excluding remote `HEAD` pseudo-refs.
+- 2026-08-25 `[CODE]` TESTED: Updated branch parser regressions to use exact tab-delimited full refs produced by `git branch --all --format`, including remote classification and symbolic `HEAD` filtering.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Rust Git-status tests passed 22/22; Stack Git Node contracts passed 28/28; `npm run check` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; final review confirmed full-ref classification and checkout compatibility after symbolic remote `HEAD` filtering.
+
+- 2026-08-25 `[CODE]` ADDED: Stack Git header branch selector now opens an anchored picker grouped into local and remote branches, supports row checkout, and creates new branches from a selectable local or remote source ref while retaining dirty-worktree confirmations.
+- 2026-08-25 `[CODE]` CHANGED: Extended Stack Git branch creation IPC with an optional validated source ref and fixed Git argv for source-based create-and-checkout or create-only operations.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first source contracts plus Rust argv/validation coverage for grouped branch picking, remote checkout, and source-based branch creation.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Stack Git contracts passed 28/28; focused Rust Git-status tests passed 21/21; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; adversarial review found and verified fixes for loader races, hidden source state, and remote/local checkout collisions.
+
 - 2026-08-24 `[CODE]` FIXED: Aligned Stack Git header bulk stage/unstage glyph centers with individual file-row action glyphs using the same horizontal gutter.
 
 - 2026-08-24 `[CODE]` FIXED: Moved individual Stack Git file-row surface and hover styling onto the full row so stage, unstage, filename, and discard controls share one continuous background.

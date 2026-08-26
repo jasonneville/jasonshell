@@ -286,6 +286,10 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
         callers: &[contracts::surfaces::STACK_POPUP],
     },
     StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STACK_GIT_DELETE_BRANCH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
         command: contracts::commands::START_PERSISTENT_TERMINAL,
         callers: &[contracts::surfaces::TERMINAL_PANEL],
     },

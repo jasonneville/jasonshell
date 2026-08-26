@@ -134,6 +134,7 @@ pub mod commands {
     pub const STACK_GIT_PUSH: &str = "stack_git_push";
     pub const STACK_GIT_CHECKOUT_BRANCH: &str = "stack_git_checkout_branch";
     pub const STACK_GIT_CREATE_BRANCH: &str = "stack_git_create_branch";
+    pub const STACK_GIT_DELETE_BRANCH: &str = "stack_git_delete_branch";
     pub const SUGGEST_STACK_PATHS: &str = "suggest_stack_paths";
     pub const RESOLVE_STACK_ITEM_ICONS: &str = "resolve_stack_item_icons";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
@@ -288,6 +289,7 @@ pub mod commands {
         STACK_GIT_PUSH,
         STACK_GIT_CHECKOUT_BRANCH,
         STACK_GIT_CREATE_BRANCH,
+        STACK_GIT_DELETE_BRANCH,
         SUGGEST_STACK_PATHS,
         RESOLVE_STACK_ITEM_ICONS,
         OPEN_STACK_ITEM,
@@ -503,6 +505,7 @@ mod tests {
         assert!(unique.contains("stack_git_push"));
         assert!(unique.contains("stack_git_checkout_branch"));
         assert!(unique.contains("stack_git_create_branch"));
+        assert!(unique.contains("stack_git_delete_branch"));
         assert!(unique.contains("list_stack_open_with_candidates"));
         assert!(unique.contains("open_stack_item_with_app"));
         assert!(unique.contains("prepare_stack_file_drag"));

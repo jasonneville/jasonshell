@@ -211,6 +211,84 @@ test('StackGitPanel replaces the file grid instead of overlaying it', () => {
   assert.match(surface, /function handleKeydown\(event: KeyboardEvent\) \{\s*if \(gitStatusPopupOpen \|\|/);
 });
 
+test('StackGitPanel branch button opens a grouped branch dropdown, not the Branches view', () => {
+  const headerBlock = panel.match(/<header class="stack-git-panel-header">[\s\S]*?<\/header>/)?.[0] ?? '';
+  const branchSelectorBlock = headerBlock.match(/<button type="button" class="stack-git-branch-selector"[\s\S]*?<\/button>/)?.[0] ?? '';
+  assert.match(branchSelectorBlock, /aria-expanded=\{branchDropdownOpen\}/);
+  assert.match(branchSelectorBlock, /aria-controls="stack-git-branch-dropdown"/);
+  assert.match(branchSelectorBlock, /on:click=\{toggleBranchDropdown\}/);
+  assert.doesNotMatch(branchSelectorBlock, /handleTabChange\('branches'\)/);
+  assert.match(panel, /let branchDropdownOpen = false;/);
+  assert.match(panel, /function toggleBranchDropdown\(\)[\s\S]*branchDropdownOpen = !branchDropdownOpen;[\s\S]*void refreshBranches\(\);/);
+  assert.match(panel, /id="stack-git-branch-dropdown"[\s\S]*aria-label="Branch picker"/);
+  assert.match(panel, /class="stack-git-branch-dropdown"/);
+  assert.match(panel, />Local branches</);
+  assert.match(panel, />Remote branches</);
+  assert.match(panel, /localBranches = branches\.filter\(\(branch\) => !branch\.remote\)/);
+  assert.match(panel, /remoteBranches = branches\.filter\(\(branch\) => branch\.remote\)/);
+});
+
+test('StackGitPanel branch dropdown rows checkout and create branch from selected source ref', () => {
+  assert.match(panel, /\{#each localBranches as branch/);
+  assert.match(panel, /\{#each remoteBranches as branch/);
+  assert.match(panel, /on:click=\{\(\) => void checkoutBranch\(branch\.name\)\}/);
+  assert.match(panel, /class="[^"]*stack-git-branch-dropdown__new-branch[^"]*"/);
+  assert.match(panel, /on:submit\|preventDefault=\{\(\) => void createBranch\(\)\}/);
+  assert.match(panel, /bind:value=\{newBranchSource\}/);
+  assert.match(panel, /\{#each sourceBranches as branch \(branch\.name\)\}/);
+  assert.match(panel, /let newBranchSource = '';/);
+  assert.match(panel, /sourceBranches = \[\.\.\.localBranches, \.\.\.remoteBranches\]/);
+  assert.match(panel, /stackGitCreateBranch\(folderPath, name, true, newBranchSource \|\| undefined\)/);
+  assert.match(panel, /stackGitCreateBranch\(folderPath, action\.branchName, true, action\.sourceBranch\)/);
+  assert.match(panel, /sourceBranch\?: string;/);
+  assert.match(panel, /<form class="stack-git-branch-form" on:submit\|preventDefault=\{\(\) => void createBranch\(\)\}>[\s\S]*<span>Source branch<\/span>[\s\S]*bind:value=\{newBranchSource\}/);
+  assert.match(panel, /let branchLoading = false;/);
+  assert.match(panel, /let branchToken = 0;/);
+  assert.match(panel, /const token = \+\+branchToken;/);
+  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \? 'true' : 'false'\}/);
+});
+
+test('stack git branches checkout prefers local branch for matching remote tail', () => {
+  assert.match(panel, /function matchLocalBranchName\(branchName: string\)/);
+  assert.ok(panel.includes("const tail = branchName.replace(/^(?:refs\\/)?remotes\\/[^/]+\\//, '').replace(/^refs\\/heads\\//, '');"));
+  assert.match(panel, /normalizeBranchLabel\(branch\) === tail/);
+  assert.match(panel, /branch = matchLocalBranchName\(branch\);[\s\S]*stackPopup\.stackGitCheckoutBranch\(folderPath, branch\)/);
+});
+
+test('stack git checkout refreshes changed files and resets dropdown state to the checked out branch', () => {
+  assert.match(panel, /async function refreshBranches\(resetSelection = false\)/);
+  assert.match(panel, /if \(resetSelection\) \{[\s\S]*selectedBranchName = next\.currentBranch \?\? status\.branch \?\? branches\[0\]\?\.name \?\? '';[\s\S]*newBranchSource = selectedBranchName;/);
+  assert.match(panel, /async function refreshAfterMutation\(refreshBranchState = false\) \{[\s\S]*await refreshStatus\(\);[\s\S]*if \(refreshBranchState\) await refreshBranches\(true\);[\s\S]*onRefresh\?\.\(\);/);
+  assert.match(panel, /stackPopup\.stackGitCheckoutBranch\(folderPath, branch\)[\s\S]*await refreshAfterMutation\(true\);/);
+  assert.match(panel, /if \(resetSelection && next\.currentBranch && status\) \{[\s\S]*status = \{ \.\.\.status, branch: next\.currentBranch \};[\s\S]*\}/);
+});
+
+test('stack git dropdown current branch uses the same live status source as the header label', () => {
+  assert.match(panel, /\$: currentBranchLabel = status\?\.branch \?\? 'Detached';/);
+  assert.match(panel, /stack-git-branch-selector__label">\{currentBranchLabel\}<\/span>/);
+  assert.doesNotMatch(panel, /\{currentBranchLabel\(\)\}/);
+  assert.match(panel, /function isCurrentBranch\(branch: StackGitBranches\['branches'\]\[number\], currentBranch: string\) \{[\s\S]*normalizeBranchLabel\(branch\) === currentBranch/);
+  assert.match(panel, /class:current=\{isCurrentBranch\(branch, currentBranchLabel\)\}/);
+  assert.match(panel, /function applyCheckedOutBranch\(branchName: string\)[\s\S]*status = \{ \.\.\.status, branch: branchName \};[\s\S]*selectedBranchName = branchName;[\s\S]*newBranchSource = branchName;/);
+  assert.match(panel, /stackPopup\.stackGitCheckoutBranch\(folderPath, branch\)[\s\S]*applyCheckedOutBranch\(branch\);[\s\S]*await refreshAfterMutation\(true\);/);
+});
+
+test('stack git dropdown confirms local branch deletion and protects current and remote branches', () => {
+  assert.match(panel, /type StackGitConfirmKind = [^;]*'delete-branch'/);
+  assert.match(panel, /function deleteLocalBranch\(branch: StackGitBranches\['branches'\]\[number\]\)/);
+  assert.match(panel, /if \(branch\.remote \|\| isCurrentBranch\(branch, currentBranchLabel\) \|\| operationBusy\) return;/);
+  assert.match(panel, /kind: 'delete-branch'/);
+  assert.match(panel, /Delete local branch/);
+  assert.match(panel, /stackPopup\.stackGitDeleteBranch\(folderPath, action\.branchName\)/);
+  assert.match(panel, /aria-label=\{`Delete local branch \$\{normalizeBranchLabel\(branch\)\}`\}/);
+  assert.match(panel, /class="stack-git-branch-delete"/);
+});
+
+test('stack git create branch frontend contract forwards optional source branch', () => {
+  assert.match(api, /export function stackGitCreateBranch\(folderPath: string, branchName: string, checkout = true, sourceBranch\?: string\): Promise<StackGitBranchOperationResult>/);
+  assert.match(api, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
+});
+
 test('StackGitPanel inserts staged and unstaged diff drawers directly below the clicked row', () => {
   const selectChangePathBlock = panel.match(/function selectChangePath\([\s\S]*?\n  }/)?.[0] ?? '';
   const openChangeDiffBlock = panel.match(/function openChangeDiff\([\s\S]*?\n  }/)?.[0] ?? '';

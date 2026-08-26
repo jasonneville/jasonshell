@@ -19,7 +19,7 @@
   } from '../lib/stackPopup';
 
   type StackGitView = 'changes' | 'history' | 'stashes' | 'branches';
-  type StackGitConfirmKind = 'discard' | 'stash-pop' | 'stash-drop' | 'checkout' | 'create-branch';
+  type StackGitConfirmKind = 'discard' | 'stash-pop' | 'stash-drop' | 'checkout' | 'create-branch' | 'delete-branch';
 
   export let folderPath = '';
   export let initialStatus: StackGitStatus | null = null;
@@ -42,6 +42,7 @@
   let stashMessage = '';
   let branchDraft = '';
   let newBranchDraft = '';
+  let newBranchSource = '';
   let selectedChangePaths: string[] = [];
   let selectedHistoryHash = '';
   let selectedStashRef = '';
@@ -54,6 +55,7 @@
   let diffLoading = false;
   let statusLoading = false;
   let viewLoading = false;
+  let branchLoading = false;
   let operationBusy = false;
   let commitTextarea: HTMLTextAreaElement | null = null;
   let collapsedChangeGroups = new Set<'staged' | 'unstaged'>();
@@ -66,6 +68,7 @@
     message: string;
     paths?: string[];
     branchName?: string;
+    sourceBranch?: string;
     stashRef?: string;
   } | null = null;
   let pendingConfirmCancelButton: HTMLButtonElement | null = null;
@@ -77,8 +80,11 @@
 
   let statusToken = 0;
   let viewToken = 0;
+  let branchToken = 0;
   let diffToken = 0;
   let mounted = false;
+  let branchDropdownOpen = false;
+  let branchPickerElement: HTMLDivElement | null = null;
 
   $: groupedEntries = groupStackGitEntries(status?.entries ?? []);
   $: stagedEntries = groupedEntries.staged;
@@ -86,6 +92,14 @@
   $: canCommit = canCommitGitStatus(status);
   $: hasDirtyWorkingTree = groupedEntries.totalCount > 0;
   $: remoteUrl = status?.remoteRepositoryUrl ?? null;
+  $: localBranches = branches.filter((branch) => !branch.remote);
+  $: remoteBranches = branches.filter((branch) => branch.remote);
+  $: sourceBranches = [...localBranches, ...remoteBranches];
+  $: currentBranchLabel = status?.branch ?? 'Detached';
+
+  $: if (branchDropdownOpen && (!newBranchSource || !sourceBranches.some((branch) => branch.name === newBranchSource))) {
+    newBranchSource = status?.branch ?? sourceBranches[0]?.name ?? '';
+  }
 
   $: if (mounted && folderPath) {
     void refreshStatus();
@@ -190,10 +204,12 @@
       history = [];
       branches = [];
       stashes = [];
+      branchDropdownOpen = false;
       diffText = '';
       diffTitle = '';
       statusLoading = false;
       viewLoading = false;
+      branchLoading = false;
       diffLoading = false;
       return;
     }
@@ -208,6 +224,7 @@
         history = [];
         branches = [];
         stashes = [];
+        branchDropdownOpen = false;
         selectedChangePaths = [];
         selectedHistoryHash = '';
         selectedStashRef = '';
@@ -265,22 +282,32 @@
     }
   }
 
-  async function refreshBranches() {
-    const token = ++viewToken;
+  async function refreshBranches(resetSelection = false) {
+    const token = ++branchToken;
     if (!status || !folderPath) return;
-    viewLoading = true;
+    branchLoading = true;
     try {
       const next = await stackPopup.stackGitBranches(folderPath);
-      if (token !== viewToken) return;
+      if (token !== branchToken) return;
       branches = next.branches;
+      const nextSourceBranches = [...next.branches.filter((branch) => !branch.remote), ...next.branches.filter((branch) => branch.remote)];
+      if (resetSelection) {
+        selectedBranchName = next.currentBranch ?? status.branch ?? branches[0]?.name ?? '';
+        newBranchSource = selectedBranchName;
+      } else if (!newBranchSource || !nextSourceBranches.some((branch) => branch.name === newBranchSource)) {
+        newBranchSource = next.currentBranch ?? status.branch ?? nextSourceBranches[0]?.name ?? '';
+      }
+      if (resetSelection && next.currentBranch && status) {
+        status = { ...status, branch: next.currentBranch };
+      }
       if (!selectedBranchName || !branches.some((branch) => branch.name === selectedBranchName)) {
         selectedBranchName = next.currentBranch ?? status.branch ?? branches[0]?.name ?? '';
       }
       ensureBranchSelection();
     } catch (error) {
-      if (token === viewToken) errorMessage = error instanceof Error ? error.message : 'Git branches unavailable';
+      if (token === branchToken) errorMessage = error instanceof Error ? error.message : 'Git branches unavailable';
     } finally {
-      if (token === viewToken) viewLoading = false;
+      if (token === branchToken) branchLoading = false;
     }
   }
 
@@ -485,8 +512,9 @@
     }
   }
 
-  async function refreshAfterMutation() {
+  async function refreshAfterMutation(refreshBranchState = false) {
     await refreshStatus();
+    if (refreshBranchState) await refreshBranches(true);
     onRefresh?.();
   }
 
@@ -522,14 +550,30 @@
     await confirmCheckout(branch);
   }
 
+  function matchLocalBranchName(branchName: string) {
+    const tail = branchName.replace(/^(?:refs\/)?remotes\/[^/]+\//, '').replace(/^refs\/heads\//, '');
+    return localBranches.find((branch) => normalizeBranchLabel(branch) === tail)?.name ?? branchName;
+  }
+
+  function applyCheckedOutBranch(branchName: string) {
+    if (!status) return;
+    status = { ...status, branch: branchName };
+    selectedBranchName = branchName;
+    newBranchSource = branchName;
+    branchDraft = branchName;
+  }
+
   async function confirmCheckout(branch: string) {
     if (!branch || operationBusy) return;
     operationBusy = true;
     try {
+      branch = matchLocalBranchName(branch);
       const result = await stackPopup.stackGitCheckoutBranch(folderPath, branch);
+      applyCheckedOutBranch(branch);
       statusMessage = result.summary;
       branchDraft = '';
-      await refreshAfterMutation();
+      branchDropdownOpen = false;
+      await refreshAfterMutation(true);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : 'Checkout failed';
     } finally {
@@ -544,17 +588,20 @@
       openPendingConfirm({
         kind: 'create-branch',
         title: 'Create branch in dirty tree?',
-        message: dirtyCheckoutWarning || 'Dirty checkout warning: creating a branch may affect local changes.',
-        branchName: name
+        message: `Create branch "${name}" from "${newBranchSource || currentBranchLabel}"? ${dirtyCheckoutWarning || 'Dirty checkout warning: creating a branch may affect local changes.'}`,
+        branchName: name,
+        sourceBranch: newBranchSource || undefined
       });
       return;
     }
     operationBusy = true;
     try {
-      const result = await stackPopup.stackGitCreateBranch(folderPath, name, true);
+      const result = await stackPopup.stackGitCreateBranch(folderPath, name, true, newBranchSource || undefined);
+      applyCheckedOutBranch(name);
       statusMessage = result.summary;
       newBranchDraft = '';
-      await refreshAfterMutation();
+      branchDropdownOpen = false;
+      await refreshAfterMutation(true);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : 'Branch creation failed';
     } finally {
@@ -653,13 +700,29 @@
       return;
     }
 
+    if (action.kind === 'delete-branch' && action.branchName) {
+      operationBusy = true;
+      try {
+        const result = await stackPopup.stackGitDeleteBranch(folderPath, action.branchName);
+        statusMessage = result.summary;
+        await refreshAfterMutation(true);
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : 'Branch deletion failed';
+      } finally {
+        operationBusy = false;
+      }
+      return;
+    }
+
     if (action.kind === 'create-branch' && action.branchName) {
       operationBusy = true;
       try {
-        const result = await stackPopup.stackGitCreateBranch(folderPath, action.branchName, true);
+        const result = await stackPopup.stackGitCreateBranch(folderPath, action.branchName, true, action.sourceBranch);
+        applyCheckedOutBranch(action.branchName);
         statusMessage = result.summary;
         newBranchDraft = '';
-        await refreshAfterMutation();
+        branchDropdownOpen = false;
+        await refreshAfterMutation(true);
       } catch (error) {
         errorMessage = error instanceof Error ? error.message : 'Branch creation failed';
       } finally {
@@ -669,7 +732,30 @@
   }
 
   function closePanel() {
+    branchDropdownOpen = false;
     onClose?.();
+  }
+
+  function deleteLocalBranch(branch: StackGitBranches['branches'][number]) {
+    if (branch.remote || isCurrentBranch(branch, currentBranchLabel) || operationBusy) return;
+    const branchName = normalizeBranchLabel(branch);
+    openPendingConfirm({
+      kind: 'delete-branch',
+      title: 'Delete local branch?',
+      message: `Delete local branch "${branchName}"? Unmerged branches cannot be deleted.`,
+      branchName
+    });
+  }
+
+  function closeBranchDropdown() {
+    branchDropdownOpen = false;
+  }
+
+  function toggleBranchDropdown() {
+    branchDropdownOpen = !branchDropdownOpen;
+    if (branchDropdownOpen) {
+      void refreshBranches();
+    }
   }
 
   function selectBranch(branch: string) {
@@ -688,6 +774,7 @@
   }
 
   function handleTabChange(view: StackGitView) {
+    closeBranchDropdown();
     if (activeView === 'changes' && view !== 'changes') closeDiffDrawer();
     activeView = view;
     if (view === 'changes') {
@@ -713,8 +800,8 @@
     return `stack-git-badge git-status-${kind}`;
   }
 
-  function currentBranchLabel() {
-    return status?.branch ?? 'Detached';
+  function isCurrentBranch(branch: StackGitBranches['branches'][number], currentBranch: string) {
+    return !branch.remote && normalizeBranchLabel(branch) === currentBranch;
   }
 
   function clearMessages() {
@@ -792,6 +879,10 @@
       closePendingConfirm();
       return;
     }
+    if (branchDropdownOpen) {
+      closeBranchDropdown();
+      return;
+    }
     if (diffDrawerOpen) {
       closeDiffDrawer();
       return;
@@ -802,6 +893,20 @@
   function openPendingConfirm(next: NonNullable<typeof pendingConfirm>) {
     pendingConfirmFocusOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     pendingConfirm = next;
+  }
+
+  function handleBranchPickerPointerdown(event: PointerEvent) {
+    if (!branchDropdownOpen) return;
+    const target = event.target as Node | null;
+    if (target && branchPickerElement?.contains(target)) return;
+    closeBranchDropdown();
+  }
+
+  function handleBranchPickerFocusout(event: FocusEvent) {
+    if (!branchDropdownOpen) return;
+    const next = event.relatedTarget as Node | null;
+    if (next && branchPickerElement?.contains(next)) return;
+    closeBranchDropdown();
   }
 
   function closePendingConfirm() {
@@ -854,15 +959,126 @@
   $: if (status && activeView === 'branches') ensureBranchSelection();
 </script>
 
-<svelte:window on:keydown={handleEscape} />
+<svelte:window on:keydown={handleEscape} on:pointerdown={handleBranchPickerPointerdown} />
 
-<section class="stack-git-panel" aria-label="Git panel" aria-busy={statusLoading || viewLoading || diffLoading ? 'true' : 'false'}>
+<section class="stack-git-panel" aria-label="Git panel" aria-busy={statusLoading || viewLoading || branchLoading || diffLoading ? 'true' : 'false'}>
   <header class="stack-git-panel-header">
     <div class="stack-git-panel-row stack-git-panel-row--primary">
-      <button type="button" class="stack-git-branch-selector" aria-label={`Branch ${currentBranchLabel()}`} title={currentBranchLabel()} on:click={() => handleTabChange('branches')}>
-        <span class="stack-git-branch-selector__icon" aria-hidden="true">⑂</span>
-        <span class="stack-git-branch-selector__label">{currentBranchLabel()}</span>
-      </button>
+      <div class="stack-git-branch-picker" bind:this={branchPickerElement} on:focusout={handleBranchPickerFocusout}>
+        <button type="button" class="stack-git-branch-selector" aria-label={`Branch ${currentBranchLabel}`} aria-expanded={branchDropdownOpen} aria-controls="stack-git-branch-dropdown" title={currentBranchLabel} on:click={toggleBranchDropdown}>
+          <span class="stack-git-branch-selector__icon" aria-hidden="true">⑂</span>
+          <span class="stack-git-branch-selector__label">{currentBranchLabel}</span>
+        </button>
+
+        {#if branchDropdownOpen}
+          <div id="stack-git-branch-dropdown" class="stack-git-branch-dropdown" aria-label="Branch picker" role="region">
+            {#if branchLoading && !branches.length}
+              <div class="stack-git-empty stack-git-branch-dropdown__state">Loading branches...</div>
+            {:else if errorMessage && !branches.length}
+              <div class="stack-git-empty stack-git-branch-dropdown__state stack-git-branch-dropdown__state--error">{errorMessage}</div>
+            {:else if branches.length}
+              <section class="stack-git-branch-group">
+                <header class="stack-git-branch-group__header">
+                  <span>Local branches</span>
+                  <span>{localBranches.length}</span>
+                </header>
+
+                {#if localBranches.length}
+                  <div class="stack-git-branch-list" role="list">
+                    {#each localBranches as branch (branch.name)}
+                      <div class="stack-git-branch-row-wrap">
+                        <button
+                          type="button"
+                          class:selected={selectedBranchName === branch.name}
+                          class:current={isCurrentBranch(branch, currentBranchLabel)}
+                          class="stack-git-branch-row"
+                          aria-current={isCurrentBranch(branch, currentBranchLabel) ? 'page' : undefined}
+                          disabled={isCurrentBranch(branch, currentBranchLabel) || operationBusy}
+                          on:click={() => void checkoutBranch(branch.name)}
+                        >
+                          <code>{isCurrentBranch(branch, currentBranchLabel) ? '*' : 'loc'}</code>
+                          <div>
+                            <strong title={normalizeBranchLabel(branch)}>{normalizeBranchLabel(branch)}</strong>
+                            <small>{isCurrentBranch(branch, currentBranchLabel) ? 'Current branch' : 'Local branch'}</small>
+                          </div>
+                          <span class="stack-git-branch-row__state">{isCurrentBranch(branch, currentBranchLabel) ? 'Current' : 'Checkout'}</span>
+                        </button>
+                        {#if !isCurrentBranch(branch, currentBranchLabel)}
+                          <button
+                            type="button"
+                            class="stack-git-branch-delete"
+                            aria-label={`Delete local branch ${normalizeBranchLabel(branch)}`}
+                            title={`Delete local branch ${normalizeBranchLabel(branch)}`}
+                            disabled={operationBusy}
+                            on:click={() => deleteLocalBranch(branch)}
+                          >
+                            <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14">
+                              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" fill="currentColor"></path>
+                            </svg>
+                          </button>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="stack-git-empty stack-git-branch-dropdown__state">No local branches</div>
+                {/if}
+              </section>
+
+              <section class="stack-git-branch-group">
+                <header class="stack-git-branch-group__header">
+                  <span>Remote branches</span>
+                  <span>{remoteBranches.length}</span>
+                </header>
+
+                {#if remoteBranches.length}
+                  <div class="stack-git-branch-list" role="list">
+                    {#each remoteBranches as branch (branch.name)}
+                      <button
+                        type="button"
+                        class:selected={selectedBranchName === branch.name}
+                        class:current={isCurrentBranch(branch, currentBranchLabel)}
+                        class="stack-git-branch-row"
+                        aria-current={isCurrentBranch(branch, currentBranchLabel) ? 'page' : undefined}
+                        disabled={isCurrentBranch(branch, currentBranchLabel) || operationBusy}
+                        on:click={() => void checkoutBranch(branch.name)}
+                      >
+                        <code>{branch.remote ? 'rem' : 'loc'}</code>
+                        <div>
+                          <strong title={normalizeBranchLabel(branch)}>{normalizeBranchLabel(branch)}</strong>
+                          <small>{isCurrentBranch(branch, currentBranchLabel) ? 'Current branch' : 'Remote branch'}</small>
+                        </div>
+                        <span class="stack-git-branch-row__state">{isCurrentBranch(branch, currentBranchLabel) ? 'Current' : 'Checkout'}</span>
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="stack-git-empty stack-git-branch-dropdown__state">No remote branches</div>
+                {/if}
+              </section>
+
+              <form class="stack-git-branch-form stack-git-branch-dropdown__new-branch" on:submit|preventDefault={() => void createBranch()}>
+                <div class="stack-git-branch-form__title">Create new branch</div>
+                <label>
+                  <span>Branch name</span>
+                  <input value={newBranchDraft} placeholder="new branch" on:input={(event) => newBranchDraft = event.currentTarget.value} />
+                </label>
+                <label>
+                  <span>Source branch</span>
+                  <select bind:value={newBranchSource}>
+                    {#each sourceBranches as branch (branch.name)}
+                      <option value={branch.name}>{normalizeBranchLabel(branch)}</option>
+                    {/each}
+                  </select>
+                </label>
+                <button type="submit" disabled={!newBranchDraft.trim() || operationBusy}>Create</button>
+              </form>
+            {:else}
+              <div class="stack-git-empty stack-git-branch-dropdown__state">No branches loaded</div>
+            {/if}
+          </div>
+        {/if}
+      </div>
 
       <div class="stack-git-panel-header-actions">
         <button type="button" class="stack-git-icon-button" aria-label="Refresh git panel" title="Refresh" on:click={() => void refreshAll()}>↻</button>
@@ -1060,7 +1276,7 @@
           {#if dirtyCheckoutWarning}
             <div class="stack-git-warning">{dirtyCheckoutWarning}</div>
           {/if}
-          {#if viewLoading && !branches.length}
+          {#if branchLoading && !branches.length}
             <div class="stack-git-empty">Loading branches...</div>
           {:else if branches.length}
             {#each branches as branch (branch.name)}
@@ -1071,14 +1287,14 @@
                     selectBranch(branch.name);
                   }
                 }}>
-                  <code>{branch.current ? '*' : branch.remote ? 'rem' : 'loc'}</code>
+                  <code>{isCurrentBranch(branch, currentBranchLabel) ? '*' : branch.remote ? 'rem' : 'loc'}</code>
                   <div>
                     <strong title={normalizeBranchLabel(branch)}>{normalizeBranchLabel(branch)}</strong>
-                    <small>{branch.current ? 'Current branch' : branch.remote ? 'Remote branch' : 'Local branch'}</small>
+                    <small>{isCurrentBranch(branch, currentBranchLabel) ? 'Current branch' : branch.remote ? 'Remote branch' : 'Local branch'}</small>
                   </div>
                 </button>
                 <div class="stack-git-row-actions">
-                  <button type="button" disabled={branch.current || operationBusy} on:click={() => void checkoutBranch(branch.name)}>Checkout</button>
+                  <button type="button" disabled={isCurrentBranch(branch, currentBranchLabel) || operationBusy} on:click={() => void checkoutBranch(branch.name)}>Checkout</button>
                 </div>
               </div>
             {/each}
@@ -1098,6 +1314,14 @@
             <label>
               <span>Create</span>
               <input value={newBranchDraft} placeholder="new branch" on:input={(event) => newBranchDraft = event.currentTarget.value} />
+            </label>
+            <label>
+              <span>Source branch</span>
+              <select bind:value={newBranchSource}>
+                {#each sourceBranches as branch (branch.name)}
+                  <option value={branch.name}>{normalizeBranchLabel(branch)}</option>
+                {/each}
+              </select>
             </label>
             <button type="submit" disabled={!newBranchDraft.trim() || operationBusy}>Create</button>
           </form>
@@ -1242,6 +1466,170 @@
     min-width: 0;
     padding-inline: 12px;
     width: auto;
+  }
+
+  .stack-git-branch-picker {
+    min-width: 0;
+    position: relative;
+  }
+
+  .stack-git-branch-dropdown {
+    background: color-mix(in srgb, var(--js-color-surface-raised) 96%, #101827);
+    border: 1px solid color-mix(in srgb, var(--js-color-border) 74%, var(--js-color-accent-border));
+    border-radius: 14px;
+    box-shadow: var(--js-shadow-raised);
+    display: grid;
+    gap: 10px;
+    left: 0;
+    max-height: min(72vh, 42rem);
+    min-width: min(24rem, calc(100vw - 1.5rem));
+    overflow: auto;
+    padding: 10px;
+    position: absolute;
+    top: calc(100% + 8px);
+    width: min(26rem, calc(100vw - 1.5rem));
+    z-index: 30;
+  }
+
+  .stack-git-branch-group {
+    display: grid;
+    gap: 6px;
+  }
+
+  .stack-git-branch-group__header,
+  .stack-git-branch-form__title {
+    align-items: center;
+    color: var(--js-color-text-muted);
+    display: flex;
+    font-size: 0.58rem;
+    font-weight: 800;
+    justify-content: space-between;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .stack-git-branch-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .stack-git-panel button.stack-git-branch-row {
+    align-items: center;
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 66%, transparent);
+    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 84%, transparent);
+    display: grid;
+    gap: 8px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    justify-content: start;
+    min-height: 34px;
+    padding: 0 10px;
+    text-align: left;
+    width: 100%;
+  }
+
+  .stack-git-branch-row-wrap {
+    align-items: stretch;
+    display: flex;
+    min-width: 0;
+  }
+
+  .stack-git-branch-row-wrap .stack-git-branch-row {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .stack-git-panel button.stack-git-branch-delete {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: var(--js-color-error-border);
+    display: inline-flex;
+    justify-content: center;
+    margin: 3px;
+    padding: 0 8px;
+  }
+
+  .stack-git-panel button.stack-git-branch-delete:hover:not(:disabled),
+  .stack-git-panel button.stack-git-branch-delete:focus-visible {
+    background: var(--js-color-error);
+    color: var(--js-color-text-strong);
+  }
+
+  .stack-git-panel button.stack-git-branch-row code {
+    color: var(--js-color-text-muted);
+    min-width: 2.4ch;
+  }
+
+  .stack-git-panel button.stack-git-branch-row strong,
+  .stack-git-panel button.stack-git-branch-row small {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stack-git-panel button.stack-git-branch-row strong {
+    color: var(--js-color-text);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .stack-git-panel button.stack-git-branch-row small {
+    color: var(--js-color-text-muted);
+    font-size: 0.63rem;
+  }
+
+  .stack-git-branch-row__state {
+    color: var(--js-color-text-muted);
+    font-size: 0.62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .stack-git-panel button.stack-git-branch-row.current {
+    background: color-mix(in srgb, var(--js-color-accent-soft) 72%, var(--js-color-surface-overlay));
+    border-color: color-mix(in srgb, var(--js-color-accent-border) 72%, transparent);
+  }
+
+  .stack-git-panel button.stack-git-branch-row.current .stack-git-branch-row__state {
+    color: var(--js-color-accent-border);
+  }
+
+  .stack-git-branch-dropdown__state {
+    padding: 8px 10px;
+  }
+
+  .stack-git-branch-dropdown__state--error {
+    color: var(--js-color-danger-text, #ff8a8a);
+  }
+
+  .stack-git-branch-dropdown__new-branch {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 4px;
+  }
+
+  .stack-git-branch-dropdown__new-branch label {
+    gap: 6px;
+  }
+
+  .stack-git-branch-dropdown__new-branch input,
+  .stack-git-branch-dropdown__new-branch select {
+    background: var(--js-color-surface-sunken);
+    border: 1px solid var(--js-color-border);
+    border-radius: var(--js-radius-sm);
+    color: var(--js-color-text);
+    box-sizing: border-box;
+    min-height: 32px;
+    padding: 0 10px;
+    width: 100%;
+  }
+
+  .stack-git-branch-dropdown__new-branch button {
+    justify-self: end;
+    min-width: 8rem;
   }
 
   .stack-git-branch-selector__icon,
@@ -1861,6 +2249,12 @@
       flex-wrap: wrap;
     }
 
+    .stack-git-branch-dropdown {
+      left: 0;
+      min-width: min(22rem, calc(100vw - 1rem));
+      width: min(22rem, calc(100vw - 1rem));
+    }
+
     .stack-git-commit-actions {
       align-items: flex-start;
     }
@@ -1871,6 +2265,20 @@
   }
 
   @container (max-width: 32rem) {
+    .stack-git-branch-picker {
+      width: 100%;
+    }
+
+    .stack-git-branch-selector {
+      width: 100%;
+    }
+
+    .stack-git-branch-dropdown {
+      left: 0;
+      min-width: 0;
+      width: calc(100vw - 1rem);
+    }
+
     .stack-git-change-diff-drawer {
       padding: 0.35rem;
     }

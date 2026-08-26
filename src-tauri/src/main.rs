@@ -198,6 +198,7 @@ fn main() {
             stack_popup::stack_git_push,
             stack_popup::stack_git_checkout_branch,
             stack_popup::stack_git_create_branch,
+            stack_popup::stack_git_delete_branch,
             stack_popup::suggest_stack_paths,
             stack_popup::resolve_stack_item_icons,
             stack_popup::open_stack_item,

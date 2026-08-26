@@ -211,6 +211,7 @@ pub struct StackGitBranchRequest {
     pub folder_path: String,
     pub branch_name: String,
     pub checkout: Option<bool>,
+    pub source_branch: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

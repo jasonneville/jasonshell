@@ -304,7 +304,7 @@ fn stack_git_branches(path: &str) -> Result<StackGitBranches, String> {
         .filter(|value| !value.is_empty());
     let output = git_stdout(
         &repo_root,
-        &["branch", "--all", "--format=%(HEAD)%x1f%(refname:short)"],
+        &["branch", "--all", "--format=%(HEAD)%09%(refname)"],
     )?
     .unwrap_or_default();
     Ok(StackGitBranches {
@@ -361,20 +361,83 @@ fn stack_git_checkout_branch(
     })
 }
 
+pub(crate) async fn stack_git_delete_branch_async(
+    request: StackGitBranchRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_delete_branch(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git branch delete task: {error}"))?
+}
+
+fn create_branch_git_args<'a>(
+    branch: &'a str,
+    checkout: bool,
+    source_branch: Option<&'a str>,
+) -> Result<Vec<&'a str>, String> {
+    if let Some(source_branch) = source_branch {
+        let source_branch = validate_git_branch_name(source_branch)?;
+        if source_branch == branch {
+            return Err("Git branch source is invalid".to_string());
+        }
+        Ok(if checkout {
+            vec!["switch", "-c", branch, source_branch]
+        } else {
+            vec!["branch", branch, source_branch]
+        })
+    } else {
+        Ok(if checkout {
+            vec!["switch", "-c", branch]
+        } else {
+            vec!["branch", branch]
+        })
+    }
+}
+
 fn stack_git_create_branch(
     request: StackGitBranchRequest,
 ) -> Result<StackGitOperationResult, String> {
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let branch = validate_git_branch_name(&request.branch_name)?;
-    if request.checkout.unwrap_or(true) {
-        run_git(&repo_root, &["switch", "-c", branch])?;
-    } else {
-        run_git(&repo_root, &["branch", branch])?;
-    }
+    let args = create_branch_git_args(
+        branch,
+        request.checkout.unwrap_or(true),
+        request.source_branch.as_deref(),
+    )?;
+    run_git(&repo_root, &args)?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Created branch {branch}"),
+    })
+}
+
+fn delete_branch_git_args(branch: &str) -> Vec<&str> {
+    vec!["branch", "-d", "--", branch]
+}
+
+fn local_branch_ref(branch: &str) -> String {
+    format!("refs/heads/{branch}")
+}
+
+fn stack_git_delete_branch(
+    request: StackGitBranchRequest,
+) -> Result<StackGitOperationResult, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let branch = validate_git_branch_name(&request.branch_name)?;
+    let branch_ref = local_branch_ref(branch);
+    git_stdout(&repo_root, &["show-ref", "--verify", "--quiet", "--", &branch_ref])
+        .map_err(|_| "Only local Git branches can be deleted".to_string())?;
+    let current_branch = git_stdout(&repo_root, &["branch", "--show-current"])?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if current_branch.as_deref() == Some(branch) {
+        return Err("Current Git branch cannot be deleted".to_string());
+    }
+    run_git(&repo_root, &delete_branch_git_args(branch))?;
+    Ok(StackGitOperationResult {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        summary: format!("Deleted branch {branch}"),
     })
 }
 
@@ -713,7 +776,10 @@ fn classify_git_run_mode(args: &[&str]) -> GitRunMode {
     match args.first().copied() {
         Some("fetch" | "pull" | "push") => GitRunMode::Remote,
         Some("add" | "commit" | "switch" | "restore" | "stash") => GitRunMode::LocalMutation,
-        Some("branch") if args.get(1).is_some_and(|arg| !arg.starts_with('-')) => {
+        Some("branch")
+            if args.iter().any(|arg| matches!(*arg, "-d" | "-D"))
+                || args.get(1).is_some_and(|arg| !arg.starts_with('-')) =>
+        {
             GitRunMode::LocalMutation
         }
         Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch") => GitRunMode::Read,
@@ -851,16 +917,23 @@ fn parse_git_branch_output(output: &str) -> Vec<StackGitBranch> {
     output
         .lines()
         .filter_map(|line| {
-            let (head, name) = line.split_once('\x1f')?;
-            let name = name.trim();
-            if name.is_empty() {
+            let (head, ref_name) = line.split_once('\t')?;
+            let ref_name = ref_name.trim();
+            let (name, remote) = if let Some(name) = ref_name.strip_prefix("refs/heads/") {
+                (name.to_string(), false)
+            } else if let Some(name) = ref_name.strip_prefix("refs/remotes/") {
+                if name.ends_with("/HEAD") {
+                    return None;
+                }
+                (format!("remotes/{name}"), true)
+            } else {
                 return None;
-            }
+            };
             Some(StackGitBranch {
-                name: name.to_string(),
+                name: name.clone(),
                 current: head.trim() == "*",
-                remote: name.starts_with("remotes/"),
-                ref_name: name.to_string(),
+                remote,
+                ref_name: name,
             })
         })
         .collect()
@@ -1264,11 +1337,12 @@ fn git_status_has_unstaged_change(xy: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_git_run_mode, git_pathspecs_for_paths, git_relative_path_for_request,
-        git_status_kind, git_timeout_for_mode, normalize_git_remote_url, nul_joined_pathspecs,
-        parse_git_branch_output, parse_git_log_output, parse_git_stash_list_output,
-        parse_git_tree_output, stack_git_status_from_porcelain, validate_git_branch_name,
-        validate_git_stash_ref, validate_treeish, GitCommandError, GitRunMode,
+        classify_git_run_mode, create_branch_git_args, delete_branch_git_args, git_pathspecs_for_paths,
+        git_relative_path_for_request, git_status_kind, git_timeout_for_mode, local_branch_ref,
+        normalize_git_remote_url, nul_joined_pathspecs, parse_git_branch_output,
+        parse_git_log_output, parse_git_stash_list_output, parse_git_tree_output,
+        stack_git_status_from_porcelain, validate_git_branch_name, validate_git_stash_ref,
+        validate_treeish, GitCommandError, GitRunMode,
     };
     use crate::stack_popup::models::StackGitFileStatusKind;
     use std::path::Path;
@@ -1404,7 +1478,8 @@ mod tests {
 
     #[test]
     fn branch_parser_marks_remote_refs_and_checkout_tracks_remote() {
-        let branches = parse_git_branch_output("*\x1fmain\n \x1fremotes/origin/feature/x\n");
+        let branches =
+            parse_git_branch_output("*\trefs/heads/main\n \trefs/remotes/origin/feature/x\n");
         assert!(!branches[0].remote);
         assert!(branches[1].remote);
         assert_eq!(branches[1].ref_name, "remotes/origin/feature/x");
@@ -1577,13 +1652,25 @@ mod tests {
 
     #[test]
     fn git_branch_parser_marks_current_and_remote() {
-        let branches =
-            parse_git_branch_output("*\x1fmain\n \x1ffeature/work\n \x1fremotes/origin/main\n");
+        let branches = parse_git_branch_output(
+            "*\trefs/heads/main\n \trefs/heads/feature/work\n \trefs/remotes/origin/main\n",
+        );
 
         assert_eq!(branches.len(), 3);
         assert!(branches[0].current);
         assert!(!branches[1].remote);
         assert!(branches[2].remote);
+    }
+
+    #[test]
+    fn git_branch_parser_skips_remote_head_symbolic_ref() {
+        let branches = parse_git_branch_output(
+            "*\trefs/heads/main\n \trefs/remotes/origin/HEAD\n \trefs/remotes/origin/main\n",
+        );
+
+        assert_eq!(branches.len(), 2);
+        assert_eq!(branches[0].name, "main");
+        assert_eq!(branches[1].name, "remotes/origin/main");
     }
 
     #[test]
@@ -1602,6 +1689,43 @@ mod tests {
         assert!(git_relative_path_for_request(repo, r"C:\repo\src\main.rs").is_ok());
         assert!(git_relative_path_for_request(repo, r"C:\other\main.rs").is_err());
         assert!(git_relative_path_for_request(repo, r"..\other").is_err());
+    }
+
+    #[test]
+    fn branch_create_args_use_fixed_argv_with_optional_source() {
+        assert_eq!(
+            create_branch_git_args("feature/new", true, None).unwrap(),
+            vec!["switch", "-c", "feature/new"]
+        );
+        assert_eq!(
+            create_branch_git_args("feature/new", false, None).unwrap(),
+            vec!["branch", "feature/new"]
+        );
+        assert_eq!(
+            create_branch_git_args("feature/new", true, Some("main")).unwrap(),
+            vec!["switch", "-c", "feature/new", "main"]
+        );
+        assert_eq!(
+            create_branch_git_args("feature/new", false, Some("main")).unwrap(),
+            vec!["branch", "feature/new", "main"]
+        );
+        assert!(create_branch_git_args("feature/new", true, Some(" feature/new ")).is_err());
+        assert!(create_branch_git_args("feature/new", true, Some("--help")).is_err());
+        assert!(create_branch_git_args("feature/new", true, Some("feature/new")).is_err());
+    }
+
+    #[test]
+    fn branch_delete_args_use_safe_fixed_argv() {
+        assert_eq!(
+            delete_branch_git_args("feature/old"),
+            vec!["branch", "-d", "--", "feature/old"]
+        );
+        assert_eq!(local_branch_ref("remotes/archive"), "refs/heads/remotes/archive");
+        assert_eq!(
+            classify_git_run_mode(&["branch", "-d", "--", "feature/old"]),
+            GitRunMode::LocalMutation
+        );
+        assert!(validate_git_branch_name("--help").is_err());
     }
 
     #[test]

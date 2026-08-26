@@ -93,6 +93,7 @@ export const IPC_COMMANDS = {
   stackGitPush: 'stack_git_push',
   stackGitCheckoutBranch: 'stack_git_checkout_branch',
   stackGitCreateBranch: 'stack_git_create_branch',
+  stackGitDeleteBranch: 'stack_git_delete_branch',
   startPersistentTerminal: 'start_persistent_terminal',
   startStackTerminal: 'start_stack_terminal',
   readStackTerminal: 'read_stack_terminal',

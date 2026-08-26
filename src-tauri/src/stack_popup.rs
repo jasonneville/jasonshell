@@ -730,6 +730,22 @@ pub async fn stack_git_create_branch(
 }
 
 #[tauri::command]
+pub async fn stack_git_delete_branch(
+    window: WebviewWindow,
+    request: StackGitBranchRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_DELETE_BRANCH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_delete_branch_async(request).await
+}
+
+#[tauri::command]
 pub fn suggest_stack_paths(
     parent_path: String,
     segment: String,
