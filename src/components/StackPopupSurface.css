@@ -473,6 +473,41 @@
   overflow: auto;
 }
 
+.stack-git-change-group {
+  display: grid;
+}
+
+.stack-git-change-group + .stack-git-change-group {
+  border-top: 1px solid var(--js-color-border-soft);
+}
+
+.stack-git-change-group-header {
+  align-items: center;
+  background: color-mix(in srgb, var(--js-color-surface-overlay) 66%, transparent);
+  border-bottom: 1px solid var(--js-color-border-soft);
+  color: var(--js-color-text-muted);
+  display: flex;
+  justify-content: space-between;
+  padding: 0.32rem 0.48rem;
+}
+
+.stack-git-change-group-header h3 {
+  color: var(--js-color-text-strong);
+  font-size: 0.62rem;
+  font-weight: 820;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.stack-git-change-group-header span {
+  font-size: 0.56rem;
+  font-weight: 760;
+}
+
+.stack-git-change-group-list {
+  display: grid;
+}
+
 .stack-git-log-list,
 .stack-git-tree-list,
 .stack-git-branch-panel {

@@ -159,7 +159,7 @@ test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackPopupSurface, /class="stack-git-popup"/);
   assert.match(stackPopupSurface, /stackGitAddPaths\(currentPath, paths\)/);
   assert.match(stackPopupSurface, /stackGitCommit\(currentPath, message, paths\)/);
-  assert.match(stackPopupSurface, /entry\.staged \? 'Staged'/);
+  assert.match(stackPopupSurface, /<small>Staged<\/small>/);
   assert.doesNotMatch(stackPopupSurface, /role="tablist"/);
   assert.match(stackPopupSurface, /<button type="button" disabled=\{!filteredGitStatusEntries\(\)\.length \|\| gitOperationPending\} on:click=\{\(\) => setAllGitPathsSelected\(true\)\}>Select all<\/button>/);
   assert.match(stackPopupSurface, /<button type="button" disabled=\{!gitStatusSelectedPaths\.length \|\| gitOperationPending\} on:click=\{\(\) => setAllGitPathsSelected\(false\)\}>Clear<\/button>/);
@@ -175,6 +175,15 @@ test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackPopupSurface, /data-git-status=\{gitEntryStatus \?\? undefined\}/);
   assert.match(stackPopupSurface, /git-status-badge/);
   assert.match(stackPopupSurface, /stackGitStatusLabel\(gitEntryStatus\)/);
+});
+
+test('stack git changes hide empty staged and unstaged sections', () => {
+  assert.match(stackPopupSurface, /function filteredStagedGitStatusEntries\(\)/);
+  assert.match(stackPopupSurface, /function unstagedGitStatusEntries\(\)/);
+  assert.match(stackPopupSurface, /\{#if unstagedGitStatusEntries\(\)\.length\}[\s\S]*aria-label="Unstaged changes"[\s\S]*<h3>Unstaged<\/h3>[\s\S]*\{\/if\}/);
+  assert.match(stackPopupSurface, /\{#if filteredStagedGitStatusEntries\(\)\.length\}[\s\S]*aria-label="Staged changes"[\s\S]*<h3>Staged<\/h3>[\s\S]*\{\/if\}/);
+  assert.match(stackPopupSurface, /\{#if filteredGitStatusEntries\(\)\.length\}[\s\S]*{:else}[\s\S]*No files[\s\S]*\{\/if\}/);
+  assert.match(stackPopupCss, /\.stack-git-change-group-header/);
 });
 
 test('stack git status dialog is upgraded into a dense developer workbench', () => {

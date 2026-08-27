@@ -1,1 +1,0 @@
-Before marking task done: run focused tests first, then npm run test:node; run npm run cargo:test/cargo:check if Rust changed; run npm run validate for P0 completion. Update master_spec.md and smoke docs if behavior/spec changed.

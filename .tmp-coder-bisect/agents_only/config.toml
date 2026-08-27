@@ -1,4 +1,0 @@
-model = "gpt-5.4"
-
-[agents]
-max_depth = 2

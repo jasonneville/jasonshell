@@ -1651,6 +1651,14 @@
     return gitStatus.entries.filter((entry) => entry.staged);
   }
 
+  function filteredStagedGitStatusEntries() {
+    return filteredGitStatusEntries().filter((entry) => entry.staged);
+  }
+
+  function unstagedGitStatusEntries() {
+    return filteredGitStatusEntries().filter((entry) => !entry.staged);
+  }
+
   function gitStatusFilterLabel() {
     if (gitStatusPopupFilter === 'all') return 'All changes';
     return stackGitStatusLabel(gitStatusPopupFilter);
@@ -2694,14 +2702,42 @@
             </div>
             <div class="stack-git-file-list" role="list" aria-label="Git changed files">
               {#if filteredGitStatusEntries().length}
-                {#each filteredGitStatusEntries() as entry (entry.path)}
-                  <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
-                    <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
-                    <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
-                    <span title={entry.path}>{entry.relativePath}</span>
-                    <small>{entry.staged ? 'Staged' : stackGitStatusLabel(entry.status)}</small>
-                  </label>
-                {/each}
+                {#if unstagedGitStatusEntries().length}
+                  <section class="stack-git-change-group" aria-label="Unstaged changes">
+                    <header class="stack-git-change-group-header">
+                      <h3>Unstaged</h3>
+                      <span>{unstagedGitStatusEntries().length}</span>
+                    </header>
+                    <div class="stack-git-change-group-list" role="list">
+                      {#each unstagedGitStatusEntries() as entry (entry.path)}
+                        <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
+                          <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
+                          <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
+                          <span title={entry.path}>{entry.relativePath}</span>
+                          <small>{stackGitStatusLabel(entry.status)}</small>
+                        </label>
+                      {/each}
+                    </div>
+                  </section>
+                {/if}
+                {#if filteredStagedGitStatusEntries().length}
+                  <section class="stack-git-change-group" aria-label="Staged changes">
+                    <header class="stack-git-change-group-header">
+                      <h3>Staged</h3>
+                      <span>{filteredStagedGitStatusEntries().length}</span>
+                    </header>
+                    <div class="stack-git-change-group-list" role="list">
+                      {#each filteredStagedGitStatusEntries() as entry (entry.path)}
+                        <label class={`stack-git-file git-status-${entry.status}`} role="listitem">
+                          <input type="checkbox" bind:group={gitStatusSelectedPaths} value={entry.path} />
+                          <span class={`git-status-badge git-status-${entry.status}`}>{stackGitStatusSymbol(entry.status)}</span>
+                          <span title={entry.path}>{entry.relativePath}</span>
+                          <small>Staged</small>
+                        </label>
+                      {/each}
+                    </div>
+                  </section>
+                {/if}
               {:else}
                 <div class="stack-git-empty" role="status">No files</div>
               {/if}

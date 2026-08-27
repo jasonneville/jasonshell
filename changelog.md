@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-08-27 `[CODE]` FIXED: Stack Browser Git Changes can stage tracked deletions from missing absolute status paths without weakening canonical containment for existing files; missing paths require component-safe repo containment and an exact current-status match.
+- 2026-08-27 `[CODE]` IMPROVED: Git Changes now omits empty Staged or Unstaged groups while preserving Add selected behavior for mixed index/worktree states.
+- 2026-08-27 `[TOOL]` VALIDATED: Cached-diff deletion staging, missing outside-repo rejection, and conditional Changes-group regressions passed; `npm run check`, `npm run build`, and `git diff --check` passed. Existing Command Panel accessibility warning remains unrelated.
+
 - 2026-08-23 `[CODE]` FIXED: Quick Commands completed previous runs now open/collapse through native details toggles while idle; running runs stay forced open.
 - 2026-08-23 `[CODE]` TESTED: Added command-panel source-contract coverage requiring native summary mouse/keyboard disclosure behavior without click or keydown prevention.
 - 2026-08-23 `[TOOL]` VALIDATED: `node --test tests/commandPanelWiring.test.mjs`, `npm run check`, and `git diff --check` passed; check retains one pre-existing Svelte accessibility warning for section event listeners.

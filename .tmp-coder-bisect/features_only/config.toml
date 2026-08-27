@@ -1,5 +1,0 @@
-model = "gpt-5.4"
-
-[features]
-memories = true
-prevent_idle_sleep = true

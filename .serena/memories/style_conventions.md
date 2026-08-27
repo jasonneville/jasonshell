@@ -1,1 +1,0 @@
-TypeScript/Svelte frontend; Rust/Tauri backend. Prefer focused source tests under tests/*.test.mjs for Svelte/TS behavior and Rust unit tests beside changed Rust modules. Keep IPC event names centralized in src/ipc/events.ts if adding events. Avoid backend command additions when frontend-only fix sufficient. TDD required for current task.

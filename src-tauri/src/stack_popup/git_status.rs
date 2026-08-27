@@ -463,20 +463,42 @@ fn git_relative_path_for_stage(
 ) -> Result<String, String> {
     let candidate = PathBuf::from(path);
     if candidate.is_absolute() {
-        let canonical = canonicalize_existing_path(&candidate)?;
         let canonical_root = canonicalize_existing_path(repo_root)?;
-        if !path_within_root(&canonical_root, &canonical) {
-            return Err("Git path is outside the repository".to_string());
-        }
-        let absolute = canonical.to_string_lossy().replace('\\', "\\");
-        if !status_paths.contains(&absolute) {
+        if candidate.exists() {
+            let canonical = canonicalize_existing_path(&candidate)?;
+            if !path_within_root(&canonical_root, &canonical) {
+                return Err("Git path is outside the repository".to_string());
+            }
+            let relative = canonical
+                .strip_prefix(&canonical_root)
+                .map_err(|_| "Git path is outside the repository".to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let absolute = absolute_git_status_path(&canonical_root, &relative.replace('/', "\\"));
+            if status_paths.contains(&absolute) {
+                return Ok(relative);
+            }
             return Err("Git path is not tracked by status".to_string());
         }
-        return Ok(canonical
+        if candidate.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        }) {
+            return Err("Git path is outside the repository".to_string());
+        }
+        let relative = candidate
             .strip_prefix(&canonical_root)
             .map_err(|_| "Git path is outside the repository".to_string())?
             .to_string_lossy()
-            .replace('\\', "/"));
+            .replace('\\', "/");
+        let normalized = normalize_repo_relative_string(&relative)?;
+        let absolute = absolute_git_status_path(&canonical_root, &normalized.replace('/', "\\"));
+        if !status_paths.contains(&absolute) {
+            return Err("Git path is not tracked by status".to_string());
+        }
+        return Ok(normalized);
     }
     validate_missing_repo_relative_path(path)?;
     let normalized = normalize_repo_relative_string(path)?;
@@ -1161,12 +1183,108 @@ mod tests {
     }
 
     #[test]
+    fn git_stage_deleted_file_uses_cached_diff_and_stack_add() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let repo_root = std::env::temp_dir().join(format!(
+            "jasonshell-git-stage-deleted-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).unwrap();
+        let init = Command::new("git")
+            .arg("init")
+            .arg(&repo_root)
+            .output()
+            .unwrap();
+        if !init.status.success() {
+            let _ = std::fs::remove_dir_all(&repo_root);
+            return;
+        }
+        for (key, value) in [
+            ("user.name", "Jason Shell"),
+            ("user.email", "jason@example.com"),
+        ] {
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .arg("config")
+                .arg(key)
+                .arg(value)
+                .output();
+        }
+        let file = repo_root.join("deleted.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("add")
+            .arg("deleted.txt")
+            .output();
+        let commit = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("commit")
+            .arg("-m")
+            .arg("base")
+            .output()
+            .unwrap();
+        assert!(commit.status.success());
+        std::fs::remove_file(&file).unwrap();
+        let canonical_root = std::fs::canonicalize(&repo_root).unwrap();
+        let absolute_file = canonical_root.join("deleted.txt");
+
+        let result = super::stack_git_add_paths(super::StackGitStageRequest {
+            folder_path: canonical_root.to_string_lossy().to_string(),
+            paths: vec![absolute_file.to_string_lossy().to_string()],
+        })
+        .unwrap();
+        assert_eq!(result.repository_root, canonical_root.to_string_lossy());
+
+        let cached = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("diff")
+            .arg("--cached")
+            .arg("--name-status")
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&cached.stdout).contains("D\tdeleted.txt"));
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
     fn missing_path_validation_rejects_namespace_and_dot_tricks() {
         assert!(super::validate_missing_repo_relative_path("..").is_err());
         assert!(super::validate_missing_repo_relative_path(".").is_err());
         assert!(super::validate_missing_repo_relative_path("src/../x").is_err());
         assert!(super::validate_missing_repo_relative_path("src/:ads").is_err());
         assert!(super::validate_missing_repo_relative_path("src/\0x").is_err());
+    }
+
+    #[test]
+    fn missing_absolute_path_outside_repo_is_rejected() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "jasonshell-git-outside-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).unwrap();
+        let repo_root = std::fs::canonicalize(&repo_root).unwrap();
+        let outside = repo_root.parent().unwrap().join("missing-outside.txt");
+
+        assert!(super::git_relative_path_for_stage(
+            &repo_root,
+            &outside.to_string_lossy(),
+            &std::collections::HashSet::new(),
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 
     #[test]
