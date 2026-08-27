@@ -85,6 +85,8 @@ export const IPC_COMMANDS = {
   stackGitStashPop: 'stack_git_stash_pop',
   stackGitStashDrop: 'stack_git_stash_drop',
   stackGitCommit: 'stack_git_commit',
+  stackGitCommitFiles: 'stack_git_commit_files',
+  stackGitCommitFileDiff: 'stack_git_commit_file_diff',
   stackGitLog: 'stack_git_log',
   stackGitTree: 'stack_git_tree',
   stackGitBranches: 'stack_git_branches',

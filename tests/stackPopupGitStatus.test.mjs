@@ -94,6 +94,16 @@ test('stack popup API exposes typed git workbench command wrappers ahead of back
   assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
 });
 
+test('stack git branches expose linked-worktree occupancy from porcelain-z output', () => {
+  assert.match(stackPopupApi, /checkedOutElsewhere: boolean;/);
+  assert.match(stackPopupApi, /checkedOutElsewherePath\?: string \| null;/);
+  assert.match(readRepoFile('src-tauri/src/stack_popup/models.rs'), /pub checked_out_elsewhere: bool,[\s\S]*pub checked_out_elsewhere_path: Option<String>,/);
+  assert.match(productionRustGitStatus, /\["worktree", "list", "--porcelain", "-z"\]/);
+  assert.match(productionRustGitStatus, /fn parse_git_worktree_output\(/);
+  assert.match(productionRustGitStatus, /fn annotate_branches_with_worktrees\(/);
+  assert.match(productionRustGitStatus, /refs\/heads\//);
+});
+
 test('stack git create branch contract accepts optional source branch and uses fixed source checkout argv', () => {
   assert.match(stackPopupApi, /export function stackGitCreateBranch\(folderPath: string, branchName: string, checkout = true, sourceBranch\?: string\): Promise<StackGitBranchOperationResult>/);
   assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
@@ -112,12 +122,36 @@ test('stack git create branch contract accepts optional source branch and uses f
 
 test('stack git delete branch contract is local-only, confirmed by UI, and uses safe fixed argv', () => {
   assert.match(commandsSource, /stackGitDeleteBranch:\s*'stack_git_delete_branch'/);
-  assert.match(stackPopupApi, /export function stackGitDeleteBranch\(folderPath: string, branchName: string\): Promise<StackGitBranchOperationResult>/);
+  assert.match(stackPopupApi, /export function stackGitDeleteBranch\(folderPath: string, branchName: string, force = false, removeWorktree = false, worktreePath\?: string\): Promise<StackGitBranchOperationResult>/);
   assert.match(stackPopupApi, /IPC_COMMANDS\.stackGitDeleteBranch/);
-  assert.match(stackPopupApi, /request: \{ folderPath, branchName \}/);
-  assert.match(rustGitStatus, /fn delete_branch_git_args[\s\S]*vec!\["branch", "-d", "--", branch\]/);
+  assert.match(stackPopupApi, /request: \{ folderPath, branchName, force, removeWorktree, worktreePath \}/);
+  assert.match(stackGitPanel, /bind:this=\{branchPickerButton\}/);
+  assert.match(stackGitPanel, /data-stack-git-branch-delete=\{branch\.name\}/);
+  assert.match(stackGitPanel, /force: true/);
+  assert.match(rustGitStatus, /fn delete_branch_git_args\(branch: &str, force: bool\) -> Vec<&str>/);
+  assert.match(rustGitStatus, /if force \{[\s\S]*vec!\["branch", "-D", "--", branch\][\s\S]*\} else \{[\s\S]*vec!\["branch", "-d", "--", branch\]/);
+  assert.match(rustGitStatus, /delete_branch_git_args\(branch, request\.force\.unwrap_or\(false\)\)/);
   assert.match(rustGitStatus, /git_stdout\(&repo_root, &\["show-ref", "--verify", "--quiet", "--", &branch_ref\]\)/);
   assert.match(rustGitStatus, /if current_branch\.as_deref\(\) == Some\(branch\)/);
+});
+
+test('stack git branch deletion can force-remove its linked worktree first', () => {
+  assert.match(stackPopupApi, /removeWorktree = false/);
+  assert.match(stackPopupApi, /request: \{ folderPath, branchName, force, removeWorktree, worktreePath \}/);
+  assert.match(readRepoFile('src-tauri/src/stack_popup/models.rs'), /pub remove_worktree: Option<bool>,/);
+  assert.match(readRepoFile('src-tauri/src/stack_popup/models.rs'), /pub worktree_path: Option<String>,/);
+  assert.match(rustGitStatus, /fn remove_worktree_git_args\(path: &str, force: bool\) -> Vec<&str>/);
+  assert.match(rustGitStatus, /vec!\["worktree", "remove", "--force", "--force", "--", path\]/);
+  assert.match(rustGitStatus, /request\.remove_worktree\.unwrap_or\(false\)/);
+  assert.match(rustGitStatus, /same_worktree_path\(Path::new\(expected_path\), Path::new\(&worktree_path\)\)/);
+  assert.match(rustGitStatus, /remove_linked_worktree\([\s\S]*&worktree_path,[\s\S]*request\.force\.unwrap_or\(false\)/);
+  assert.match(rustGitStatus, /Removed linked Git worktree \{worktree_path\}, but branch deletion failed: \{error\}/);
+  assert.match(rustGitStatus, /fn remove_linked_worktree\([\s\S]*repo_root: &Path,[\s\S]*worktree_path: &str,[\s\S]*branch_ref: &str,[\s\S]*force: bool/);
+  assert.match(rustGitStatus, /fn remove_dir_all_with_retries\(path: &Path\)/);
+  assert.match(rustGitStatus, /std::fs::remove_dir_all\(path\)/);
+  assert.match(rustGitStatus, /run_git\(repo_root, &\["worktree", "prune"\]\)/);
+  assert.match(rustGitStatus, /refused unsafe residual worktree path/);
+  assert.match(rustGitStatus, /linked worktree changed during removal/);
 });
 
 test('stack git remote checkout preserves remote branch tail as local branch name', () => {

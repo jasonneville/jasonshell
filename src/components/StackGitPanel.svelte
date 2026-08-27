@@ -20,6 +20,11 @@
 
   type StackGitView = 'changes' | 'history' | 'stashes' | 'branches';
   type StackGitConfirmKind = 'discard' | 'stash-pop' | 'stash-drop' | 'checkout' | 'create-branch' | 'delete-branch';
+  type StackGitCommitFile = { path: string; relativePath: string; status: string };
+  type StackGitBranchRow = StackGitBranches['branches'][number] & {
+    checkedOutElsewhere?: boolean;
+    checkedOutElsewherePath?: string | null;
+  };
 
   export let folderPath = '';
   export let initialStatus: StackGitStatus | null = null;
@@ -36,7 +41,10 @@
   let activeView: StackGitView = 'changes';
   let status: StackGitStatus | null = initialStatus;
   let history: StackGitLog['entries'] = [];
-  let branches: StackGitBranches['branches'] = [];
+  let historyFiles: StackGitCommitFile[] = [];
+  let historyFilesLoading = false;
+  let historyFilesError = '';
+  let branches: StackGitBranchRow[] = [];
   let stashes: StackGitStashes['entries'] = [];
   let commitMessage = '';
   let stashMessage = '';
@@ -45,6 +53,7 @@
   let newBranchSource = '';
   let selectedChangePaths: string[] = [];
   let selectedHistoryHash = '';
+  let selectedHistoryFilePath = '';
   let selectedStashRef = '';
   let selectedBranchName = '';
   let diffText = '';
@@ -53,10 +62,13 @@
   let diffDrawerOpen = false;
   let diffDrawerStaged = false;
   let diffLoading = false;
+  let diffError = '';
   let statusLoading = false;
   let viewLoading = false;
   let branchLoading = false;
   let operationBusy = false;
+  let branchDeleteErrorBranchName = '';
+  let branchDeleteErrorMessage = '';
   let commitTextarea: HTMLTextAreaElement | null = null;
   let collapsedChangeGroups = new Set<'staged' | 'unstaged'>();
   let statusMessage = '';
@@ -70,6 +82,9 @@
     branchName?: string;
     sourceBranch?: string;
     stashRef?: string;
+    force?: boolean;
+    removeWorktree?: boolean;
+    worktreePath?: string;
   } | null = null;
   let pendingConfirmCancelButton: HTMLButtonElement | null = null;
   let pendingConfirmConfirmButton: HTMLButtonElement | null = null;
@@ -85,6 +100,8 @@
   let mounted = false;
   let branchDropdownOpen = false;
   let branchPickerElement: HTMLDivElement | null = null;
+  let branchPickerButton: HTMLButtonElement | null = null;
+  let branchDeleteInProgress = false;
 
   $: groupedEntries = groupStackGitEntries(status?.entries ?? []);
   $: stagedEntries = groupedEntries.staged;
@@ -117,6 +134,33 @@
     if (!value) return '';
     const parsed = typeof value === 'number' ? value : Date.parse(value);
     return Number.isFinite(parsed) ? dateFormatter.format(new Date(parsed)) : String(value);
+  }
+
+  function operationErrorMessage(error: unknown, fallback: string) {
+    if (typeof error === 'string' && error.trim()) return error;
+    if (error instanceof Error && error.message) return error.message;
+    return fallback;
+  }
+
+  function branchDeleteFocusTarget(branchName: string, force = false) {
+    const attr = force ? 'data-stack-git-branch-force-delete' : 'data-stack-git-branch-delete';
+    return Array.from(branchPickerElement?.querySelectorAll<HTMLButtonElement>(`[${attr}]`) ?? []).find(
+      (button) => button.dataset[force ? 'stackGitBranchForceDelete' : 'stackGitBranchDelete'] === branchName
+    ) ?? null;
+  }
+
+  function branchDeleteFocusFallback(branchName: string) {
+    return branchDeleteFocusTarget(branchName, true) ?? branchDeleteFocusTarget(branchName, false);
+  }
+
+  async function focusBranchDeleteTarget(branchName: string, force = false) {
+    await tick();
+    branchDeleteFocusTarget(branchName, force)?.focus();
+  }
+
+  async function focusBranchPickerButton() {
+    await tick();
+    if (branchPickerButton?.isConnected && !branchPickerButton.disabled) branchPickerButton.focus();
   }
 
   function gitStatusSymbol(statusKind: StackGitFileStatus['status'] | null | undefined) {
@@ -160,6 +204,7 @@
     }
     diffDrawerOpen = true;
     diffDrawerStaged = staged;
+    diffError = '';
     selectChangePath(entry.path);
     diffTitle = entry.relativePath;
     void loadDiff(entry.path, staged, entry.status);
@@ -185,10 +230,6 @@
     }
   }
 
-  function ensureHistorySelection() {
-    if (!selectedHistoryHash && history.length) selectedHistoryHash = history[0].commitHash;
-  }
-
   function ensureStashSelection() {
     if (!selectedStashRef && stashes.length) selectedStashRef = normalizeRef(stashes[0]);
   }
@@ -207,6 +248,9 @@
       branchDropdownOpen = false;
       diffText = '';
       diffTitle = '';
+      historyFiles = [];
+      historyFilesLoading = false;
+      historyFilesError = '';
       statusLoading = false;
       viewLoading = false;
       branchLoading = false;
@@ -231,6 +275,9 @@
         selectedBranchName = '';
         diffText = '';
         diffTitle = '';
+        historyFiles = [];
+        historyFilesLoading = false;
+        historyFilesError = '';
         statusMessage = 'No repository found';
         dirtyCheckoutWarning = '';
         return;
@@ -269,12 +316,18 @@
     const token = ++viewToken;
     if (!status || !folderPath) return;
     viewLoading = true;
+    historyFilesError = '';
     try {
       const log = await stackPopup.stackGitLog(folderPath, 80);
       if (token !== viewToken) return;
       history = log.entries;
-      ensureHistorySelection();
-      await refreshHistoryDiff();
+      if (!history.some((entry) => entry.commitHash === selectedHistoryHash)) {
+        selectedHistoryHash = '';
+        selectedHistoryFilePath = '';
+        historyFiles = [];
+        historyFilesLoading = false;
+      }
+      if (selectedHistoryHash) await refreshHistoryFiles();
     } catch (error) {
       if (token === viewToken) errorMessage = error instanceof Error ? error.message : 'Git history unavailable';
     } finally {
@@ -303,6 +356,8 @@
       if (!selectedBranchName || !branches.some((branch) => branch.name === selectedBranchName)) {
         selectedBranchName = next.currentBranch ?? status.branch ?? branches[0]?.name ?? '';
       }
+      branchDeleteErrorBranchName = '';
+      branchDeleteErrorMessage = '';
       ensureBranchSelection();
     } catch (error) {
       if (token === branchToken) errorMessage = error instanceof Error ? error.message : 'Git branches unavailable';
@@ -342,20 +397,57 @@
     await loadDiff(targetPath, diffDrawerStaged, selected[0]?.status ?? null);
   }
 
-  async function refreshHistoryDiff() {
-    const entry = history.find((item) => item.commitHash === selectedHistoryHash) ?? history[0] ?? null;
+  async function refreshHistoryFiles() {
+    const entry = history.find((item) => item.commitHash === selectedHistoryHash) ?? null;
     if (!entry) {
-      diffText = 'Select a commit to inspect the diff.';
-      diffTitle = 'History diff';
+      historyFiles = [];
+      selectedHistoryFilePath = '';
+      historyFilesLoading = false;
+      historyFilesError = '';
       return;
     }
+    historyFilesLoading = true;
+    historyFilesError = '';
+    try {
+      // @ts-ignore legacy wrapper present at runtime
+      const result = await stackPopup.stackGitCommitFiles(folderPath, entry.commitHash);
+      if (entry.commitHash !== selectedHistoryHash) return;
+      historyFiles = result.files;
+      if (!historyFiles.some((file) => file.path === selectedHistoryFilePath)) selectedHistoryFilePath = '';
+      historyFilesError = '';
+    } catch (error) {
+      if (entry.commitHash === selectedHistoryHash) {
+        historyFilesError = error instanceof Error ? error.message : 'Commit files unavailable';
+        historyFiles = [];
+        selectedHistoryFilePath = '';
+      }
+    } finally {
+      if (entry.commitHash === selectedHistoryHash) historyFilesLoading = false;
+    }
+  }
 
-    diffTitle = `${entry.shortHash} · ${entry.subject}`;
-    diffText = [
-      `Commit ${entry.commitHash}`,
-      `${entry.authorName} · ${formatDate(entry.authoredAt)}`,
-      'Working-tree diff preview stays on file rows.'
-    ].join('\n');
+  async function loadHistoryFileDiff(path: string) {
+    const commitHash = selectedHistoryHash;
+    if (!commitHash || !path) return;
+    const token = ++diffToken;
+    diffLoading = true;
+    diffError = '';
+    try {
+      // @ts-ignore legacy wrapper present at runtime
+      const result = await stackPopup.stackGitCommitFileDiff(folderPath, commitHash, path);
+      if (token !== diffToken || selectedHistoryHash !== commitHash || selectedHistoryFilePath !== path) return;
+      diffText = result?.content ?? '';
+      diffTitle = path;
+      diffError = '';
+      if (!diffText) diffText = 'No diff content.';
+    } catch (error) {
+      if (token === diffToken && selectedHistoryHash === commitHash && selectedHistoryFilePath === path) {
+        diffError = error instanceof Error ? error.message : 'Diff unavailable';
+        diffText = 'No diff content.';
+      }
+    } finally {
+      if (token === diffToken) diffLoading = false;
+    }
   }
 
   async function refreshStashDiff() {
@@ -565,6 +657,8 @@
 
   async function confirmCheckout(branch: string) {
     if (!branch || operationBusy) return;
+    branchDeleteErrorBranchName = '';
+    branchDeleteErrorMessage = '';
     operationBusy = true;
     try {
       branch = matchLocalBranchName(branch);
@@ -584,6 +678,8 @@
   async function createBranch() {
     const name = newBranchDraft.trim();
     if (!name || operationBusy || !status) return;
+    branchDeleteErrorBranchName = '';
+    branchDeleteErrorMessage = '';
     if (hasDirtyWorkingTree) {
       openPendingConfirm({
         kind: 'create-branch',
@@ -701,15 +797,30 @@
     }
 
     if (action.kind === 'delete-branch' && action.branchName) {
+      branchDeleteInProgress = true;
       operationBusy = true;
+      branches = branches.filter((branch) => branch.name !== action.branchName);
       try {
-        const result = await stackPopup.stackGitDeleteBranch(folderPath, action.branchName);
+        // @ts-ignore legacy wrapper present at runtime
+        const result = await stackPopup.stackGitDeleteBranch(folderPath, action.branchName, action.force ?? false, action.removeWorktree ?? false, action.worktreePath);
+        branchDeleteErrorBranchName = '';
+        branchDeleteErrorMessage = '';
         statusMessage = result.summary;
         await refreshAfterMutation(true);
       } catch (error) {
-        errorMessage = error instanceof Error ? error.message : 'Branch deletion failed';
+        errorMessage = operationErrorMessage(error, 'Branch deletion failed');
+        branchDeleteErrorBranchName = action.branchName;
+        branchDeleteErrorMessage = operationErrorMessage(error, 'Git branch deletion failed');
+        await refreshBranches(true);
       } finally {
         operationBusy = false;
+        branchDeleteInProgress = false;
+      }
+      if (branchDeleteErrorBranchName === action.branchName) {
+        await tick();
+        branchDeleteFocusFallback(action.branchName)?.focus();
+      } else {
+        await focusBranchPickerButton();
       }
       return;
     }
@@ -739,11 +850,17 @@
   function deleteLocalBranch(branch: StackGitBranches['branches'][number]) {
     if (branch.remote || isCurrentBranch(branch, currentBranchLabel) || operationBusy) return;
     const branchName = normalizeBranchLabel(branch);
+    const row = branch as StackGitBranchRow;
     openPendingConfirm({
       kind: 'delete-branch',
-      title: 'Delete local branch?',
-      message: `Delete local branch "${branchName}"? Unmerged branches cannot be deleted.`,
-      branchName
+      title: row.checkedOutElsewhere ? 'Delete worktree and branch?' : 'Delete local branch?',
+      message: row.checkedOutElsewhere
+        ? `Force delete local branch "${branchName}" and permanently remove its linked worktree directory "${row.checkedOutElsewherePath}". Uncommitted worktree changes and unmerged branch commits will be lost.`
+        : `Force delete local branch "${branchName}"? Unmerged commits will be lost.`,
+      branchName,
+      force: true,
+      removeWorktree: row.checkedOutElsewhere,
+      worktreePath: row.checkedOutElsewherePath ?? undefined
     });
   }
 
@@ -764,8 +881,29 @@
   }
 
   function selectHistory(commitHash: string) {
+    if (selectedHistoryHash === commitHash) {
+      selectedHistoryHash = '';
+      selectedHistoryFilePath = '';
+      historyFiles = [];
+      return;
+    }
     selectedHistoryHash = commitHash;
-    void refreshHistoryDiff();
+    selectedHistoryFilePath = '';
+    historyFiles = [];
+    historyFilesError = '';
+    void refreshHistoryFiles();
+  }
+
+  function selectHistoryFile(path: string) {
+    if (selectedHistoryFilePath === path) {
+      diffToken += 1;
+      selectedHistoryFilePath = '';
+      diffText = '';
+      diffLoading = false;
+      return;
+    }
+    selectedHistoryFilePath = path;
+    void loadHistoryFileDiff(path);
   }
 
   function selectStash(stashRef: string) {
@@ -781,7 +919,6 @@
       ensureChangeSelection();
       if (diffDrawerOpen) void refreshChangesDiff();
     } else if (view === 'history') {
-      ensureHistorySelection();
       void refreshHistory();
     } else if (view === 'stashes') {
       ensureStashSelection();
@@ -800,6 +937,23 @@
     return `stack-git-badge git-status-${kind}`;
   }
 
+  function commitFileStatusLabel(status: string) {
+    if (status === 'A') return 'Added';
+    if (status === 'D') return 'Deleted';
+    if (status === 'M') return 'Modified';
+    if (status === 'R') return 'Renamed';
+    if (status === 'C') return 'Copied';
+    if (status === 'T') return 'Type changed';
+    if (status === 'U') return 'Conflict';
+    if (status === '?') return 'Untracked';
+    return status || 'Changed';
+  }
+
+  function commitFileStatusClass(status: string) {
+    const map: Record<string, string> = { A: 'added', D: 'deleted', M: 'modified', R: 'renamed', C: 'copied', T: 'type-changed', U: 'conflict', '?': 'untracked' };
+    return `stack-git-badge git-status-${map[status] ?? 'modified'}`;
+  }
+
   function isCurrentBranch(branch: StackGitBranches['branches'][number], currentBranch: string) {
     return !branch.remote && normalizeBranchLabel(branch) === currentBranch;
   }
@@ -811,6 +965,8 @@
 
   async function refreshAll() {
     clearMessages();
+    branchDeleteErrorBranchName = '';
+    branchDeleteErrorMessage = '';
     await refreshStatus();
     onRefresh?.();
   }
@@ -883,6 +1039,18 @@
       closeBranchDropdown();
       return;
     }
+    if (selectedHistoryFilePath) {
+      selectedHistoryFilePath = '';
+      diffText = '';
+      return;
+    }
+    if (selectedHistoryHash) {
+      selectedHistoryHash = '';
+      historyFiles = [];
+      historyFilesLoading = false;
+      historyFilesError = '';
+      return;
+    }
     if (diffDrawerOpen) {
       closeDiffDrawer();
       return;
@@ -896,21 +1064,27 @@
   }
 
   function handleBranchPickerPointerdown(event: PointerEvent) {
-    if (!branchDropdownOpen) return;
+    if (!branchDropdownOpen || pendingConfirm || branchDeleteInProgress) return;
     const target = event.target as Node | null;
     if (target && branchPickerElement?.contains(target)) return;
     closeBranchDropdown();
   }
 
   function handleBranchPickerFocusout(event: FocusEvent) {
-    if (!branchDropdownOpen) return;
+    if (!branchDropdownOpen || pendingConfirm || branchDeleteInProgress) return;
     const next = event.relatedTarget as Node | null;
     if (next && branchPickerElement?.contains(next)) return;
     closeBranchDropdown();
   }
 
-  function closePendingConfirm() {
+  async function closePendingConfirm() {
+    const action = pendingConfirm;
+    if (action?.kind === 'delete-branch') pendingConfirmFocusOrigin = null;
     pendingConfirm = null;
+    if (action?.kind === 'delete-branch' && action.branchName) {
+      if (branchDeleteErrorBranchName === action.branchName) await focusBranchDeleteTarget(action.branchName, Boolean(action.force));
+      else await focusBranchPickerButton();
+    }
   }
 
   function handlePendingConfirmKeydown(event: KeyboardEvent) {
@@ -954,7 +1128,6 @@
   $: pendingConfirmWasOpen = Boolean(pendingConfirm);
 
   $: if (status && activeView === 'changes') ensureChangeSelection();
-  $: if (status && activeView === 'history') ensureHistorySelection();
   $: if (status && activeView === 'stashes') ensureStashSelection();
   $: if (status && activeView === 'branches') ensureBranchSelection();
 </script>
@@ -965,13 +1138,16 @@
   <header class="stack-git-panel-header">
     <div class="stack-git-panel-row stack-git-panel-row--primary">
       <div class="stack-git-branch-picker" bind:this={branchPickerElement} on:focusout={handleBranchPickerFocusout}>
-        <button type="button" class="stack-git-branch-selector" aria-label={`Branch ${currentBranchLabel}`} aria-expanded={branchDropdownOpen} aria-controls="stack-git-branch-dropdown" title={currentBranchLabel} on:click={toggleBranchDropdown}>
+        <button bind:this={branchPickerButton} type="button" class="stack-git-branch-selector" aria-label={`Branch ${currentBranchLabel}`} aria-expanded={branchDropdownOpen} aria-controls="stack-git-branch-dropdown" title={currentBranchLabel} on:click={toggleBranchDropdown}>
           <span class="stack-git-branch-selector__icon" aria-hidden="true">⑂</span>
           <span class="stack-git-branch-selector__label">{currentBranchLabel}</span>
         </button>
 
         {#if branchDropdownOpen}
           <div id="stack-git-branch-dropdown" class="stack-git-branch-dropdown" aria-label="Branch picker" role="region">
+            {#if branchDeleteErrorMessage}
+              <div class="stack-git-empty stack-git-branch-dropdown__state stack-git-branch-dropdown__state--error">{branchDeleteErrorMessage}</div>
+            {/if}
             {#if branchLoading && !branches.length}
               <div class="stack-git-empty stack-git-branch-dropdown__state">Loading branches...</div>
             {:else if errorMessage && !branches.length}
@@ -1001,12 +1177,17 @@
                             <strong title={normalizeBranchLabel(branch)}>{normalizeBranchLabel(branch)}</strong>
                             <small>{isCurrentBranch(branch, currentBranchLabel) ? 'Current branch' : 'Local branch'}</small>
                           </div>
-                          <span class="stack-git-branch-row__state">{isCurrentBranch(branch, currentBranchLabel) ? 'Current' : 'Checkout'}</span>
+                          {#if branch.checkedOutElsewhere}
+                            <span class="stack-git-branch-row__worktree" title={`Checked out in another worktree: ${branch.checkedOutElsewherePath ?? 'Unknown path'}`}>Other worktree</span>
+                          {:else}
+                            <span class="stack-git-branch-row__state">{isCurrentBranch(branch, currentBranchLabel) ? 'Current' : 'Checkout'}</span>
+                          {/if}
                         </button>
                         {#if !isCurrentBranch(branch, currentBranchLabel)}
                           <button
                             type="button"
                             class="stack-git-branch-delete"
+                            data-stack-git-branch-delete={branch.name}
                             aria-label={`Delete local branch ${normalizeBranchLabel(branch)}`}
                             title={`Delete local branch ${normalizeBranchLabel(branch)}`}
                             disabled={operationBusy}
@@ -1097,20 +1278,17 @@
         </span>
       {/if}
 
-      <details class="stack-git-repository-menu">
-        <summary aria-label="Repository views" title="Repository views"><span aria-hidden="true">⋯</span></summary>
-        <div class="stack-git-repository-menu__list" aria-label="Repository views">
-          <button type="button" aria-current={activeView === 'changes' ? 'page' : undefined} class:active={activeView === 'changes'} on:click={() => handleTabChange('changes')}>Changes</button>
-          <button type="button" aria-current={activeView === 'history' ? 'page' : undefined} class:active={activeView === 'history'} on:click={() => handleTabChange('history')}>History</button>
-          <button type="button" aria-current={activeView === 'stashes' ? 'page' : undefined} class:active={activeView === 'stashes'} on:click={() => handleTabChange('stashes')}>Stashes</button>
-          <button type="button" aria-current={activeView === 'branches' ? 'page' : undefined} class:active={activeView === 'branches'} on:click={() => handleTabChange('branches')}>Branches</button>
-        </div>
-      </details>
-
       <div class="stack-git-sync-actions" aria-label="Git sync actions">
         <button type="button" class="stack-git-icon-button" disabled={!status || operationBusy} aria-label="Fetch" title="Fetch" on:click={() => void syncRemote('fetch')}>↓</button>
         <button type="button" class="stack-git-icon-button" disabled={!status || operationBusy} aria-label="Pull" title="Pull" on:click={() => void syncRemote('pull')}>⇣</button>
         <button type="button" class="stack-git-icon-button" disabled={!status || operationBusy || !remoteUrl} aria-label="Push" title="Push" on:click={() => void syncRemote('push')}>⇡</button>
+      </div>
+
+      <div class="stack-git-view-tabs" role="tablist" aria-label="Repository views">
+        <button type="button" role="tab" aria-selected={activeView === 'changes'} tabindex={activeView === 'changes' ? 0 : -1} class:active={activeView === 'changes'} on:click={() => handleTabChange('changes')}>Changes</button>
+        <button type="button" role="tab" aria-selected={activeView === 'history'} tabindex={activeView === 'history' ? 0 : -1} class:active={activeView === 'history'} on:click={() => handleTabChange('history')}>History</button>
+        <button type="button" role="tab" aria-selected={activeView === 'stashes'} tabindex={activeView === 'stashes' ? 0 : -1} class:active={activeView === 'stashes'} on:click={() => handleTabChange('stashes')}>Stashes</button>
+        <button type="button" role="tab" aria-selected={activeView === 'branches'} tabindex={activeView === 'branches' ? 0 : -1} class:active={activeView === 'branches'} on:click={() => handleTabChange('branches')}>Branches</button>
       </div>
     </div>
   </header>
@@ -1210,22 +1388,49 @@
             <div class="stack-git-empty">Loading history...</div>
           {:else if history.length}
             {#each history as entry (entry.commitHash)}
-              <div class="stack-git-row-shell" role="listitem">
-                <button type="button" class:selected={selectedHistoryHash === entry.commitHash} class="stack-git-stream-row" on:click={() => selectHistory(entry.commitHash)} on:keydown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    selectHistory(entry.commitHash);
-                  }
-                }}>
-                  <code>{entry.shortHash}</code>
-                  <div>
-                    <strong title={entry.subject}>{entry.subject}</strong>
-                    <small>{entry.authorName} · {formatDate(entry.authoredAt)}</small>
+              <div class="stack-git-history-commit" role="listitem">
+                <div class="stack-git-row-shell">
+                  <button type="button" class:selected={selectedHistoryHash === entry.commitHash} aria-expanded={selectedHistoryHash === entry.commitHash} aria-controls={`stack-git-history-files-${entry.commitHash}`} class="stack-git-stream-row" on:click={() => selectHistory(entry.commitHash)}>
+                    <code>{entry.shortHash}</code>
+                    <div>
+                      <strong title={entry.subject}>{entry.subject}</strong>
+                      <small>{entry.authorName} · {formatDate(entry.authoredAt)}</small>
+                    </div>
+                  </button>
+                  <div class="stack-git-row-actions">
+                    <button type="button" on:click={() => selectHistory(entry.commitHash)}>Diff</button>
                   </div>
-                </button>
-                <div class="stack-git-row-actions">
-                  <button type="button" on:click={() => selectHistory(entry.commitHash)}>Diff</button>
                 </div>
+                {#if selectedHistoryHash === entry.commitHash}
+                  <div id={`stack-git-history-files-${entry.commitHash}`} class="stack-git-history-files" role="list" aria-label={`Files in ${entry.shortHash}`}>
+                  {#if historyFilesLoading}
+                    <div class="stack-git-empty">Loading commit files...</div>
+                  {:else if historyFilesError}
+                    <div class="stack-git-empty stack-git-empty--error">{historyFilesError}</div>
+                  {:else if historyFiles.length}
+                    {#each historyFiles as file, fileIndex (file.path)}
+                      <div class="stack-git-history-file-shell" role="listitem">
+                        <button type="button" class="stack-git-history-file" aria-expanded={selectedHistoryFilePath === file.path} aria-controls={`stack-git-history-diff-${entry.commitHash}-${fileIndex}`} on:click={() => selectHistoryFile(file.path)}>
+                          <span class={commitFileStatusClass(file.status)}>{commitFileStatusLabel(file.status)}</span>
+                          <span class="stack-git-path">
+                            <span class="stack-git-path__dir">{file.relativePath.includes('/') ? file.relativePath.slice(0, file.relativePath.lastIndexOf('/')) : ''}</span>
+                            <span class="stack-git-path__name">{file.relativePath.includes('/') ? file.relativePath.slice(file.relativePath.lastIndexOf('/') + 1) : file.relativePath}</span>
+                          </span>
+                          <span class="stack-git-history-file__chevron" aria-hidden="true"></span>
+                        </button>
+                        {#if selectedHistoryFilePath === file.path}
+                          <div id={`stack-git-history-diff-${entry.commitHash}-${fileIndex}`} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${file.relativePath}`}>
+                            {#if diffError}<div class="stack-git-empty stack-git-empty--error">{diffError}</div>{/if}
+                            <pre class="stack-git-diff-view" aria-label={`Unified diff for ${file.relativePath}`}>{#if diffLoading && selectedHistoryFilePath === file.path}Loading diff...{:else if diffText}{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}{:else}No diff content.{/if}</pre>
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  {:else}
+                    <div class="stack-git-empty">No files changed</div>
+                  {/if}
+                  </div>
+                {/if}
               </div>
             {/each}
           {:else}
@@ -1401,8 +1606,7 @@
 
   .stack-git-panel button,
   .stack-git-panel input,
-  .stack-git-panel textarea,
-  .stack-git-panel summary {
+  .stack-git-panel textarea {
     font: inherit;
   }
 
@@ -1588,6 +1792,14 @@
     text-transform: uppercase;
   }
 
+  .stack-git-branch-row__worktree {
+    color: var(--js-color-warning-text, #f4c56a);
+    font-size: 0.6rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
   .stack-git-panel button.stack-git-branch-row.current {
     background: color-mix(in srgb, var(--js-color-accent-soft) 72%, var(--js-color-surface-overlay));
     border-color: color-mix(in srgb, var(--js-color-accent-border) 72%, transparent);
@@ -1646,6 +1858,7 @@
 
   .stack-git-panel-header-actions,
   .stack-git-sync-actions,
+  .stack-git-view-tabs,
   .stack-git-commit-actions,
   .stack-git-commit-actions__primary,
   .stack-git-row-actions {
@@ -1680,46 +1893,15 @@
     white-space: nowrap;
   }
 
-  .stack-git-repository-menu {
-    position: relative;
+  .stack-git-view-tabs {
+    margin-left: auto;
+    flex-wrap: wrap;
   }
 
-  .stack-git-repository-menu > summary {
-    align-items: center;
-    background: color-mix(in srgb, var(--js-color-surface-raised) 72%, transparent);
-    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 86%, transparent);
-    border-radius: 999px;
-    cursor: pointer;
-    display: inline-flex;
-    height: 32px;
+  .stack-git-view-tabs button {
     justify-content: center;
-    list-style: none;
-    padding: 0;
-    width: 32px;
-  }
-
-  .stack-git-repository-menu > summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .stack-git-repository-menu__list {
-    background: color-mix(in srgb, var(--js-color-surface-raised) 94%, #101827);
-    border: 1px solid color-mix(in srgb, var(--js-color-border) 72%, var(--js-color-accent-border));
-    border-radius: var(--js-radius-sm);
-    box-shadow: var(--js-shadow-raised);
-    display: grid;
-    gap: 4px;
-    left: 0;
-    min-width: 11rem;
-    padding: 8px;
-    position: absolute;
-    top: calc(100% + 6px);
-    z-index: 20;
-  }
-
-  .stack-git-repository-menu__list button {
-    justify-content: flex-start;
-    width: 100%;
+    min-height: 32px;
+    padding: 0 12px;
   }
 
   .stack-git-panel-content {
@@ -1952,6 +2134,115 @@
   .stack-git-row-shell:hover .stack-git-row-actions,
   .stack-git-row-shell:focus-within .stack-git-row-actions {
     opacity: 1;
+  }
+
+  .stack-git-history-files {
+    border-left: 1px solid color-mix(in srgb, var(--js-color-accent-border) 58%, transparent);
+    display: grid;
+    gap: 4px;
+    margin: -8px 0 2px 18px;
+    min-width: 0;
+    padding: 2px 0 2px 10px;
+  }
+
+  .stack-git-history-commit {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .stack-git-history-file-shell {
+    display: grid;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .stack-git-panel button.stack-git-history-file {
+    align-items: center;
+    appearance: none;
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 68%, transparent);
+    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 78%, transparent);
+    border-radius: var(--js-radius-xs);
+    color: inherit;
+    cursor: pointer;
+    display: grid;
+    font: inherit;
+    gap: 9px;
+    grid-template-columns: auto minmax(0, 1fr) 12px;
+    min-height: 34px;
+    min-width: 0;
+    padding: 6px 9px;
+    text-align: left;
+    width: 100%;
+  }
+
+  .stack-git-panel button.stack-git-history-file:hover,
+  .stack-git-panel button.stack-git-history-file:focus-visible,
+  .stack-git-panel button.stack-git-history-file[aria-expanded='true'] {
+    background: color-mix(in srgb, var(--js-color-control-hover) 76%, var(--js-color-surface-overlay));
+    border-color: color-mix(in srgb, var(--js-color-accent-border) 62%, var(--js-color-border-soft));
+  }
+
+  .stack-git-panel button.stack-git-history-file:focus-visible {
+    box-shadow: var(--js-focus-ring);
+    outline: 0;
+  }
+
+  .stack-git-history-file .stack-git-badge {
+    font-size: 0.6rem;
+    height: 18px;
+    padding-inline: 6px;
+    width: auto;
+  }
+
+  .stack-git-path {
+    align-items: baseline;
+    display: flex;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .stack-git-path__dir,
+  .stack-git-path__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stack-git-path__dir {
+    color: var(--js-color-text-muted);
+    flex: 0 1 auto;
+  }
+
+  .stack-git-path__dir:not(:empty)::after {
+    content: '/';
+  }
+
+  .stack-git-path__name {
+    color: var(--js-color-text);
+    flex: 1 1 auto;
+    font-weight: 650;
+    min-width: 0;
+  }
+
+  .stack-git-history-file__chevron {
+    border-bottom: 1.5px solid currentColor;
+    border-right: 1.5px solid currentColor;
+    height: 6px;
+    justify-self: center;
+    opacity: 0.65;
+    transform: rotate(45deg) translate(-1px, 1px);
+    transition: transform 140ms ease;
+    width: 6px;
+  }
+
+  .stack-git-history-file[aria-expanded='true'] .stack-git-history-file__chevron {
+    transform: rotate(225deg) translate(-1px, 1px);
+  }
+
+  .stack-git-history-file-shell > .stack-git-change-diff-drawer {
+    border-radius: 0 0 var(--js-radius-xs) var(--js-radius-xs);
+    max-height: min(32rem, 55vh);
   }
 
   .stack-git-badge {

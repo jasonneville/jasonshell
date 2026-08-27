@@ -191,6 +191,8 @@ fn main() {
             stack_popup::stack_git_stash_drop,
             stack_popup::stack_git_commit,
             stack_popup::stack_git_log,
+            stack_popup::stack_git_commit_files,
+            stack_popup::stack_git_commit_file_diff,
             stack_popup::stack_git_tree,
             stack_popup::stack_git_branches,
             stack_popup::stack_git_fetch,

@@ -35,7 +35,8 @@ pub(crate) use auth::{
 };
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
-    StackGitBranches, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest, StackGitLog,
+    StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
+    StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest, StackGitLog,
     StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest,
     StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
     StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
@@ -599,6 +600,38 @@ pub async fn stack_git_commit(
     )
     .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_commit_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_commit_files(
+    window: WebviewWindow,
+    request: StackGitCommitFilesRequest,
+) -> Result<StackGitCommitFiles, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_COMMIT_FILES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_commit_files_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_commit_file_diff(
+    window: WebviewWindow,
+    request: StackGitCommitFileDiffRequest,
+) -> Result<StackGitCommitFileDiff, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_COMMIT_FILE_DIFF,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_commit_file_diff_async(request).await
 }
 
 #[tauri::command]

@@ -1,9 +1,11 @@
 use crate::stack_popup::models::{
-    StackGitBranch, StackGitBranchRequest, StackGitBranches, StackGitCommitRequest, StackGitDiff,
-    StackGitDiffRequest, StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry,
-    StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest,
-    StackGitStashEntry, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
-    StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
+    StackGitBranch, StackGitBranchRequest, StackGitBranches, StackGitCommitFile,
+    StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
+    StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
+    StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry, StackGitLogRequest,
+    StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest, StackGitStashEntry,
+    StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
+    StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
 use std::collections::HashSet;
@@ -78,6 +80,22 @@ pub(crate) async fn stack_git_commit_async(
     tauri::async_runtime::spawn_blocking(move || stack_git_commit(request))
         .await
         .map_err(|error| format!("Failed to join stack git commit task: {error}"))?
+}
+
+pub(crate) async fn stack_git_commit_files_async(
+    request: StackGitCommitFilesRequest,
+) -> Result<StackGitCommitFiles, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_commit_files(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git commit files task: {error}"))?
+}
+
+pub(crate) async fn stack_git_commit_file_diff_async(
+    request: StackGitCommitFileDiffRequest,
+) -> Result<StackGitCommitFileDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_commit_file_diff(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git commit file diff task: {error}"))?
 }
 
 pub(crate) async fn stack_git_log_async(
@@ -307,10 +325,21 @@ fn stack_git_branches(path: &str) -> Result<StackGitBranches, String> {
         &["branch", "--all", "--format=%(HEAD)%09%(refname)"],
     )?
     .unwrap_or_default();
+    let worktree_output = git_stdout_bytes(
+        &repo_root,
+        &["worktree", "list", "--porcelain", "-z"],
+    )?
+    .unwrap_or_default();
+    let mut branches = parse_git_branch_output(&output);
+    annotate_branches_with_worktrees(
+        &mut branches,
+        &parse_git_worktree_output(&worktree_output),
+        &repo_root,
+    );
     Ok(StackGitBranches {
         repository_root: repo_root.to_string_lossy().into_owned(),
         current_branch,
-        branches: parse_git_branch_output(&output),
+        branches,
     })
 }
 
@@ -358,6 +387,39 @@ fn stack_git_checkout_branch(
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Checked out {branch}"),
+    })
+}
+
+fn stack_git_commit_files(request: StackGitCommitFilesRequest) -> Result<StackGitCommitFiles, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let commit_hash = validate_git_commit_hash(&request.commit_hash)?.to_string();
+    let output = git_stdout_bytes(
+        &repo_root,
+        &["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", &commit_hash],
+    )?
+    .unwrap_or_default();
+    Ok(StackGitCommitFiles {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        commit_hash,
+        files: parse_git_commit_files_output(&output, &repo_root),
+    })
+}
+
+fn stack_git_commit_file_diff(
+    request: StackGitCommitFileDiffRequest,
+) -> Result<StackGitCommitFileDiff, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let commit_hash = validate_git_commit_hash(&request.commit_hash)?.to_string();
+    let path = git_relative_path_for_request(&repo_root, &request.path)?;
+    let content = git_stdout(&repo_root, &["show", "--format=", "--unified=3", &commit_hash, "--", &path])?
+        .unwrap_or_default();
+    Ok(StackGitCommitFileDiff {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        commit_hash,
+        path,
+        content,
     })
 }
 
@@ -411,8 +473,94 @@ fn stack_git_create_branch(
     })
 }
 
-fn delete_branch_git_args(branch: &str) -> Vec<&str> {
-    vec!["branch", "-d", "--", branch]
+pub(crate) fn delete_branch_git_args(branch: &str, force: bool) -> Vec<&str> {
+    if force {
+        vec!["branch", "-D", "--", branch]
+    } else {
+        vec!["branch", "-d", "--", branch]
+    }
+}
+
+fn remove_worktree_git_args(path: &str, force: bool) -> Vec<&str> {
+    if force {
+        vec!["worktree", "remove", "--force", "--force", "--", path]
+    } else {
+        vec!["worktree", "remove", "--", path]
+    }
+}
+
+fn remove_dir_all_with_retries(path: &Path) -> std::io::Result<()> {
+    let mut last_error = None;
+    for attempt in 0..5 {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(_) if !path.try_exists()? => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+        if attempt < 4 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    Err(last_error.expect("directory removal attempt must produce an error"))
+}
+
+fn remove_linked_worktree(
+    repo_root: &Path,
+    worktree_path: &str,
+    branch_ref: &str,
+    force: bool,
+) -> Result<(), String> {
+    let git_error = match run_git(
+        repo_root,
+        &remove_worktree_git_args(worktree_path, force),
+    ) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+
+    if !force {
+        return Err(git_error);
+    }
+
+    // Git for Windows can unregister a worktree but leave residual files behind.
+    // Confirmation already authorized deleting this freshly validated linked path.
+    let cleanup_path = canonicalize_existing_path(Path::new(worktree_path))
+        .map_err(|error| format!("{git_error}; invalid residual worktree path: {error}"))?;
+    let current_dir = std::env::current_dir()
+        .ok()
+        .and_then(|path| canonicalize_existing_path(&path).ok());
+    if cleanup_path.parent().is_none()
+        || same_worktree_path(&cleanup_path, repo_root)
+        || current_dir
+            .as_deref()
+            .is_some_and(|path| same_worktree_path(&cleanup_path, path))
+    {
+        return Err(format!("{git_error}; refused unsafe residual worktree path"));
+    }
+
+    let refreshed_output = git_stdout_bytes(
+        repo_root,
+        &["worktree", "list", "--porcelain", "-z"],
+    )?
+    .unwrap_or_default();
+    if let Some(worktree) = parse_git_worktree_output(&refreshed_output)
+        .into_iter()
+        .find(|worktree| same_worktree_path(Path::new(&worktree.path), &cleanup_path))
+    {
+        if worktree.bare
+            || worktree.branch_ref != branch_ref
+            || same_worktree_path(Path::new(&worktree.path), repo_root)
+        {
+            return Err(format!("{git_error}; linked worktree changed during removal"));
+        }
+    }
+
+    if cleanup_path.try_exists().map_err(|error| error.to_string())? {
+        remove_dir_all_with_retries(&cleanup_path).map_err(|error| {
+            format!("{git_error}; failed to remove residual worktree directory: {error}")
+        })?;
+    }
+    run_git(repo_root, &["worktree", "prune"])
 }
 
 fn local_branch_ref(branch: &str) -> String {
@@ -434,7 +582,48 @@ fn stack_git_delete_branch(
     if current_branch.as_deref() == Some(branch) {
         return Err("Current Git branch cannot be deleted".to_string());
     }
-    run_git(&repo_root, &delete_branch_git_args(branch))?;
+    let removed_worktree = if request.remove_worktree.unwrap_or(false) {
+        let worktree_output = git_stdout_bytes(
+            &repo_root,
+            &["worktree", "list", "--porcelain", "-z"],
+        )?
+        .unwrap_or_default();
+        let worktree_path = parse_git_worktree_output(&worktree_output)
+            .into_iter()
+            .find(|worktree| {
+                !worktree.bare
+                    && worktree.branch_ref == branch_ref
+                    && !same_worktree_path(Path::new(&worktree.path), &repo_root)
+            })
+            .map(|worktree| worktree.path)
+            .ok_or_else(|| "Linked Git worktree is unavailable".to_string())?;
+        let expected_path = request
+            .worktree_path
+            .as_deref()
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| "Linked Git worktree path is required".to_string())?;
+        if !same_worktree_path(Path::new(expected_path), Path::new(&worktree_path)) {
+            return Err("Linked Git worktree changed; refresh branches and try again".to_string());
+        }
+        remove_linked_worktree(
+            &repo_root,
+            &worktree_path,
+            &branch_ref,
+            request.force.unwrap_or(false),
+        )?;
+        Some(worktree_path)
+    } else {
+        None
+    };
+    let args = delete_branch_git_args(branch, request.force.unwrap_or(false));
+    if let Err(error) = run_git(&repo_root, &args) {
+        if let Some(worktree_path) = removed_worktree {
+            return Err(format!(
+                "Removed linked Git worktree {worktree_path}, but branch deletion failed: {error}"
+            ));
+        }
+        return Err(error);
+    }
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Deleted branch {branch}"),
@@ -513,6 +702,14 @@ fn validate_treeish(value: &str) -> Result<&str, String> {
     Ok(value)
 }
 
+fn validate_git_commit_hash(value: &str) -> Result<&str, String> {
+    let value = value.trim();
+    if value.len() != 40 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("Git commit hash is invalid".to_string());
+    }
+    Ok(value)
+}
+
 fn validate_git_branch_name(value: &str) -> Result<&str, String> {
     let value = value.trim();
     if value.is_empty()
@@ -543,6 +740,40 @@ fn git_pathspecs_for_paths(repo_root: &Path, paths: &[String]) -> Result<Vec<Str
         pathspecs.push(relative);
     }
     Ok(pathspecs)
+}
+
+fn parse_git_commit_files_output(output: &[u8], repo_root: &Path) -> Vec<StackGitCommitFile> {
+    let mut files = Vec::new();
+    let fields: Vec<&[u8]> = output
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let mut index = 0;
+    while index < fields.len() {
+        let status = String::from_utf8_lossy(fields[index]).into_owned();
+        index += 1;
+        let rename_or_copy = matches!(status.chars().next(), Some('R' | 'C'));
+        if index >= fields.len() {
+            break;
+        }
+        if rename_or_copy {
+            index += 1;
+            if index >= fields.len() {
+                break;
+            }
+        }
+        let relative_path = String::from_utf8_lossy(fields[index]).replace('\\', "/");
+        index += 1;
+        if relative_path.is_empty() {
+            continue;
+        }
+        let path = repo_root
+            .join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR))
+            .to_string_lossy()
+            .into_owned();
+        files.push(StackGitCommitFile { path, relative_path, status });
+    }
+    files
 }
 
 fn git_relative_path_for_stage(
@@ -776,13 +1007,14 @@ fn classify_git_run_mode(args: &[&str]) -> GitRunMode {
     match args.first().copied() {
         Some("fetch" | "pull" | "push") => GitRunMode::Remote,
         Some("add" | "commit" | "switch" | "restore" | "stash") => GitRunMode::LocalMutation,
+        Some("worktree") if args.get(1) == Some(&"remove") => GitRunMode::LocalMutation,
         Some("branch")
             if args.iter().any(|arg| matches!(*arg, "-d" | "-D"))
                 || args.get(1).is_some_and(|arg| !arg.starts_with('-')) =>
         {
             GitRunMode::LocalMutation
         }
-        Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch") => GitRunMode::Read,
+        Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch" | "merge-base") => GitRunMode::Read,
         Some("diff") => GitRunMode::Read,
         _ => GitRunMode::OptionalProbe,
     }
@@ -934,9 +1166,89 @@ fn parse_git_branch_output(output: &str) -> Vec<StackGitBranch> {
                 current: head.trim() == "*",
                 remote,
                 ref_name: name,
+                checked_out_elsewhere: false,
+                checked_out_elsewhere_path: None,
             })
         })
         .collect()
+}
+
+#[derive(Debug, PartialEq)]
+struct GitWorktreeBranch {
+    path: String,
+    branch_ref: String,
+    bare: bool,
+}
+
+fn parse_git_worktree_output(output: &[u8]) -> Vec<GitWorktreeBranch> {
+    let mut records = Vec::new();
+    let mut path = None;
+    let mut branch_ref = None;
+    let mut bare = false;
+
+    for field in output.split(|byte| *byte == 0) {
+        if field.is_empty() {
+            if let (Some(path), Some(branch_ref)) = (path.take(), branch_ref.take()) {
+                records.push(GitWorktreeBranch {
+                    path,
+                    branch_ref,
+                    bare,
+                });
+            }
+            path = None;
+            branch_ref = None;
+            bare = false;
+            continue;
+        }
+        let field = String::from_utf8_lossy(field);
+        if let Some(value) = field.strip_prefix("worktree ") {
+            path = Some(value.to_string());
+        } else if let Some(value) = field.strip_prefix("branch ") {
+            branch_ref = Some(value.to_string());
+        } else if field == "bare" {
+            bare = true;
+        }
+    }
+    if let (Some(path), Some(branch_ref)) = (path, branch_ref) {
+        records.push(GitWorktreeBranch {
+            path,
+            branch_ref,
+            bare,
+        });
+    }
+    records
+}
+
+fn annotate_branches_with_worktrees(
+    branches: &mut [StackGitBranch],
+    worktrees: &[GitWorktreeBranch],
+    current_worktree: &Path,
+) {
+    for branch in branches.iter_mut().filter(|branch| !branch.remote) {
+        let branch_ref = format!("refs/heads/{}", branch.ref_name);
+        if let Some(worktree) = worktrees.iter().find(|worktree| {
+            !worktree.bare
+                && worktree.branch_ref == branch_ref
+                && !same_worktree_path(Path::new(&worktree.path), current_worktree)
+        }) {
+            branch.checked_out_elsewhere = true;
+            branch.checked_out_elsewhere_path = Some(worktree.path.clone());
+        }
+    }
+}
+
+fn same_worktree_path(left: &Path, right: &Path) -> bool {
+    let left = left.canonicalize().unwrap_or_else(|_| left.to_path_buf());
+    let right = right.canonicalize().unwrap_or_else(|_| right.to_path_buf());
+    normalize_worktree_path(&left).eq_ignore_ascii_case(&normalize_worktree_path(&right))
+}
+
+fn normalize_worktree_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn git_remote_repository_url(folder: &Path) -> Option<String> {
@@ -1339,8 +1651,10 @@ mod tests {
     use super::{
         classify_git_run_mode, create_branch_git_args, delete_branch_git_args, git_pathspecs_for_paths,
         git_relative_path_for_request, git_status_kind, git_timeout_for_mode, local_branch_ref,
-        normalize_git_remote_url, nul_joined_pathspecs, parse_git_branch_output,
-        parse_git_log_output, parse_git_stash_list_output, parse_git_tree_output,
+        annotate_branches_with_worktrees, normalize_git_remote_url, nul_joined_pathspecs,
+        parse_git_branch_output, parse_git_worktree_output, remove_worktree_git_args,
+        parse_git_commit_files_output, parse_git_log_output, parse_git_stash_list_output,
+        parse_git_tree_output,
         stack_git_status_from_porcelain, validate_git_branch_name, validate_git_stash_ref,
         validate_treeish, GitCommandError, GitRunMode,
     };
@@ -1348,6 +1662,22 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn commit_file_parser_handles_nul_status_paths_and_renames() {
+        let files = parse_git_commit_files_output(
+            b"M\0src/a.rs\0A\0x y.txt\0R100\0old.rs\0new.rs\0",
+            Path::new("C:/repo"),
+        );
+
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].status, "M");
+        assert_eq!(files[0].relative_path, "src/a.rs");
+        assert_eq!(files[1].status, "A");
+        assert_eq!(files[1].relative_path, "x y.txt");
+        assert_eq!(files[2].status, "R100");
+        assert_eq!(files[2].relative_path, "new.rs");
+    }
 
     #[test]
     fn porcelain_status_kinds_cover_stack_badges() {
@@ -1674,6 +2004,24 @@ mod tests {
     }
 
     #[test]
+    fn worktree_parser_and_annotation_mark_only_other_local_worktrees() {
+        let worktrees = parse_git_worktree_output(
+            b"worktree c:/REPO/\0HEAD aaa\0branch refs/heads/main\0\0worktree C:/linked tree\0HEAD bbb\0branch refs/heads/feature/work\0\0worktree C:/bare\0HEAD ddd\0branch refs/heads/bare-only\0bare\0\0worktree C:/detached\0HEAD ccc\0detached\0\0",
+        );
+        let mut branches = parse_git_branch_output(
+            "*\trefs/heads/main\n \trefs/heads/feature/work\n \trefs/heads/bare-only\n \trefs/remotes/origin/feature/work\n",
+        );
+
+        annotate_branches_with_worktrees(&mut branches, &worktrees, Path::new("C:/repo"));
+
+        assert!(!branches[0].checked_out_elsewhere);
+        assert!(branches[1].checked_out_elsewhere);
+        assert_eq!(branches[1].checked_out_elsewhere_path.as_deref(), Some("C:/linked tree"));
+        assert!(!branches[2].checked_out_elsewhere);
+        assert!(!branches[3].checked_out_elsewhere);
+    }
+
+    #[test]
     fn git_request_validation_rejects_option_injection_and_parent_paths() {
         let repo = Path::new(r"C:\repo");
 
@@ -1717,13 +2065,33 @@ mod tests {
     #[test]
     fn branch_delete_args_use_safe_fixed_argv() {
         assert_eq!(
-            delete_branch_git_args("feature/old"),
+            delete_branch_git_args("feature/old", false),
             vec!["branch", "-d", "--", "feature/old"]
+        );
+        assert_eq!(
+            delete_branch_git_args("feature/old", true),
+            vec!["branch", "-D", "--", "feature/old"]
         );
         assert_eq!(local_branch_ref("remotes/archive"), "refs/heads/remotes/archive");
         assert_eq!(
             classify_git_run_mode(&["branch", "-d", "--", "feature/old"]),
             GitRunMode::LocalMutation
+        );
+        assert_eq!(
+            remove_worktree_git_args(r"C:\worktrees\feature old", false),
+            vec!["worktree", "remove", "--", r"C:\worktrees\feature old"]
+        );
+        assert_eq!(
+            remove_worktree_git_args(r"C:\worktrees\feature old", true),
+            vec!["worktree", "remove", "--force", "--force", "--", r"C:\worktrees\feature old"]
+        );
+        assert_eq!(
+            classify_git_run_mode(&["worktree", "remove", "--", r"C:\worktrees\feature old"]),
+            GitRunMode::LocalMutation
+        );
+        assert_eq!(
+            classify_git_run_mode(&["merge-base", "--is-ancestor", "refs/heads/feature/old", "HEAD"]),
+            GitRunMode::Read
         );
         assert!(validate_git_branch_name("--help").is_err());
     }

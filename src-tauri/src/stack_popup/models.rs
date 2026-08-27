@@ -164,6 +164,46 @@ pub struct StackGitLog {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StackGitCommitFilesRequest {
+    pub folder_path: String,
+    pub commit_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitCommitFile {
+    pub path: String,
+    pub relative_path: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitCommitFiles {
+    pub repository_root: String,
+    pub commit_hash: String,
+    pub files: Vec<StackGitCommitFile>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitCommitFileDiffRequest {
+    pub folder_path: String,
+    pub commit_hash: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitCommitFileDiff {
+    pub repository_root: String,
+    pub commit_hash: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackGitTreeRequest {
     pub folder_path: String,
     pub treeish: Option<String>,
@@ -195,6 +235,8 @@ pub struct StackGitBranch {
     pub ref_name: String,
     pub current: bool,
     pub remote: bool,
+    pub checked_out_elsewhere: bool,
+    pub checked_out_elsewhere_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -212,6 +254,9 @@ pub struct StackGitBranchRequest {
     pub branch_name: String,
     pub checkout: Option<bool>,
     pub source_branch: Option<String>,
+    pub force: Option<bool>,
+    pub remove_worktree: Option<bool>,
+    pub worktree_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

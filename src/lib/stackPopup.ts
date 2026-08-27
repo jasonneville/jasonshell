@@ -60,6 +60,9 @@ export type StackGitOperationResult = {
 
 export type StackGitBranchOperationResult = StackGitOperationResult;
 export type StackGitDiff = { repositoryRoot: string; path: string; staged: boolean; content: string };
+export type StackGitCommitFile = { path: string; relativePath: string; status: string };
+export type StackGitCommitFiles = { repositoryRoot: string; commitHash: string; files: StackGitCommitFile[] };
+export type StackGitCommitFileDiff = { repositoryRoot: string; commitHash: string; path: string; content: string };
 export type StackGitStashEntry = { stashRef: string; ref: string; index: number; branch?: string | null; message: string };
 export type StackGitStashes = { repositoryRoot: string; entries: StackGitStashEntry[] };
 export type StackGitStashRequest = { folderPath: string; message?: string; includeUntracked: boolean };
@@ -98,6 +101,8 @@ export type StackGitBranch = {
   refName?: string;
   current: boolean;
   remote: boolean;
+  checkedOutElsewhere: boolean;
+  checkedOutElsewherePath?: string | null;
 };
 
 export type StackGitBranches = {
@@ -569,6 +574,18 @@ export function stackGitCommit(folderPath: string, message: string, paths: strin
   });
 }
 
+export function stackGitCommitFiles(folderPath: string, commitHash: string): Promise<StackGitCommitFiles> {
+  return invoke<StackGitCommitFiles>(IPC_COMMANDS.stackGitCommitFiles, {
+    request: { folderPath, commitHash }
+  });
+}
+
+export function stackGitCommitFileDiff(folderPath: string, commitHash: string, path: string): Promise<StackGitCommitFileDiff> {
+  return invoke<StackGitCommitFileDiff>(IPC_COMMANDS.stackGitCommitFileDiff, {
+    request: { folderPath, commitHash, path }
+  });
+}
+
 export function stackGitLog(folderPath: string, limit?: number): Promise<StackGitLog> {
   return invoke<StackGitLog>(IPC_COMMANDS.stackGitLog, {
     request: { folderPath, limit: limit ?? null }
@@ -609,9 +626,9 @@ export function stackGitCreateBranch(folderPath: string, branchName: string, che
   });
 }
 
-export function stackGitDeleteBranch(folderPath: string, branchName: string): Promise<StackGitBranchOperationResult> {
+export function stackGitDeleteBranch(folderPath: string, branchName: string, force = false, removeWorktree = false, worktreePath?: string): Promise<StackGitBranchOperationResult> {
   return invoke<StackGitBranchOperationResult>(IPC_COMMANDS.stackGitDeleteBranch, {
-    request: { folderPath, branchName }
+    request: { folderPath, branchName, force, removeWorktree, worktreePath }
   });
 }
 

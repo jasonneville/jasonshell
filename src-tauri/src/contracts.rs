@@ -126,6 +126,8 @@ pub mod commands {
     pub const STACK_GIT_STASH_POP: &str = "stack_git_stash_pop";
     pub const STACK_GIT_STASH_DROP: &str = "stack_git_stash_drop";
     pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
+    pub const STACK_GIT_COMMIT_FILES: &str = "stack_git_commit_files";
+    pub const STACK_GIT_COMMIT_FILE_DIFF: &str = "stack_git_commit_file_diff";
     pub const STACK_GIT_LOG: &str = "stack_git_log";
     pub const STACK_GIT_TREE: &str = "stack_git_tree";
     pub const STACK_GIT_BRANCHES: &str = "stack_git_branches";
@@ -497,6 +499,8 @@ mod tests {
         assert!(unique.contains("get_stack_git_status"));
         assert!(unique.contains("stack_git_add_paths"));
         assert!(unique.contains("stack_git_commit"));
+        assert!(unique.contains("stack_git_commit_files"));
+        assert!(unique.contains("stack_git_commit_file_diff"));
         assert!(unique.contains("stack_git_log"));
         assert!(unique.contains("stack_git_tree"));
         assert!(unique.contains("stack_git_branches"));

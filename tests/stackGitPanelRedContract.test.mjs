@@ -40,8 +40,27 @@ test('stack git API exposes no-AI diff, unstage, and destructive revert command 
   assert.match(api, /export type StackGitDiff = \{/);
   assert.match(api, /path: string;/);
   assert.match(api, /content: string/);
+  assert.match(api, /export type StackGitCommitFiles = \{/);
+  assert.match(api, /export type StackGitCommitFile = \{/);
+  assert.match(api, /export type StackGitCommitFileDiff = \{/);
   assert.match(api, /export type StackGitRevertRequest = \{/);
   assert.match(api, /paths: string\[\];/);
+});
+
+test('stack git commit history exposes commit file list and per-file diff contracts', () => {
+  for (const [jsName, commandId] of [
+    ['stackGitCommitFiles', 'stack_git_commit_files'],
+    ['stackGitCommitFileDiff', 'stack_git_commit_file_diff']
+  ]) {
+    assert.match(commands, new RegExp(`${jsName}:\\s*'${commandId}'`));
+    assert.match(api, new RegExp(`export function ${jsName}\\(`));
+    assert.match(api, new RegExp(`IPC_COMMANDS\\.${jsName}`));
+    assert.match(contracts, new RegExp(`pub const ${commandId.toUpperCase()}: &str = "${commandId}"`));
+    assert.match(stackPopupRs, new RegExp(`pub async fn ${commandId}\\(`));
+    assert.match(mainRs, new RegExp(`stack_popup::${commandId}`));
+  }
+  assert.match(panel, /stackGitCommitFiles\(/);
+  assert.match(panel, /stackGitCommitFileDiff\(/);
 });
 
 test('stack git status tracks staged and unstaged state plus optional ahead behind counts', () => {
@@ -135,6 +154,23 @@ test('stack git API exposes first-class history and stash command contracts with
   assert.doesNotMatch(panel, /\bAI\b|assistant|chat|prompt|LLM|model/i);
 });
 
+test('stack git history files and diffs use stale-safe loading, friendly status labels, and accessible disclosure', () => {
+  assert.match(panel, /historyFilesLoading/);
+  assert.match(panel, /historyFilesError/);
+  assert.match(panel, /No files changed/);
+  assert.match(panel, /No diff content\./);
+  assert.match(panel, /aria-controls=\{`stack-git-history-files-\$\{entry\.commitHash\}`\}/);
+  assert.match(panel, /aria-controls=\{`stack-git-history-diff-\$\{entry\.commitHash\}-\$\{fileIndex\}`\}/);
+  assert.match(panel, /const token = \+\+diffToken;[\s\S]*token !== diffToken/);
+  assert.match(panel, /commitFileStatusLabel\(file\.status\)/);
+  assert.match(panel, /commitFileStatusClass\(file\.status\)/);
+  assert.match(panel, /stack-git-path__dir/);
+  assert.match(panel, /stack-git-path__name/);
+  assert.match(panel, /handleEscape\(event: KeyboardEvent\)/);
+  assert.doesNotMatch(panel, /ensureHistorySelection\(/);
+  assert.doesNotMatch(panel, /diffDrawerHistory/);
+});
+
 test('stack git stash backend uses fixed argv, bounded message, explicit untracked flag, and spawn_blocking', () => {
   assert.match(productionGitStatusRs, /stack_git_stashes_async[\s\S]*spawn_blocking/);
   assert.match(productionGitStatusRs, /stack_git_stash_async[\s\S]*spawn_blocking/);
@@ -189,8 +225,15 @@ test('Stack Browser navigation shortcuts never capture Backspace from editable c
 });
 
 test('StackGitPanel uses OpenChamber Git display geometry instead of card tabs and split panes', () => {
+  const headerBlock = panel.match(/<div class="stack-git-panel-row stack-git-panel-row--secondary">[\s\S]*?<\/header>/)?.[0] ?? '';
   assert.match(panel, /class="stack-git-branch-selector"/);
-  assert.match(panel, /class="stack-git-repository-menu"/);
+  assert.doesNotMatch(panel, /class="stack-git-repository-menu"/);
+  assert.doesNotMatch(panel, /<details[^>]*>\s*<summary[^>]*aria-label="Repository views"/);
+  assert.match(headerBlock, /<div[^>]*role="tablist"/);
+  assert.match(headerBlock, /role="tab"/);
+  assert.match(headerBlock, /aria-selected=/);
+  assert.match(headerBlock, /Fetch[\s\S]*Pull[\s\S]*Push[\s\S]*Changes[\s\S]*History[\s\S]*Stashes[\s\S]*Branches/);
+  assert.match(panel, /let activeView: StackGitView = 'changes';/);
   assert.match(panel, /class="stack-git-change-group-header"/);
   assert.match(panel, /class="stack-git-change-row/);
   assert.match(panel, /rows="1"/);
@@ -213,7 +256,7 @@ test('StackGitPanel replaces the file grid instead of overlaying it', () => {
 
 test('StackGitPanel branch button opens a grouped branch dropdown, not the Branches view', () => {
   const headerBlock = panel.match(/<header class="stack-git-panel-header">[\s\S]*?<\/header>/)?.[0] ?? '';
-  const branchSelectorBlock = headerBlock.match(/<button type="button" class="stack-git-branch-selector"[\s\S]*?<\/button>/)?.[0] ?? '';
+  const branchSelectorBlock = headerBlock.match(/<button[\s\S]*?class="stack-git-branch-selector"[\s\S]*?<\/button>/)?.[0] ?? '';
   assert.match(branchSelectorBlock, /aria-expanded=\{branchDropdownOpen\}/);
   assert.match(branchSelectorBlock, /aria-controls="stack-git-branch-dropdown"/);
   assert.match(branchSelectorBlock, /on:click=\{toggleBranchDropdown\}/);
@@ -248,6 +291,15 @@ test('StackGitPanel branch dropdown rows checkout and create branch from selecte
   assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \? 'true' : 'false'\}/);
 });
 
+test('StackGitPanel marks local branches checked out in another worktree', () => {
+  assert.match(panel, /branch\.checkedOutElsewhere/);
+  assert.match(panel, />Other worktree</);
+  assert.match(panel, /Checked out in another worktree:/);
+  assert.match(panel, /branch\.checkedOutElsewherePath/);
+  assert.match(panel, /on:click=\{\(\) => void checkoutBranch\(branch\.name\)\}/);
+  assert.match(panel, /data-stack-git-branch-delete=\{branch\.name\}/);
+});
+
 test('stack git branches checkout prefers local branch for matching remote tail', () => {
   assert.match(panel, /function matchLocalBranchName\(branchName: string\)/);
   assert.ok(panel.includes("const tail = branchName.replace(/^(?:refs\\/)?remotes\\/[^/]+\\//, '').replace(/^refs\\/heads\\//, '');"));
@@ -276,12 +328,37 @@ test('stack git dropdown current branch uses the same live status source as the 
 test('stack git dropdown confirms local branch deletion and protects current and remote branches', () => {
   assert.match(panel, /type StackGitConfirmKind = [^;]*'delete-branch'/);
   assert.match(panel, /function deleteLocalBranch\(branch: StackGitBranches\['branches'\]\[number\]\)/);
+  assert.match(panel, /function operationErrorMessage\(error: unknown, fallback: string\)/);
+  assert.match(panel, /typeof error === 'string' && error\.trim\(\)/);
+  assert.match(panel, /error instanceof Error && error\.message/);
   assert.match(panel, /if \(branch\.remote \|\| isCurrentBranch\(branch, currentBranchLabel\) \|\| operationBusy\) return;/);
   assert.match(panel, /kind: 'delete-branch'/);
   assert.match(panel, /Delete local branch/);
-  assert.match(panel, /stackPopup\.stackGitDeleteBranch\(folderPath, action\.branchName\)/);
+  assert.match(panel, /bind:this=\{branchPickerButton\}/);
+  assert.match(panel, /data-stack-git-branch-delete=\{branch\.name\}/);
+  assert.match(panel, /branchDeleteInProgress = true;/);
+  assert.match(panel, /branchDeleteInProgress = false;/);
+  assert.match(panel, /await stackPopup\.stackGitDeleteBranch\(folderPath, action\.branchName, action\.force \?\? false, action\.removeWorktree \?\? false, action\.worktreePath\)/);
+  assert.match(panel, /force: true/);
+  assert.match(panel, /branch delete error|deleteError|Git branch deletion failed|not fully merged/);
   assert.match(panel, /aria-label=\{`Delete local branch \$\{normalizeBranchLabel\(branch\)\}`\}/);
   assert.match(panel, /class="stack-git-branch-delete"/);
+  assert.match(panel, /await focusBranchPickerButton\(\);/);
+});
+
+test('linked-worktree branch deletion confirms once then removes optimistically and forces backend cleanup', () => {
+  assert.match(panel, /function deleteLocalBranch\([\s\S]*force: true/);
+  assert.match(panel, /removeWorktree: branch\.checkedOutElsewhere/);
+  assert.match(panel, /worktreePath: branch\.checkedOutElsewherePath/);
+  assert.match(panel, /branch\.checkedOutElsewherePath/);
+  assert.match(panel, /action\.removeWorktree \?\? false/);
+  assert.match(panel, /branches = branches\.filter\(\(branch\) => branch\.name !== action\.branchName\)/);
+  assert.match(panel, /permanently remove its linked worktree directory/);
+  assert.match(panel, /uncommitted worktree changes/i);
+  assert.match(panel, /unmerged branch commits/i);
+  assert.match(panel, /catch \(error\) \{[\s\S]*await refreshBranches\(true\);/);
+  assert.doesNotMatch(panel, /function forceDeleteLocalBranch/);
+  assert.doesNotMatch(panel, /function removeWorktreeAndDeleteLocalBranch/);
 });
 
 test('stack git create branch frontend contract forwards optional source branch', () => {

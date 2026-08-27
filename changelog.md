@@ -1,5 +1,26 @@
 ## Change Ledger
 
+- 2026-08-26 `[CODE]` FIXED: Stack Git panel removed the 3-dot repository views menu, moved Changes/History/Stashes/Branches into compact accessible tabs beside Fetch/Pull/Push, and keeps the panel defaulting to Changes.
+
+- 2026-08-26 `[TOOL]` TESTED: Updated focused Stack Git panel source-contract coverage for no repository summary/details menu, visible tablist tabs, sync-actions-before-tabs layout, and default `activeView='changes'`.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git History commit files now render as a full-width vertical disclosure list with nested per-file diff drawers, readable status badges, truncated paths, responsive indentation, and bounded diff scrolling.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git History now uses typed commit-file wrappers, stale-safe loading/error state, friendly commit-file status badges, and accessible row/diff disclosure with no empty-commit infinite loading.
+- 2026-08-26 `[TEST]` TESTED: Added focused contract assertions for History loading, diff fallback, keyboard disclosure, status labels, and dead selection helper cleanup.
+
+- 2026-08-26 `[CODE]` FIXED: Forced linked-worktree deletion now handles locked worktrees with repeated `--force` and cleans residual Windows directories with bounded retries before pruning stale Git worktree metadata.
+
+- 2026-08-26 `[CODE]` CHANGED: Local branch deletion now uses one destructive confirmation, immediately removes the branch row, and finishes forced deletion asynchronously in the backend.
+- 2026-08-26 `[CODE]` ADDED: Confirmed deletion of a branch in another worktree now freshly verifies its linked path, force-removes that worktree with fixed argv, then force-deletes the branch; confirmation names the directory and warns that uncommitted changes will be lost.
+- 2026-08-26 `[TEST]` TESTED: Added frontend/backend contracts and Rust argv/mutation-timeout coverage for optimistic forced branch and linked-worktree deletion.
+
+- 2026-08-26 `[CODE]` ADDED: Stack Git local branch rows now mark branches checked out in another worktree and expose the linked path in a tooltip, using fixed `git worktree list --porcelain -z` discovery.
+- 2026-08-26 `[TEST]` TESTED: Added RED-first TS/Svelte contracts and Rust parser coverage for current-vs-other worktree annotation, detached records, remote exclusion, and paths containing spaces.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git branch deletion now keeps the picker open, shows safe-delete Git stderr inside the branch dropdown, and requires an explicit force-delete click before using `git branch -D -- <branch>`.
+- 2026-08-26 `[TEST]` TESTED: Added RED-first frontend/backend contracts for force-delete plumbing and bounded branch-delete error surfacing, then passed focused Node and Rust Git-status tests.
+
 - 2026-08-25 `[CODE]` FIXED: Stack Git branch selector title now uses an explicit Svelte reactive value derived from `status.branch` and reconciles from post-checkout `currentBranch`; branch changes render immediately without reopening the view.
 - 2026-08-25 `[CODE]` TESTED: Added RED-first contracts requiring reset branch refreshes to update `status.branch` and rendered labels to consume its reactive scalar directly rather than a hidden function dependency.
 
