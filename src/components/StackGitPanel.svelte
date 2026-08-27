@@ -46,6 +46,9 @@
   let historyFilesError = '';
   let branches: StackGitBranchRow[] = [];
   let stashes: StackGitStashes['entries'] = [];
+  let stashFiles: { path: string; relativePath: string; status: string }[] = [];
+  let stashFilesLoading = false;
+  let stashFilesError = '';
   let commitMessage = '';
   let stashMessage = '';
   let branchDraft = '';
@@ -55,6 +58,7 @@
   let selectedHistoryHash = '';
   let selectedHistoryFilePath = '';
   let selectedStashRef = '';
+  let selectedStashFilePath = '';
   let selectedBranchName = '';
   let diffText = '';
   let diffLines: string[] = ['Loading diff...'];
@@ -231,7 +235,17 @@
   }
 
   function ensureStashSelection() {
-    if (!selectedStashRef && stashes.length) selectedStashRef = normalizeRef(stashes[0]);
+    const availableRefs = new Set(stashes.map((entry) => normalizeRef(entry)));
+    if (selectedStashRef && availableRefs.has(selectedStashRef)) return selectedStashRef;
+    selectedStashRef = stashes[0] ? normalizeRef(stashes[0]) : '';
+    if (!selectedStashRef) {
+      stashFiles = [];
+      stashFilesLoading = false;
+      stashFilesError = '';
+      selectedStashFilePath = '';
+      closeDiffDrawer();
+    }
+    return selectedStashRef;
   }
 
   function ensureBranchSelection() {
@@ -374,7 +388,8 @@
       const next = await stackPopup.stackGitStashes(folderPath);
       if (token !== viewToken) return;
       stashes = next.entries;
-      ensureStashSelection();
+      const selected = ensureStashSelection();
+      if (!selected) return;
       await refreshStashDiff();
     } catch (error) {
       if (token === viewToken) errorMessage = error instanceof Error ? error.message : 'Git stashes unavailable';
@@ -451,19 +466,35 @@
   }
 
   async function refreshStashDiff() {
-    const entry = stashes.find((item) => normalizeRef(item) === selectedStashRef) ?? stashes[0] ?? null;
+    const selectedRef = ensureStashSelection();
+    const entry = stashes.find((item) => normalizeRef(item) === selectedRef) ?? null;
     if (!entry) {
-      diffText = 'Select a stash to inspect the diff.';
-      diffTitle = 'Stash diff';
+      stashFiles = [];
+      stashFilesError = '';
+      stashFilesLoading = false;
+      selectedStashFilePath = '';
+      closeDiffDrawer();
       return;
     }
 
-    diffTitle = normalizeStashLabel(entry);
-    diffText = [
-      `Stash ${normalizeRef(entry)}`,
-      `Branch ${entry.branch ?? 'unknown'}`,
-      'Working-tree diff preview stays on file rows.'
-    ].join('\n');
+    stashFilesLoading = true;
+    stashFilesError = '';
+    selectedStashFilePath = '';
+    closeDiffDrawer();
+    try {
+      // @ts-ignore legacy wrapper present at runtime
+      const result = await stackPopup.stackGitStashFiles(folderPath, normalizeRef(entry));
+      if (normalizeRef(entry) !== selectedStashRef || selectedRef !== selectedStashRef) return;
+      stashFiles = result.files ?? [];
+      stashFilesError = stashFiles.length ? '' : 'No files changed in stash.';
+    } catch (error) {
+      if (normalizeRef(entry) === selectedStashRef && selectedRef === selectedStashRef) {
+        stashFiles = [];
+        stashFilesError = error instanceof Error ? error.message : 'Stash files unavailable';
+      }
+    } finally {
+      if (normalizeRef(entry) === selectedStashRef && selectedRef === selectedStashRef) stashFilesLoading = false;
+    }
   }
 
   async function loadDiff(target: string, staged = false, statusKind: StackGitFileStatus['status'] | null = null) {
@@ -859,8 +890,8 @@
         : `Force delete local branch "${branchName}"? Unmerged commits will be lost.`,
       branchName,
       force: true,
-      removeWorktree: row.checkedOutElsewhere,
-      worktreePath: row.checkedOutElsewherePath ?? undefined
+      removeWorktree: branch.checkedOutElsewhere,
+      worktreePath: branch.checkedOutElsewherePath ?? undefined
     });
   }
 
@@ -907,8 +938,53 @@
   }
 
   function selectStash(stashRef: string) {
+    if (selectedStashRef === stashRef) {
+      selectedStashRef = '';
+      stashFiles = [];
+      stashFilesError = '';
+      selectedStashFilePath = '';
+      closeDiffDrawer();
+      return;
+    }
     selectedStashRef = stashRef;
+    selectedStashFilePath = '';
+    stashFiles = [];
+    stashFilesError = '';
     void refreshStashDiff();
+  }
+
+  function selectStashFile(path: string) {
+    if (selectedStashFilePath === path) {
+      selectedStashFilePath = '';
+      closeDiffDrawer();
+      return;
+    }
+    selectedStashFilePath = path;
+    void loadStashFileDiff(path);
+  }
+
+  async function loadStashFileDiff(path: string) {
+    const stashRef = selectedStashRef;
+    if (!stashRef || !path) return;
+    const token = ++diffToken;
+    diffLoading = true;
+    diffError = '';
+    try {
+      // @ts-ignore legacy wrapper present at runtime
+      const result = await stackPopup.stackGitStashFileDiff(folderPath, stashRef, path);
+      if (token !== diffToken || selectedStashRef !== stashRef || selectedStashFilePath !== path) return;
+      diffText = result?.content ?? '';
+      diffTitle = path;
+      diffError = '';
+      if (!diffText) diffText = 'No diff content.';
+    } catch (error) {
+      if (token === diffToken && selectedStashRef === stashRef && selectedStashFilePath === path) {
+        diffError = error instanceof Error ? error.message : 'Diff unavailable';
+        diffText = 'No diff content.';
+      }
+    } finally {
+      if (token === diffToken) diffLoading = false;
+    }
   }
 
   function handleTabChange(view: StackGitView) {
@@ -1044,11 +1120,23 @@
       diffText = '';
       return;
     }
+    if (selectedStashFilePath) {
+      selectedStashFilePath = '';
+      diffText = '';
+      return;
+    }
     if (selectedHistoryHash) {
       selectedHistoryHash = '';
       historyFiles = [];
       historyFilesLoading = false;
       historyFilesError = '';
+      return;
+    }
+    if (selectedStashRef) {
+      selectedStashRef = '';
+      stashFiles = [];
+      stashFilesLoading = false;
+      stashFilesError = '';
       return;
     }
     if (diffDrawerOpen) {
@@ -1297,6 +1385,11 @@
     <section class="stack-git-panel-scroll" aria-label={activeView === 'changes' ? 'Git changes' : activeView === 'history' ? 'Git history' : activeView === 'stashes' ? 'Git stashes' : 'Git branches'}>
       {#if activeView === 'changes'}
         <div class="stack-git-change-groups" role="list">
+          {#if !stagedEntries.length && !unstagedEntries.length}
+            <div class="stack-git-empty">No changes, working tree clean</div>
+          {/if}
+
+          {#if stagedEntries.length}
           <section id={stagedChangeGroupId} class="stack-git-change-group" aria-label="Staged changes">
             <header class="stack-git-change-group-header">
               <button type="button" class="stack-git-change-group-header__bulk" aria-label="Unstage all staged files" title="Unstage all" disabled={!canUnstageGitSelection(stagedEntries) || operationBusy} on:click={() => void unstagePaths(stagedEntries.map((entry) => entry.path))}>−</button>
@@ -1308,8 +1401,7 @@
             </header>
 
             {#if !isChangeGroupCollapsed('staged')}
-              {#if stagedEntries.length}
-                {#each stagedEntries as entry (entry.path + (entry.unstaged ? '-both-staged' : '-staged'))}
+              {#each stagedEntries as entry (entry.path + (entry.unstaged ? '-both-staged' : '-staged'))}
                   <div class="stack-git-change-row staged" role="listitem">
                     <button type="button" class="stack-git-change-row__action" aria-label="Unstage" title={changeRowActionLabel('staged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'staged')}>{changeRowActionSymbol('staged')}</button>
                     <button type="button" class="stack-git-change-row__content" aria-pressed={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} on:click={() => openChangeDiff(entry, true)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'staged')}>
@@ -1329,13 +1421,12 @@
                       <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
                     </div>
                   {/if}
-                {/each}
-              {:else}
-                <div class="stack-git-empty">No staged files</div>
-              {/if}
+              {/each}
             {/if}
           </section>
+          {/if}
 
+          {#if unstagedEntries.length}
           <section id={unstagedChangeGroupId} class="stack-git-change-group" aria-label="Unstaged changes">
             <header class="stack-git-change-group-header">
               <button type="button" class="stack-git-change-group-header__bulk" aria-label="Stage all unstaged files" title="Stage all" disabled={!canStageGitSelection(unstagedEntries) || operationBusy} on:click={() => void stagePaths(unstagedEntries.map((entry) => entry.path))}>+</button>
@@ -1347,8 +1438,7 @@
             </header>
 
             {#if !isChangeGroupCollapsed('unstaged')}
-              {#if unstagedEntries.length}
-                {#each unstagedEntries as entry (entry.path + (entry.staged ? '-both-unstaged' : '-unstaged'))}
+              {#each unstagedEntries as entry (entry.path + (entry.staged ? '-both-unstaged' : '-unstaged'))}
                   <div class="stack-git-change-row unstaged" role="listitem">
                     <button type="button" class="stack-git-change-row__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
                     <button type="button" class="stack-git-change-row__content" aria-pressed={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')}>
@@ -1371,12 +1461,10 @@
                       <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
                     </div>
                   {/if}
-                {/each}
-              {:else}
-                <div class="stack-git-empty">No unstaged files</div>
-              {/if}
+              {/each}
             {/if}
           </section>
+          {/if}
         </div>
       {:else if activeView === 'history'}
         <div class="stack-git-stream" role="list">
@@ -1466,6 +1554,36 @@
                   <button type="button" on:click={() => void popStash(stashRef)}>Pop</button>
                   <button type="button" on:click={() => void dropStash(stashRef)}>Drop</button>
                 </div>
+                {#if selectedStashRef === stashRef}
+                  <div class="stack-git-change-diff-drawer" role="region" aria-label={`Files in ${normalizeStashLabel(stash)}`}>
+                    {#if stashFilesError}<div class="stack-git-empty stack-git-empty--error">{stashFilesError}</div>{/if}
+                    {#if stashFilesLoading && !stashFiles.length}
+                      <div class="stack-git-empty">Loading stash files...</div>
+                    {:else if stashFiles.length}
+                      {#each stashFiles as file, fileIndex (file.path)}
+                        <div class="stack-git-change-row-shell" role="listitem">
+                          <button type="button" class:selected={selectedStashFilePath === file.path} class="stack-git-change-row" aria-expanded={selectedStashFilePath === file.path} aria-controls={`stack-git-stash-diff-${stashRef}-${fileIndex}`} on:click={() => selectStashFile(file.path)} on:keydown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              selectStashFile(file.path);
+                            }
+                          }}>
+                            <span class="stack-git-path__dir">{file.status}</span>
+                            <span class="stack-git-path__name">{file.relativePath}</span>
+                          </button>
+                          {#if selectedStashFilePath === file.path}
+                            <div id={`stack-git-stash-diff-${stashRef}-${fileIndex}`} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${file.relativePath}`}>
+                              {#if diffError}<div class="stack-git-empty stack-git-empty--error">{diffError}</div>{/if}
+                              <pre class="stack-git-diff-view" aria-label={`Unified diff for ${file.relativePath}`}>{#if diffLoading && selectedStashFilePath === file.path}Loading diff...{:else if diffText}{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}{:else}No diff content.{/if}</pre>
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    {:else}
+                      <div class="stack-git-empty">No files changed</div>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             {/each}
           {:else}

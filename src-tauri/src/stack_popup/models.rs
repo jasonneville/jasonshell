@@ -204,6 +204,46 @@ pub struct StackGitCommitFileDiff {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StackGitStashFilesRequest {
+    pub folder_path: String,
+    pub stash_ref: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashFile {
+    pub path: String,
+    pub relative_path: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashFiles {
+    pub repository_root: String,
+    pub stash_ref: String,
+    pub files: Vec<StackGitStashFile>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashFileDiffRequest {
+    pub folder_path: String,
+    pub stash_ref: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitStashFileDiff {
+    pub repository_root: String,
+    pub stash_ref: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackGitTreeRequest {
     pub folder_path: String,
     pub treeish: Option<String>,

@@ -38,9 +38,11 @@ pub use models::{
     StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
     StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest, StackGitLog,
     StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest,
-    StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
-    StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
-    StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
+    StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
+    StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
+    StackGitStatus, StackGitTree, StackGitTreeRequest, StackItem, StackItemIconResolutionBatch,
+    StackNativeDragPreparation, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize,
+    StackPopupRuntimeState,
 };
 pub use terminal::{
     StackTerminalPollResult, StackTerminalRenameRequest, StackTerminalResizeRequest,
@@ -632,6 +634,38 @@ pub async fn stack_git_commit_file_diff(
     )
     .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_commit_file_diff_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_files(
+    window: WebviewWindow,
+    request: StackGitStashFilesRequest,
+) -> Result<StackGitStashFiles, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_FILES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_files_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_file_diff(
+    window: WebviewWindow,
+    request: StackGitStashFileDiffRequest,
+) -> Result<StackGitStashFileDiff, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_FILE_DIFF,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_file_diff_async(request).await
 }
 
 #[tauri::command]

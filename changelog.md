@@ -1,5 +1,10 @@
 ## Change Ledger
 
+- 2026-08-26 `[CODE]` FIXED: Stack Git Stashes now uses a 2-layer in-flow drawer model matching History: stash rows open nested file lists, stash file rows open nested diffs, and Apply/Pop/Drop stay mutation-only.
+- 2026-08-26 `[TOOL]` TESTED: Added focused Stack Git contracts covering dedicated stash file-list/file-diff IPC, stash-ref validation, and the rejection of commit-hash validators for stash refs.
+- 2026-08-26 `[CODE]` FIXED: Stash refresh now reconciles invalid selected refs to the first current stash or clears stash/file/diff/loading/error state when empty, preventing stale loading or async repopulation after drop/pop/external stash changes.
+- 2026-08-26 `[TOOL]` TESTED: Added focused Stack Git source-contract coverage for stash-selection reconciliation and loading-state reset.
+
 - 2026-08-26 `[CODE]` FIXED: Stack Git panel removed the 3-dot repository views menu, moved Changes/History/Stashes/Branches into compact accessible tabs beside Fetch/Pull/Push, and keeps the panel defaulting to Changes.
 
 - 2026-08-26 `[TOOL]` TESTED: Updated focused Stack Git panel source-contract coverage for no repository summary/details menu, visible tablist tabs, sync-actions-before-tabs layout, and default `activeView='changes'`.

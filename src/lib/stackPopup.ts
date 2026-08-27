@@ -63,6 +63,9 @@ export type StackGitDiff = { repositoryRoot: string; path: string; staged: boole
 export type StackGitCommitFile = { path: string; relativePath: string; status: string };
 export type StackGitCommitFiles = { repositoryRoot: string; commitHash: string; files: StackGitCommitFile[] };
 export type StackGitCommitFileDiff = { repositoryRoot: string; commitHash: string; path: string; content: string };
+export type StackGitStashFile = { path: string; relativePath: string; status: string };
+export type StackGitStashFiles = { repositoryRoot: string; stashRef: string; files: StackGitStashFile[] };
+export type StackGitStashFileDiff = { repositoryRoot: string; stashRef: string; path: string; content: string };
 export type StackGitStashEntry = { stashRef: string; ref: string; index: number; branch?: string | null; message: string };
 export type StackGitStashes = { repositoryRoot: string; entries: StackGitStashEntry[] };
 export type StackGitStashRequest = { folderPath: string; message?: string; includeUntracked: boolean };
@@ -583,6 +586,18 @@ export function stackGitCommitFiles(folderPath: string, commitHash: string): Pro
 export function stackGitCommitFileDiff(folderPath: string, commitHash: string, path: string): Promise<StackGitCommitFileDiff> {
   return invoke<StackGitCommitFileDiff>(IPC_COMMANDS.stackGitCommitFileDiff, {
     request: { folderPath, commitHash, path }
+  });
+}
+
+export function stackGitStashFiles(folderPath: string, stashRef: string): Promise<StackGitStashFiles> {
+  return invoke<StackGitStashFiles>(IPC_COMMANDS.stackGitStashFiles, {
+    request: { folderPath, stashRef }
+  });
+}
+
+export function stackGitStashFileDiff(folderPath: string, stashRef: string, path: string): Promise<StackGitStashFileDiff> {
+  return invoke<StackGitStashFileDiff>(IPC_COMMANDS.stackGitStashFileDiff, {
+    request: { folderPath, stashRef, path }
   });
 }
 

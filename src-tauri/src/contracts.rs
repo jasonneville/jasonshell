@@ -128,6 +128,8 @@ pub mod commands {
     pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
     pub const STACK_GIT_COMMIT_FILES: &str = "stack_git_commit_files";
     pub const STACK_GIT_COMMIT_FILE_DIFF: &str = "stack_git_commit_file_diff";
+    pub const STACK_GIT_STASH_FILES: &str = "stack_git_stash_files";
+    pub const STACK_GIT_STASH_FILE_DIFF: &str = "stack_git_stash_file_diff";
     pub const STACK_GIT_LOG: &str = "stack_git_log";
     pub const STACK_GIT_TREE: &str = "stack_git_tree";
     pub const STACK_GIT_BRANCHES: &str = "stack_git_branches";
@@ -283,6 +285,8 @@ pub mod commands {
         STACK_GIT_STASH_POP,
         STACK_GIT_STASH_DROP,
         STACK_GIT_COMMIT,
+        STACK_GIT_STASH_FILES,
+        STACK_GIT_STASH_FILE_DIFF,
         STACK_GIT_LOG,
         STACK_GIT_TREE,
         STACK_GIT_BRANCHES,

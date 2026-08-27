@@ -63,6 +63,25 @@ test('stack git commit history exposes commit file list and per-file diff contra
   assert.match(panel, /stackGitCommitFileDiff\(/);
 });
 
+test('stack git stash exposes dedicated file list and per-file diff contracts', () => {
+  for (const [jsName, commandId] of [
+    ['stackGitStashFiles', 'stack_git_stash_files'],
+    ['stackGitStashFileDiff', 'stack_git_stash_file_diff']
+  ]) {
+    assert.match(commands, new RegExp(`${jsName}:\\s*'${commandId}'`));
+    assert.match(api, new RegExp(`export function ${jsName}\\(`));
+    assert.match(api, new RegExp(`IPC_COMMANDS\\.${jsName}`));
+    assert.match(contracts, new RegExp(`pub const ${commandId.toUpperCase()}: &str = "${commandId}"`));
+    assert.match(stackPopupRs, new RegExp(`pub async fn ${commandId}\\(`));
+    assert.match(mainRs, new RegExp(`stack_popup::${commandId}`));
+  }
+  assert.match(api, /export type StackGitStashFiles = \{/);
+  assert.match(api, /export type StackGitStashFile = \{/);
+  assert.match(api, /export type StackGitStashFileDiff = \{/);
+  assert.match(panel, /stackGitStashFiles\(/);
+  assert.match(panel, /stackGitStashFileDiff\(/);
+});
+
 test('stack git status tracks staged and unstaged state plus optional ahead behind counts', () => {
   assert.match(api, /export type StackGitFileStatus = \{[\s\S]*staged: boolean;[\s\S]*unstaged: boolean;/);
   assert.match(api, /export type StackGitStatus = \{[\s\S]*ahead\?: number \| null;[\s\S]*behind\?: number \| null;/);
@@ -191,6 +210,15 @@ test('stack git stash backend uses fixed argv, bounded message, explicit untrack
   assert.match(productionGitStatusRs, /args:\s*std::iter::once\("-C"\.to_string\(\)\)/);
   assert.match(productionGitStatusRs, /run_process\(spec\)/);
   assert.doesNotMatch(productionGitStatusRs, /Command::new\("git"\)/);
+});
+
+test('stack git stash file backend uses dedicated stash refs instead of commit-hash validators', () => {
+  assert.match(productionGitStatusRs, /stack_git_stash_files_async[\s\S]*spawn_blocking/);
+  assert.match(productionGitStatusRs, /stack_git_stash_file_diff_async[\s\S]*spawn_blocking/);
+  assert.match(productionGitStatusRs, /\[\s*"stash",\s*"show",\s*"--format="[\s\S]*--name-status/);
+  assert.match(productionGitStatusRs, /\[\s*"show",\s*"--format="[\s\S]*--unified=3/);
+  assert.match(productionGitStatusRs, /validate_git_stash_ref\(\s*&request\.stash_ref\s*\)/);
+  assert.doesNotMatch(productionGitStatusRs, /validate_git_commit_hash\(\s*&request\.stash_ref\s*\)/);
 });
 
 test('StackGitPanel renders visible history and stash UI with destructive confirmations', () => {
@@ -454,4 +482,23 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.match(panel, /@container \(max-width: 32rem\)/);
   assert.doesNotMatch(panel, /stack-git-diff-drawer-backdrop/);
   assert.doesNotMatch(panel, /\{#if diffText \|\| diffLoading\}\s*<aside class="stack-git-diff-panel"/);
+});
+
+test('stack git stash selection reconciles invalid refs and clears loading state when empty', () => {
+  const ensureBlock = panel.match(/function ensureStashSelection\(\)[\s\S]*?\n  }/)?.[0] ?? '';
+  const refreshStashesBlock = panel.match(/async function refreshStashes\(\)[\s\S]*?\n  }/)?.[0] ?? '';
+  const refreshStashDiffBlock = panel.match(/async function refreshStashDiff\(\)[\s\S]*?\n  }/)?.[0] ?? '';
+  assert.match(ensureBlock, /const availableRefs = new Set\(stashes\.map\(/);
+  assert.match(ensureBlock, /if \(selectedStashRef && availableRefs\.has\(selectedStashRef\)\) return selectedStashRef;/);
+  assert.match(ensureBlock, /selectedStashRef = stashes\[0\] \? normalizeRef\(stashes\[0\]\) : '';/);
+  assert.match(ensureBlock, /stashFilesLoading = false;/);
+  assert.match(ensureBlock, /closeDiffDrawer\(\);/);
+  assert.match(refreshStashesBlock, /const selected = ensureStashSelection\(\);\s*if \(!selected\) return;\s*await refreshStashDiff\(\);/);
+  assert.match(refreshStashDiffBlock, /const selectedRef = ensureStashSelection\(\);/);
+  assert.match(refreshStashDiffBlock, /const entry = stashes\.find\(\(item\) => normalizeRef\(item\) === selectedRef\) \?\? null;/);
+  assert.match(refreshStashDiffBlock, /stashFilesError = '';/);
+  assert.match(refreshStashDiffBlock, /stashFilesLoading = false;/);
+  assert.match(refreshStashDiffBlock, /selectedStashFilePath = '';/);
+  assert.match(refreshStashDiffBlock, /if \(normalizeRef\(entry\) !== selectedStashRef \|\| selectedRef !== selectedStashRef\) return;/);
+  assert.match(refreshStashDiffBlock, /if \(normalizeRef\(entry\) === selectedStashRef && selectedRef === selectedStashRef\) stashFilesLoading = false;/);
 });

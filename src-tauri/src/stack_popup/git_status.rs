@@ -4,8 +4,9 @@ use crate::stack_popup::models::{
     StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
     StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry, StackGitLogRequest,
     StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest, StackGitStashEntry,
-    StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
-    StackGitTreeEntry, StackGitTreeRequest,
+    StackGitStashFile, StackGitStashFileDiff, StackGitStashFileDiffRequest,
+    StackGitStashFiles, StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest,
+    StackGitStashes, StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
 use std::collections::HashSet;
@@ -96,6 +97,22 @@ pub(crate) async fn stack_git_commit_file_diff_async(
     tauri::async_runtime::spawn_blocking(move || stack_git_commit_file_diff(request))
         .await
         .map_err(|error| format!("Failed to join stack git commit file diff task: {error}"))?
+}
+
+pub(crate) async fn stack_git_stash_files_async(
+    request: StackGitStashFilesRequest,
+) -> Result<StackGitStashFiles, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stash_files(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git stash files task: {error}"))?
+}
+
+pub(crate) async fn stack_git_stash_file_diff_async(
+    request: StackGitStashFileDiffRequest,
+) -> Result<StackGitStashFileDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_stash_file_diff(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git stash file diff task: {error}"))?
 }
 
 pub(crate) async fn stack_git_log_async(
@@ -421,6 +438,30 @@ fn stack_git_commit_file_diff(
         path,
         content,
     })
+}
+
+fn stack_git_stash_files(request: StackGitStashFilesRequest) -> Result<StackGitStashFiles, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
+    let output = git_stdout_bytes(&repo_root, &[
+        "stash", "show", "--format=", "--name-status", "-z", &stash_ref
+    ])?.unwrap_or_default();
+    Ok(StackGitStashFiles {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        stash_ref,
+        files: parse_git_commit_files_output(&output, &repo_root).into_iter().map(|file| StackGitStashFile { path: file.path, relative_path: file.relative_path, status: file.status }).collect(),
+    })
+}
+
+fn stack_git_stash_file_diff(request: StackGitStashFileDiffRequest) -> Result<StackGitStashFileDiff, String> {
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
+    let path = git_relative_path_for_request(&repo_root, &request.path)?;
+    let content = git_stdout(&repo_root, &["show", "--format=", "--unified=3", &stash_ref, "--", &path])?
+        .unwrap_or_default();
+    Ok(StackGitStashFileDiff { repository_root: repo_root.to_string_lossy().into_owned(), stash_ref, path: path.to_string(), content })
 }
 
 pub(crate) async fn stack_git_delete_branch_async(
@@ -783,28 +824,39 @@ fn git_relative_path_for_stage(
 ) -> Result<String, String> {
     let candidate = PathBuf::from(path);
     if candidate.is_absolute() {
-        if !candidate.exists() {
-            let relative = candidate
-                .strip_prefix(repo_root)
+        if candidate.exists() {
+            let canonical = canonicalize_existing_path(&candidate)?;
+            let canonical_root = canonicalize_existing_path(repo_root)?;
+            if !path_within_root(&canonical_root, &canonical) {
+                return Err("Git path is outside the repository".to_string());
+            }
+            let relative = canonical
+                .strip_prefix(&canonical_root)
                 .map_err(|_| "Git path is outside the repository".to_string())?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let normalized = normalize_repo_relative_string(&relative)?;
-            if status_paths.contains(&normalized) {
-                return Ok(normalized);
+            let absolute = absolute_git_status_path(&canonical_root, &relative.replace('/', "\\"));
+            if status_paths.contains(&absolute) {
+                return Ok(relative);
             }
             return Err("Git path is not a changed repository path".to_string());
         }
-        let canonical = canonicalize_existing_path(&candidate)?;
-        let canonical_root = canonicalize_existing_path(repo_root)?;
-        if !path_within_root(&canonical_root, &canonical) {
+        let lexical_root = repo_root.to_string_lossy().replace('\\', "/");
+        let lexical_candidate = candidate.to_string_lossy().replace('\\', "/");
+        if !lexical_candidate.starts_with(&lexical_root) {
             return Err("Git path is outside the repository".to_string());
         }
-        return Ok(canonical
-            .strip_prefix(&canonical_root)
+        let relative = candidate
+            .strip_prefix(repo_root)
             .map_err(|_| "Git path is outside the repository".to_string())?
             .to_string_lossy()
-            .replace('\\', "/"));
+            .replace('\\', "/");
+        let normalized = normalize_repo_relative_string(&relative)?;
+        let absolute = absolute_git_status_path(repo_root, &normalized.replace('/', "\\"));
+        if status_paths.contains(&absolute) {
+            return Ok(normalized);
+        }
+        return Err("Git path is not a changed repository path".to_string());
     }
     validate_missing_repo_relative_path(path)?;
     let normalized = normalize_repo_relative_string(path)?;
@@ -1905,12 +1957,106 @@ mod tests {
     }
 
     #[test]
+    fn git_stage_deleted_file_uses_cached_diff_and_stack_add() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let repo_root = std::env::temp_dir().join(format!(
+            "jasonshell-git-stage-deleted-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).unwrap();
+        let init = Command::new("git").arg("init").arg(&repo_root).output().unwrap();
+        if !init.status.success() {
+            let _ = std::fs::remove_dir_all(&repo_root);
+            return;
+        }
+        for key in ["user.name", "user.email"] {
+            let value = if key == "user.name" { "Jason Shell" } else { "jason@example.com" };
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(&repo_root)
+                .arg("config")
+                .arg(key)
+                .arg(value)
+                .output();
+        }
+        let file = repo_root.join("deleted.txt");
+        std::fs::write(&file, b"base").unwrap();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("add")
+            .arg("deleted.txt")
+            .output();
+        let commit = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("commit")
+            .arg("-m")
+            .arg("base")
+            .output()
+            .unwrap();
+        if !commit.status.success() {
+            let _ = std::fs::remove_dir_all(&repo_root);
+            return;
+        }
+        std::fs::remove_file(&file).unwrap();
+        let canonical_root = std::fs::canonicalize(&repo_root).unwrap();
+        let absolute_file = std::fs::canonicalize(&repo_root).unwrap().join("deleted.txt");
+
+        let request = super::StackGitStageRequest {
+            folder_path: canonical_root.to_string_lossy().to_string(),
+            paths: vec![absolute_file.to_string_lossy().to_string()],
+        };
+        let result = super::stack_git_add_paths(request).unwrap();
+        assert_eq!(result.repository_root, canonical_root.to_string_lossy());
+
+        let cached = Command::new("git")
+            .arg("-C")
+            .arg(&repo_root)
+            .arg("diff")
+            .arg("--cached")
+            .arg("--name-status")
+            .output()
+            .unwrap();
+        let cached_text = String::from_utf8_lossy(&cached.stdout);
+        assert!(cached_text.contains("D\tdeleted.txt"));
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
     fn missing_path_validation_rejects_namespace_and_dot_tricks() {
         assert!(super::validate_missing_repo_relative_path("..").is_err());
         assert!(super::validate_missing_repo_relative_path(".").is_err());
         assert!(super::validate_missing_repo_relative_path("src/../x").is_err());
         assert!(super::validate_missing_repo_relative_path("src/:ads").is_err());
         assert!(super::validate_missing_repo_relative_path("src/\0x").is_err());
+    }
+
+    #[test]
+    fn missing_absolute_path_outside_repo_is_rejected() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "jasonshell-git-outside-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).unwrap();
+        let repo_root = std::fs::canonicalize(&repo_root).unwrap();
+        let outside = repo_root.parent().unwrap().join("missing-outside.txt");
+
+        assert!(super::git_relative_path_for_stage(
+            &repo_root,
+            &outside.to_string_lossy(),
+            &std::collections::HashSet::new()
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 
     #[test]
