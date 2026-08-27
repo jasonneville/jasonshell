@@ -70,7 +70,12 @@ test('stack popup API exposes typed git branch counts and per-path status entrie
   assert.match(stackPopupApi, /invoke\(IPC_COMMANDS\.openStackGitRemoteUrl, \{ url \}\)/);
   assert.match(stackPopupApi, /conflicts: number;/);
   assert.match(stackPopupApi, /staged: boolean;/);
+  assert.match(stackPopupApi, /stagedAdditions\?: number;/);
+  assert.match(stackPopupApi, /stagedDeletions\?: number;/);
+  assert.match(stackPopupApi, /unstagedAdditions\?: number;/);
+  assert.match(stackPopupApi, /unstagedDeletions\?: number;/);
   assert.match(stackPopupApi, /entries: StackGitFileStatus\[\];/);
+  assert.match(stackPopupApi, /export type StackGitFileStats = \{ additions: number; deletions: number \};/);
   assert.match(stackPopupApi, /export function getStackGitStatus\(folderPath: string\): Promise<StackGitStatus \| null>/);
   assert.match(stackPopupApi, /invoke<StackGitStatus \| null>\(IPC_COMMANDS\.getStackGitStatus/);
   assert.match(stackPopupApi, /export function stackGitAddPaths\(folderPath: string, paths: string\[\]\): Promise<StackGitOperationResult>/);

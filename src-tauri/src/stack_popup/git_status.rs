@@ -9,7 +9,7 @@ use crate::stack_popup::models::{
     StackGitStashes, StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -212,6 +212,18 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
         return Ok(None);
     };
 
+    let staged_stats = parse_git_numstat_output(
+        &git_stdout_bytes(&repo_root, &["diff", "--cached", "--numstat", "-z"])?
+            .unwrap_or_default(),
+        &repo_root,
+    );
+    let unstaged_stats = parse_git_numstat_output(
+        &git_stdout_bytes(&repo_root, &["diff", "--numstat", "-z"])?
+            .unwrap_or_default(),
+        &repo_root,
+    );
+    let untracked_stats = parse_git_untracked_numstat_output(&repo_root, &status_output);
+
     let remote_repository_url = git_remote_repository_url(&folder);
 
     Ok(Some(stack_git_status_from_porcelain(
@@ -220,6 +232,9 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
         remote_repository_url,
         git_ahead_behind(&folder),
         &status_output,
+        &staged_stats,
+        &unstaged_stats,
+        &untracked_stats,
     )))
 }
 
@@ -411,15 +426,16 @@ fn stack_git_commit_files(request: StackGitCommitFilesRequest) -> Result<StackGi
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let commit_hash = validate_git_commit_hash(&request.commit_hash)?.to_string();
-    let output = git_stdout_bytes(
-        &repo_root,
-        &["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", &commit_hash],
-    )?
-    .unwrap_or_default();
+    let status_output = git_stdout_bytes(&repo_root, &[
+        "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", &commit_hash,
+    ])?.unwrap_or_default();
+    let numstat_output = git_stdout_bytes(&repo_root, &[
+        "diff-tree", "--root", "--no-commit-id", "--numstat", "-r", "-z", &commit_hash,
+    ])?.unwrap_or_default();
     Ok(StackGitCommitFiles {
         repository_root: repo_root.to_string_lossy().into_owned(),
         commit_hash,
-        files: parse_git_commit_files_output(&output, &repo_root),
+        files: parse_git_commit_files_output(&status_output, &repo_root, &parse_git_numstat_output(&numstat_output, &repo_root)),
     })
 }
 
@@ -444,13 +460,19 @@ fn stack_git_stash_files(request: StackGitStashFilesRequest) -> Result<StackGitS
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
-    let output = git_stdout_bytes(&repo_root, &[
+    let status_output = git_stdout_bytes(&repo_root, &[
         "stash", "show", "--format=", "--name-status", "-z", &stash_ref
+    ])?.unwrap_or_default();
+    let numstat_output = git_stdout_bytes(&repo_root, &[
+        "stash", "show", "--format=", "--numstat", "-z", &stash_ref
     ])?.unwrap_or_default();
     Ok(StackGitStashFiles {
         repository_root: repo_root.to_string_lossy().into_owned(),
         stash_ref,
-        files: parse_git_commit_files_output(&output, &repo_root).into_iter().map(|file| StackGitStashFile { path: file.path, relative_path: file.relative_path, status: file.status }).collect(),
+        files: parse_git_commit_files_output(&status_output, &repo_root, &parse_git_numstat_output(&numstat_output, &repo_root))
+            .into_iter()
+            .map(|file| StackGitStashFile { path: file.path, relative_path: file.relative_path, status: file.status, additions: file.additions, deletions: file.deletions })
+            .collect(),
     })
 }
 
@@ -783,7 +805,7 @@ fn git_pathspecs_for_paths(repo_root: &Path, paths: &[String]) -> Result<Vec<Str
     Ok(pathspecs)
 }
 
-fn parse_git_commit_files_output(output: &[u8], repo_root: &Path) -> Vec<StackGitCommitFile> {
+fn parse_git_commit_files_output(output: &[u8], repo_root: &Path, stats: &HashMap<String, (usize, usize)>) -> Vec<StackGitCommitFile> {
     let mut files = Vec::new();
     let fields: Vec<&[u8]> = output
         .split(|byte| *byte == 0)
@@ -812,9 +834,129 @@ fn parse_git_commit_files_output(output: &[u8], repo_root: &Path) -> Vec<StackGi
             .join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR))
             .to_string_lossy()
             .into_owned();
-        files.push(StackGitCommitFile { path, relative_path, status });
+        let (additions, deletions) = stats.get(&relative_path).copied().unwrap_or((0, 0));
+        files.push(StackGitCommitFile { path, relative_path, status, additions, deletions });
     }
     files
+}
+
+fn parse_git_numstat_output(output: &[u8], repo_root: &Path) -> HashMap<String, (usize, usize)> {
+    let mut stats = HashMap::new();
+    let mut pending_counts: Option<(usize, usize)> = None;
+    let mut pending_rename_source: bool = false;
+    for record in output.split(|byte| *byte == 0).filter(|part| !part.is_empty()) {
+        if let Some((additions, deletions, relative_path)) = parse_git_numstat_record(record) {
+            let normalized_path = relative_path.replace('\\', "/");
+            if normalized_path.is_empty() {
+                pending_counts = Some((additions, deletions));
+                pending_rename_source = true;
+                continue;
+            }
+            stats.insert(normalized_path, (additions, deletions));
+            pending_counts = None;
+            pending_rename_source = false;
+            continue;
+        }
+
+        if let Some((additions, deletions)) = pending_counts {
+            let relative_path = String::from_utf8_lossy(record).replace('\\', "/");
+            if pending_rename_source {
+                pending_rename_source = false;
+                continue;
+            }
+            stats.insert(relative_path, (additions, deletions));
+            pending_counts = None;
+            pending_rename_source = false;
+        }
+    }
+    let _ = repo_root;
+    stats
+}
+
+fn parse_git_untracked_numstat_output(repo_root: &Path, porcelain: &[u8]) -> HashMap<String, (usize, usize)> {
+    let mut stats = HashMap::new();
+    let mut budget = UntrackedBudget::default();
+    for path in parse_git_untracked_paths(porcelain) {
+        if let Some((additions, deletions)) = count_untracked_file_lines(repo_root, &path, &mut budget) {
+            stats.insert(path.replace('\\', "/"), (additions, deletions));
+        }
+    }
+    stats
+}
+
+#[derive(Default)]
+struct UntrackedBudget {
+    files: usize,
+    bytes: u64,
+}
+
+fn count_untracked_file_lines(
+    repo_root: &Path,
+    relative_path: &str,
+    budget: &mut UntrackedBudget,
+) -> Option<(usize, usize)> {
+    const MAX_BYTES: u64 = 1_048_576;
+    const MAX_FILES: usize = 256;
+    const MAX_TOTAL_BYTES: u64 = 8 * 1_048_576;
+    if budget.files >= MAX_FILES {
+        return None;
+    }
+    let path = repo_root.join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_BYTES {
+        return None;
+    }
+    if budget.bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES {
+        return None;
+    }
+    let canonical_root = canonicalize_existing_path(repo_root).ok()?;
+    let canonical = canonicalize_existing_path(&path).ok()?;
+    if !path_within_root(&canonical_root, &canonical) {
+        return None;
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.contains(&0) {
+        return None;
+    }
+    let additions = if bytes.is_empty() {
+        0
+    } else {
+        let newline_count = bytes.iter().filter(|&&byte| byte == b'\n').count();
+        newline_count + usize::from(*bytes.last().unwrap() != b'\n')
+    };
+    budget.files += 1;
+    budget.bytes += metadata.len();
+    Some((additions, 0))
+}
+
+fn parse_git_untracked_paths(porcelain: &[u8]) -> Vec<String> {
+    porcelain
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .filter_map(|field| {
+            let field = String::from_utf8_lossy(field);
+            if field.starts_with("?? ") {
+                Some(field[3..].trim().replace('/', "\\"))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn parse_git_numstat_record(record: &[u8]) -> Option<(usize, usize, String)> {
+    let mut fields = record.splitn(3, |byte| *byte == b'\t');
+    let additions = parse_git_numstat_count(fields.next()?)?;
+    let deletions = parse_git_numstat_count(fields.next()?)?;
+    let relative_path = String::from_utf8_lossy(fields.next()?).into_owned();
+    Some((additions, deletions, relative_path))
+}
+
+fn parse_git_numstat_count(value: &[u8]) -> Option<usize> {
+    if value == b"-" {
+        return Some(0);
+    }
+    std::str::from_utf8(value).ok()?.parse::<usize>().ok()
 }
 
 fn git_relative_path_for_stage(
@@ -1354,6 +1496,9 @@ fn stack_git_status_from_porcelain(
     remote_repository_url: Option<String>,
     ahead_behind: (Option<usize>, Option<usize>),
     porcelain: &[u8],
+    staged_stats: &HashMap<String, (usize, usize)>,
+    unstaged_stats: &HashMap<String, (usize, usize)>,
+    untracked_stats: &HashMap<String, (usize, usize)>,
 ) -> StackGitStatus {
     let mut status = StackGitStatus {
         repository_root: repo_root.to_string_lossy().into_owned(),
@@ -1386,12 +1531,29 @@ fn stack_git_status_from_porcelain(
         let status_kind = git_status_kind(xy);
         if let Some(kind) = status_kind {
             increment_status_count(&mut status, kind);
+            let staged = git_status_has_staged_change(xy);
+            let unstaged = git_status_has_unstaged_change(xy);
+            let staged_stats_value = staged_stats.get(&relative_path.replace('\\', "/")).copied();
+            let unstaged_stats_value = unstaged_stats.get(&relative_path.replace('\\', "/")).copied();
+            let untracked_stats_value = untracked_stats.get(&relative_path.replace('\\', "/")).copied();
             status.entries.push(StackGitFileStatus {
                 path: absolute_git_status_path(repo_root, &relative_path),
                 relative_path,
                 status: kind,
-                staged: git_status_has_staged_change(xy),
-                unstaged: git_status_has_unstaged_change(xy),
+                staged,
+                unstaged,
+                staged_additions: staged_stats_value.map(|value| value.0),
+                staged_deletions: staged_stats_value.map(|value| value.1),
+                unstaged_additions: if kind == StackGitFileStatusKind::Untracked {
+                    untracked_stats_value.map(|value| value.0)
+                } else {
+                    unstaged_stats_value.map(|value| value.0)
+                },
+                unstaged_deletions: if kind == StackGitFileStatusKind::Untracked {
+                    untracked_stats_value.map(|value| value.1)
+                } else {
+                    unstaged_stats_value.map(|value| value.1)
+                },
             });
             if matches!(xy.as_bytes().first(), Some(b'R' | b'C')) {
                 if let Some(next) = fields.get(index + 1) {
@@ -1400,8 +1562,20 @@ fn stack_git_status_from_porcelain(
                         path: absolute_git_status_path(repo_root, &other_relative_path),
                         relative_path: other_relative_path,
                         status: kind,
-                        staged: git_status_has_staged_change(xy),
-                        unstaged: git_status_has_unstaged_change(xy),
+                        staged,
+                        unstaged,
+                        staged_additions: staged_stats_value.map(|value| value.0),
+                        staged_deletions: staged_stats_value.map(|value| value.1),
+                        unstaged_additions: if kind == StackGitFileStatusKind::Untracked {
+                            untracked_stats_value.map(|value| value.0)
+                        } else {
+                            unstaged_stats_value.map(|value| value.0)
+                        },
+                        unstaged_deletions: if kind == StackGitFileStatusKind::Untracked {
+                            untracked_stats_value.map(|value| value.1)
+                        } else {
+                            unstaged_stats_value.map(|value| value.1)
+                        },
                     });
                 }
             }
@@ -1705,12 +1879,15 @@ mod tests {
         git_relative_path_for_request, git_status_kind, git_timeout_for_mode, local_branch_ref,
         annotate_branches_with_worktrees, normalize_git_remote_url, nul_joined_pathspecs,
         parse_git_branch_output, parse_git_worktree_output, remove_worktree_git_args,
-        parse_git_commit_files_output, parse_git_log_output, parse_git_stash_list_output,
-        parse_git_tree_output,
+        parse_git_commit_files_output, parse_git_log_output, parse_git_numstat_output,
+        parse_git_stash_list_output, parse_git_tree_output,
         stack_git_status_from_porcelain, validate_git_branch_name, validate_git_stash_ref,
         validate_treeish, GitCommandError, GitRunMode,
+        parse_git_untracked_numstat_output, count_untracked_file_lines, UntrackedBudget,
     };
     use crate::stack_popup::models::StackGitFileStatusKind;
+    use std::collections::HashMap;
+    use std::fs;
     use std::path::Path;
     use std::process::Command;
     use std::time::Duration;
@@ -1720,6 +1897,7 @@ mod tests {
         let files = parse_git_commit_files_output(
             b"M\0src/a.rs\0A\0x y.txt\0R100\0old.rs\0new.rs\0",
             Path::new("C:/repo"),
+            &Default::default(),
         );
 
         assert_eq!(files.len(), 3);
@@ -1729,6 +1907,72 @@ mod tests {
         assert_eq!(files[1].relative_path, "x y.txt");
         assert_eq!(files[2].status, "R100");
         assert_eq!(files[2].relative_path, "new.rs");
+    }
+
+    #[test]
+    fn numstat_parser_handles_tab_records_binary_and_rename_nuls() {
+        let stats = parse_git_numstat_output(
+            b"2\t1\tsrc/lib.rs\0-\t-\tbinary.dat\03\t0\t\0old name.rs\0new name.rs\0",
+            Path::new("C:/repo"),
+        );
+
+        assert_eq!(stats.get("src/lib.rs"), Some(&(2, 1)));
+        assert_eq!(stats.get("binary.dat"), Some(&(0, 0)));
+        assert_eq!(stats.get("new name.rs"), Some(&(3, 0)));
+        assert!(!stats.contains_key("old name.rs"));
+    }
+
+    #[test]
+    fn untracked_line_counter_handles_trailing_newline_and_nonterminated_bytes() {
+        let tmp = std::env::temp_dir().join(format!("git-upgrade-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).expect("temp dir");
+        let repo = tmp.join("repo");
+        fs::create_dir_all(&repo).expect("repo dir");
+        fs::write(repo.join("with_newline.txt"), b"a\nb\n").expect("write newline file");
+        fs::write(repo.join("without_newline.txt"), b"a\nb").expect("write nonterminated file");
+        let mut budget = UntrackedBudget::default();
+        assert_eq!(count_untracked_file_lines(&repo, "with_newline.txt", &mut budget), Some((2, 0)));
+        assert_eq!(count_untracked_file_lines(&repo, "without_newline.txt", &mut budget), Some((2, 0)));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn untracked_line_counter_rejects_symlink_outside_repo() {
+        let tmp = std::env::temp_dir().join(format!("git-upgrade-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).expect("temp dir");
+        let repo = tmp.join("repo");
+        let outside = tmp.join("outside.txt");
+        fs::create_dir_all(&repo).expect("repo dir");
+        fs::write(&outside, b"outside\n").expect("outside file");
+        let link = repo.join("link.txt");
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            if symlink_file(&outside, &link).is_ok() {
+                let mut budget = UntrackedBudget::default();
+                assert_eq!(count_untracked_file_lines(&repo, "link.txt", &mut budget), None);
+            }
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn untracked_line_counter_stops_after_budget() {
+        let tmp = std::env::temp_dir().join(format!("git-upgrade-budget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("repo")).expect("repo dir");
+        let repo = tmp.join("repo");
+        for idx in 0..260usize {
+            fs::write(repo.join(format!("file{idx}.txt")), b"x\n").expect("write file");
+        }
+        let porcelain = (0..260usize)
+            .map(|idx| format!("?? file{idx}.txt\0"))
+            .collect::<String>();
+        let stats = parse_git_untracked_numstat_output(&repo, porcelain.as_bytes());
+        assert!(stats.len() <= 256);
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -1787,6 +2031,9 @@ mod tests {
             Some("https://github.com/acme/repo".to_string()),
             (None, None),
             b" M src/lib.rs\0A  app/main.rs\0?? notes/todo.md\0D  old.txt\0UU conflict.txt\0",
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert_eq!(status.branch, "main");
@@ -1814,6 +2061,9 @@ mod tests {
             None,
             (None, None),
             b"MM both.rs\0M  staged.rs\0 M unstaged.rs\0?? new.txt\0",
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
         );
 
         let both = status
@@ -1849,6 +2099,9 @@ mod tests {
             None,
             (None, None),
             b"R  old.txt\0new.txt\0C  copy-old.txt\0copy-new.txt\0",
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert_eq!(status.entries.len(), 4);

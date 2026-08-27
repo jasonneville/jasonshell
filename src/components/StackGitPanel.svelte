@@ -13,6 +13,7 @@
     StackGitDiff,
     StackGitFileStatus,
     StackGitLog,
+    StackGitStashFile,
     StackGitStashEntry,
     StackGitStashes,
     StackGitStatus
@@ -20,7 +21,7 @@
 
   type StackGitView = 'changes' | 'history' | 'stashes' | 'branches';
   type StackGitConfirmKind = 'discard' | 'stash-pop' | 'stash-drop' | 'checkout' | 'create-branch' | 'delete-branch';
-  type StackGitCommitFile = { path: string; relativePath: string; status: string };
+  type StackGitCommitFile = { path: string; relativePath: string; status: string; additions?: number; deletions?: number };
   type StackGitBranchRow = StackGitBranches['branches'][number] & {
     checkedOutElsewhere?: boolean;
     checkedOutElsewherePath?: string | null;
@@ -41,12 +42,12 @@
   let activeView: StackGitView = 'changes';
   let status: StackGitStatus | null = initialStatus;
   let history: StackGitLog['entries'] = [];
-  let historyFiles: StackGitCommitFile[] = [];
+  let historyFiles: (StackGitCommitFile & { additions?: number; deletions?: number })[] = [];
   let historyFilesLoading = false;
   let historyFilesError = '';
   let branches: StackGitBranchRow[] = [];
   let stashes: StackGitStashes['entries'] = [];
-  let stashFiles: { path: string; relativePath: string; status: string }[] = [];
+  let stashFiles: (StackGitStashFile & { additions?: number; deletions?: number })[] = [];
   let stashFilesLoading = false;
   let stashFilesError = '';
   let commitMessage = '';
@@ -146,6 +147,17 @@
     return fallback;
   }
 
+  function stackGitPathParts(relativePath: string) {
+    const lastSeparator = Math.max(relativePath.lastIndexOf('/'), relativePath.lastIndexOf('\\'));
+    return lastSeparator < 0
+      ? { directory: '', separator: '', name: relativePath }
+      : { directory: relativePath.slice(0, lastSeparator).replaceAll('\\', '/'), separator: '/', name: relativePath.slice(lastSeparator + 1) };
+  }
+
+  function changeGroupLabel(label: string, count: number) {
+    return `${label} (${count} ${count === 1 ? 'file' : 'files'})`;
+  }
+
   function branchDeleteFocusTarget(branchName: string, force = false) {
     const attr = force ? 'data-stack-git-branch-force-delete' : 'data-stack-git-branch-delete';
     return Array.from(branchPickerElement?.querySelectorAll<HTMLButtonElement>(`[${attr}]`) ?? []).find(
@@ -214,6 +226,10 @@
     void loadDiff(entry.path, staged, entry.status);
   }
 
+  function changeGroupFileId(staged: boolean, index: number) {
+    return `stack-git-change-group-${staged ? 'staged' : 'unstaged'}-file-${index}`;
+  }
+
   function selectChangePath(path: string, additive = false) {
     selectedChangePaths = additive
       ? selectedChangePaths.includes(path)
@@ -250,6 +266,13 @@
 
   function ensureBranchSelection() {
     if (!selectedBranchName && branches.length) selectedBranchName = status?.branch ?? branches[0].name;
+  }
+
+  function toggleChangeGroup(group: 'staged' | 'unstaged') {
+    const next = new Set(collapsedChangeGroups);
+    if (next.has(group)) next.delete(group);
+    else next.add(group);
+    collapsedChangeGroups = next;
   }
 
   async function refreshStatus() {
@@ -1030,6 +1053,17 @@
     return `stack-git-badge git-status-${map[status] ?? 'modified'}`;
   }
 
+  function fileStatLabel(entry: { additions: number; deletions: number }) {
+    return `+${entry.additions ?? 0} -${entry.deletions ?? 0}`;
+  }
+
+  function changeRowStats(entry: StackGitFileStatus, group: 'staged' | 'unstaged') {
+    if (group === 'staged') {
+      return { additions: entry.stagedAdditions ?? 0, deletions: entry.stagedDeletions ?? 0 };
+    }
+    return { additions: entry.unstagedAdditions ?? 0, deletions: entry.unstagedDeletions ?? 0 };
+  }
+
   function isCurrentBranch(branch: StackGitBranches['branches'][number], currentBranch: string) {
     return !branch.remote && normalizeBranchLabel(branch) === currentBranch;
   }
@@ -1049,17 +1083,6 @@
 
   function canDiscardEntry(entry: StackGitFileStatus) {
     return entry.status !== 'untracked' && !entry.staged;
-  }
-
-  function isChangeGroupCollapsed(group: 'staged' | 'unstaged') {
-    return collapsedChangeGroups.has(group);
-  }
-
-  function toggleChangeGroup(group: 'staged' | 'unstaged') {
-    const next = new Set(collapsedChangeGroups);
-    if (next.has(group)) next.delete(group);
-    else next.add(group);
-    collapsedChangeGroups = next;
   }
 
   function changeRowActionLabel(group: 'staged' | 'unstaged') {
@@ -1390,79 +1413,93 @@
           {/if}
 
           {#if stagedEntries.length}
-          <section id={stagedChangeGroupId} class="stack-git-change-group" aria-label="Staged changes">
-            <header class="stack-git-change-group-header">
-              <button type="button" class="stack-git-change-group-header__bulk" aria-label="Unstage all staged files" title="Unstage all" disabled={!canUnstageGitSelection(stagedEntries) || operationBusy} on:click={() => void unstagePaths(stagedEntries.map((entry) => entry.path))}>−</button>
-              <button type="button" class="stack-git-change-group-header__title" aria-controls={stagedChangeGroupId} aria-expanded={!isChangeGroupCollapsed('staged')} on:click={() => toggleChangeGroup('staged')}>
-                <span>Staged</span>
-                <span>{groupedEntries.stagedCount}</span>
-                <span aria-hidden="true">{isChangeGroupCollapsed('staged') ? '▸' : '▾'}</span>
-              </button>
-            </header>
-
-            {#if !isChangeGroupCollapsed('staged')}
-              {#each stagedEntries as entry (entry.path + (entry.unstaged ? '-both-staged' : '-staged'))}
-                  <div class="stack-git-change-row staged" role="listitem">
-                    <button type="button" class="stack-git-change-row__action" aria-label="Unstage" title={changeRowActionLabel('staged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'staged')}>{changeRowActionSymbol('staged')}</button>
-                    <button type="button" class="stack-git-change-row__content" aria-pressed={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} on:click={() => openChangeDiff(entry, true)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'staged')}>
-                      <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
-                      <span class="stack-git-change-row__path" title={entry.relativePath}>
-                        {#if entry.relativePath.includes('/')}
-                          {@const lastSlash = entry.relativePath.lastIndexOf('/')}
-                          <span class="stack-git-change-row__dir">{entry.relativePath.slice(0, lastSlash)}</span><span class="stack-git-change-row__sep">/</span><span class="stack-git-change-row__name">{entry.relativePath.slice(lastSlash + 1)}</span>
-                        {:else}
-                          <span class="stack-git-change-row__name">{entry.relativePath}</span>
-                        {/if}
-                      </span>
-                    </button>
-                  </div>
-                  {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && diffDrawerStaged}
-                    <div class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
-                      <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
+          <section id={stagedChangeGroupId} class="stack-git-change-group" role="listitem" aria-label="Staged changes">
+            <div class="stack-git-history-commit">
+              <div class="stack-git-row-shell">
+                <div class="stack-git-change-group-shell">
+                  <button type="button" class="stack-git-change-group__bulk" aria-label="Unstage all staged files" title="Unstage all" disabled={!canUnstageGitSelection(stagedEntries) || operationBusy} on:click={() => void unstagePaths(stagedEntries.map((entry) => entry.path))}>−</button>
+                  <button type="button" class="stack-git-stream-row stack-git-change-group-row" aria-expanded={!collapsedChangeGroups.has('staged')} aria-controls="stack-git-change-group-files-staged" on:click={() => toggleChangeGroup('staged')}>
+                    <span class="stack-git-change-group-row__title">{changeGroupLabel('Staged', groupedEntries.stagedCount)}</span>
+                    <span aria-hidden="true" class="stack-git-history-file__chevron"></span>
+                  </button>
+                </div>
+              </div>
+              {#if !collapsedChangeGroups.has('staged')}
+                <div id="stack-git-change-group-files-staged" class="stack-git-history-files stack-git-change-group-files" role="list" aria-label="Staged changes files">
+                  {#each stagedEntries as entry, entryIndex (entry.path + (entry.unstaged ? '-both-staged' : '-staged'))}
+                    {@const pathParts = stackGitPathParts(entry.relativePath)}
+                    <div class="stack-git-history-file-shell stack-git-change-group-file-shell" role="listitem">
+                      <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Unstage" title={changeRowActionLabel('staged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'staged')}>{changeRowActionSymbol('staged')}</button>
+                      <div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} aria-controls={changeGroupFileId(true, entryIndex)} on:click={() => openChangeDiff(entry, true)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'staged')}>
+                        <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
+                        <span class="stack-git-path">
+                          <span class="stack-git-path__dir">{pathParts.directory}</span>
+                          <span class="stack-git-path__sep">{pathParts.separator}</span>
+                          <span class="stack-git-path__name">{pathParts.name}</span>
+                        </span>
+                        <span class="stack-git-history-file__stats" aria-label={`Changes ${fileStatLabel(changeRowStats(entry, 'staged'))}`}>
+                          <span class="stack-git-history-file__stat stack-git-history-file__stat--success">+{changeRowStats(entry, 'staged').additions}</span>
+                          <span class="stack-git-history-file__stat stack-git-history-file__stat--error">-{changeRowStats(entry, 'staged').deletions}</span>
+                        </span>
+                        <span class="stack-git-history-file__chevron" aria-hidden="true"></span>
+                      </div>
+                      {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && diffDrawerStaged}
+                        <div id={changeGroupFileId(true, entryIndex)} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
+                          <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
+                        </div>
+                      {/if}
                     </div>
-                  {/if}
-              {/each}
-            {/if}
+                  {/each}
+                </div>
+              {/if}
+            </div>
           </section>
           {/if}
 
           {#if unstagedEntries.length}
-          <section id={unstagedChangeGroupId} class="stack-git-change-group" aria-label="Unstaged changes">
-            <header class="stack-git-change-group-header">
-              <button type="button" class="stack-git-change-group-header__bulk" aria-label="Stage all unstaged files" title="Stage all" disabled={!canStageGitSelection(unstagedEntries) || operationBusy} on:click={() => void stagePaths(unstagedEntries.map((entry) => entry.path))}>+</button>
-              <button type="button" class="stack-git-change-group-header__title" aria-controls={unstagedChangeGroupId} aria-expanded={!isChangeGroupCollapsed('unstaged')} on:click={() => toggleChangeGroup('unstaged')}>
-                <span>Unstaged</span>
-                <span>{groupedEntries.unstagedCount}</span>
-                <span aria-hidden="true">{isChangeGroupCollapsed('unstaged') ? '▸' : '▾'}</span>
-              </button>
-            </header>
-
-            {#if !isChangeGroupCollapsed('unstaged')}
-              {#each unstagedEntries as entry (entry.path + (entry.staged ? '-both-unstaged' : '-unstaged'))}
-                  <div class="stack-git-change-row unstaged" role="listitem">
-                    <button type="button" class="stack-git-change-row__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
-                    <button type="button" class="stack-git-change-row__content" aria-pressed={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')}>
-                      <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
-                      <span class="stack-git-change-row__path" title={entry.relativePath}>
-                        {#if entry.relativePath.includes('/')}
-                          {@const lastSlash = entry.relativePath.lastIndexOf('/')}
-                          <span class="stack-git-change-row__dir">{entry.relativePath.slice(0, lastSlash)}</span><span class="stack-git-change-row__sep">/</span><span class="stack-git-change-row__name">{entry.relativePath.slice(lastSlash + 1)}</span>
-                        {:else}
-                          <span class="stack-git-change-row__name">{entry.relativePath}</span>
-                        {/if}
-                      </span>
-                    </button>
-                    {#if canDiscardEntry(entry)}
-                      <button type="button" class="stack-git-change-row__discard" aria-label="Discard" title={`Discard ${entry.relativePath}`} disabled={operationBusy} on:click={() => void discardPaths([entry])}>↺</button>
-                    {/if}
-                  </div>
-                  {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && !diffDrawerStaged}
-                    <div class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
-                      <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
+          <section id={unstagedChangeGroupId} class="stack-git-change-group" role="listitem" aria-label="Unstaged changes">
+            <div class="stack-git-history-commit">
+              <div class="stack-git-row-shell">
+                <div class="stack-git-change-group-shell">
+                  <button type="button" class="stack-git-change-group__bulk" aria-label="Stage all unstaged files" title="Stage all" disabled={!canStageGitSelection(unstagedEntries) || operationBusy} on:click={() => void stagePaths(unstagedEntries.map((entry) => entry.path))}>+</button>
+                  <button type="button" class="stack-git-stream-row stack-git-change-group-row" aria-expanded={!collapsedChangeGroups.has('unstaged')} aria-controls="stack-git-change-group-files-unstaged" on:click={() => toggleChangeGroup('unstaged')}>
+                    <span class="stack-git-change-group-row__title">{changeGroupLabel('Unstaged', groupedEntries.unstagedCount)}</span>
+                    <span aria-hidden="true" class="stack-git-history-file__chevron"></span>
+                  </button>
+                </div>
+              </div>
+              {#if !collapsedChangeGroups.has('unstaged')}
+                <div id="stack-git-change-group-files-unstaged" class="stack-git-history-files stack-git-change-group-files" role="list" aria-label="Unstaged changes files">
+                  {#each unstagedEntries as entry, entryIndex (entry.path + (entry.staged ? '-both-unstaged' : '-unstaged'))}
+                    {@const pathParts = stackGitPathParts(entry.relativePath)}
+                    <div class="stack-git-history-file-shell stack-git-change-group-file-shell" role="listitem">
+                      <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
+                      <div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-controls={changeGroupFileId(false, entryIndex)} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')}>
+                        <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
+                        <span class="stack-git-path">
+                          <span class="stack-git-path__dir">{pathParts.directory}</span>
+                          <span class="stack-git-path__sep">{pathParts.separator}</span>
+                          <span class="stack-git-path__name">{pathParts.name}</span>
+                        </span>
+                        <span class="stack-git-history-file__stats" aria-label={`Changes ${fileStatLabel(changeRowStats(entry, 'unstaged'))}`}>
+                          <span class="stack-git-history-file__stat stack-git-history-file__stat--success">+{changeRowStats(entry, 'unstaged').additions}</span>
+                          <span class="stack-git-history-file__stat stack-git-history-file__stat--error">-{changeRowStats(entry, 'unstaged').deletions}</span>
+                        </span>
+                        <span class="stack-git-history-file__chevron" aria-hidden="true"></span>
+                      </div>
+                      {#if canDiscardEntry(entry)}
+                        <button type="button" class="stack-git-change-row__discard stack-git-change-group-file__discard" aria-label="Discard" title={`Discard ${entry.relativePath}`} disabled={operationBusy} on:click={() => void discardPaths([entry])}>↺</button>
+                      {/if}
+                      {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && !diffDrawerStaged}
+                        <div id={changeGroupFileId(false, entryIndex)} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
+                          <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
+                        </div>
+                      {/if}
                     </div>
-                  {/if}
-              {/each}
-            {/if}
+                  {/each}
+                </div>
+              {/if}
+            </div>
           </section>
           {/if}
         </div>
@@ -1497,13 +1534,19 @@
                     <div class="stack-git-empty stack-git-empty--error">{historyFilesError}</div>
                   {:else if historyFiles.length}
                     {#each historyFiles as file, fileIndex (file.path)}
+                      {@const pathParts = stackGitPathParts(file.relativePath)}
                       <div class="stack-git-history-file-shell" role="listitem">
                         <button type="button" class="stack-git-history-file" aria-expanded={selectedHistoryFilePath === file.path} aria-controls={`stack-git-history-diff-${entry.commitHash}-${fileIndex}`} on:click={() => selectHistoryFile(file.path)}>
                           <span class={commitFileStatusClass(file.status)}>{commitFileStatusLabel(file.status)}</span>
                           <span class="stack-git-path">
-                            <span class="stack-git-path__dir">{file.relativePath.includes('/') ? file.relativePath.slice(0, file.relativePath.lastIndexOf('/')) : ''}</span>
-                            <span class="stack-git-path__name">{file.relativePath.includes('/') ? file.relativePath.slice(file.relativePath.lastIndexOf('/') + 1) : file.relativePath}</span>
+                            <span class="stack-git-path__dir">{pathParts.directory}</span>
+                            <span class="stack-git-path__sep">{pathParts.separator}</span>
+                            <span class="stack-git-path__name">{pathParts.name}</span>
                           </span>
+                            <span class="stack-git-history-file__stats" aria-label={`History ${fileStatLabel({ additions: file.additions ?? 0, deletions: file.deletions ?? 0 })}`}>
+                              <span class="stack-git-history-file__stat stack-git-history-file__stat--success">+{file.additions ?? 0}</span>
+                              <span class="stack-git-history-file__stat stack-git-history-file__stat--error">-{file.deletions ?? 0}</span>
+                            </span>
                           <span class="stack-git-history-file__chevron" aria-hidden="true"></span>
                         </button>
                         {#if selectedHistoryFilePath === file.path}
@@ -1536,40 +1579,52 @@
           {:else if stashes.length}
             {#each stashes as stash (normalizeRef(stash))}
               {@const stashRef = normalizeRef(stash)}
-              <div class="stack-git-row-shell" role="listitem">
-                <button type="button" class:selected={selectedStashRef === stashRef} class="stack-git-stream-row" on:click={() => selectStash(stashRef)} on:keydown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    selectStash(stashRef);
-                  }
-                }}>
-                  <code>{stashRef}</code>
-                  <div>
-                    <strong title={normalizeStashLabel(stash)}>{normalizeStashLabel(stash)}</strong>
-                    <small>{stash.branch ? `Branch ${stash.branch}` : `stash@{${stash.index}}`}</small>
+              <div class="stack-git-history-commit" role="listitem">
+                <div class="stack-git-row-shell">
+                  <button type="button" class:selected={selectedStashRef === stashRef} class="stack-git-stream-row" on:click={() => selectStash(stashRef)} on:keydown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      selectStash(stashRef);
+                    }
+                  }}>
+                    <code>{stashRef}</code>
+                    <div>
+                      <strong title={normalizeStashLabel(stash)}>{normalizeStashLabel(stash)}</strong>
+                      <small>{stash.branch ? `Branch ${stash.branch}` : `stash@{${stash.index}}`}</small>
+                    </div>
+                  </button>
+                  <div class="stack-git-row-actions">
+                    <button type="button" on:click={() => void applyStash(stashRef)}>Apply</button>
+                    <button type="button" on:click={() => void popStash(stashRef)}>Pop</button>
+                    <button type="button" on:click={() => void dropStash(stashRef)}>Drop</button>
                   </div>
-                </button>
-                <div class="stack-git-row-actions">
-                  <button type="button" on:click={() => void applyStash(stashRef)}>Apply</button>
-                  <button type="button" on:click={() => void popStash(stashRef)}>Pop</button>
-                  <button type="button" on:click={() => void dropStash(stashRef)}>Drop</button>
                 </div>
                 {#if selectedStashRef === stashRef}
-                  <div class="stack-git-change-diff-drawer" role="region" aria-label={`Files in ${normalizeStashLabel(stash)}`}>
+                  <div class="stack-git-history-files stack-git-stash-files" role="list" aria-label={`Files in ${normalizeStashLabel(stash)}`}>
                     {#if stashFilesError}<div class="stack-git-empty stack-git-empty--error">{stashFilesError}</div>{/if}
                     {#if stashFilesLoading && !stashFiles.length}
                       <div class="stack-git-empty">Loading stash files...</div>
                     {:else if stashFiles.length}
                       {#each stashFiles as file, fileIndex (file.path)}
-                        <div class="stack-git-change-row-shell" role="listitem">
-                          <button type="button" class:selected={selectedStashFilePath === file.path} class="stack-git-change-row" aria-expanded={selectedStashFilePath === file.path} aria-controls={`stack-git-stash-diff-${stashRef}-${fileIndex}`} on:click={() => selectStashFile(file.path)} on:keydown={(event) => {
+                        {@const pathParts = stackGitPathParts(file.relativePath)}
+                        <div class="stack-git-history-file-shell stack-git-stash-file-shell" role="listitem">
+                          <button type="button" class:selected={selectedStashFilePath === file.path} class="stack-git-history-file stack-git-stash-file" aria-expanded={selectedStashFilePath === file.path} aria-controls={`stack-git-stash-diff-${stashRef}-${fileIndex}`} on:click={() => selectStashFile(file.path)} on:keydown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
                               selectStashFile(file.path);
                             }
                           }}>
-                            <span class="stack-git-path__dir">{file.status}</span>
-                            <span class="stack-git-path__name">{file.relativePath}</span>
+                            <span class={commitFileStatusClass(file.status)}>{commitFileStatusLabel(file.status)}</span>
+                            <span class="stack-git-path">
+                              <span class="stack-git-path__dir">{pathParts.directory}</span>
+                              <span class="stack-git-path__sep">{pathParts.separator}</span>
+                              <span class="stack-git-path__name">{pathParts.name}</span>
+                            </span>
+                            <span class="stack-git-history-file__stats" aria-label={`Stash ${fileStatLabel({ additions: file.additions ?? 0, deletions: file.deletions ?? 0 })}`}>
+                              <span class="stack-git-history-file__stat stack-git-history-file__stat--success">+{file.additions ?? 0}</span>
+                              <span class="stack-git-history-file__stat stack-git-history-file__stat--error">-{file.deletions ?? 0}</span>
+                            </span>
+                           <span class="stack-git-history-file__chevron" aria-hidden="true"></span>
                           </button>
                           {#if selectedStashFilePath === file.path}
                             <div id={`stack-git-stash-diff-${stashRef}-${fileIndex}`} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${file.relativePath}`}>
@@ -1654,9 +1709,9 @@
     </section>
   </div>
 
-  {#if errorMessage || statusMessage}
+  {#if errorMessage }
     <div class:error={Boolean(errorMessage)} class="stack-git-operation-status" role="status" aria-live="polite">
-      {errorMessage || statusMessage}
+      {errorMessage}
     </div>
   {/if}
 
@@ -2080,7 +2135,46 @@
     z-index: 2;
   }
 
-  .stack-git-panel button.stack-git-change-group-header__bulk,
+  .stack-git-change-group-shell {
+    align-items: stretch;
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 56%, transparent);
+    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 88%, transparent);
+    border-radius: var(--js-radius-sm);
+    display: grid;
+    gap: 0;
+    grid-template-columns: max-content minmax(0, 1fr);
+    height: 34px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .stack-git-change-group-shell:hover,
+  .stack-git-change-group-shell:focus-within {
+    background: color-mix(in srgb, var(--js-color-control-hover) 76%, var(--js-color-surface-overlay));
+    border-color: color-mix(in srgb, var(--js-color-accent-border) 62%, var(--js-color-border-soft));
+  }
+
+  .stack-git-change-group-shell:hover > .stack-git-change-group__bulk,
+  .stack-git-change-group-shell:hover > .stack-git-change-group-row,
+  .stack-git-change-group-shell:focus-within > .stack-git-change-group__bulk,
+  .stack-git-change-group-shell:focus-within > .stack-git-change-group-row {
+    background: color-mix(in srgb, var(--js-color-control-hover) 76%, var(--js-color-surface-overlay));
+  }
+
+  .stack-git-change-group-shell > .stack-git-change-group-row {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding-left: 4px;
+  }
+
+  .stack-git-change-group-shell > .stack-git-change-group-row:hover,
+  .stack-git-change-group-shell > .stack-git-change-group-row:focus-visible {
+    background: color-mix(in srgb, var(--js-color-control-hover) 76%, var(--js-color-surface-overlay));
+    border: 0;
+  }
+
+  .stack-git-panel button.stack-git-change-group__bulk,
   .stack-git-panel button.stack-git-change-row__action,
   .stack-git-panel button.stack-git-change-row__discard {
     appearance: none;
@@ -2100,8 +2194,19 @@
     width: 20px;
   }
 
-  .stack-git-panel button.stack-git-change-group-header__bulk:hover:not(:disabled),
-  .stack-git-panel button.stack-git-change-group-header__bulk:active:not(:disabled),
+  .stack-git-panel button.stack-git-change-group__bulk {
+    align-items: center;
+    align-self: stretch;
+    border-radius: 0;
+    height: 100%;
+    justify-content: center;
+    line-height: 1;
+    min-width: 28px;
+    width: 28px;
+  }
+
+  .stack-git-panel button.stack-git-change-group__bulk:hover:not(:disabled),
+  .stack-git-panel button.stack-git-change-group__bulk:active:not(:disabled),
   .stack-git-panel button.stack-git-change-row__action:hover:not(:disabled),
   .stack-git-panel button.stack-git-change-row__action:active:not(:disabled),
   .stack-git-panel button.stack-git-change-row__discard:hover:not(:disabled),
@@ -2110,7 +2215,12 @@
     color: inherit;
   }
 
-  .stack-git-panel button.stack-git-change-group-header__bulk:focus-visible,
+  .stack-git-panel .stack-git-change-group-shell:hover > button.stack-git-change-group__bulk,
+  .stack-git-panel .stack-git-change-group-shell:focus-within > button.stack-git-change-group__bulk {
+    background: color-mix(in srgb, var(--js-color-control-hover) 76%, var(--js-color-surface-overlay));
+  }
+
+  .stack-git-panel button.stack-git-change-group__bulk:focus-visible,
   .stack-git-panel button.stack-git-change-row__action:focus-visible,
   .stack-git-panel button.stack-git-change-row__discard:focus-visible {
     box-shadow: var(--js-focus-ring);
@@ -2126,6 +2236,17 @@
     justify-content: flex-start;
     min-width: 0;
     padding: 0;
+  }
+
+  .stack-git-change-group-row__title {
+    align-items: center;
+    display: inline-flex;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .stack-git-change-groups {
+    margin-inline: -12px;
   }
 
   .stack-git-change-group-header__title span:first-child {
@@ -2207,6 +2328,31 @@
     overflow: hidden;
   }
 
+  .stack-git-change-row__stats,
+  .stack-git-history-file__stats {
+    flex: 0 0 auto;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    gap: 0.45rem;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  .stack-git-change-row__stats {
+    margin-left: auto;
+  }
+
+  .stack-git-change-row__stat--success,
+  .stack-git-history-file__stat--success {
+    color: color-mix(in srgb, var(--js-color-success-border) 75%, var(--js-color-text-strong));
+  }
+
+  .stack-git-change-row__stat--error,
+  .stack-git-history-file__stat--error {
+    color: color-mix(in srgb, var(--js-color-error-border) 75%, var(--js-color-text-strong));
+  }
+
   .stack-git-change-row__dir,
   .stack-git-change-row__sep {
     color: var(--js-color-text-muted);
@@ -2271,8 +2417,61 @@
 
   .stack-git-history-file-shell {
     display: grid;
+    gap: 8px;
     min-width: 0;
     width: 100%;
+  }
+
+  .stack-git-change-group-file-shell {
+    align-items: center;
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 56%, transparent);
+    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 88%, transparent);
+    border-radius: var(--js-radius-sm);
+    gap: 0;
+    min-height: 34px;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+  }
+
+  .stack-git-change-group-file-shell:hover,
+  .stack-git-change-group-file-shell:focus-within {
+    background: color-mix(in srgb, var(--js-color-control-hover) 76%, var(--js-color-surface-overlay));
+    border-color: color-mix(in srgb, var(--js-color-accent-border) 62%, var(--js-color-border-soft));
+  }
+
+  .stack-git-change-group-file-shell > .stack-git-change-row__action {
+    grid-column: 1;
+  }
+
+  .stack-git-change-group-file-shell > .stack-git-history-file {
+    align-items: center;
+    cursor: pointer;
+    display: grid;
+    gap: 9px;
+    grid-column: 2;
+    grid-template-columns: auto minmax(0, 1fr) max-content 12px;
+    height: 34px;
+    min-width: 0;
+    padding: 6px 9px;
+    text-align: left;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .stack-git-change-group-file-shell > .stack-git-change-row__discard {
+    align-self: center;
+    display: inline-flex;
+    grid-column: 3;
+    justify-content: center;
+    height: 20px;
+    min-height: 0;
+  }
+
+  .stack-git-change-group-file-shell > .stack-git-history-file:hover,
+  .stack-git-change-group-file-shell > .stack-git-history-file:focus-visible {
+    background: transparent;
+    border: 0;
   }
 
   .stack-git-panel button.stack-git-history-file {
@@ -2286,8 +2485,8 @@
     display: grid;
     font: inherit;
     gap: 9px;
-    grid-template-columns: auto minmax(0, 1fr) 12px;
-    min-height: 34px;
+    grid-template-columns: auto minmax(0, 1fr) max-content 12px;
+    height: 34px;
     min-width: 0;
     padding: 6px 9px;
     text-align: left;
@@ -2304,6 +2503,24 @@
   .stack-git-panel button.stack-git-history-file:focus-visible {
     box-shadow: var(--js-focus-ring);
     outline: 0;
+  }
+
+  .stack-git-change-group-shell > button:focus-visible,
+  .stack-git-change-group-file-shell > button:focus-visible {
+    box-shadow: none;
+  }
+
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__action,
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__action:hover:not(:disabled),
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__action:focus-visible,
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__action:active:not(:disabled),
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__discard,
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__discard:hover:not(:disabled),
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__discard:focus-visible,
+  .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__discard:active:not(:disabled) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
   }
 
   .stack-git-history-file .stack-git-badge {
@@ -2327,13 +2544,13 @@
     white-space: nowrap;
   }
 
-  .stack-git-path__dir {
+  .stack-git-path__dir,
+  .stack-git-path__sep {
     color: var(--js-color-text-muted);
-    flex: 0 1 auto;
   }
 
-  .stack-git-path__dir:not(:empty)::after {
-    content: '/';
+  .stack-git-path__dir {
+    flex: 0 1 auto;
   }
 
   .stack-git-path__name {
@@ -2348,17 +2565,20 @@
     border-right: 1.5px solid currentColor;
     height: 6px;
     justify-self: center;
+    min-width: 6px;
     opacity: 0.65;
     transform: rotate(45deg) translate(-1px, 1px);
     transition: transform 140ms ease;
     width: 6px;
   }
 
-  .stack-git-history-file[aria-expanded='true'] .stack-git-history-file__chevron {
+  .stack-git-history-file[aria-expanded='true'] .stack-git-history-file__chevron,
+  .stack-git-change-group-row[aria-expanded='true'] .stack-git-history-file__chevron {
     transform: rotate(225deg) translate(-1px, 1px);
   }
 
   .stack-git-history-file-shell > .stack-git-change-diff-drawer {
+    grid-column: 1 / -1;
     border-radius: 0 0 var(--js-radius-xs) var(--js-radius-xs);
     max-height: min(32rem, 55vh);
   }

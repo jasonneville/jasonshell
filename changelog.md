@@ -1,4 +1,22 @@
 ## Change Ledger
+- 2026-08-27 `[CODE]` FIXED: Staged/unstaged header chevrons now rotate with expanded state like file-row chevrons.
+- 2026-08-27 `[CODE]` FIXED: Changes-view staged/unstaged headers now use directly tracked Svelte collapse state, restoring working file-list collapse and expansion while defaulting both groups open.
+- 2026-08-27 `[CODE]` CHANGED: Staged/unstaged headers now show pluralized file counts and align their right-edge chevrons with file rows.
+- 2026-08-27 `[CODE]` FIXED: Removed overlapping Unicode arrows from staged and unstaged disclosure chevrons, eliminating the artifact beside the CSS-drawn icon.
+- 2026-08-27 `[CODE]` FIXED: Staged and unstaged group hover/focus highlighting now covers the bulk `+`/`-` action area and disclosure label uniformly.
+- 2026-08-27 `[CODE]` FIXED: Stack Git file paths now display forward slashes consistently, including paths received with Windows backslashes.
+- 2026-08-27 `[CODE]` FIXED: Stack Git file-path emphasis now recognizes Windows backslashes as well as Git forward slashes, so Changes mutes intermediate folders and keeps only the basename plus extension prominent.
+- 2026-08-27 `[TOOL]` VALIDATED: Added RED-first separator coverage; focused Stack Git contracts pass 31/31 and `svelte-check` reports zero errors.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes group headers now keep the bulk action and disclosure in one unified shell, with the bulk button before the title and the staged/unstaged glyph placed directly before the label text.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes file rows now keep the stage/unstage action at far left, the diff disclosure button transparent in the center, and discard aligned at the right edge inside one shared row shell.
+- 2026-08-27 `[TEST]` TESTED: Updated focused source-contract assertions for unified header shells, action-before-title order, transparent central file buttons, action placement, and centered discard alignment.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes rows now use a three-column shell with stage/unstage at far left, diff disclosure in the center, discard at far right, and full-width in-flow drawer alignment under the same row shell.
+- 2026-08-27 `[TEST]` TESTED: Updated focused source-contract assertions for action order, shared row-shell grid columns, discard placement, and drawer full-span geometry.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes, History, and Stashes file rows now show additions/deletions badges in `+N -M` form beside the action edge, and commit/stash file payloads now include numstat counts from Rust so the UI can render them consistently.
+- 2026-08-27 `[TOOL]` TESTED: Added focused source-contract coverage for Stack Git row stats and OpenChamber color usage.
+
+- 2026-08-27 `[CODE]` FIXED: Stack Git stash drawers now use the same vertical outer wrapper and file-list geometry as History, with the file list opening below the closed row shell instead of nesting inside the horizontal row shell.
+- 2026-08-27 `[TEST]` TESTED: Added focused source-contract coverage for stash drawer placement, row-shell closure before drawer render, and reuse of History file-list/file-shell/file classes.
 
 - 2026-08-26 `[CODE]` FIXED: Stack Git Stashes now uses a 2-layer in-flow drawer model matching History: stash rows open nested file lists, stash file rows open nested diffs, and Apply/Pop/Drop stay mutation-only.
 - 2026-08-26 `[TOOL]` TESTED: Added focused Stack Git contracts covering dedicated stash file-list/file-diff IPC, stash-ref validation, and the rejection of commit-hash validators for stash refs.

@@ -37,6 +37,10 @@ export type StackGitFileStatus = {
   status: StackGitFileStatusKind;
   staged: boolean;
   unstaged: boolean;
+  stagedAdditions?: number;
+  stagedDeletions?: number;
+  unstagedAdditions?: number;
+  unstagedDeletions?: number;
 };
 
 export type StackGitStatus = {
@@ -61,10 +65,13 @@ export type StackGitOperationResult = {
 export type StackGitBranchOperationResult = StackGitOperationResult;
 export type StackGitDiff = { repositoryRoot: string; path: string; staged: boolean; content: string };
 export type StackGitCommitFile = { path: string; relativePath: string; status: string };
-export type StackGitCommitFiles = { repositoryRoot: string; commitHash: string; files: StackGitCommitFile[] };
+export type StackGitFileStats = { additions: number; deletions: number };
+export type StackGitCommitFileWithStats = StackGitCommitFile & StackGitFileStats;
+export type StackGitCommitFiles = { repositoryRoot: string; commitHash: string; files: StackGitCommitFileWithStats[] };
 export type StackGitCommitFileDiff = { repositoryRoot: string; commitHash: string; path: string; content: string };
 export type StackGitStashFile = { path: string; relativePath: string; status: string };
-export type StackGitStashFiles = { repositoryRoot: string; stashRef: string; files: StackGitStashFile[] };
+export type StackGitStashFileWithStats = StackGitStashFile & StackGitFileStats;
+export type StackGitStashFiles = { repositoryRoot: string; stashRef: string; files: StackGitStashFileWithStats[] };
 export type StackGitStashFileDiff = { repositoryRoot: string; stashRef: string; path: string; content: string };
 export type StackGitStashEntry = { stashRef: string; ref: string; index: number; branch?: string | null; message: string };
 export type StackGitStashes = { repositoryRoot: string; entries: StackGitStashEntry[] };

@@ -97,6 +97,14 @@ pub struct StackGitFileStatus {
     pub status: StackGitFileStatusKind,
     pub staged: bool,
     pub unstaged: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staged_additions: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staged_deletions: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unstaged_additions: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unstaged_deletions: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -175,6 +183,8 @@ pub struct StackGitCommitFile {
     pub path: String,
     pub relative_path: String,
     pub status: String,
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -215,6 +225,8 @@ pub struct StackGitStashFile {
     pub path: String,
     pub relative_path: String,
     pub status: String,
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]

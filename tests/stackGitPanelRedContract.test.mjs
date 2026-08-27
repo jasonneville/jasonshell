@@ -42,6 +42,9 @@ test('stack git API exposes no-AI diff, unstage, and destructive revert command 
   assert.match(api, /content: string/);
   assert.match(api, /export type StackGitCommitFiles = \{/);
   assert.match(api, /export type StackGitCommitFile = \{/);
+  assert.match(api, /export type StackGitFileStats = \{/);
+  assert.match(api, /additions: number;/);
+  assert.match(api, /export type StackGitFileStats = \{ additions: number; deletions: number \};/);
   assert.match(api, /export type StackGitCommitFileDiff = \{/);
   assert.match(api, /export type StackGitRevertRequest = \{/);
   assert.match(api, /paths: string\[\];/);
@@ -77,6 +80,8 @@ test('stack git stash exposes dedicated file list and per-file diff contracts', 
   }
   assert.match(api, /export type StackGitStashFiles = \{/);
   assert.match(api, /export type StackGitStashFile = \{/);
+  assert.match(api, /export type StackGitFileStats = \{/);
+  assert.match(api, /export type StackGitFileStats = \{ additions: number; deletions: number \};/);
   assert.match(api, /export type StackGitStashFileDiff = \{/);
   assert.match(panel, /stackGitStashFiles\(/);
   assert.match(panel, /stackGitStashFileDiff\(/);
@@ -133,6 +138,17 @@ test('stack git pure state groups paths and gates safe operations', async () => 
   assert.equal(state.canDiscardGitSelection([entries[0]]), false);
 });
 
+test('stack git status exposes context-specific additions and deletions fields', () => {
+  assert.match(api, /stagedAdditions\?: number;/);
+  assert.match(api, /stagedDeletions\?: number;/);
+  assert.match(api, /unstagedAdditions\?: number;/);
+  assert.match(api, /unstagedDeletions\?: number;/);
+  assert.match(models, /pub staged_additions: Option<usize>,[\s\S]*pub staged_deletions: Option<usize>,[\s\S]*pub unstaged_additions: Option<usize>,[\s\S]*pub unstaged_deletions: Option<usize>,/);
+  assert.match(panel, /changeRowStats\(entry, 'unstaged'\)/);
+  assert.match(panel, /entry\.stagedAdditions/);
+  assert.match(panel, /entry\.unstagedAdditions/);
+});
+
 test('destructive discard requires explicit confirmation and never targets untracked files', () => {
   assert.match(panelState, /function confirmStackGitDiscard|export function confirmStackGitDiscard/);
   assert.match(panelState, /untracked[\s\S]*(return false|blocked|throw)/i);
@@ -146,6 +162,12 @@ test('stack git API exposes first-class history and stash command contracts with
   assert.match(panel, /History/);
   assert.match(panel, /Stashes/);
   assert.match(panel, /stackGitLog/);
+  assert.match(panel, /stack-git-change-row__stat--success/);
+  assert.match(panel, /grid-template-columns:\s*auto minmax\(0, 1fr\) max-content 12px/);
+  assert.match(panel, /height:\s*34px/);
+  assert.match(panel, /color-mix\(in srgb, var\(--js-color-success-border\) 75%, var\(--js-color-text-strong\)\)/);
+  assert.match(panel, /color-mix\(in srgb, var\(--js-color-error-border\) 75%, var\(--js-color-text-strong\)\)/);
+  assert.match(panel, /stack-git-history-file__stat--error/);
 
   for (const [jsName, commandId] of [
     ['stackGitStashes', 'stack_git_stashes'],
@@ -178,6 +200,7 @@ test('stack git history files and diffs use stale-safe loading, friendly status 
   assert.match(panel, /historyFilesError/);
   assert.match(panel, /No files changed/);
   assert.match(panel, /No diff content\./);
+  assert.match(panel, /stack-git-history-file__stats/);
   assert.match(panel, /aria-controls=\{`stack-git-history-files-\$\{entry\.commitHash\}`\}/);
   assert.match(panel, /aria-controls=\{`stack-git-history-diff-\$\{entry\.commitHash\}-\$\{fileIndex\}`\}/);
   assert.match(panel, /const token = \+\+diffToken;[\s\S]*token !== diffToken/);
@@ -185,6 +208,7 @@ test('stack git history files and diffs use stale-safe loading, friendly status 
   assert.match(panel, /commitFileStatusClass\(file\.status\)/);
   assert.match(panel, /stack-git-path__dir/);
   assert.match(panel, /stack-git-path__name/);
+  assert.match(panel, /stack-git-history-file__stats/);
   assert.match(panel, /handleEscape\(event: KeyboardEvent\)/);
   assert.doesNotMatch(panel, /ensureHistorySelection\(/);
   assert.doesNotMatch(panel, /diffDrawerHistory/);
@@ -232,10 +256,27 @@ test('StackGitPanel renders visible history and stash UI with destructive confir
   assert.match(panel, /Apply|stackGitStashApply/);
   assert.match(panel, /Pop|stackGitStashPop/);
   assert.match(panel, /Drop|stackGitStashDrop/);
+  assert.match(panel, /stack-git-history-file-shell stack-git-change-group-file-shell/);
+  assert.match(panel, /stack-git-history-file stack-git-change-group-file/);
+  assert.match(panel, /stack-git-history-file__stats/);
+  assert.match(panel, /stack-git-change-row__action/);
+  assert.match(panel, /stack-git-change-row__discard/);
+  assert.match(panel, /stack-git-history-file__stats[\s\S]*var\(--js-color-text-muted\)/);
   assert.match(panel, /title: 'Pop stash\?'/);
   assert.match(panel, /title: 'Drop stash\?'/);
   assert.match(panel, /Pop applies the stash and removes it from the list\./);
   assert.match(panel, /Drop removes this stash permanently\./);
+});
+
+test('stack git stash drawer matches history geometry and opens after the closing row shell', () => {
+  const stashStart = panel.indexOf("{:else if activeView === 'stashes'}");
+  const stashEnd = panel.indexOf("{:else}", stashStart);
+  const stashSection = stashStart >= 0 && stashEnd > stashStart ? panel.slice(stashStart, stashEnd) : '';
+  assert.match(stashSection, /<div class="stack-git-history-commit" role="listitem">[\s\S]*<div class="stack-git-row-shell">[\s\S]*<\/div>[\s\S]*{#if selectedStashRef === stashRef}[\s\S]*<div class="stack-git-history-files stack-git-stash-files" role="list"/);
+  assert.match(stashSection, /<button type="button" class:selected=\{selectedStashFilePath === file\.path\} class="stack-git-history-file stack-git-stash-file"/);
+  assert.match(stashSection, /<span class="stack-git-history-file__chevron" aria-hidden="true"><\/span>/);
+  assert.match(stashSection, /class="stack-git-history-file-shell stack-git-stash-file-shell" role="listitem"/);
+  assert.ok(stashSection.indexOf('<div class="stack-git-row-shell">') < stashSection.indexOf('{#if selectedStashRef === stashRef}'));
 });
 
 test('stack git commit push failure clears stale success and stash button follows dirty tree', () => {
@@ -262,8 +303,9 @@ test('StackGitPanel uses OpenChamber Git display geometry instead of card tabs a
   assert.match(headerBlock, /aria-selected=/);
   assert.match(headerBlock, /Fetch[\s\S]*Pull[\s\S]*Push[\s\S]*Changes[\s\S]*History[\s\S]*Stashes[\s\S]*Branches/);
   assert.match(panel, /let activeView: StackGitView = 'changes';/);
-  assert.match(panel, /class="stack-git-change-group-header"/);
-  assert.match(panel, /class="stack-git-change-row/);
+  assert.match(panel, /class="stack-git-stream-row stack-git-change-group-row"/);
+  assert.match(panel, /stack-git-change-group__bulk/);
+  assert.match(panel, /class="stack-git-history-file stack-git-change-group-file"/);
   assert.match(panel, /rows="1"/);
   assert.match(panel, /min-height:\s*38px/);
   assert.match(panel, /height:\s*34px/);
@@ -431,13 +473,13 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.doesNotMatch(panel, /aria-label="Close diff"/);
   assert.match(panel, /aria-expanded=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && diffDrawerStaged\}/);
   assert.match(panel, /aria-expanded=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && !diffDrawerStaged\}/);
-  assert.match(panel, /aria-pressed=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && diffDrawerStaged\}/);
-  assert.match(panel, /aria-pressed=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && !diffDrawerStaged\}/);
+  assert.doesNotMatch(panel, /aria-pressed=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && diffDrawerStaged\}/);
+  assert.doesNotMatch(panel, /aria-pressed=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && !diffDrawerStaged\}/);
   assert.match(panel, /handleEscape\(event: KeyboardEvent\)[\s\S]*if \(diffDrawerOpen\) \{[\s\S]*closeDiffDrawer\(\);[\s\S]*return;[\s\S]*\}[\s\S]*closePanel\(\);/);
   const drawerStyleBlock = panel.match(/\.stack-git-change-diff-drawer\s*\{[\s\S]*?\.stack-git-stream-header h3\s*\{/ )?.[0] ?? '';
   const drawerPreBlock = panel.match(/\.stack-git-change-diff-drawer pre\s*\{[\s\S]*?\n  \}/)?.[0] ?? '';
   const lineStyleBlock = panel.match(/\.stack-git-diff-line\s*\{[\s\S]*?\.stack-git-commit\s*\{/ )?.[0] ?? '';
-  const bareActionStyles = panel.match(/\.stack-git-panel button\.stack-git-change-group-header__bulk,[\s\S]*?button\.stack-git-change-row__discard:focus-visible\s*\{[\s\S]*?\n  \}/)?.[0] ?? '';
+  const bareActionStyles = panel.match(/\.stack-git-panel button\.stack-git-change-group__bulk,[\s\S]*?button\.stack-git-change-row__discard:focus-visible\s*\{[\s\S]*?\n  \}/)?.[0] ?? '';
   const changeRowStyles = panel.match(/\.stack-git-change-row\s*\{[\s\S]*?\.stack-git-change-row__status\s*\{/ )?.[0] ?? '';
   const changeHeaderStyles = panel.match(/\.stack-git-change-group-header\s*\{[\s\S]*?\n  \}/)?.[0] ?? '';
   assert.match(drawerStyleBlock, /background:\s*var\(--js-color-surface\);/);
@@ -461,6 +503,8 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.match(lineStyleBlock, /\.stack-git-diff-line--deletion\s*\{[\s\S]*background:\s*var\(--js-color-error\);[\s\S]*border-left-color:\s*var\(--js-color-error-border\);[\s\S]*color:\s*var\(--js-color-text-strong\);/);
   assert.match(lineStyleBlock, /\.stack-git-diff-line--hunk\s*\{[\s\S]*background:\s*var\(--js-color-warning\);[\s\S]*border-left-color:\s*var\(--js-color-warning-border\);[\s\S]*color:\s*var\(--js-color-text-strong\);/);
   assert.match(lineStyleBlock, /\.stack-git-diff-line--addition \.stack-git-diff-line__prefix[\s\S]*color-mix\(in srgb, var\(--js-color-success-border\) 75%, var\(--js-color-text-strong\)\)/);
+  assert.match(panel, /stack-git-change-row__stats[\s\S]*var\(--js-color-text-muted\)/);
+  assert.match(panel, /stack-git-history-file__stats[\s\S]*var\(--js-color-text-muted\)/);
   assert.match(bareActionStyles, /appearance:\s*none;/);
   assert.match(bareActionStyles, /background:\s*transparent;/);
   assert.match(bareActionStyles, /border:\s*0;/);
@@ -501,4 +545,82 @@ test('stack git stash selection reconciles invalid refs and clears loading state
   assert.match(refreshStashDiffBlock, /selectedStashFilePath = '';/);
   assert.match(refreshStashDiffBlock, /if \(normalizeRef\(entry\) !== selectedStashRef \|\| selectedRef !== selectedStashRef\) return;/);
   assert.match(refreshStashDiffBlock, /if \(normalizeRef\(entry\) === selectedStashRef && selectedRef === selectedStashRef\) stashFilesLoading = false;/);
+});
+
+test('StackGitPanel changes view collapses staged and unstaged groups with history-file row shell reuse', () => {
+  assert.match(panel, /let collapsedChangeGroups = new Set<'staged' \| 'unstaged'>\(\);/);
+  assert.match(panel, /function toggleChangeGroup\(group: 'staged' \| 'unstaged'\)/);
+  assert.doesNotMatch(panel, /function isChangeGroupCollapsed\(/);
+  assert.match(panel, /aria-expanded=\{!collapsedChangeGroups\.has\('staged'\)\}/);
+  assert.match(panel, /aria-expanded=\{!collapsedChangeGroups\.has\('unstaged'\)\}/);
+  assert.match(panel, /\{#if !collapsedChangeGroups\.has\('staged'\)\}/);
+  assert.match(panel, /\{#if !collapsedChangeGroups\.has\('unstaged'\)\}/);
+  assert.match(panel, /const next = new Set\(collapsedChangeGroups\);[\s\S]*collapsedChangeGroups = next;/);
+  assert.match(panel, /stack-git-change-group-shell/);
+  assert.match(panel, /class="stack-git-change-group__bulk"[^]*class="stack-git-stream-row stack-git-change-group-row"/);
+  assert.match(panel, /function changeGroupLabel\(label: string, count: number\)/);
+  assert.match(panel, /`\$\{label\} \(\$\{count\} \$\{count === 1 \? 'file' : 'files'\}\)`/);
+  assert.match(panel, /class="stack-git-change-group-row__title">\{changeGroupLabel\('Staged', groupedEntries\.stagedCount\)\}/);
+  assert.match(panel, /class="stack-git-change-group-row__title">\{changeGroupLabel\('Unstaged', groupedEntries\.unstagedCount\)\}/);
+  assert.match(panel, /\.stack-git-change-group-row__title \{[\s\S]*flex:\s*1 1 auto;/);
+  assert.doesNotMatch(panel, /stack-git-change-group-row__icon/);
+  assert.match(panel, /stack-git-change-group-files-staged/);
+  assert.match(panel, /stack-git-change-group-files-unstaged/);
+  assert.match(panel, /stack-git-history-file stack-git-change-group-file/);
+  assert.match(panel, /stack-git-history-file-shell stack-git-change-group-file-shell/);
+  assert.match(panel, /stack-git-history-file__chevron/);
+  assert.doesNotMatch(panel, /class="stack-git-history-file__chevron">\{isChangeGroupCollapsed\('(staged|unstaged)'\) \? '▸' : '▾'\}/);
+  assert.match(panel, /\.stack-git-history-file\[aria-expanded='true'\] \.stack-git-history-file__chevron,[\s\S]*\.stack-git-change-group-row\[aria-expanded='true'\] \.stack-git-history-file__chevron/);
+  assert.match(panel, /stack-git-change-row__action/);
+  assert.match(panel, /stack-git-change-row__discard/);
+  assert.match(panel, /class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Unstage"[^]*<div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0"/);
+  assert.match(panel, /class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Stage"[^]*<div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0"/);
+  assert.doesNotMatch(panel, /<button[^>]*class="stack-git-history-file stack-git-change-group-file"/);
+  assert.match(panel, /class="stack-git-change-row__discard stack-git-change-group-file__discard"/);
+  assert.match(panel, /class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Unstage"/);
+  assert.match(panel, /on:click=\{\(\) => openChangeDiff\(entry, true\)\}/);
+  assert.match(panel, /on:click=\{\(\) => openChangeDiff\(entry, false\)\}/);
+  assert.match(panel, /on:click=\{\(\) => handleChangeRowAction\(entry, 'staged'\)\}/);
+  assert.match(panel, /on:click=\{\(\) => handleChangeRowAction\(entry, 'unstaged'\)\}/);
+  assert.match(panel, /on:keydown=\{\(event\) => handleChangeRowKeydown\(event, entry, 'staged'\)\}/);
+  assert.match(panel, /on:keydown=\{\(event\) => handleChangeRowKeydown\(event, entry, 'unstaged'\)\}/);
+  assert.match(panel, /\.stack-git-change-group-shell \{[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-surface-overlay\) 56%, transparent\);[\s\S]*border:\s*1px solid color-mix\(in srgb, var\(--js-color-border-soft\) 88%, transparent\);[\s\S]*border-radius:\s*var\(--js-radius-sm\);[\s\S]*grid-template-columns:\s*max-content minmax\(0, 1fr\);[\s\S]*height:\s*34px;[\s\S]*width:\s*100%;/);
+  assert.match(panel, /\.stack-git-change-group-shell:hover,[\s\S]*\.stack-git-change-group-shell:focus-within \{[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-control-hover\) 76%, var\(--js-color-surface-overlay\)\);[\s\S]*border-color:\s*color-mix\(in srgb, var\(--js-color-accent-border\) 62%, var\(--js-color-border-soft\)\);/);
+  assert.match(panel, /\.stack-git-change-group-shell:hover > \.stack-git-change-group__bulk,[\s\S]*\.stack-git-change-group-shell:focus-within > \.stack-git-change-group-row \{[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-control-hover\) 76%, var\(--js-color-surface-overlay\)\);/);
+  assert.match(panel, /\.stack-git-change-group-shell > \.stack-git-change-group-row \{[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell \{[\s\S]*grid-template-columns:\s*max-content minmax\(0, 1fr\) max-content;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell \{[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-surface-overlay\) 56%, transparent\);[\s\S]*border:\s*1px solid color-mix\(in srgb, var\(--js-color-border-soft\) 88%, transparent\);[\s\S]*border-radius:\s*var\(--js-radius-sm\);[\s\S]*min-height:\s*34px;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell \{[\s\S]*gap:\s*0;[\s\S]*grid-template-columns:\s*max-content minmax\(0, 1fr\) max-content;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell:hover,[\s\S]*\.stack-git-change-group-file-shell:focus-within \{[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-control-hover\) 76%, var\(--js-color-surface-overlay\)\);[\s\S]*border-color:\s*color-mix\(in srgb, var\(--js-color-accent-border\) 62%, var\(--js-color-border-soft\)\);/);
+  assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-change-row__action \{[\s\S]*grid-column:\s*1;/);
+  assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk,[\s\S]*\.stack-git-panel button\.stack-git-change-row__action/);
+  assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk \{[\s\S]*align-items:\s*center;[\s\S]*height:\s*100%;[\s\S]*line-height:\s*1;[\s\S]*justify-content:\s*center;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-history-file \{[\s\S]*grid-column:\s*2;[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
+  assert.match(panel, /\.stack-git-change-groups \{[\s\S]*margin-inline:\s*-12px;/);
+  assert.doesNotMatch(panel, /\.stack-git-change-group-files \{[\s\S]*border-left:\s*0;[\s\S]*margin:\s*-8px 0 2px;/);
+  assert.match(panel, /\.stack-git-history-files \{[\s\S]*border-left:\s*1px solid[\s\S]*margin:\s*-8px 0 2px 18px;[\s\S]*padding:\s*2px 0 2px 10px;/);
+  assert.match(panel, /\.stack-git-change-group-shell > button:focus-visible,[\s\S]*\.stack-git-change-group-file-shell > button:focus-visible \{[\s\S]*box-shadow:\s*none;/);
+  assert.match(panel, /\.stack-git-panel \.stack-git-change-group-file-shell > button\.stack-git-change-row__action:[\s\S]*\.stack-git-change-row__discard:active:not\(:disabled\) \{[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*box-shadow:\s*none;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-change-row__discard \{[\s\S]*align-self:\s*center;[\s\S]*display:\s*inline-flex;[\s\S]*grid-column:\s*3;[\s\S]*justify-content:\s*center;[\s\S]*height:\s*20px;[\s\S]*min-height:\s*0;/);
+  assert.match(panel, /\.stack-git-history-file-shell > \.stack-git-change-diff-drawer \{[\s\S]*grid-column:\s*1 \/ -1;/);
+  assert.match(panel, /aria-controls=\{changeGroupFileId\(true, entryIndex\)\}/);
+  assert.match(panel, /aria-controls=\{changeGroupFileId\(false, entryIndex\)\}/);
+  assert.match(panel, /id=\{changeGroupFileId\(true, entryIndex\)\}/);
+  assert.match(panel, /id=\{changeGroupFileId\(false, entryIndex\)\}/);
+  assert.doesNotMatch(panel, /stack-git-change-group-diff-\$\{entry\.path\}/);
+  assert.match(panel, /role="listitem" aria-label="Staged changes"/);
+  assert.match(panel, /role="listitem" aria-label="Unstaged changes"/);
+  assert.doesNotMatch(panel, /<section[^>]*aria-label="Staged changes"[^>]*>\s*<div class="stack-git-history-commit" role="listitem">/);
+  assert.doesNotMatch(panel, /<section[^>]*aria-label="Unstaged changes"[^>]*>\s*<div class="stack-git-history-commit" role="listitem">/);
+});
+
+test('stack git path emphasis splits Windows and Git separators', () => {
+  assert.match(panel, /function stackGitPathParts\(relativePath: string\)/);
+  assert.match(panel, /Math\.max\(relativePath\.lastIndexOf\('\/'\), relativePath\.lastIndexOf\('\\\\'\)\)/);
+  assert.match(panel, /directory: relativePath\.slice\(0, lastSeparator\)\.replaceAll\('\\\\', '\/'\), separator: '\/'/);
+  assert.match(panel, /\{@const pathParts = stackGitPathParts\(entry\.relativePath\)\}/);
+  assert.match(panel, /class="stack-git-path__dir">\{pathParts\.directory\}/);
+  assert.match(panel, /class="stack-git-path__sep">\{pathParts\.separator\}/);
+  assert.match(panel, /class="stack-git-path__name">\{pathParts\.name\}/);
+  assert.doesNotMatch(panel, /\.stack-git-path__dir:not\(:empty\)::after/);
 });
