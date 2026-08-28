@@ -195,14 +195,7 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
     let branch = git_stdout(&folder, &["branch", "--show-current"])?
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| {
-            git_stdout(&folder, &["rev-parse", "--short", "HEAD"])
-                .ok()
-                .flatten()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_else(|| "detached".to_string());
+        .unwrap_or_default();
 
     let Some(status_output) = git_stdout_bytes(
         &folder,
@@ -223,7 +216,7 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
     );
     let untracked_stats = parse_git_untracked_numstat_output(&repo_root, &status_output);
 
-    let remote_repository_url = git_remote_repository_url(&folder);
+    let remote_repository_url = git_remote_repository_url(&folder, &branch);
 
     Ok(Some(stack_git_status_from_porcelain(
         &repo_root,
@@ -1593,7 +1586,7 @@ fn normalize_worktree_path(path: &Path) -> String {
         .to_string()
 }
 
-fn git_remote_repository_url(folder: &Path) -> Option<String> {
+fn git_remote_repository_url(folder: &Path, branch: &str) -> Option<String> {
     ["origin", "upstream"].iter().find_map(|remote| {
         git_stdout(
             folder,
@@ -1601,11 +1594,11 @@ fn git_remote_repository_url(folder: &Path) -> Option<String> {
         )
         .ok()
         .flatten()
-        .and_then(|value| normalize_git_remote_url(value.trim()))
+        .and_then(|value| normalize_git_remote_url(value.trim(), branch))
     })
 }
 
-fn normalize_git_remote_url(value: &str) -> Option<String> {
+fn normalize_git_remote_url(value: &str, branch: &str) -> Option<String> {
     let remote = value.trim();
     if remote.is_empty() || remote.contains('\0') || remote.contains(char::is_whitespace) {
         return None;
@@ -1619,23 +1612,68 @@ fn normalize_git_remote_url(value: &str) -> Option<String> {
         if authority.is_empty() || authority.contains('@') {
             return None;
         }
-        return Some(without_git_suffix(remote));
+        let base = without_git_suffix(remote);
+        return browser_remote_repository_url(&base, branch).or(Some(base));
     }
     if let Some(rest) = remote.strip_prefix("git@") {
         let (host, path) = rest.split_once(':')?;
         if host.is_empty() || path.is_empty() || path.starts_with('/') || path.contains("://") {
             return None;
         }
-        return Some(format!("https://{}/{}", host, without_git_suffix(path)));
+        let base = format!("https://{}/{}", host, without_git_suffix(path));
+        return browser_remote_repository_url(&base, branch).or(Some(base));
     }
     if let Some(rest) = remote.strip_prefix("ssh://git@") {
         let (host, path) = rest.split_once('/')?;
         if host.is_empty() || path.is_empty() || path.contains("://") {
             return None;
         }
-        return Some(format!("https://{}/{}", host, without_git_suffix(path)));
+        let base = format!("https://{}/{}", host, without_git_suffix(path));
+        return browser_remote_repository_url(&base, branch).or(Some(base));
     }
     None
+}
+
+fn browser_remote_repository_url(base: &str, branch: &str) -> Option<String> {
+    let (scheme, rest) = base
+        .strip_prefix("https://")
+        .map(|rest| ("https://", rest))
+        .or_else(|| base.strip_prefix("http://").map(|rest| ("http://", rest)))?;
+    let (host, path) = rest.split_once('/')?;
+    let path = path.trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    let host = host.to_ascii_lowercase();
+    let route = if host == "github.com" || host.ends_with(".github.com") {
+        "tree"
+    } else if host == "gitlab.com" || host.ends_with(".gitlab.com") {
+        "-/tree"
+    } else if host == "bitbucket.org" || host.ends_with(".bitbucket.org") {
+        "src"
+    } else {
+        return None;
+    };
+    Some(format!("{scheme}{host}/{path}/{route}/{}", encode_git_branch_path(branch)?))
+}
+
+fn encode_git_branch_path(branch: &str) -> Option<String> {
+    if branch.is_empty() || branch.contains('\0') {
+        return None;
+    }
+    let mut encoded = String::with_capacity(branch.len());
+    for byte in branch.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push_str(&format!("{byte:02X}"));
+            }
+        }
+    }
+    Some(encoded)
 }
 
 fn stack_git_status_from_porcelain(
@@ -2032,9 +2070,9 @@ fn git_status_has_unstaged_change(xy: &str) -> bool {
 mod tests {
     use super::{
         annotate_branches_with_worktrees, classify_git_run_mode, count_untracked_file_lines,
-        create_branch_git_args, delete_branch_git_args, git_operation_output,
-        git_pathspecs_for_paths, git_relative_path_for_request, git_status_kind,
-        git_timeout_for_mode, local_branch_ref, normalize_git_remote_url,
+        create_branch_git_args, delete_branch_git_args, encode_git_branch_path,
+        git_operation_output, git_pathspecs_for_paths, git_relative_path_for_request,
+        git_status_kind, git_timeout_for_mode, local_branch_ref, normalize_git_remote_url,
         parse_git_branch_output, parse_git_commit_files_output, parse_git_log_output,
         parse_git_numstat_output, parse_git_stash_list_output, parse_git_tree_output,
         parse_git_untracked_numstat_output, parse_git_worktree_output, remove_worktree_git_args,
@@ -2165,29 +2203,57 @@ mod tests {
     #[test]
     fn git_remote_url_normalizer_handles_common_browser_remotes() {
         assert_eq!(
-            normalize_git_remote_url("https://github.com/acme/repo.git").as_deref(),
-            Some("https://github.com/acme/repo")
+            normalize_git_remote_url("https://github.com/acme/repo.git", "main").as_deref(),
+            Some("https://github.com/acme/repo/tree/main")
         );
         assert_eq!(
-            normalize_git_remote_url("git@github.com:acme/repo.git").as_deref(),
-            Some("https://github.com/acme/repo")
+            normalize_git_remote_url("git@github.com:acme/repo.git", "feature/x").as_deref(),
+            Some("https://github.com/acme/repo/tree/feature/x")
         );
         assert_eq!(
-            normalize_git_remote_url("ssh://git@gitlab.com/acme/repo.git").as_deref(),
+            normalize_git_remote_url("ssh://git@gitlab.com/acme/repo.git", "bug fix").as_deref(),
+            Some("https://gitlab.com/acme/repo/-/tree/bug%20fix")
+        );
+        assert_eq!(
+            normalize_git_remote_url("https://bitbucket.org/acme/repo.git", "release/v1").as_deref(),
+            Some("https://bitbucket.org/acme/repo/src/release/v1")
+        );
+        assert_eq!(normalize_git_remote_url("file:///C:/repo", "main"), None);
+        assert_eq!(
+            normalize_git_remote_url("https://user:token@github.com/acme/repo.git", "main"),
+            None
+        );
+        assert_eq!(
+            normalize_git_remote_url("http://user@github.com/acme/repo.git", "main"),
+            None
+        );
+        assert_eq!(
+            normalize_git_remote_url("ssh://user@example.com/acme/repo.git", "main"),
+            None
+        );
+    }
+
+    #[test]
+    fn git_branch_path_encoder_preserves_slashes_and_escapes_specials() {
+        assert_eq!(encode_git_branch_path("feature/x").as_deref(), Some("feature/x"));
+        assert_eq!(encode_git_branch_path("bug fix").as_deref(), Some("bug%20fix"));
+        assert_eq!(encode_git_branch_path("release#1").as_deref(), Some("release%231"));
+        assert_eq!(encode_git_branch_path(""), None);
+    }
+
+    #[test]
+    fn browser_remote_repository_url_uses_provider_routes_and_root_fallback() {
+        assert_eq!(
+            normalize_git_remote_url("https://gitlab.com/acme/group/repo", "feature/x").as_deref(),
+            Some("https://gitlab.com/acme/group/repo/-/tree/feature/x")
+        );
+        assert_eq!(
+            normalize_git_remote_url("https://example.com/acme/repo", "feature/x").as_deref(),
+            Some("https://example.com/acme/repo")
+        );
+        assert_eq!(
+            normalize_git_remote_url("https://gitlab.com/acme/repo", "").as_deref(),
             Some("https://gitlab.com/acme/repo")
-        );
-        assert_eq!(normalize_git_remote_url("file:///C:/repo"), None);
-        assert_eq!(
-            normalize_git_remote_url("https://user:token@github.com/acme/repo.git"),
-            None
-        );
-        assert_eq!(
-            normalize_git_remote_url("http://user@github.com/acme/repo.git"),
-            None
-        );
-        assert_eq!(
-            normalize_git_remote_url("ssh://user@example.com/acme/repo.git"),
-            None
         );
     }
 

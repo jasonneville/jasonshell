@@ -185,6 +185,21 @@ test('stack git remote checkout preserves remote branch tail as local branch nam
   assert.match(rustGitStatus, /feature\/x/);
 });
 
+test('stack git remote url builder uses GitLab nested-group routes and root fallback', () => {
+  assert.match(rustGitStatus, /\/-\/tree\//);
+  assert.match(rustGitStatus, /normalize_git_remote_url\(\s*"https:\/\/gitlab\.com\/acme\/group\/repo",\s*"feature\/x"\s*\)/);
+  assert.match(rustGitStatus, /Some\("https:\/\/gitlab\.com\/acme\/group\/repo\/-\/tree\/feature\/x"\)/);
+  assert.match(rustGitStatus, /normalize_git_remote_url\("https:\/\/example\.com\/acme\/repo", "feature\/x"\)/);
+  assert.match(rustGitStatus, /Some\("https:\/\/example\.com\/acme\/repo"\)/);
+});
+
+test('stack git status detached branch stays empty instead of synthesizing short sha', () => {
+  assert.match(rustGitStatus, /branch = git_stdout\(&folder, &\["branch", "--show-current"\]\)\?/);
+  assert.match(rustGitStatus, /unwrap_or_default\(\)/);
+  assert.doesNotMatch(rustGitStatus, /rev-parse", "--short", "HEAD"/);
+  assert.doesNotMatch(rustGitStatus, /"detached"\.to_string\(\)/);
+});
+
 test('stack popup loads git status outside folder listing and guards stale responses', () => {
   assert.match(stackPopupSurface, /getStackGitStatus/);
   assert.match(stackPopupSurface, /let gitStatus: StackGitStatus \| null = null;/);
