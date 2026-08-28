@@ -6,7 +6,8 @@
     canStageGitSelection,
     canUnstageGitSelection,
     confirmStackGitDiscard,
-    groupStackGitEntries
+    groupStackGitEntries,
+    parseStackGitUnifiedDiffRows
   } from '../lib/stackGitPanelState';
   import type {
     StackGitBranches,
@@ -62,7 +63,8 @@
   let selectedStashFilePath = '';
   let selectedBranchName = '';
   let diffText = '';
-  let diffLines: string[] = ['Loading diff...'];
+  let renderedDiffRows = parseStackGitUnifiedDiffRows(['Loading diff...']);
+  let diffGutterWidth = '3ch';
   let diffTitle = '';
   let diffDrawerOpen = false;
   let diffDrawerStaged = false;
@@ -545,48 +547,6 @@
     return result?.content ?? '';
   }
 
-  $: diffLines = getDiffLines(diffText || 'Loading diff...');
-
-  type DiffLineKind = 'meta' | 'hunk' | 'addition' | 'deletion' | 'context' | 'empty';
-
-  type DiffLineRender = {
-    kind: DiffLineKind;
-    text: string;
-    prefix: string;
-    body: string;
-  };
-
-  function classifyDiffLine(line: string): DiffLineKind {
-    if (!line) return 'empty';
-    if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('diff --git ') || line.startsWith('index ') || line.startsWith('new file mode') || line.startsWith('deleted file mode') || line.startsWith('similarity index') || line.startsWith('rename from') || line.startsWith('rename to') || line.startsWith('old mode') || line.startsWith('new mode') || line.startsWith('Binary files ')) {
-      return 'meta';
-    }
-    if (line.startsWith('@@')) return 'hunk';
-    if (line.startsWith('+')) return 'addition';
-    if (line.startsWith('-')) return 'deletion';
-    return 'context';
-  }
-
-  function renderDiffLineContent(line: string): DiffLineRender {
-    const kind = classifyDiffLine(line);
-    if (kind === 'meta') {
-      return { kind, text: line || ' ', prefix: '', body: '' };
-    }
-
-    if (kind === 'hunk') {
-      return {
-        kind,
-        text: line.length ? line : ' ',
-        prefix: line.slice(0, 2) || '@@',
-        body: line.slice(2) || ' '
-      };
-    }
-
-    const prefix = line.slice(0, 1) || ' ';
-    const body = line.slice(1) || ' ';
-    return { kind, text: line.length ? line : ' ', prefix, body };
-  }
-
   function getDiffLines(text: string) {
     const lines = text.split(/\r?\n/);
     if (lines.length <= maxRenderedDiffLines) return lines;
@@ -595,6 +555,9 @@
       `Diff truncated after ${maxRenderedDiffLines.toLocaleString()} lines (${lines.length.toLocaleString()} total).`
     ];
   }
+
+  $: renderedDiffRows = parseStackGitUnifiedDiffRows(getDiffLines(diffText || 'Loading diff...'));
+  $: diffGutterWidth = `${Math.max(3, ...renderedDiffRows.flatMap((row) => [String(row.oldLineNumber).length, String(row.newLineNumber).length]))}ch`;
 
   async function stagePaths(paths: string[]) {
     if (!paths.length || operationBusy) return;
@@ -1445,7 +1408,7 @@
                       </div>
                       {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && diffDrawerStaged}
                         <div id={changeGroupFileId(true, entryIndex)} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
-                          <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
+                          <pre class="stack-git-diff-view" style={`--stack-git-diff-gutter-width: ${diffGutterWidth}`} aria-label={`Unified diff for ${entry.relativePath}`}>{#each renderedDiffRows as rendered, index (index)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}><span class="stack-git-diff-line__gutter" aria-hidden="true">{rendered.newLineNumber || rendered.oldLineNumber}</span>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
                         </div>
                       {/if}
                     </div>
@@ -1492,7 +1455,7 @@
                       {/if}
                       {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && !diffDrawerStaged}
                         <div id={changeGroupFileId(false, entryIndex)} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
-                          <pre class="stack-git-diff-view" aria-label={`Unified diff for ${entry.relativePath}`}>{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
+                          <pre class="stack-git-diff-view" style={`--stack-git-diff-gutter-width: ${diffGutterWidth}`} aria-label={`Unified diff for ${entry.relativePath}`}>{#each renderedDiffRows as rendered, index (index)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}><span class="stack-git-diff-line__gutter" aria-hidden="true">{rendered.newLineNumber || rendered.oldLineNumber}</span>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}</pre>
                         </div>
                       {/if}
                     </div>
@@ -1552,7 +1515,7 @@
                         {#if selectedHistoryFilePath === file.path}
                           <div id={`stack-git-history-diff-${entry.commitHash}-${fileIndex}`} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${file.relativePath}`}>
                             {#if diffError}<div class="stack-git-empty stack-git-empty--error">{diffError}</div>{/if}
-                            <pre class="stack-git-diff-view" aria-label={`Unified diff for ${file.relativePath}`}>{#if diffLoading && selectedHistoryFilePath === file.path}Loading diff...{:else if diffText}{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}{:else}No diff content.{/if}</pre>
+                            <pre class="stack-git-diff-view" style={`--stack-git-diff-gutter-width: ${diffGutterWidth}`} aria-label={`Unified diff for ${file.relativePath}`}>{#if diffLoading && selectedHistoryFilePath === file.path}Loading diff...{:else if diffText}{#each renderedDiffRows as rendered, index (index)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}><span class="stack-git-diff-line__gutter" aria-hidden="true">{rendered.newLineNumber || rendered.oldLineNumber}</span>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}{:else}No diff content.{/if}</pre>
                           </div>
                         {/if}
                       </div>
@@ -1629,7 +1592,7 @@
                           {#if selectedStashFilePath === file.path}
                             <div id={`stack-git-stash-diff-${stashRef}-${fileIndex}`} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${file.relativePath}`}>
                               {#if diffError}<div class="stack-git-empty stack-git-empty--error">{diffError}</div>{/if}
-                              <pre class="stack-git-diff-view" aria-label={`Unified diff for ${file.relativePath}`}>{#if diffLoading && selectedStashFilePath === file.path}Loading diff...{:else if diffText}{#each diffLines as line, index (index)}{@const rendered = renderDiffLineContent(line)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}{:else}No diff content.{/if}</pre>
+                              <pre class="stack-git-diff-view" style={`--stack-git-diff-gutter-width: ${diffGutterWidth}`} aria-label={`Unified diff for ${file.relativePath}`}>{#if diffLoading && selectedStashFilePath === file.path}Loading diff...{:else if diffText}{#each renderedDiffRows as rendered, index (index)}<span class={`stack-git-diff-line stack-git-diff-line--${rendered.kind}`} data-kind={rendered.kind}><span class="stack-git-diff-line__gutter" aria-hidden="true">{rendered.newLineNumber || rendered.oldLineNumber}</span>{#if rendered.kind === 'meta'}<span class="stack-git-diff-line__meta">{rendered.text}</span>{:else}<span class="stack-git-diff-line__prefix">{rendered.prefix}</span><span class="stack-git-diff-line__body">{rendered.body}</span>{/if}</span>{/each}{:else}No diff content.{/if}</pre>
                             </div>
                           {/if}
                         </div>
@@ -2617,9 +2580,10 @@
     font: 0.67rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
     margin: 0;
     overflow: auto;
+    overflow-x: auto;
     padding: 0.45rem;
     user-select: text;
-    white-space: pre-wrap;
+    white-space: pre;
     cursor: text;
     width: 100%;
     animation: stack-git-drawer-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -2634,13 +2598,15 @@
     background: transparent;
     border: 0;
     color: inherit;
+    display: table;
     font: inherit;
     margin: 0;
     min-height: 0;
-    overflow: auto;
+    min-width: 100%;
     padding: 0;
     tab-size: 4;
     white-space: inherit;
+    width: max-content;
   }
 
   .stack-git-diff-view { color: var(--js-color-text); }
@@ -2648,13 +2614,23 @@
   .stack-git-diff-line {
     align-items: start;
     border-left: 3px solid transparent;
+    box-sizing: border-box;
     display: grid;
-    grid-template-columns: 1.25ch minmax(0, 1fr);
+    grid-template-columns: var(--stack-git-diff-gutter-width, 3ch) 1.25ch minmax(max-content, 1fr);
     gap: 0.25rem;
     min-height: 1.45em;
     margin: 0;
     padding: 0.06rem 0.35rem 0.06rem 0.45rem;
-    white-space: pre-wrap;
+    white-space: pre;
+    width: 100%;
+  }
+
+  .stack-git-diff-line__gutter {
+    font-variant-numeric: tabular-nums;
+    padding-inline: 0.2rem;
+    text-align: center;
+    color: var(--js-color-text-muted);
+    border-right: 1px solid color-mix(in srgb, var(--js-color-border-soft) 80%, transparent);
   }
 
   .stack-git-diff-line__prefix {
@@ -2671,14 +2647,20 @@
     background: var(--js-color-accent-soft);
     border-left-color: var(--js-color-accent-border);
     color: var(--js-color-text);
-    display: block;
+    display: grid;
+    grid-template-columns: var(--stack-git-diff-gutter-width, 3ch) minmax(max-content, 1fr);
     padding-inline: 0.45rem;
   }
 
   .stack-git-diff-line--meta .stack-git-diff-line__meta {
     display: block;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
+    grid-column: 2 / -1;
+    white-space: pre;
+  }
+
+  .stack-git-diff-line--meta .stack-git-diff-line__gutter,
+  .stack-git-diff-line--meta .stack-git-diff-line__prefix {
+    visibility: hidden;
   }
 
   .stack-git-diff-line--hunk {

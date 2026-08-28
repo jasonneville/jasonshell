@@ -488,15 +488,21 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.match(drawerStyleBlock, /overflow:\s*auto;/);
   assert.match(drawerStyleBlock, /padding:\s*0\.45rem;/);
   assert.match(drawerStyleBlock, /user-select:\s*text;/);
-  assert.match(drawerStyleBlock, /white-space:\s*pre-wrap;/);
+  assert.match(drawerStyleBlock, /overflow-x:\s*auto;/);
+  assert.match(drawerStyleBlock, /white-space:\s*pre;/);
   assert.match(drawerStyleBlock, /cursor:\s*text;/);
   assert.match(drawerPreBlock, /background:\s*transparent;/);
   assert.match(drawerPreBlock, /border:\s*0;/);
   assert.match(drawerPreBlock, /font:\s*inherit;/);
-  assert.match(drawerPreBlock, /overflow:\s*auto;/);
+  assert.match(drawerPreBlock, /display:\s*table;/);
+  assert.match(drawerPreBlock, /min-width:\s*100%;/);
+  assert.match(drawerPreBlock, /width:\s*max-content;/);
   assert.match(drawerPreBlock, /white-space:\s*inherit;/);
   assert.match(lineStyleBlock, /border-left:\s*3px solid transparent;/);
-  assert.match(lineStyleBlock, /grid-template-columns:\s*1\.25ch minmax\(0, 1fr\);/);
+  assert.match(lineStyleBlock, /box-sizing:\s*border-box;/);
+  assert.match(lineStyleBlock, /grid-template-columns:\s*var\(--stack-git-diff-gutter-width, 3ch\) 1\.25ch minmax\(max-content, 1fr\);/);
+  assert.match(lineStyleBlock, /width:\s*100%;/);
+  assert.match(lineStyleBlock, /white-space:\s*pre;/);
   assert.match(lineStyleBlock, /padding:\s*0\.06rem 0\.35rem 0\.06rem 0\.45rem;/);
   assert.doesNotMatch(panel, /background:\s*#06080b/);
   assert.match(lineStyleBlock, /\.stack-git-diff-line--addition\s*\{[\s\S]*background:\s*var\(--js-color-success\);[\s\S]*border-left-color:\s*var\(--js-color-success-border\);[\s\S]*color:\s*var\(--js-color-text-strong\);/);
@@ -623,4 +629,107 @@ test('stack git path emphasis splits Windows and Git separators', () => {
   assert.match(panel, /class="stack-git-path__sep">\{pathParts\.separator\}/);
   assert.match(panel, /class="stack-git-path__name">\{pathParts\.name\}/);
   assert.doesNotMatch(panel, /\.stack-git-path__dir:not\(:empty\)::after/);
+});
+
+test('stack git diff row parser hides patch headers and exposes source line gutters', async () => {
+  const state = await import('../dist-tests/lib/stackGitPanelState.js');
+  assert.equal(typeof state.parseStackGitUnifiedDiffRows, 'function');
+
+  const rows = state.parseStackGitUnifiedDiffRows([
+    'diff --git a/src/app.ts b/src/app.ts',
+    'index 1111111..2222222 100644',
+    '--- a/src/app.ts',
+    '+++ b/src/app.ts',
+    '@@ -10,3 +20,4 @@ function demo()',
+    ' const kept = true;',
+    '-const removed = true;',
+    '+const added = true;',
+    '+++ heading added by source',
+    '--- separator removed by source',
+    ' ',
+    '+const addedAgain = true;',
+    '\\ No newline at end of file',
+    '@@ -42 +55 @@ omitted counts',
+    '-old singleton',
+    '+new singleton',
+    ' shared singleton',
+    '@@ -100,2 +200,2 @@ reset again',
+    ' context after reset',
+    '-old after reset',
+    '+new after reset'
+  ]);
+
+  assert.deepEqual(rows.map(({ oldLineNumber, newLineNumber, prefix, body, kind }) => ({ oldLineNumber, newLineNumber, prefix, body, kind })), [
+    { oldLineNumber: 10, newLineNumber: 20, prefix: ' ', body: 'const kept = true;', kind: 'context' },
+    { oldLineNumber: 11, newLineNumber: '', prefix: '-', body: 'const removed = true;', kind: 'deletion' },
+    { oldLineNumber: '', newLineNumber: 21, prefix: '+', body: 'const added = true;', kind: 'addition' },
+    { oldLineNumber: '', newLineNumber: 22, prefix: '+', body: '++ heading added by source', kind: 'addition' },
+    { oldLineNumber: 12, newLineNumber: '', prefix: '-', body: '-- separator removed by source', kind: 'deletion' },
+    { oldLineNumber: 13, newLineNumber: 23, prefix: ' ', body: ' ', kind: 'context' },
+    { oldLineNumber: '', newLineNumber: 24, prefix: '+', body: 'const addedAgain = true;', kind: 'addition' },
+    { oldLineNumber: '', newLineNumber: '', prefix: '', body: '\\ No newline at end of file', kind: 'meta' },
+    { oldLineNumber: 42, newLineNumber: '', prefix: '-', body: 'old singleton', kind: 'deletion' },
+    { oldLineNumber: '', newLineNumber: 55, prefix: '+', body: 'new singleton', kind: 'addition' },
+    { oldLineNumber: 43, newLineNumber: 56, prefix: ' ', body: 'shared singleton', kind: 'context' },
+    { oldLineNumber: 100, newLineNumber: 200, prefix: ' ', body: 'context after reset', kind: 'context' },
+    { oldLineNumber: 101, newLineNumber: '', prefix: '-', body: 'old after reset', kind: 'deletion' },
+    { oldLineNumber: '', newLineNumber: 201, prefix: '+', body: 'new after reset', kind: 'addition' }
+  ]);
+});
+
+test('stack git diff row parser safely blanks malformed and no-hunk content', async () => {
+  const state = await import('../dist-tests/lib/stackGitPanelState.js');
+  const rows = state.parseStackGitUnifiedDiffRows([
+    'plain text before any hunk',
+    '-looks deleted before hunk',
+    '+looks added before hunk',
+    '@@ malformed hunk @@',
+    'still no valid counters',
+    '\\ No newline at end of file'
+  ]);
+
+  assert.deepEqual(rows.map(({ oldLineNumber, newLineNumber, prefix, body, kind }) => ({ oldLineNumber, newLineNumber, prefix, body, kind })), [
+    { oldLineNumber: '', newLineNumber: '', prefix: ' ', body: 'plain text before any hunk', kind: 'context' },
+    { oldLineNumber: '', newLineNumber: '', prefix: '-', body: 'looks deleted before hunk', kind: 'deletion' },
+    { oldLineNumber: '', newLineNumber: '', prefix: '+', body: 'looks added before hunk', kind: 'addition' },
+    { oldLineNumber: '', newLineNumber: '', prefix: ' ', body: 'still no valid counters', kind: 'context' },
+    { oldLineNumber: '', newLineNumber: '', prefix: '', body: '\\ No newline at end of file', kind: 'meta' }
+  ]);
+});
+
+test('stack git diff row parser resets gutters at file boundaries and blanks truncation notices', async () => {
+  const state = await import('../dist-tests/lib/stackGitPanelState.js');
+  const rows = state.parseStackGitUnifiedDiffRows([
+    '@@ -7 +9 @@',
+    ' context',
+    'diff --git a/next.ts b/next.ts',
+    'copy from old.ts',
+    'copy to next.ts',
+    'GIT binary patch',
+    'literal 12',
+    'Diff truncated after 4,000 lines (8,000 total).',
+    'diff --cc merge.ts'
+  ]);
+
+  assert.deepEqual(rows.slice(1).map(({ oldLineNumber, newLineNumber, kind }) => ({ oldLineNumber, newLineNumber, kind })), [
+    { oldLineNumber: '', newLineNumber: '', kind: 'meta' },
+    { oldLineNumber: '', newLineNumber: '', kind: 'meta' }
+  ]);
+});
+
+test('StackGitPanel shared diff renderer owns one centered gutter for changes, history, and stashes', () => {
+  const preBlocks = [...panel.matchAll(/<pre class="stack-git-diff-view"[\s\S]*?<\/pre>/g)].map((match) => match[0]);
+  assert.equal(preBlocks.length, 4, 'shared renderer must remain used by all four diff pre blocks');
+  for (const block of preBlocks) {
+    assert.match(block, /\{#each\s+(?:renderedDiffRows|diffRows)\s+as\s+rendered,\s*index\s*\(index\)\}/);
+    assert.match(block, /style=\{`--stack-git-diff-gutter-width: \$\{diffGutterWidth\}`\}/);
+    assert.match(block, /class="stack-git-diff-line__gutter"\s+aria-hidden="true"[^>]*>\{rendered\.newLineNumber \|\| rendered\.oldLineNumber\}<\/span>/);
+    assert.doesNotMatch(block, /stack-git-diff-line__gutter--(?:old|new)/);
+    assert.ok(block.indexOf('stack-git-diff-line__gutter') < block.indexOf('stack-git-diff-line__prefix'));
+    assert.ok(block.indexOf('stack-git-diff-line__prefix') < block.indexOf('stack-git-diff-line__body'));
+  }
+
+  const lineStyleBlock = panel.match(/\.stack-git-diff-line\s*\{[\s\S]*?\.stack-git-commit\s*\{/)?.[0] ?? '';
+  assert.match(lineStyleBlock, /grid-template-columns:\s*var\(--stack-git-diff-gutter-width, 3ch\) 1\.25ch minmax\(max-content, 1fr\);/);
+  assert.match(lineStyleBlock, /\.stack-git-diff-line__gutter\s*\{[\s\S]*font-variant-numeric:\s*tabular-nums;[\s\S]*text-align:\s*center;[\s\S]*color:\s*var\(--js-color-text-muted\);[\s\S]*border-right:\s*1px solid color-mix\(in srgb, var\(--js-color-border-soft\) 80%, transparent\);/);
 });

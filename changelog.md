@@ -1,4 +1,10 @@
 ## Change Ledger
+- 2026-08-27 `[CODE]` CHANGED: Stack Git Changes, History, and Stashes diff drawers now hide Git patch transport headers and hunk coordinates while preserving source line numbering and useful binary, truncation, and no-newline notices.
+- 2026-08-27 `[TEST]` TESTED: Added parser contracts proving patch headers are omitted without breaking multi-hunk counters or file-boundary resets.
+- 2026-08-27 `[CODE]` CHANGED: Stack Git diff files now preserve unwrapped line lengths, size every semantic row to the longest line, and expose drawer-level horizontal scrolling across Changes, History, and Stashes.
+- 2026-08-27 `[TEST]` TESTED: Added layout contracts for natural-width diff canvases, shared full-width rows, no-wrap lines, and horizontal drawer scrolling.
+- 2026-08-27 `[CODE]` ADDED: Stack Git Changes, History, and Stashes unified diffs now show one centered OpenChamber-style line-number gutter, using old numbers for deletions and new numbers for additions/context while leaving non-source rows blank.
+- 2026-08-27 `[TEST]` TESTED: Added RED-first parser and shared-renderer contracts covering hunk offsets, omitted counts, multi-hunk resets, malformed input, source-side number selection, one centered gutter, and all four diff drawer render sites.
 - 2026-08-27 `[CODE]` FIXED: Staged/unstaged header chevrons now rotate with expanded state like file-row chevrons.
 - 2026-08-27 `[CODE]` FIXED: Changes-view staged/unstaged headers now use directly tracked Svelte collapse state, restoring working file-list collapse and expansion while defaulting both groups open.
 - 2026-08-27 `[CODE]` CHANGED: Staged/unstaged headers now show pluralized file counts and align their right-edge chevrons with file rows.
