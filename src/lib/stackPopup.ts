@@ -60,6 +60,7 @@ export type StackGitStatus = {
 export type StackGitOperationResult = {
   repositoryRoot: string;
   summary: string;
+  output: string;
 };
 
 export type StackGitBranchOperationResult = StackGitOperationResult;

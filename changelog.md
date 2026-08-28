@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-08-28 `[CODE]` ADDED: Stack Git workbench now shows operation status below the header, explicit mutation step labels, Commit & Push commit/push transitions, expandable successful command output, contextual bounded backend errors, and operation-state-driven mutation/`aria-busy` gating; `StackGitOperationResult` now carries bounded stdout/stderr output with existing 64 KiB per-stream caps.
+- 2026-08-28 `[TEST]` TESTED: Focused Node tests, `cargo check`, focused Rust output test, and `svelte-check` known-result run covered the Stack Git operation status/output change.
 - 2026-08-27 `[CODE]` CHANGED: Stack Git Changes, History, and Stashes diff drawers now hide Git patch transport headers and hunk coordinates while preserving source line numbering and useful binary, truncation, and no-newline notices.
 - 2026-08-27 `[TEST]` TESTED: Added parser contracts proving patch headers are omitted without breaking multi-hunk counters or file-boundary resets.
 - 2026-08-27 `[CODE]` CHANGED: Stack Git diff files now preserve unwrapped line lengths, size every semantic row to the longest line, and expose drawer-level horizontal scrolling across Changes, History, and Stashes.

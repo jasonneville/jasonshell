@@ -4,9 +4,9 @@ use crate::stack_popup::models::{
     StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
     StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry, StackGitLogRequest,
     StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest, StackGitStashEntry,
-    StackGitStashFile, StackGitStashFileDiff, StackGitStashFileDiffRequest,
-    StackGitStashFiles, StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest,
-    StackGitStashes, StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
+    StackGitStashFile, StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
+    StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
+    StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
 use std::collections::{HashMap, HashSet};
@@ -218,8 +218,7 @@ fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, Strin
         &repo_root,
     );
     let unstaged_stats = parse_git_numstat_output(
-        &git_stdout_bytes(&repo_root, &["diff", "--numstat", "-z"])?
-            .unwrap_or_default(),
+        &git_stdout_bytes(&repo_root, &["diff", "--numstat", "-z"])?.unwrap_or_default(),
         &repo_root,
     );
     let untracked_stats = parse_git_untracked_numstat_output(&repo_root, &status_output);
@@ -260,7 +259,7 @@ fn stack_git_add_paths(request: StackGitStageRequest) -> Result<StackGitOperatio
         return Err("Select at least one file to add".to_string());
     }
     let pathspecs = git_pathspecs_for_paths(&repo_root, &request.paths)?;
-    run_git_with_stdin(
+    let output = run_git_with_stdin(
         &repo_root,
         &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
         nul_joined_pathspecs(&pathspecs),
@@ -268,6 +267,7 @@ fn stack_git_add_paths(request: StackGitStageRequest) -> Result<StackGitOperatio
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Added {} file(s)", pathspecs.len()),
+        output: git_operation_output(&output),
     })
 }
 
@@ -282,7 +282,7 @@ fn stack_git_commit(request: StackGitCommitRequest) -> Result<StackGitOperationR
         return Err("Select at least one staged file to commit".to_string());
     }
     let pathspecs = git_pathspecs_for_paths(&repo_root, &request.paths)?;
-    run_git_with_stdin(
+    let output = run_git_with_stdin(
         &repo_root,
         &[
             "commit",
@@ -296,6 +296,7 @@ fn stack_git_commit(request: StackGitCommitRequest) -> Result<StackGitOperationR
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: "Commit created".to_string(),
+        output: git_operation_output(&output),
     })
 }
 
@@ -357,11 +358,8 @@ fn stack_git_branches(path: &str) -> Result<StackGitBranches, String> {
         &["branch", "--all", "--format=%(HEAD)%09%(refname)"],
     )?
     .unwrap_or_default();
-    let worktree_output = git_stdout_bytes(
-        &repo_root,
-        &["worktree", "list", "--porcelain", "-z"],
-    )?
-    .unwrap_or_default();
+    let worktree_output = git_stdout_bytes(&repo_root, &["worktree", "list", "--porcelain", "-z"])?
+        .unwrap_or_default();
     let mut branches = parse_git_branch_output(&output);
     annotate_branches_with_worktrees(
         &mut branches,
@@ -387,7 +385,7 @@ fn stack_git_remote_operation(
         "push" => vec!["push"],
         _ => return Err("Git operation is invalid".to_string()),
     };
-    run_git(&repo_root, &args)?;
+    let output = run_git(&repo_root, &args)?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: match operation {
@@ -397,6 +395,7 @@ fn stack_git_remote_operation(
             _ => "Updated",
         }
         .to_string(),
+        output: git_operation_output(&output),
     })
 }
 
@@ -415,27 +414,54 @@ fn stack_git_checkout_branch(
     } else {
         vec!["switch", "--", branch]
     };
-    run_git(&repo_root, &args)?;
+    let output = run_git(&repo_root, &args)?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Checked out {branch}"),
+        output: git_operation_output(&output),
     })
 }
 
-fn stack_git_commit_files(request: StackGitCommitFilesRequest) -> Result<StackGitCommitFiles, String> {
+fn stack_git_commit_files(
+    request: StackGitCommitFilesRequest,
+) -> Result<StackGitCommitFiles, String> {
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let commit_hash = validate_git_commit_hash(&request.commit_hash)?.to_string();
-    let status_output = git_stdout_bytes(&repo_root, &[
-        "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", &commit_hash,
-    ])?.unwrap_or_default();
-    let numstat_output = git_stdout_bytes(&repo_root, &[
-        "diff-tree", "--root", "--no-commit-id", "--numstat", "-r", "-z", &commit_hash,
-    ])?.unwrap_or_default();
+    let status_output = git_stdout_bytes(
+        &repo_root,
+        &[
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "-z",
+            &commit_hash,
+        ],
+    )?
+    .unwrap_or_default();
+    let numstat_output = git_stdout_bytes(
+        &repo_root,
+        &[
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--numstat",
+            "-r",
+            "-z",
+            &commit_hash,
+        ],
+    )?
+    .unwrap_or_default();
     Ok(StackGitCommitFiles {
         repository_root: repo_root.to_string_lossy().into_owned(),
         commit_hash,
-        files: parse_git_commit_files_output(&status_output, &repo_root, &parse_git_numstat_output(&numstat_output, &repo_root)),
+        files: parse_git_commit_files_output(
+            &status_output,
+            &repo_root,
+            &parse_git_numstat_output(&numstat_output, &repo_root),
+        ),
     })
 }
 
@@ -446,8 +472,18 @@ fn stack_git_commit_file_diff(
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let commit_hash = validate_git_commit_hash(&request.commit_hash)?.to_string();
     let path = git_relative_path_for_request(&repo_root, &request.path)?;
-    let content = git_stdout(&repo_root, &["show", "--format=", "--unified=3", &commit_hash, "--", &path])?
-        .unwrap_or_default();
+    let content = git_stdout(
+        &repo_root,
+        &[
+            "show",
+            "--format=",
+            "--unified=3",
+            &commit_hash,
+            "--",
+            &path,
+        ],
+    )?
+    .unwrap_or_default();
     Ok(StackGitCommitFileDiff {
         repository_root: repo_root.to_string_lossy().into_owned(),
         commit_hash,
@@ -460,30 +496,61 @@ fn stack_git_stash_files(request: StackGitStashFilesRequest) -> Result<StackGitS
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
-    let status_output = git_stdout_bytes(&repo_root, &[
-        "stash", "show", "--format=", "--name-status", "-z", &stash_ref
-    ])?.unwrap_or_default();
-    let numstat_output = git_stdout_bytes(&repo_root, &[
-        "stash", "show", "--format=", "--numstat", "-z", &stash_ref
-    ])?.unwrap_or_default();
+    let status_output = git_stdout_bytes(
+        &repo_root,
+        &[
+            "stash",
+            "show",
+            "--format=",
+            "--name-status",
+            "-z",
+            &stash_ref,
+        ],
+    )?
+    .unwrap_or_default();
+    let numstat_output = git_stdout_bytes(
+        &repo_root,
+        &["stash", "show", "--format=", "--numstat", "-z", &stash_ref],
+    )?
+    .unwrap_or_default();
     Ok(StackGitStashFiles {
         repository_root: repo_root.to_string_lossy().into_owned(),
         stash_ref,
-        files: parse_git_commit_files_output(&status_output, &repo_root, &parse_git_numstat_output(&numstat_output, &repo_root))
-            .into_iter()
-            .map(|file| StackGitStashFile { path: file.path, relative_path: file.relative_path, status: file.status, additions: file.additions, deletions: file.deletions })
-            .collect(),
+        files: parse_git_commit_files_output(
+            &status_output,
+            &repo_root,
+            &parse_git_numstat_output(&numstat_output, &repo_root),
+        )
+        .into_iter()
+        .map(|file| StackGitStashFile {
+            path: file.path,
+            relative_path: file.relative_path,
+            status: file.status,
+            additions: file.additions,
+            deletions: file.deletions,
+        })
+        .collect(),
     })
 }
 
-fn stack_git_stash_file_diff(request: StackGitStashFileDiffRequest) -> Result<StackGitStashFileDiff, String> {
+fn stack_git_stash_file_diff(
+    request: StackGitStashFileDiffRequest,
+) -> Result<StackGitStashFileDiff, String> {
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
     let path = git_relative_path_for_request(&repo_root, &request.path)?;
-    let content = git_stdout(&repo_root, &["show", "--format=", "--unified=3", &stash_ref, "--", &path])?
-        .unwrap_or_default();
-    Ok(StackGitStashFileDiff { repository_root: repo_root.to_string_lossy().into_owned(), stash_ref, path: path.to_string(), content })
+    let content = git_stdout(
+        &repo_root,
+        &["show", "--format=", "--unified=3", &stash_ref, "--", &path],
+    )?
+    .unwrap_or_default();
+    Ok(StackGitStashFileDiff {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        stash_ref,
+        path: path.to_string(),
+        content,
+    })
 }
 
 pub(crate) async fn stack_git_delete_branch_async(
@@ -529,10 +596,11 @@ fn stack_git_create_branch(
         request.checkout.unwrap_or(true),
         request.source_branch.as_deref(),
     )?;
-    run_git(&repo_root, &args)?;
+    let output = run_git(&repo_root, &args)?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Created branch {branch}"),
+        output: git_operation_output(&output),
     })
 }
 
@@ -573,11 +641,8 @@ fn remove_linked_worktree(
     branch_ref: &str,
     force: bool,
 ) -> Result<(), String> {
-    let git_error = match run_git(
-        repo_root,
-        &remove_worktree_git_args(worktree_path, force),
-    ) {
-        Ok(()) => return Ok(()),
+    let git_error = match run_git(repo_root, &remove_worktree_git_args(worktree_path, force)) {
+        Ok(_) => return Ok(()),
         Err(error) => error,
     };
 
@@ -598,14 +663,13 @@ fn remove_linked_worktree(
             .as_deref()
             .is_some_and(|path| same_worktree_path(&cleanup_path, path))
     {
-        return Err(format!("{git_error}; refused unsafe residual worktree path"));
+        return Err(format!(
+            "{git_error}; refused unsafe residual worktree path"
+        ));
     }
 
-    let refreshed_output = git_stdout_bytes(
-        repo_root,
-        &["worktree", "list", "--porcelain", "-z"],
-    )?
-    .unwrap_or_default();
+    let refreshed_output = git_stdout_bytes(repo_root, &["worktree", "list", "--porcelain", "-z"])?
+        .unwrap_or_default();
     if let Some(worktree) = parse_git_worktree_output(&refreshed_output)
         .into_iter()
         .find(|worktree| same_worktree_path(Path::new(&worktree.path), &cleanup_path))
@@ -614,16 +678,22 @@ fn remove_linked_worktree(
             || worktree.branch_ref != branch_ref
             || same_worktree_path(Path::new(&worktree.path), repo_root)
         {
-            return Err(format!("{git_error}; linked worktree changed during removal"));
+            return Err(format!(
+                "{git_error}; linked worktree changed during removal"
+            ));
         }
     }
 
-    if cleanup_path.try_exists().map_err(|error| error.to_string())? {
+    if cleanup_path
+        .try_exists()
+        .map_err(|error| error.to_string())?
+    {
         remove_dir_all_with_retries(&cleanup_path).map_err(|error| {
             format!("{git_error}; failed to remove residual worktree directory: {error}")
         })?;
     }
-    run_git(repo_root, &["worktree", "prune"])
+    run_git(repo_root, &["worktree", "prune"])?;
+    Ok(())
 }
 
 fn local_branch_ref(branch: &str) -> String {
@@ -637,8 +707,11 @@ fn stack_git_delete_branch(
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let branch = validate_git_branch_name(&request.branch_name)?;
     let branch_ref = local_branch_ref(branch);
-    git_stdout(&repo_root, &["show-ref", "--verify", "--quiet", "--", &branch_ref])
-        .map_err(|_| "Only local Git branches can be deleted".to_string())?;
+    git_stdout(
+        &repo_root,
+        &["show-ref", "--verify", "--quiet", "--", &branch_ref],
+    )
+    .map_err(|_| "Only local Git branches can be deleted".to_string())?;
     let current_branch = git_stdout(&repo_root, &["branch", "--show-current"])?
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -646,11 +719,9 @@ fn stack_git_delete_branch(
         return Err("Current Git branch cannot be deleted".to_string());
     }
     let removed_worktree = if request.remove_worktree.unwrap_or(false) {
-        let worktree_output = git_stdout_bytes(
-            &repo_root,
-            &["worktree", "list", "--porcelain", "-z"],
-        )?
-        .unwrap_or_default();
+        let worktree_output =
+            git_stdout_bytes(&repo_root, &["worktree", "list", "--porcelain", "-z"])?
+                .unwrap_or_default();
         let worktree_path = parse_git_worktree_output(&worktree_output)
             .into_iter()
             .find(|worktree| {
@@ -679,17 +750,21 @@ fn stack_git_delete_branch(
         None
     };
     let args = delete_branch_git_args(branch, request.force.unwrap_or(false));
-    if let Err(error) = run_git(&repo_root, &args) {
-        if let Some(worktree_path) = removed_worktree {
-            return Err(format!(
-                "Removed linked Git worktree {worktree_path}, but branch deletion failed: {error}"
-            ));
+    let output = match run_git(&repo_root, &args) {
+        Ok(output) => output,
+        Err(error) => {
+            if let Some(worktree_path) = removed_worktree {
+                return Err(format!(
+                    "Removed linked Git worktree {worktree_path}, but branch deletion failed: {error}"
+                ));
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
+    };
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Deleted branch {branch}"),
+        output: git_operation_output(&output),
     })
 }
 
@@ -805,7 +880,11 @@ fn git_pathspecs_for_paths(repo_root: &Path, paths: &[String]) -> Result<Vec<Str
     Ok(pathspecs)
 }
 
-fn parse_git_commit_files_output(output: &[u8], repo_root: &Path, stats: &HashMap<String, (usize, usize)>) -> Vec<StackGitCommitFile> {
+fn parse_git_commit_files_output(
+    output: &[u8],
+    repo_root: &Path,
+    stats: &HashMap<String, (usize, usize)>,
+) -> Vec<StackGitCommitFile> {
     let mut files = Vec::new();
     let fields: Vec<&[u8]> = output
         .split(|byte| *byte == 0)
@@ -835,7 +914,13 @@ fn parse_git_commit_files_output(output: &[u8], repo_root: &Path, stats: &HashMa
             .to_string_lossy()
             .into_owned();
         let (additions, deletions) = stats.get(&relative_path).copied().unwrap_or((0, 0));
-        files.push(StackGitCommitFile { path, relative_path, status, additions, deletions });
+        files.push(StackGitCommitFile {
+            path,
+            relative_path,
+            status,
+            additions,
+            deletions,
+        });
     }
     files
 }
@@ -844,7 +929,10 @@ fn parse_git_numstat_output(output: &[u8], repo_root: &Path) -> HashMap<String, 
     let mut stats = HashMap::new();
     let mut pending_counts: Option<(usize, usize)> = None;
     let mut pending_rename_source: bool = false;
-    for record in output.split(|byte| *byte == 0).filter(|part| !part.is_empty()) {
+    for record in output
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+    {
         if let Some((additions, deletions, relative_path)) = parse_git_numstat_record(record) {
             let normalized_path = relative_path.replace('\\', "/");
             if normalized_path.is_empty() {
@@ -873,11 +961,16 @@ fn parse_git_numstat_output(output: &[u8], repo_root: &Path) -> HashMap<String, 
     stats
 }
 
-fn parse_git_untracked_numstat_output(repo_root: &Path, porcelain: &[u8]) -> HashMap<String, (usize, usize)> {
+fn parse_git_untracked_numstat_output(
+    repo_root: &Path,
+    porcelain: &[u8],
+) -> HashMap<String, (usize, usize)> {
     let mut stats = HashMap::new();
     let mut budget = UntrackedBudget::default();
     for path in parse_git_untracked_paths(porcelain) {
-        if let Some((additions, deletions)) = count_untracked_file_lines(repo_root, &path, &mut budget) {
+        if let Some((additions, deletions)) =
+            count_untracked_file_lines(repo_root, &path, &mut budget)
+        {
             stats.insert(path.replace('\\', "/"), (additions, deletions));
         }
     }
@@ -1125,16 +1218,44 @@ fn git_stdout_bytes(cwd: &Path, args: &[&str]) -> Result<Option<Vec<u8>>, String
     }
 }
 
-fn run_git(cwd: &Path, args: &[&str]) -> Result<(), String> {
+fn run_git(
+    cwd: &Path,
+    args: &[&str],
+) -> Result<crate::stack_popup::process_runner::ProcessRunOutput, String> {
     run_git_command(cwd, args, None, classify_git_run_mode(args))
-        .map(|_| ())
         .map_err(GitCommandError::into_message)
 }
 
-fn run_git_with_stdin(cwd: &Path, args: &[&str], stdin: Vec<u8>) -> Result<(), String> {
+fn run_git_with_stdin(
+    cwd: &Path,
+    args: &[&str],
+    stdin: Vec<u8>,
+) -> Result<crate::stack_popup::process_runner::ProcessRunOutput, String> {
     run_git_command(cwd, args, Some(stdin), GitRunMode::LocalMutation)
-        .map(|_| ())
         .map_err(GitCommandError::into_message)
+}
+
+fn git_operation_output(output: &crate::stack_popup::process_runner::ProcessRunOutput) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .trim_end()
+        .to_string();
+    let mut sections = Vec::new();
+    if !stdout.is_empty() {
+        sections.push(format!("stdout:\n{stdout}"));
+    }
+    if !stderr.is_empty() {
+        sections.push(format!("stderr:\n{stderr}"));
+    }
+    if output.stdout_truncated {
+        sections.push("stdout truncated".to_string());
+    }
+    if output.stderr_truncated {
+        sections.push("stderr truncated".to_string());
+    }
+    sections.join("\n\n")
 }
 
 fn run_git_command(
@@ -1208,7 +1329,9 @@ fn classify_git_run_mode(args: &[&str]) -> GitRunMode {
         {
             GitRunMode::LocalMutation
         }
-        Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch" | "merge-base") => GitRunMode::Read,
+        Some("status" | "rev-parse" | "log" | "ls-tree" | "config" | "branch" | "merge-base") => {
+            GitRunMode::Read
+        }
         Some("diff") => GitRunMode::Read,
         _ => GitRunMode::OptionalProbe,
     }
@@ -1250,9 +1373,7 @@ fn map_git_process_error(error: ProcessRunError) -> GitCommandError {
 }
 
 fn classify_git_nonzero(status: Option<i32>, stdout: Vec<u8>, stderr: Vec<u8>) -> GitCommandError {
-    let text = String::from_utf8_lossy(&stderr).trim().to_string();
-    let fallback = String::from_utf8_lossy(&stdout).trim().to_string();
-    let text = if text.is_empty() { fallback } else { text };
+    let text = combined_git_nonzero_text(stdout, stderr);
     let lower = text.to_ascii_lowercase();
     if lower.contains("not a git repository")
         || lower.contains("fatal: unable to read current working directory")
@@ -1282,6 +1403,33 @@ fn classify_git_nonzero(status: Option<i32>, stdout: Vec<u8>, stderr: Vec<u8>) -
     } else {
         GitCommandError::NonZero(bound_msg("Git failed", &text))
     }
+}
+
+fn combined_git_nonzero_text(stdout: Vec<u8>, stderr: Vec<u8>) -> String {
+    let mut parts = Vec::new();
+    let stdout = bounded_git_output_text("stdout", &stdout);
+    if !stdout.is_empty() {
+        parts.push(stdout);
+    }
+    let stderr = bounded_git_output_text("stderr", &stderr);
+    if !stderr.is_empty() {
+        parts.push(stderr);
+    }
+    parts.join("\n\n").trim().to_string()
+}
+
+fn bounded_git_output_text(label: &str, bytes: &[u8]) -> String {
+    const MAX_CHARS: usize = 8_192;
+    let text = String::from_utf8_lossy(bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut body = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    if trimmed.chars().count() > MAX_CHARS {
+        body.push_str("\n...");
+    }
+    format!("{label}:\n{body}")
 }
 
 fn bound_msg(prefix: &str, detail: &str) -> String {
@@ -1534,8 +1682,12 @@ fn stack_git_status_from_porcelain(
             let staged = git_status_has_staged_change(xy);
             let unstaged = git_status_has_unstaged_change(xy);
             let staged_stats_value = staged_stats.get(&relative_path.replace('\\', "/")).copied();
-            let unstaged_stats_value = unstaged_stats.get(&relative_path.replace('\\', "/")).copied();
-            let untracked_stats_value = untracked_stats.get(&relative_path.replace('\\', "/")).copied();
+            let unstaged_stats_value = unstaged_stats
+                .get(&relative_path.replace('\\', "/"))
+                .copied();
+            let untracked_stats_value = untracked_stats
+                .get(&relative_path.replace('\\', "/"))
+                .copied();
             status.entries.push(StackGitFileStatus {
                 path: absolute_git_status_path(repo_root, &relative_path),
                 relative_path,
@@ -1698,7 +1850,7 @@ fn stack_git_unstage_paths(
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let pathspecs = git_pathspecs_for_paths(&repo_root, &request.paths)?;
-    run_git_with_stdin(
+    let output = run_git_with_stdin(
         &repo_root,
         &[
             "restore",
@@ -1711,6 +1863,7 @@ fn stack_git_unstage_paths(
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Unstaged {} file(s)", pathspecs.len()),
+        output: git_operation_output(&output),
     })
 }
 fn stack_git_revert_paths(
@@ -1722,7 +1875,7 @@ fn stack_git_revert_paths(
         return Err("Select at least one tracked file to discard".to_string());
     }
     let pathspecs = git_pathspecs_for_paths(&repo_root, &request.paths)?;
-    run_git_with_stdin(
+    let output = run_git_with_stdin(
         &repo_root,
         &[
             "restore",
@@ -1735,6 +1888,7 @@ fn stack_git_revert_paths(
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Discarded changes in {} file(s)", pathspecs.len()),
+        output: git_operation_output(&output),
     })
 }
 fn stack_git_diff(request: StackGitDiffRequest) -> Result<StackGitDiff, String> {
@@ -1777,10 +1931,11 @@ fn stack_git_stash(request: StackGitStashRequest) -> Result<StackGitOperationRes
     if request.include_untracked {
         args.push("--include-untracked");
     }
-    run_git(&repo_root, &args)?;
+    let output = run_git(&repo_root, &args)?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: "Stash created".to_string(),
+        output: git_operation_output(&output),
     })
 }
 fn stack_git_stash_apply(
@@ -1805,10 +1960,11 @@ fn git_stash_mutation(
     let repo_root = repo_root_for_folder(&request.folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
     let stash_ref = validate_git_stash_ref(&request.stash_ref)?.to_string();
-    run_git(&repo_root, &["stash", op, &stash_ref])?;
+    let output = run_git(&repo_root, &["stash", op, &stash_ref])?;
     Ok(StackGitOperationResult {
         repository_root: repo_root.to_string_lossy().into_owned(),
         summary: format!("Stash {op} done"),
+        output: git_operation_output(&output),
     })
 }
 fn trim_git_stash_message(value: Option<&str>) -> String {
@@ -1875,19 +2031,22 @@ fn git_status_has_unstaged_change(xy: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_git_run_mode, create_branch_git_args, delete_branch_git_args, git_pathspecs_for_paths,
-        git_relative_path_for_request, git_status_kind, git_timeout_for_mode, local_branch_ref,
-        annotate_branches_with_worktrees, normalize_git_remote_url, nul_joined_pathspecs,
-        parse_git_branch_output, parse_git_worktree_output, remove_worktree_git_args,
-        parse_git_commit_files_output, parse_git_log_output, parse_git_numstat_output,
-        parse_git_stash_list_output, parse_git_tree_output,
+        annotate_branches_with_worktrees, classify_git_run_mode, count_untracked_file_lines,
+        create_branch_git_args, delete_branch_git_args, git_operation_output,
+        git_pathspecs_for_paths, git_relative_path_for_request, git_status_kind,
+        git_timeout_for_mode, local_branch_ref, normalize_git_remote_url,
+        parse_git_branch_output, parse_git_commit_files_output, parse_git_log_output,
+        parse_git_numstat_output, parse_git_stash_list_output, parse_git_tree_output,
+        parse_git_untracked_numstat_output, parse_git_worktree_output, remove_worktree_git_args,
         stack_git_status_from_porcelain, validate_git_branch_name, validate_git_stash_ref,
-        validate_treeish, GitCommandError, GitRunMode,
-        parse_git_untracked_numstat_output, count_untracked_file_lines, UntrackedBudget,
+        validate_treeish, GitCommandError, GitRunMode, UntrackedBudget,
     };
     use crate::stack_popup::models::StackGitFileStatusKind;
+    use crate::stack_popup::process_runner::ProcessRunOutput;
     use std::collections::HashMap;
     use std::fs;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
     use std::path::Path;
     use std::process::Command;
     use std::time::Duration;
@@ -1932,8 +2091,14 @@ mod tests {
         fs::write(repo.join("with_newline.txt"), b"a\nb\n").expect("write newline file");
         fs::write(repo.join("without_newline.txt"), b"a\nb").expect("write nonterminated file");
         let mut budget = UntrackedBudget::default();
-        assert_eq!(count_untracked_file_lines(&repo, "with_newline.txt", &mut budget), Some((2, 0)));
-        assert_eq!(count_untracked_file_lines(&repo, "without_newline.txt", &mut budget), Some((2, 0)));
+        assert_eq!(
+            count_untracked_file_lines(&repo, "with_newline.txt", &mut budget),
+            Some((2, 0))
+        );
+        assert_eq!(
+            count_untracked_file_lines(&repo, "without_newline.txt", &mut budget),
+            Some((2, 0))
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 
@@ -1952,7 +2117,10 @@ mod tests {
             use std::os::windows::fs::symlink_file;
             if symlink_file(&outside, &link).is_ok() {
                 let mut budget = UntrackedBudget::default();
-                assert_eq!(count_untracked_file_lines(&repo, "link.txt", &mut budget), None);
+                assert_eq!(
+                    count_untracked_file_lines(&repo, "link.txt", &mut budget),
+                    None
+                );
             }
         }
         let _ = fs::remove_dir_all(&tmp);
@@ -2222,13 +2390,21 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&repo_root).unwrap();
-        let init = Command::new("git").arg("init").arg(&repo_root).output().unwrap();
+        let init = Command::new("git")
+            .arg("init")
+            .arg(&repo_root)
+            .output()
+            .unwrap();
         if !init.status.success() {
             let _ = std::fs::remove_dir_all(&repo_root);
             return;
         }
         for key in ["user.name", "user.email"] {
-            let value = if key == "user.name" { "Jason Shell" } else { "jason@example.com" };
+            let value = if key == "user.name" {
+                "Jason Shell"
+            } else {
+                "jason@example.com"
+            };
             let _ = Command::new("git")
                 .arg("-C")
                 .arg(&repo_root)
@@ -2259,7 +2435,9 @@ mod tests {
         }
         std::fs::remove_file(&file).unwrap();
         let canonical_root = std::fs::canonicalize(&repo_root).unwrap();
-        let absolute_file = std::fs::canonicalize(&repo_root).unwrap().join("deleted.txt");
+        let absolute_file = std::fs::canonicalize(&repo_root)
+            .unwrap()
+            .join("deleted.txt");
 
         let request = super::StackGitStageRequest {
             folder_path: canonical_root.to_string_lossy().to_string(),
@@ -2350,13 +2528,53 @@ mod tests {
     #[test]
     fn git_nonzero_classifier_maps_repository_and_auth_errors() {
         assert!(matches!(
-            super::classify_git_nonzero(None, vec![], b"fatal: not a git repository".to_vec()),
+            super::classify_git_nonzero(
+                None,
+                b"kept stdout".to_vec(),
+                b"fatal: not a git repository".to_vec()
+            ),
             GitCommandError::NotRepository(_)
         ));
         assert!(matches!(
-            super::classify_git_nonzero(None, vec![], b"fatal: Authentication failed".to_vec()),
+            super::classify_git_nonzero(
+                None,
+                b"kept stdout".to_vec(),
+                b"fatal: Authentication failed".to_vec()
+            ),
             GitCommandError::AuthRequired(_)
         ));
+    }
+
+    #[test]
+    fn git_nonzero_classifier_keeps_labeled_stdout_and_stderr() {
+        let text = super::combined_git_nonzero_text(b"alpha".to_vec(), b"beta".to_vec());
+
+        assert!(text.contains("stdout:\nalpha"));
+        assert!(text.contains("stderr:\nbeta"));
+    }
+
+    #[test]
+    fn git_operation_output_includes_stdout_stderr_and_truncation_markers() {
+        #[cfg(windows)]
+        let status = std::process::ExitStatus::from_raw(0);
+        #[cfg(not(windows))]
+        let status = Command::new("sh").arg("-c").arg(":").status().unwrap();
+        let output = ProcessRunOutput {
+            status,
+            stdout: b"ok\n".to_vec(),
+            stderr: b"warn\n".to_vec(),
+            stdout_total_bytes: 3,
+            stderr_total_bytes: 5,
+            stdout_truncated: true,
+            stderr_truncated: true,
+        };
+
+        let text = git_operation_output(&output);
+
+        assert!(text.contains("stdout:\nok"));
+        assert!(text.contains("stderr:\nwarn"));
+        assert!(text.contains("stdout truncated"));
+        assert!(text.contains("stderr truncated"));
     }
 
     #[test]
@@ -2415,7 +2633,10 @@ mod tests {
 
         assert!(!branches[0].checked_out_elsewhere);
         assert!(branches[1].checked_out_elsewhere);
-        assert_eq!(branches[1].checked_out_elsewhere_path.as_deref(), Some("C:/linked tree"));
+        assert_eq!(
+            branches[1].checked_out_elsewhere_path.as_deref(),
+            Some("C:/linked tree")
+        );
         assert!(!branches[2].checked_out_elsewhere);
         assert!(!branches[3].checked_out_elsewhere);
     }
@@ -2471,7 +2692,10 @@ mod tests {
             delete_branch_git_args("feature/old", true),
             vec!["branch", "-D", "--", "feature/old"]
         );
-        assert_eq!(local_branch_ref("remotes/archive"), "refs/heads/remotes/archive");
+        assert_eq!(
+            local_branch_ref("remotes/archive"),
+            "refs/heads/remotes/archive"
+        );
         assert_eq!(
             classify_git_run_mode(&["branch", "-d", "--", "feature/old"]),
             GitRunMode::LocalMutation
@@ -2482,14 +2706,26 @@ mod tests {
         );
         assert_eq!(
             remove_worktree_git_args(r"C:\worktrees\feature old", true),
-            vec!["worktree", "remove", "--force", "--force", "--", r"C:\worktrees\feature old"]
+            vec![
+                "worktree",
+                "remove",
+                "--force",
+                "--force",
+                "--",
+                r"C:\worktrees\feature old"
+            ]
         );
         assert_eq!(
             classify_git_run_mode(&["worktree", "remove", "--", r"C:\worktrees\feature old"]),
             GitRunMode::LocalMutation
         );
         assert_eq!(
-            classify_git_run_mode(&["merge-base", "--is-ancestor", "refs/heads/feature/old", "HEAD"]),
+            classify_git_run_mode(&[
+                "merge-base",
+                "--is-ancestor",
+                "refs/heads/feature/old",
+                "HEAD"
+            ]),
             GitRunMode::Read
         );
         assert!(validate_git_branch_name("--help").is_err());

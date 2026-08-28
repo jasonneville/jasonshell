@@ -279,8 +279,11 @@ test('stack git stash drawer matches history geometry and opens after the closin
   assert.ok(stashSection.indexOf('<div class="stack-git-row-shell">') < stashSection.indexOf('{#if selectedStashRef === stashRef}'));
 });
 
-test('stack git commit push failure clears stale success and stash button follows dirty tree', () => {
-  assert.match(panel, /statusMessage = '';/);
+test('stack git commit push validates remote early and preserves refresh warnings after success', () => {
+  assert.match(panel, /if \(pushAfter && !status\.remoteRepositoryUrl\)/);
+  assert.match(panel, /beginOperation\('Pushing'\);[\s\S]*failOperation\('Pushing', new Error\('No remote configured'\), 'Push failed'\)/);
+  assert.match(panel, /operationRefreshWarning/);
+  assert.match(panel, /Refresh warning/);
   assert.match(panel, /stackGitStash\(folderPath, stashMessage\.trim\(\) \|\| 'WIP', status\.entries\.some\(/);
   assert.match(panel, /disabled=\{!status \|\| operationBusy \|\| !hasDirtyWorkingTree\}/);
 });
@@ -352,13 +355,12 @@ test('StackGitPanel branch dropdown rows checkout and create branch from selecte
   assert.match(panel, /let newBranchSource = '';/);
   assert.match(panel, /sourceBranches = \[\.\.\.localBranches, \.\.\.remoteBranches\]/);
   assert.match(panel, /stackGitCreateBranch\(folderPath, name, true, newBranchSource \|\| undefined\)/);
-  assert.match(panel, /stackGitCreateBranch\(folderPath, action\.branchName, true, action\.sourceBranch\)/);
   assert.match(panel, /sourceBranch\?: string;/);
   assert.match(panel, /<form class="stack-git-branch-form" on:submit\|preventDefault=\{\(\) => void createBranch\(\)\}>[\s\S]*<span>Source branch<\/span>[\s\S]*bind:value=\{newBranchSource\}/);
   assert.match(panel, /let branchLoading = false;/);
   assert.match(panel, /let branchToken = 0;/);
   assert.match(panel, /const token = \+\+branchToken;/);
-  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \? 'true' : 'false'\}/);
+  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| operationBusy \? 'true' : 'false'\}/);
 });
 
 test('StackGitPanel marks local branches checked out in another worktree', () => {
@@ -408,7 +410,7 @@ test('stack git dropdown confirms local branch deletion and protects current and
   assert.match(panel, /data-stack-git-branch-delete=\{branch\.name\}/);
   assert.match(panel, /branchDeleteInProgress = true;/);
   assert.match(panel, /branchDeleteInProgress = false;/);
-  assert.match(panel, /await stackPopup\.stackGitDeleteBranch\(folderPath, action\.branchName, action\.force \?\? false, action\.removeWorktree \?\? false, action\.worktreePath\)/);
+  assert.match(panel, /stackPopup\.stackGitDeleteBranch\(folderPath, branchName, action\.force \?\? false, action\.removeWorktree \?\? false, action\.worktreePath\)/);
   assert.match(panel, /force: true/);
   assert.match(panel, /branch delete error|deleteError|Git branch deletion failed|not fully merged/);
   assert.match(panel, /aria-label=\{`Delete local branch \$\{normalizeBranchLabel\(branch\)\}`\}/);
@@ -422,11 +424,10 @@ test('linked-worktree branch deletion confirms once then removes optimistically 
   assert.match(panel, /worktreePath: branch\.checkedOutElsewherePath/);
   assert.match(panel, /branch\.checkedOutElsewherePath/);
   assert.match(panel, /action\.removeWorktree \?\? false/);
-  assert.match(panel, /branches = branches\.filter\(\(branch\) => branch\.name !== action\.branchName\)/);
   assert.match(panel, /permanently remove its linked worktree directory/);
   assert.match(panel, /uncommitted worktree changes/i);
   assert.match(panel, /unmerged branch commits/i);
-  assert.match(panel, /catch \(error\) \{[\s\S]*await refreshBranches\(true\);/);
+  assert.match(panel, /runStackGitOperation\('Deleting branch', 'Branch deleted', 'Branch deletion failed'/);
   assert.doesNotMatch(panel, /function forceDeleteLocalBranch/);
   assert.doesNotMatch(panel, /function removeWorktreeAndDeleteLocalBranch/);
 });
@@ -618,6 +619,22 @@ test('StackGitPanel changes view collapses staged and unstaged groups with histo
   assert.match(panel, /role="listitem" aria-label="Unstaged changes"/);
   assert.doesNotMatch(panel, /<section[^>]*aria-label="Staged changes"[^>]*>\s*<div class="stack-git-history-commit" role="listitem">/);
   assert.doesNotMatch(panel, /<section[^>]*aria-label="Unstaged changes"[^>]*>\s*<div class="stack-git-history-commit" role="listitem">/);
+});
+
+test('StackGitPanel shows sequential operation progress, detailed failures, and expandable output below header', () => {
+  const headerEnd = panel.indexOf('</header>');
+  const contentStart = panel.indexOf('<div class="stack-git-panel-content"');
+  const operationPanel = panel.indexOf('class="stack-git-operation-status"');
+  assert.ok(headerEnd >= 0 && operationPanel > headerEnd && operationPanel < contentStart);
+  assert.match(panel, /let operationLabel = '';/);
+  assert.match(panel, /operationLabel = 'Committing';[\s\S]*await tick\(\);[\s\S]*stackGitCommit/);
+  assert.match(panel, /operationLabel = 'Pushing';[\s\S]*await tick\(\);[\s\S]*stackGitPush/);
+  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| operationBusy \? 'true' : 'false'\}/);
+  assert.match(panel, /role=\{errorMessage \? 'alert' : 'status'\}/);
+  assert.match(panel, /<details[^>]*class="stack-git-operation-output"[\s\S]*<summary>Command output<\/summary>[\s\S]*<pre>\{operationOutput\}<\/pre>/);
+  assert.match(panel, /operationErrorMessage\(error, `\$\{operationLabel\} failed`\)/);
+  assert.match(panel, /`\$\{operationLabel\} failed: \$\{detail\}`/);
+  assert.match(panel, /operationState === 'success' && operationRefreshWarning/);
 });
 
 test('stack git path emphasis splits Windows and Git separators', () => {

@@ -14,6 +14,7 @@
     StackGitDiff,
     StackGitFileStatus,
     StackGitLog,
+    StackGitOperationResult,
     StackGitStashFile,
     StackGitStashEntry,
     StackGitStashes,
@@ -23,6 +24,7 @@
   type StackGitView = 'changes' | 'history' | 'stashes' | 'branches';
   type StackGitConfirmKind = 'discard' | 'stash-pop' | 'stash-drop' | 'checkout' | 'create-branch' | 'delete-branch';
   type StackGitCommitFile = { path: string; relativePath: string; status: string; additions?: number; deletions?: number };
+  type StackGitOperationSummary = Pick<StackGitOperationResult, 'summary' | 'output'>;
   type StackGitBranchRow = StackGitBranches['branches'][number] & {
     checkedOutElsewhere?: boolean;
     checkedOutElsewherePath?: string | null;
@@ -74,6 +76,11 @@
   let viewLoading = false;
   let branchLoading = false;
   let operationBusy = false;
+  let operationState: 'idle' | 'active' | 'success' | 'error' = 'idle';
+  let operationLabel = '';
+  let operationOutput = '';
+  let operationErrorDetail = '';
+  let operationRefreshWarning = '';
   let branchDeleteErrorBranchName = '';
   let branchDeleteErrorMessage = '';
   let commitTextarea: HTMLTextAreaElement | null = null;
@@ -147,6 +154,75 @@
     if (typeof error === 'string' && error.trim()) return error;
     if (error instanceof Error && error.message) return error.message;
     return fallback;
+  }
+
+  function normalizeOperationOutput(output: string | null | undefined) {
+    return output?.trim() ?? '';
+  }
+
+  function formatOperationOutput(parts: { heading: string; output?: string | null | undefined }[]) {
+    return parts
+      .map((part) => {
+        const output = normalizeOperationOutput(part.output);
+        return output ? `${part.heading}\n${output}` : '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  function beginOperation(label: string) {
+    operationBusy = true;
+    operationState = 'active';
+    operationLabel = label;
+    operationOutput = '';
+    operationErrorDetail = '';
+    operationRefreshWarning = '';
+    errorMessage = '';
+  }
+
+  function completeOperation(label: string, result: StackGitOperationSummary) {
+    operationState = 'success';
+    operationLabel = label;
+    operationOutput = normalizeOperationOutput(result.output);
+    operationErrorDetail = '';
+    operationRefreshWarning = '';
+  }
+
+  function failOperation(label: string, error: unknown, fallback: string) {
+    operationState = 'error';
+    operationLabel = label;
+    const legacyDetail = operationErrorMessage(error, `${operationLabel} failed`);
+    const detail = operationErrorMessage(error, fallback);
+    const prefix = `${label} failed`;
+    operationErrorDetail = detail.startsWith(`${prefix}:`) ? detail : `${operationLabel} failed: ${detail}`;
+    if (detail === `${label} failed`) operationErrorDetail = legacyDetail;
+    errorMessage = operationErrorDetail;
+  }
+
+  async function runStackGitOperation(
+    activeLabel: string,
+    successLabel: string,
+    fallback: string,
+    action: () => Promise<StackGitOperationSummary>,
+    refreshBranchState = false
+  ) {
+    if (operationBusy) return;
+    beginOperation(activeLabel);
+    await tick();
+    try {
+      const result = await action();
+      statusMessage = result.summary;
+      completeOperation(successLabel, result);
+      try {
+        await refreshAfterMutation(refreshBranchState);
+      } catch (refreshError) {
+        operationRefreshWarning = operationErrorMessage(refreshError, 'Refresh warning');
+      }
+    } catch (error) {
+      failOperation(activeLabel, error, fallback);
+    } finally {
+      operationBusy = false;
+    }
   }
 
   function stackGitPathParts(relativePath: string) {
@@ -449,7 +525,6 @@
     historyFilesLoading = true;
     historyFilesError = '';
     try {
-      // @ts-ignore legacy wrapper present at runtime
       const result = await stackPopup.stackGitCommitFiles(folderPath, entry.commitHash);
       if (entry.commitHash !== selectedHistoryHash) return;
       historyFiles = result.files;
@@ -473,7 +548,6 @@
     diffLoading = true;
     diffError = '';
     try {
-      // @ts-ignore legacy wrapper present at runtime
       const result = await stackPopup.stackGitCommitFileDiff(folderPath, commitHash, path);
       if (token !== diffToken || selectedHistoryHash !== commitHash || selectedHistoryFilePath !== path) return;
       diffText = result?.content ?? '';
@@ -507,7 +581,6 @@
     selectedStashFilePath = '';
     closeDiffDrawer();
     try {
-      // @ts-ignore legacy wrapper present at runtime
       const result = await stackPopup.stackGitStashFiles(folderPath, normalizeRef(entry));
       if (normalizeRef(entry) !== selectedStashRef || selectedRef !== selectedStashRef) return;
       stashFiles = result.files ?? [];
@@ -562,30 +635,12 @@
   async function stagePaths(paths: string[]) {
     if (!paths.length || operationBusy) return;
     if (!stackPopup.stackGitAddPaths || !status) return;
-    operationBusy = true;
-    try {
-      const result = await stackPopup.stackGitAddPaths(folderPath, paths);
-      statusMessage = result.summary;
-      await refreshAfterMutation();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : 'Stage failed';
-    } finally {
-      operationBusy = false;
-    }
+    await runStackGitOperation('Staging', 'Staged', 'Stage failed', async () => await stackPopup.stackGitAddPaths(folderPath, paths));
   }
 
   async function unstagePaths(paths: string[]) {
     if (!paths.length || operationBusy || !status) return;
-    operationBusy = true;
-    try {
-      const result = await stackPopup.stackGitUnstagePaths(folderPath, paths);
-      statusMessage = result.summary;
-      await refreshAfterMutation();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : 'Unstage failed';
-    } finally {
-      operationBusy = false;
-    }
+    await runStackGitOperation('Unstaging', 'Unstaged', 'Unstage failed', () => stackPopup.stackGitUnstagePaths(folderPath, paths));
   }
 
   async function discardPaths(entries: StackGitFileStatus[]) {
@@ -601,21 +656,46 @@
 
   async function commitChanges(pushAfter = false) {
     if (!status || !commitMessage.trim() || !canCommit || operationBusy) return;
-    operationBusy = true;
+    if (pushAfter && !status.remoteRepositoryUrl) {
+      beginOperation('Pushing');
+      await tick();
+      failOperation('Pushing', new Error('No remote configured'), 'Push failed');
+      operationBusy = false;
+      return;
+    }
+    beginOperation('Committing');
+    operationLabel = 'Committing';
+    await tick();
     try {
       const result = await stackPopup.stackGitCommit(folderPath, commitMessage.trim(), stagedEntries.map((entry) => entry.path));
-      if (pushAfter) {
-        if (!status.remoteRepositoryUrl) throw new Error('No remote configured');
-        const pushResult = await stackPopup.stackGitPush(folderPath);
-        statusMessage = `${result.summary}; ${pushResult.summary}`;
-      } else {
-        statusMessage = result.summary;
-      }
+      const commitOutput = normalizeOperationOutput(result.output);
+      const outputParts = [{ heading: 'Commit', output: commitOutput }];
+      statusMessage = result.summary;
       commitMessage = '';
-      await refreshAfterMutation();
+      if (!pushAfter) {
+        completeOperation('Committed', result);
+        try {
+          await refreshAfterMutation();
+        } catch (refreshError) {
+          operationRefreshWarning = operationErrorMessage(refreshError, 'Refresh warning');
+        }
+        return;
+      }
+      operationOutput = formatOperationOutput(outputParts);
+      operationLabel = 'Pushing';
+      await tick();
+      const pushResult = await stackPopup.stackGitPush(folderPath);
+      outputParts.push({ heading: 'Push', output: pushResult.output });
+      statusMessage = `${result.summary}; ${pushResult.summary}`;
+      completeOperation('Committed and pushed', { summary: `${result.summary}; ${pushResult.summary}`, output: formatOperationOutput(outputParts) });
+      try {
+        await refreshAfterMutation();
+      } catch (refreshError) {
+        operationRefreshWarning = operationErrorMessage(refreshError, 'Refresh warning');
+      }
     } catch (error) {
-      statusMessage = '';
-      errorMessage = error instanceof Error ? error.message : 'Commit failed';
+      failOperation(operationLabel || 'Committing', error, pushAfter ? 'Commit and push failed' : 'Commit failed');
+      return;
     } finally {
       operationBusy = false;
     }
@@ -629,20 +709,18 @@
 
   async function syncRemote(operation: 'fetch' | 'pull' | 'push') {
     if (!status || operationBusy) return;
-    operationBusy = true;
-    try {
-      const result = operation === 'fetch'
-        ? await stackPopup.stackGitFetch(folderPath)
+    const labels = operation === 'fetch'
+      ? ['Fetching', 'Fetched']
+      : operation === 'pull'
+        ? ['Pulling', 'Pulled']
+        : ['Pushing', 'Pushed'];
+    await runStackGitOperation(labels[0], labels[1], `Git ${operation} failed`, () =>
+      operation === 'fetch'
+        ? stackPopup.stackGitFetch(folderPath)
         : operation === 'pull'
-          ? await stackPopup.stackGitPull(folderPath)
-          : await stackPopup.stackGitPush(folderPath);
-      statusMessage = result.summary;
-      await refreshAfterMutation();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : `Git ${operation} failed`;
-    } finally {
-      operationBusy = false;
-    }
+          ? stackPopup.stackGitPull(folderPath)
+          : stackPopup.stackGitPush(folderPath)
+    );
   }
 
   async function checkoutBranch(branch: string) {
@@ -676,17 +754,20 @@
     if (!branch || operationBusy) return;
     branchDeleteErrorBranchName = '';
     branchDeleteErrorMessage = '';
-    operationBusy = true;
+    branch = matchLocalBranchName(branch);
+    beginOperation('Checking out');
+    operationLabel = 'Checking out';
+    await tick();
     try {
-      branch = matchLocalBranchName(branch);
       const result = await stackPopup.stackGitCheckoutBranch(folderPath, branch);
       applyCheckedOutBranch(branch);
       statusMessage = result.summary;
       branchDraft = '';
       branchDropdownOpen = false;
+      completeOperation('Checked out', result);
       await refreshAfterMutation(true);
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : 'Checkout failed';
+      failOperation('Checking out', error, 'Checkout failed');
     } finally {
       operationBusy = false;
     }
@@ -707,48 +788,28 @@
       });
       return;
     }
-    operationBusy = true;
-    try {
+    await runStackGitOperation('Creating branch', 'Branch created', 'Branch creation failed', async () => {
       const result = await stackPopup.stackGitCreateBranch(folderPath, name, true, newBranchSource || undefined);
       applyCheckedOutBranch(name);
-      statusMessage = result.summary;
       newBranchDraft = '';
       branchDropdownOpen = false;
-      await refreshAfterMutation(true);
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : 'Branch creation failed';
-    } finally {
-      operationBusy = false;
-    }
+      return result;
+    }, true);
   }
 
   async function stashChanges() {
-    if (!status || operationBusy) return;
-    operationBusy = true;
-    try {
+    const currentStatus = status;
+    if (!currentStatus || operationBusy) return;
+    await runStackGitOperation('Stashing', 'Stashed', 'Stash failed', ((status: StackGitStatus) => async () => {
       const result = await stackPopup.stackGitStash(folderPath, stashMessage.trim() || 'WIP', status.entries.some((entry) => entry.status === 'untracked'));
-      statusMessage = result.summary;
       stashMessage = '';
-      await refreshAfterMutation();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : 'Stash failed';
-    } finally {
-      operationBusy = false;
-    }
+      return result;
+    })(currentStatus));
   }
 
   async function applyStash(stashRef: string) {
     if (!stashRef || operationBusy) return;
-    operationBusy = true;
-    try {
-      const result = await stackPopup.stackGitStashApply(folderPath, stashRef);
-      statusMessage = result.summary;
-      await refreshAfterMutation();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : 'Stash apply failed';
-    } finally {
-      operationBusy = false;
-    }
+    await runStackGitOperation('Applying stash', 'Applied stash', 'Stash apply failed', () => stackPopup.stackGitStashApply(folderPath, stashRef));
   }
 
   async function popStash(stashRef: string) {
@@ -767,44 +828,20 @@
     if (!action) return;
 
     if (action.kind === 'discard' && action.paths) {
-      operationBusy = true;
-      try {
-        const result = await stackPopup.stackGitRevertPaths({ folderPath, paths: action.paths });
-        statusMessage = result.summary;
-        await refreshAfterMutation();
-      } catch (error) {
-        errorMessage = error instanceof Error ? error.message : 'Discard failed';
-      } finally {
-        operationBusy = false;
-      }
+      const paths = action.paths;
+      await runStackGitOperation('Discarding', 'Discarded', 'Discard failed', () => stackPopup.stackGitRevertPaths({ folderPath, paths }));
       return;
     }
 
     if (action.kind === 'stash-pop' && action.stashRef) {
-      operationBusy = true;
-      try {
-        const result = await stackPopup.stackGitStashPop(folderPath, action.stashRef);
-        statusMessage = result.summary;
-        await refreshAfterMutation();
-      } catch (error) {
-        errorMessage = error instanceof Error ? error.message : 'Stash pop failed';
-      } finally {
-        operationBusy = false;
-      }
+      const stashRef = action.stashRef;
+      await runStackGitOperation('Popping stash', 'Popped stash', 'Stash pop failed', () => stackPopup.stackGitStashPop(folderPath, stashRef));
       return;
     }
 
     if (action.kind === 'stash-drop' && action.stashRef) {
-      operationBusy = true;
-      try {
-        const result = await stackPopup.stackGitStashDrop(folderPath, action.stashRef);
-        statusMessage = result.summary;
-        await refreshAfterMutation();
-      } catch (error) {
-        errorMessage = error instanceof Error ? error.message : 'Stash drop failed';
-      } finally {
-        operationBusy = false;
-      }
+      const stashRef = action.stashRef;
+      await runStackGitOperation('Dropping stash', 'Dropped stash', 'Stash drop failed', () => stackPopup.stackGitStashDrop(folderPath, stashRef));
       return;
     }
 
@@ -813,49 +850,41 @@
       return;
     }
 
-    if (action.kind === 'delete-branch' && action.branchName) {
+    if (action.kind === 'delete-branch' && hasActionBranchName(action)) {
+      const branchName = action.branchName;
       branchDeleteInProgress = true;
-      operationBusy = true;
-      branches = branches.filter((branch) => branch.name !== action.branchName);
-      try {
-        // @ts-ignore legacy wrapper present at runtime
-        const result = await stackPopup.stackGitDeleteBranch(folderPath, action.branchName, action.force ?? false, action.removeWorktree ?? false, action.worktreePath);
+      branches = branches.filter((branch) => branch.name !== branchName);
+      await runStackGitOperation('Deleting branch', 'Branch deleted', 'Branch deletion failed', async () => {
+        const result = await stackPopup.stackGitDeleteBranch(folderPath, branchName, action.force ?? false, action.removeWorktree ?? false, action.worktreePath);
         branchDeleteErrorBranchName = '';
         branchDeleteErrorMessage = '';
-        statusMessage = result.summary;
-        await refreshAfterMutation(true);
-      } catch (error) {
-        errorMessage = operationErrorMessage(error, 'Branch deletion failed');
-        branchDeleteErrorBranchName = action.branchName;
-        branchDeleteErrorMessage = operationErrorMessage(error, 'Git branch deletion failed');
+        return result;
+      }, true);
+      if (operationState === 'error') {
+        branchDeleteErrorBranchName = branchName;
+        branchDeleteErrorMessage = operationErrorMessage(new Error(operationErrorDetail), 'Git branch deletion failed');
         await refreshBranches(true);
-      } finally {
-        operationBusy = false;
-        branchDeleteInProgress = false;
       }
-      if (branchDeleteErrorBranchName === action.branchName) {
+      branchDeleteInProgress = false;
+      if (branchDeleteErrorBranchName === branchName) {
         await tick();
-        branchDeleteFocusFallback(action.branchName)?.focus();
+        branchDeleteFocusFallback(branchName)?.focus();
       } else {
         await focusBranchPickerButton();
       }
       return;
     }
 
-    if (action.kind === 'create-branch' && action.branchName) {
-      operationBusy = true;
-      try {
-        const result = await stackPopup.stackGitCreateBranch(folderPath, action.branchName, true, action.sourceBranch);
-        applyCheckedOutBranch(action.branchName);
-        statusMessage = result.summary;
+    if (action.kind === 'create-branch' && hasActionBranchName(action)) {
+      const branchName = action.branchName;
+      const sourceBranch = action.sourceBranch;
+      await runStackGitOperation('Creating branch', 'Branch created', 'Branch creation failed', async () => {
+        const result = await stackPopup.stackGitCreateBranch(folderPath, branchName, true, sourceBranch);
+        applyCheckedOutBranch(branchName);
         newBranchDraft = '';
         branchDropdownOpen = false;
-        await refreshAfterMutation(true);
-      } catch (error) {
-        errorMessage = error instanceof Error ? error.message : 'Branch creation failed';
-      } finally {
-        operationBusy = false;
-      }
+        return result;
+      }, true);
     }
   }
 
@@ -956,7 +985,6 @@
     diffLoading = true;
     diffError = '';
     try {
-      // @ts-ignore legacy wrapper present at runtime
       const result = await stackPopup.stackGitStashFileDiff(folderPath, stashRef, path);
       if (token !== diffToken || selectedStashRef !== stashRef || selectedStashFilePath !== path) return;
       diffText = result?.content ?? '';
@@ -1029,6 +1057,10 @@
 
   function isCurrentBranch(branch: StackGitBranches['branches'][number], currentBranch: string) {
     return !branch.remote && normalizeBranchLabel(branch) === currentBranch;
+  }
+
+  function hasActionBranchName<T extends { branchName?: string | null }>(action: T): action is T & { branchName: string } {
+    return typeof action.branchName === 'string' && action.branchName.length > 0;
   }
 
   function clearMessages() {
@@ -1207,8 +1239,7 @@
 </script>
 
 <svelte:window on:keydown={handleEscape} on:pointerdown={handleBranchPickerPointerdown} />
-
-<section class="stack-git-panel" aria-label="Git panel" aria-busy={statusLoading || viewLoading || branchLoading || diffLoading ? 'true' : 'false'}>
+<section class="stack-git-panel" aria-label="Git panel" aria-busy={statusLoading || viewLoading || branchLoading || diffLoading || operationBusy ? 'true' : 'false'}>
   <header class="stack-git-panel-header">
     <div class="stack-git-panel-row stack-git-panel-row--primary">
       <div class="stack-git-branch-picker" bind:this={branchPickerElement} on:focusout={handleBranchPickerFocusout}>
@@ -1366,6 +1397,32 @@
       </div>
     </div>
   </header>
+
+  {#if operationState !== 'idle'}
+    <div class="stack-git-operation-status" class:stack-git-operation-status--error={operationState === 'error'} role={errorMessage ? 'alert' : 'status'} aria-live={errorMessage ? 'assertive' : 'polite'}>
+      <div class="stack-git-operation-status__line">
+        {#if operationState === 'active'}
+          <span class="stack-git-operation-status__spinner" aria-hidden="true"></span>
+        {/if}
+        <strong>{operationLabel}</strong>
+      </div>
+      {#if operationState === 'success' && statusMessage}
+        <div class="stack-git-operation-status__message">{statusMessage}</div>
+      {/if}
+      {#if operationState === 'error'}
+        <div class="stack-git-operation-status__message">{operationErrorDetail}</div>
+      {/if}
+      {#if operationState === 'success' && operationRefreshWarning}
+        <div class="stack-git-operation-status__message">{operationRefreshWarning}</div>
+      {/if}
+      {#if operationOutput}
+        <details class="stack-git-operation-output">
+          <summary>Command output</summary>
+          <pre>{operationOutput}</pre>
+        </details>
+      {/if}
+    </div>
+  {/if}
 
   <div class="stack-git-panel-content">
     <section class="stack-git-panel-scroll" aria-label={activeView === 'changes' ? 'Git changes' : activeView === 'history' ? 'Git history' : activeView === 'stashes' ? 'Git stashes' : 'Git branches'}>
@@ -1671,12 +1728,6 @@
 
     </section>
   </div>
-
-  {#if errorMessage }
-    <div class:error={Boolean(errorMessage)} class="stack-git-operation-status" role="status" aria-live="polite">
-      {errorMessage}
-    </div>
-  {/if}
 
   {#if activeView === 'changes'}
     <form class="stack-git-commit" on:submit|preventDefault={() => void commitChanges(false)}>
@@ -2048,16 +2099,88 @@
   }
 
   .stack-git-operation-status {
+    align-items: start;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--js-color-surface-overlay) 82%, transparent), color-mix(in srgb, var(--js-color-surface-overlay) 66%, transparent));
+    border-bottom: 1px solid color-mix(in srgb, var(--js-color-border-soft) 88%, transparent);
     color: var(--js-color-text-muted);
-    font-size: 0.75rem;
-    overflow: hidden;
-    padding: 4px 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: grid;
+    gap: 6px;
+    padding: 8px 12px 10px;
   }
 
-  .stack-git-operation-status.error {
+  .stack-git-operation-status--error {
     color: var(--js-color-danger-text, #ff8a8a);
+  }
+
+  .stack-git-operation-status__line {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .stack-git-operation-status__line strong {
+    color: var(--js-color-text-strong);
+    font-size: 0.78rem;
+    font-weight: 700;
+    min-width: 0;
+  }
+
+  .stack-git-operation-status__message {
+    color: inherit;
+    font-size: 0.74rem;
+    line-height: 1.35;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .stack-git-operation-status__spinner {
+    animation: stack-git-spin 0.75s linear infinite;
+    border: 2px solid color-mix(in srgb, var(--js-color-text-muted) 28%, transparent);
+    border-top-color: var(--js-color-accent-border);
+    border-radius: 999px;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    height: 12px;
+    width: 12px;
+  }
+
+  .stack-git-operation-output {
+    border: 1px solid color-mix(in srgb, var(--js-color-border-soft) 82%, transparent);
+    border-radius: var(--js-radius-sm);
+    background: color-mix(in srgb, var(--js-color-surface-raised) 64%, transparent);
+    color: var(--js-color-text);
+    display: grid;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .stack-git-operation-output summary {
+    cursor: pointer;
+    color: var(--js-color-text-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    list-style: none;
+    text-transform: uppercase;
+  }
+
+  .stack-git-operation-output summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .stack-git-operation-output pre {
+    margin: 0;
+    max-height: 10rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+
+  @keyframes stack-git-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .stack-git-panel-scroll {

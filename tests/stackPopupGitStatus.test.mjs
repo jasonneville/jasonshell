@@ -99,6 +99,25 @@ test('stack popup API exposes typed git workbench command wrappers ahead of back
   assert.match(stackPopupApi, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
 });
 
+test('stack git mutation results preserve bounded command output for on-demand inspection', () => {
+  const rustModels = readRepoFile('src-tauri/src/stack_popup/models.rs');
+  assert.match(stackPopupApi, /export type StackGitOperationResult = \{[\s\S]*output: string;/);
+  assert.match(rustModels, /pub struct StackGitOperationResult \{[\s\S]*pub output: String,/);
+  assert.match(productionRustGitStatus, /fn git_operation_output\(/);
+  assert.match(productionRustGitStatus, /String::from_utf8_lossy\(&output\.stdout\)/);
+  assert.match(productionRustGitStatus, /String::from_utf8_lossy\(&output\.stderr\)/);
+  assert.match(productionRustGitStatus, /run_git_command\([\s\S]*git_operation_output/);
+});
+
+test('stack git nonzero classifier preserves labeled stdout and stderr in merged diagnostics', () => {
+  assert.match(productionRustGitStatus, /combined_git_nonzero_text\(stdout, stderr\)/);
+  assert.match(productionRustGitStatus, /fn combined_git_nonzero_text\(stdout: Vec<u8>, stderr: Vec<u8>\) -> String/);
+  assert.match(productionRustGitStatus, /format!\("\{label\}:\\n\{body\}"\)/);
+  assert.match(productionRustGitStatus, /fn bounded_git_output_text\(label: &str, bytes: &\[u8\]\) -> String/);
+  assert.match(productionRustGitStatus, /MAX_CHARS: usize = 8_192/);
+  assert.match(productionRustGitStatus, /trimmed\.chars\(\)\.take\(MAX_CHARS\)/);
+});
+
 test('stack git branches expose linked-worktree occupancy from porcelain-z output', () => {
   assert.match(stackPopupApi, /checkedOutElsewhere: boolean;/);
   assert.match(stackPopupApi, /checkedOutElsewherePath\?: string \| null;/);
@@ -136,7 +155,7 @@ test('stack git delete branch contract is local-only, confirmed by UI, and uses 
   assert.match(rustGitStatus, /fn delete_branch_git_args\(branch: &str, force: bool\) -> Vec<&str>/);
   assert.match(rustGitStatus, /if force \{[\s\S]*vec!\["branch", "-D", "--", branch\][\s\S]*\} else \{[\s\S]*vec!\["branch", "-d", "--", branch\]/);
   assert.match(rustGitStatus, /delete_branch_git_args\(branch, request\.force\.unwrap_or\(false\)\)/);
-  assert.match(rustGitStatus, /git_stdout\(&repo_root, &\["show-ref", "--verify", "--quiet", "--", &branch_ref\]\)/);
+  assert.match(rustGitStatus, /show-ref", "--verify", "--quiet", "--", &branch_ref/);
   assert.match(rustGitStatus, /if current_branch\.as_deref\(\) == Some\(branch\)/);
 });
 

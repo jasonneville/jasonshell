@@ -143,6 +143,7 @@ pub struct StackGitCommitRequest {
 pub struct StackGitOperationResult {
     pub repository_root: String,
     pub summary: String,
+    pub output: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
