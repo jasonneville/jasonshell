@@ -36,6 +36,23 @@ impl<'a> ShellOpenTarget<'a> {
     }
 }
 
+fn classify_open_with_picker_target(path: &str) -> Result<ShellOpenTarget<'_>, String> {
+    let lower = path.to_ascii_lowercase();
+    if lower.starts_with("ms-settings:")
+        || lower.contains("://")
+        || lower.starts_with("file:")
+        || looks_like_protocol(path)
+    {
+        return Err("Shell path protocol is not allowed".to_string());
+    }
+
+    let target = classify_shell_open_target(path)?;
+    if Path::new(path).is_dir() {
+        return Err("Open with is only available for files".to_string());
+    }
+    Ok(target)
+}
+
 fn classify_shell_open_target(path: &str) -> Result<ShellOpenTarget<'_>, String> {
     let lower = path.to_ascii_lowercase();
     if lower.starts_with("ms-settings:") {
@@ -199,7 +216,8 @@ pub fn open_shell_path_with_picker(path: String) -> Result<(), String> {
         return Err("Shell path is empty".to_string());
     }
 
-    open_with_picker(path)
+    let target = classify_open_with_picker_target(path)?;
+    open_with_picker(target.as_shell_value())
 }
 
 fn is_safe_control_panel_arg(arg: &str) -> bool {
@@ -388,11 +406,22 @@ fn to_wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_app_launch_target, classify_shell_open_target, classify_stack_item_open_route,
-        is_safe_control_panel_arg, resolve_vscode_executable_with, ShellOpenTarget,
-        StackItemOpenRoute,
+        classify_app_launch_target, classify_open_with_picker_target, classify_shell_open_target,
+        classify_stack_item_open_route, is_safe_control_panel_arg, resolve_vscode_executable_with,
+        ShellOpenTarget, StackItemOpenRoute,
     };
     use std::path::PathBuf;
+
+    fn unique_temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "jasonshell-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn control_panel_args_allow_applets_and_block_shell_metacharacters() {
@@ -499,6 +528,86 @@ mod tests {
         ));
         assert!(classify_shell_open_target("ms-settings:display&calc.exe").is_err());
         assert!(classify_shell_open_target("Ms-Settings:display&calc.exe").is_err());
+    }
+
+    #[test]
+    fn open_with_picker_rejects_protocol_targets() {
+        for path in [
+            "http://example.com/file.txt",
+            "https://example.com/file.txt",
+            "file:///C:/Temp/file.txt",
+            "ms-settings:display",
+            "unknown-protocol:value",
+        ] {
+            assert!(
+                classify_open_with_picker_target(path)
+                    .unwrap_err()
+                    .contains("protocol is not allowed"),
+                "{path} should be rejected as protocol"
+            );
+        }
+    }
+
+    #[test]
+    fn open_with_picker_rejects_missing_targets() {
+        let missing = unique_temp_root("open-with-picker-missing").join("missing.txt");
+
+        assert!(classify_open_with_picker_target(&missing.to_string_lossy())
+            .unwrap_err()
+            .contains("does not exist"));
+    }
+
+    #[test]
+    fn open_with_picker_rejects_directories() {
+        let root = unique_temp_root("open-with-picker-dir");
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(
+            classify_open_with_picker_target(&root.to_string_lossy()).unwrap_err(),
+            "Open with is only available for files"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn open_with_picker_rejects_executable_or_script_targets() {
+        let root = unique_temp_root("open-with-picker-executable");
+        std::fs::create_dir_all(&root).unwrap();
+
+        for name in [
+            "tool.exe",
+            "batch.cmd",
+            "script.ps1",
+            "shortcut.lnk",
+            "website.url",
+        ] {
+            let path = root.join(name);
+            std::fs::write(&path, b"blocked").unwrap();
+            assert!(
+                classify_open_with_picker_target(&path.to_string_lossy())
+                    .unwrap_err()
+                    .contains("executable or script launch is not allowed"),
+                "{name} should be rejected"
+            );
+        }
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn open_with_picker_accepts_existing_document_file() {
+        let root = unique_temp_root("open-with-picker-document");
+        std::fs::create_dir_all(&root).unwrap();
+        let text = root.join("notes.txt");
+        std::fs::write(&text, b"hello").unwrap();
+
+        assert!(matches!(
+            classify_open_with_picker_target(&text.to_string_lossy()).unwrap(),
+            ShellOpenTarget::LocalPath(_)
+        ));
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

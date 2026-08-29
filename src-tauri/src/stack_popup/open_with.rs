@@ -162,3 +162,46 @@ fn expand_environment(candidate: &str) -> String {
     }
     expanded
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{candidate_specs_for_extension, open_with_candidates_for_extension_with_resolver};
+    use std::path::PathBuf;
+
+    #[test]
+    fn open_with_candidate_list_is_allowlist_only() {
+        let candidates =
+            open_with_candidates_for_extension_with_resolver(Some("txt"), |candidate| {
+                Some(PathBuf::from(format!(r"C:\resolved\{candidate}")))
+            })
+            .unwrap();
+
+        let ids: Vec<_> = candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect();
+        assert_eq!(ids, ["notepad", "notepad-plus-plus", "vscode"]);
+        assert!(!ids.contains(&"renderer-supplied-app"));
+    }
+
+    #[test]
+    fn open_with_candidate_specs_are_selected_from_known_extensions() {
+        let text_ids: Vec<_> = candidate_specs_for_extension(Some(".md"))
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect();
+        assert_eq!(text_ids, ["notepad", "notepad-plus-plus", "vscode"]);
+
+        let image_ids: Vec<_> = candidate_specs_for_extension(Some("png"))
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect();
+        assert_eq!(image_ids, ["paint", "vscode"]);
+
+        let fallback_ids: Vec<_> = candidate_specs_for_extension(Some("unknown"))
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect();
+        assert_eq!(fallback_ids, ["notepad", "vscode"]);
+    }
+}

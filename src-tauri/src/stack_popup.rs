@@ -875,7 +875,10 @@ pub fn open_stack_item(window: WebviewWindow, path: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn open_stack_item_with_picker(window: WebviewWindow, path: String) -> Result<(), String> {
+pub async fn open_stack_item_with_picker(
+    window: WebviewWindow,
+    path: String,
+) -> Result<(), String> {
     authorize_stack_command(
         &window,
         StackCommandAuth::AllowedCallers {
@@ -884,15 +887,19 @@ pub fn open_stack_item_with_picker(window: WebviewWindow, path: String) -> Resul
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    let path = paths::normalize_existing_path(&path)?;
-    if Path::new(&path).is_dir() {
-        return Err("Open with is only available for files".to_string());
-    }
-    shell_paths::open_shell_path_with_picker(path)
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = paths::normalize_existing_path(&path)?;
+        if Path::new(&path).is_dir() {
+            return Err("Open with is only available for files".to_string());
+        }
+        shell_paths::open_shell_path_with_picker(path)
+    })
+    .await
+    .map_err(|error| format!("Failed to join open with picker task: {error}"))?
 }
 
 #[tauri::command]
-pub fn list_stack_open_with_candidates(
+pub async fn list_stack_open_with_candidates(
     window: WebviewWindow,
     path: String,
 ) -> Result<Vec<StackOpenWithCandidate>, String> {
@@ -904,15 +911,19 @@ pub fn list_stack_open_with_candidates(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    let path = paths::normalize_existing_path(&path)?;
-    if Path::new(&path).is_dir() {
-        return Err("Open with is only available for files".to_string());
-    }
-    open_with::open_with_candidates_for_path(Path::new(&path))
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = paths::normalize_existing_path(&path)?;
+        if Path::new(&path).is_dir() {
+            return Err("Open with is only available for files".to_string());
+        }
+        open_with::open_with_candidates_for_path(Path::new(&path))
+    })
+    .await
+    .map_err(|error| format!("Failed to join open with candidate task: {error}"))?
 }
 
 #[tauri::command]
-pub fn open_stack_item_with_app(
+pub async fn open_stack_item_with_app(
     window: WebviewWindow,
     path: String,
     app_id: String,
@@ -925,11 +936,15 @@ pub fn open_stack_item_with_app(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    let path = paths::normalize_existing_path(&path)?;
-    if Path::new(&path).is_dir() {
-        return Err("Open with is only available for files".to_string());
-    }
-    open_with::open_with_app(Path::new(&path), &app_id)
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = paths::normalize_existing_path(&path)?;
+        if Path::new(&path).is_dir() {
+            return Err("Open with is only available for files".to_string());
+        }
+        open_with::open_with_app(Path::new(&path), &app_id)
+    })
+    .await
+    .map_err(|error| format!("Failed to join open with app task: {error}"))?
 }
 
 #[tauri::command]

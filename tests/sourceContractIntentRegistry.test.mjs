@@ -93,6 +93,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'backendBlockingLockBoundaries.test.mjs',
     'backendBlockingLockBoundariesP6.test.mjs',
     'searchEngineContracts.test.mjs',
+    'stackOpenWithAsyncBoundary.test.mjs',
     'settingsPowerActionsPhase5.test.mjs'
   ],
   temporaryLegacyGuard: [
