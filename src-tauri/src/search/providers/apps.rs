@@ -243,7 +243,8 @@ fn emit_app_index_refreshed(entry_count: usize) {
 
 fn cached_app_entries(now_epoch_secs: u64) -> CachedAppEntriesSnapshot {
     if let Ok(guard) = app_index_runtime().lock() {
-        return cached_app_entries_from_cache(guard.cache.as_ref(), now_epoch_secs);
+        let refresh_in_flight = APP_INDEX_REFRESH_IN_FLIGHT.load(Ordering::Acquire);
+        return cached_app_entries_from_cache(guard.cache.as_ref(), now_epoch_secs, refresh_in_flight);
     }
     CachedAppEntriesSnapshot {
         entries: Vec::new(),
@@ -256,9 +257,10 @@ fn cached_app_entries(now_epoch_secs: u64) -> CachedAppEntriesSnapshot {
 fn cached_app_entries_from_cache(
     cached: Option<&CachedAppIndex>,
     now_epoch_secs: u64,
+    refresh_in_flight: bool,
 ) -> CachedAppEntriesSnapshot {
     match cached {
-        Some(cached) if APP_INDEX_REFRESH_IN_FLIGHT.load(Ordering::Acquire) => {
+        Some(cached) if refresh_in_flight => {
             CachedAppEntriesSnapshot {
                 entries: cached.entries.clone(),
                 cache_state: SearchProviderCacheState::Refresh,
@@ -278,7 +280,7 @@ fn cached_app_entries_from_cache(
             cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
             refresh_needed: true,
         },
-        None if APP_INDEX_REFRESH_IN_FLIGHT.load(Ordering::Acquire) => CachedAppEntriesSnapshot {
+        None if refresh_in_flight => CachedAppEntriesSnapshot {
             entries: Vec::new(),
             cache_state: SearchProviderCacheState::Indexing,
             cache_age_ms: None,
@@ -846,27 +848,6 @@ mod tests {
     use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    static APP_INDEX_REFRESH_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct AppIndexRefreshTestGuard {
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl AppIndexRefreshTestGuard {
-        fn acquire() -> Self {
-            let lock = APP_INDEX_REFRESH_TEST_LOCK.get_or_init(|| Mutex::new(()));
-            let lock = lock.lock().unwrap();
-            APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
-            Self { _lock: lock }
-        }
-    }
-
-    impl Drop for AppIndexRefreshTestGuard {
-        fn drop(&mut self) {
-            APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
-        }
-    }
-
     #[test]
     fn phase2_app_source_priority_signals_match_approved_cap_scale() {
         assert_eq!(test_app_source_priority_signal("pinnedTaskbar"), 50);
@@ -917,9 +898,7 @@ mod tests {
 
     #[test]
     fn cold_query_path_returns_cache_miss_without_scanning() {
-        let _guard = AppIndexRefreshTestGuard::acquire();
-        APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
-        let snapshot = cached_app_entries_from_cache(None, 100);
+        let snapshot = cached_app_entries_from_cache(None, 100, false);
 
         assert!(snapshot.entries.is_empty());
         assert_eq!(snapshot.cache_state, SearchProviderCacheState::Miss);
@@ -928,7 +907,6 @@ mod tests {
 
     #[test]
     fn stale_app_cache_returns_existing_rows_while_refresh_is_deferred() {
-        let _guard = AppIndexRefreshTestGuard::acquire();
         let cached = CachedAppIndex {
             indexed_at_epoch_secs: 100,
             entries: vec![AppIndexEntry {
@@ -939,7 +917,7 @@ mod tests {
                 priority: 1_550,
             }],
         };
-        let snapshot = cached_app_entries_from_cache(Some(&cached), 220);
+        let snapshot = cached_app_entries_from_cache(Some(&cached), 220, false);
 
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.cache_state, SearchProviderCacheState::Refresh);
@@ -949,12 +927,8 @@ mod tests {
 
     #[test]
     fn empty_cache_reports_indexing_while_refresh_is_running() {
-        let _guard = AppIndexRefreshTestGuard::acquire();
-        APP_INDEX_REFRESH_IN_FLIGHT.store(true, Ordering::Release);
+        let snapshot = cached_app_entries_from_cache(None, 100, true);
 
-        let snapshot = cached_app_entries_from_cache(None, 100);
-
-        APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
         assert!(snapshot.entries.is_empty());
         assert_eq!(snapshot.cache_state, SearchProviderCacheState::Indexing);
         assert!(!snapshot.refresh_needed);
@@ -962,7 +936,6 @@ mod tests {
 
     #[test]
     fn fresh_cache_reports_refresh_while_startup_warm_is_running() {
-        let _guard = AppIndexRefreshTestGuard::acquire();
         let cached = CachedAppIndex {
             indexed_at_epoch_secs: 99,
             entries: vec![AppIndexEntry {
@@ -973,11 +946,8 @@ mod tests {
                 priority: 1_550,
             }],
         };
-        APP_INDEX_REFRESH_IN_FLIGHT.store(true, Ordering::Release);
+        let snapshot = cached_app_entries_from_cache(Some(&cached), 100, true);
 
-        let snapshot = cached_app_entries_from_cache(Some(&cached), 100);
-
-        APP_INDEX_REFRESH_IN_FLIGHT.store(false, Ordering::Release);
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.cache_state, SearchProviderCacheState::Refresh);
         assert_eq!(snapshot.cache_age_ms, Some(1_000));
