@@ -38,6 +38,8 @@
     enrichProcessesWithTaskbarWindows,
     filterProcesses,
     isProcessGroupExpanded,
+    killConfirmationFromPlan,
+    processKillErrorMessage,
     processMetricPercent,
     safeKillButtonState,
     taskbarActiveProcessIds,
@@ -200,7 +202,7 @@
       await refreshProcesses({ preserveVolatileOrder: false });
     } catch (error) {
       console.error(`Failed to kill process ${process.pid}`, error);
-      statusMessage = `Could not kill ${process.name} (${process.pid})`;
+      statusMessage = `Could not kill ${process.name} (${process.pid}): ${processKillErrorMessage(error)}`;
       await refreshProcesses({ preserveVolatileOrder: false });
     } finally {
       killingPid = null;
@@ -228,18 +230,6 @@
 
   function toggleGroup(groupId: ProcessGroupId) {
     processGroupExpansionState = toggleProcessGroupExpansion(groupId, processGroupExpansionState);
-  }
-
-  function killConfirmationFromPlan(killPlan: ReturnType<typeof buildProcessKillPlan>): ProcessKillConfirmation {
-    return {
-      confirmedTargetPid: killPlan.targetPid,
-      mode: killPlan.mode,
-      affectedPids: killPlan.affectedPids,
-      descendantPids: killPlan.descendantPids,
-      acknowledgedWarningCount: killPlan.warnings.length,
-      requiresSecondConfirmation: killPlan.requiresSecondConfirmation,
-      canExecute: killPlan.canExecute
-    };
   }
 
   onMount(() => {

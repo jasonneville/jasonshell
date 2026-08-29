@@ -7,6 +7,8 @@ import {
   enrichProcessesWithTaskbarWindows,
   filterProcesses,
   isProcessGroupExpanded,
+  killConfirmationFromPlan,
+  processKillErrorMessage,
   processMetricPercent,
   safeKillButtonState,
   taskbarActiveProcessIds,
@@ -155,4 +157,35 @@ test('plans kill-tree guardrails without enabling unsafe default tree kill', () 
   assert.deepEqual(treePlan.affectedPids, [20, 30]);
   assert.equal(treePlan.canExecute, false);
   assert.match(treePlan.warnings.at(-1), /plan-only/);
+});
+
+test('builds behavioral kill confirmation payload with identity copied from plan', () => {
+  const process = {
+    ...processes[1],
+    creationTime100ns: '987654321',
+    normalizedImagePath: 'c:\\tools\\code helper.exe'
+  };
+  const plan = buildProcessKillPlan(processes, process, false);
+
+  assert.deepEqual(killConfirmationFromPlan(plan), {
+    confirmedTargetPid: 20,
+    mode: 'single',
+    affectedPids: [20],
+    descendantPids: [30],
+    acknowledgedWarningCount: 2,
+    requiresSecondConfirmation: true,
+    canExecute: true,
+    creationTime100ns: '987654321',
+    normalizedImagePath: 'c:\\tools\\code helper.exe'
+  });
+});
+
+test('keeps classified process kill errors visible and bounded', () => {
+  assert.equal(
+    processKillErrorMessage(new Error('Access denied opening process 20 for termination/query')),
+    'Access denied opening process 20 for termination/query'
+  );
+  assert.equal(processKillErrorMessage('  stale\n identity  '), 'stale identity');
+  assert.equal(processKillErrorMessage('x'.repeat(300)).length, 240);
+  assert.equal(processKillErrorMessage(null), 'Process termination failed');
 });

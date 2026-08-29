@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-08-29 `[CODE]` FIXED: Process Manager kill identity now uses a shared production revalidation seam before termination, numeric Win32/HRESULT access-denied classification, lexical verbatim/UNC path normalization, a shared frontend confirmation-payload helper, and bounded classified failure status.
+- 2026-08-29 `[TOOL]` TESTED: Added focused Rust and Node coverage for zero/one terminate decisions, access-denied code matching, path normalization, and PID/creation-time/path confirmation payload copying; focused Rust and TS/Node checks pass, with existing svelte-check warnings only.
 - 2026-08-29 `[CODE]` DOCS: Documented current Stack Browser paging caps, limit clamping, retained-snapshot sorting/warnings, bounded session eviction, slice cloning, stale/path semantics, and overflow/beyond-total behavior without promising complete global sort past caps.
 - 2026-08-29 `[TOOL]` VALIDATED: Focused evidence recorded from implementation pass: Rust Stack Browser paging boundary tests passed 19/19 and Stack Node source contracts passed 60/60.
 - 2026-08-29 `[CODE]` SECURED: Adversarial Stack paging follow-up bounds ZIP entry names before normalization and prevents oversized snapshots from self-evicting before their first page; retained-cap warnings no longer echo archive-controlled names.

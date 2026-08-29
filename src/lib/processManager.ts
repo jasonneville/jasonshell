@@ -19,6 +19,8 @@ export type ProcessInfo = {
   gpuPercent?: number | null;
   threadCount?: number | null;
   startTimeMs?: number | null;
+  creationTime100ns?: string | null;
+  normalizedImagePath?: string | null;
   childProcessCount?: number;
   descendantProcessCount?: number;
   workspaceHint?: ProcessWorkspaceHint | null;
@@ -51,6 +53,8 @@ export type ProcessKillConfirmation = {
   acknowledgedWarningCount: number;
   requiresSecondConfirmation: boolean;
   canExecute: boolean;
+  creationTime100ns?: string | null;
+  normalizedImagePath?: string | null;
 };
 
 export function showProcessManager(request: ShowProcessManagerRequest): Promise<void> {

@@ -31,6 +31,8 @@ pub struct ProcessInfo {
     pub gpu_percent: Option<f64>,
     pub thread_count: Option<u32>,
     pub start_time_ms: Option<u64>,
+    pub creation_time_100ns: Option<String>,
+    pub normalized_image_path: Option<String>,
     pub child_process_count: u32,
     pub descendant_process_count: u32,
     pub workspace_hint: Option<ProcessWorkspaceHint>,
@@ -58,6 +60,8 @@ pub struct ProcessKillPlan {
     pub warnings: Vec<String>,
     pub requires_second_confirmation: bool,
     pub can_execute: bool,
+    pub creation_time_100ns: Option<String>,
+    pub normalized_image_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -70,6 +74,14 @@ pub struct ProcessKillConfirmation {
     pub acknowledged_warning_count: usize,
     pub requires_second_confirmation: bool,
     pub can_execute: bool,
+    pub creation_time_100ns: Option<String>,
+    pub normalized_image_path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProcessIdentity {
+    creation_time_100ns: String,
+    normalized_image_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -183,13 +195,13 @@ pub fn kill_process(pid: u32, confirmation: Option<ProcessKillConfirmation>) -> 
     #[cfg(target_os = "windows")]
     {
         let processes = windows_impl::list_processes()?;
-        validate_kill_guardrail_execution(
+        let plan = validate_kill_guardrail_execution(
             &processes,
             pid,
             confirmation.as_ref(),
             std::process::id(),
         )?;
-        windows_impl::kill_process(pid)
+        windows_impl::kill_process(pid, &plan_identity(&plan)?)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -275,6 +287,8 @@ fn build_kill_guardrail_plan(
             warnings,
             requires_second_confirmation: true,
             can_execute: false,
+            creation_time_100ns: target.creation_time_100ns.clone(),
+            normalized_image_path: target.normalized_image_path.clone(),
         });
     }
 
@@ -293,7 +307,62 @@ fn build_kill_guardrail_plan(
         warnings,
         requires_second_confirmation: true,
         can_execute: true,
+        creation_time_100ns: target.creation_time_100ns.clone(),
+        normalized_image_path: target.normalized_image_path.clone(),
     })
+}
+
+fn plan_identity(plan: &ProcessKillPlan) -> Result<ProcessIdentity, String> {
+    let creation_time_100ns = plan
+        .creation_time_100ns
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Refusing to terminate process {}; identity-limited process kill is unsupported: missing creation time",
+                plan.target_pid
+            )
+        })?;
+    let normalized_image_path = plan
+        .normalized_image_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Refusing to terminate process {}; identity-limited process kill is unsupported: missing image path",
+                plan.target_pid
+            )
+        })?;
+    Ok(ProcessIdentity {
+        creation_time_100ns: creation_time_100ns.to_string(),
+        normalized_image_path: normalized_image_path.to_string(),
+    })
+}
+
+fn execute_kill_after_identity_revalidation<F>(
+    pid: u32,
+    expected_identity: &ProcessIdentity,
+    current_identity: Option<ProcessIdentity>,
+    mut terminate: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<(), String>,
+{
+    let current_identity = current_identity.ok_or_else(|| {
+        format!(
+            "Refusing to terminate process {pid}; identity-limited query failure before termination"
+        )
+    })?;
+    if &current_identity != expected_identity {
+        return Err(format!(
+            "Refusing to terminate process {pid}; stale identity before termination"
+        ));
+    }
+    terminate()
+}
+
+fn is_access_denied_status(status: u32) -> bool {
+    status == 5 || status == 0x8007_0005
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -321,6 +390,7 @@ fn validate_kill_guardrail_execution(
     }
 
     let plan = build_kill_guardrail_plan(processes, target_pid, false, current_pid)?;
+    let expected_identity = plan_identity(&plan)?;
     if !plan.can_execute || !confirmation.can_execute {
         return Err(format!(
             "Refusing to execute guarded kill plan for {target_pid}"
@@ -335,6 +405,15 @@ fn validate_kill_guardrail_execution(
     {
         return Err(format!(
             "Refusing to terminate process {target_pid}; guardrail confirmation is stale or incomplete"
+        ));
+    }
+    if confirmation.creation_time_100ns.as_deref()
+        != Some(expected_identity.creation_time_100ns.as_str())
+        || confirmation.normalized_image_path.as_deref()
+            != Some(expected_identity.normalized_image_path.as_str())
+    {
+        return Err(format!(
+            "Refusing to terminate process {target_pid}; stale identity confirmation"
         ));
     }
 
@@ -440,7 +519,15 @@ fn dev_workspace_from_text(value: &str) -> Option<(String, String)> {
 }
 
 fn normalize_path_for_match(value: &str) -> String {
-    value.replace('/', "\\").to_ascii_lowercase()
+    let slashed = value.replace('/', "\\");
+    let without_verbatim = if slashed.len() >= 8 && slashed[..8].eq_ignore_ascii_case(r"\\?\UNC\") {
+        format!(r"\\{}", &slashed[8..])
+    } else if slashed.len() >= 4 && slashed[..4].eq_ignore_ascii_case(r"\\?\") {
+        slashed[4..].to_string()
+    } else {
+        slashed
+    };
+    without_verbatim.to_ascii_lowercase()
 }
 
 fn cpu_percent_from_snapshots(
@@ -504,8 +591,9 @@ fn record_cpu_snapshot(pid: u32, snapshot: ProcessCpuSnapshot) -> Option<f64> {
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::{
-        enrich_process_tree, is_pid_killable, record_cpu_snapshot, retain_process_snapshots,
-        workspace_hint_from_metadata, ProcessCpuSnapshot, ProcessInfo,
+        enrich_process_tree, execute_kill_after_identity_revalidation, is_access_denied_status,
+        is_pid_killable, normalize_path_for_match, record_cpu_snapshot, retain_process_snapshots,
+        workspace_hint_from_metadata, ProcessCpuSnapshot, ProcessIdentity, ProcessInfo,
     };
     use crate::task_windows::bounded_string_cache::BoundedStringCache;
     use std::collections::HashMap;
@@ -586,15 +674,57 @@ mod windows_impl {
         Ok(processes)
     }
 
-    pub(super) fn kill_process(pid: u32) -> Result<(), String> {
-        let process_handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }
-            .map_err(|error| format!("Failed to open process {pid} for termination: {error}"))?;
-        let result = unsafe { TerminateProcess(process_handle, 1) }
-            .map_err(|error| format!("Failed to terminate process {pid}: {error}"));
+    pub(super) fn kill_process(
+        pid: u32,
+        expected_identity: &ProcessIdentity,
+    ) -> Result<(), String> {
+        let process_handle = unsafe {
+            OpenProcess(
+                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                pid,
+            )
+        }
+        .map_err(|error| {
+            if is_access_denied_status(error.code().0 as u32) {
+                format!("Access denied opening process {pid} for termination/query: {error}")
+            } else {
+                format!("Failed to open process {pid} for termination/query: {error}")
+            }
+        })?;
+        let result = kill_process_on_open_handle(pid, process_handle, expected_identity);
         unsafe {
             let _ = CloseHandle(process_handle);
         }
         result
+    }
+
+    fn kill_process_on_open_handle(
+        pid: u32,
+        process_handle: HANDLE,
+        expected_identity: &ProcessIdentity,
+    ) -> Result<(), String> {
+        execute_kill_after_identity_revalidation(
+            pid,
+            expected_identity,
+            process_identity_from_handle(process_handle),
+            || {
+                unsafe { TerminateProcess(process_handle, 1) }.map_err(|error| {
+                    if is_access_denied_status(error.code().0 as u32) {
+                        format!("Access denied terminating process {pid}: {error}")
+                    } else {
+                        format!("Failed to terminate process {pid}: {error}")
+                    }
+                })
+            },
+        )
+    }
+
+    fn process_identity_from_handle(process_handle: HANDLE) -> Option<ProcessIdentity> {
+        Some(ProcessIdentity {
+            creation_time_100ns: process_creation_time_100ns(process_handle)?,
+            normalized_image_path: normalize_path_for_match(&process_image_path(process_handle)?),
+        })
     }
 
     fn process_info_from_entry(
@@ -622,6 +752,7 @@ mod windows_impl {
         let memory_bytes = process_handle.and_then(process_memory_bytes);
         let current_pid = std::process::id();
         let executable_path = process_handle.and_then(process_image_path);
+        let normalized_image_path = executable_path.as_deref().map(normalize_path_for_match);
         let icon_data_url = process_icon_data_url(executable_path.as_deref());
         let command_line = process_handle.and_then(process_command_line);
         let workspace_hint =
@@ -645,6 +776,8 @@ mod windows_impl {
             gpu_percent: gpu_percent.get(&pid).copied(),
             thread_count: Some(entry.cntThreads),
             start_time_ms: process_handle.and_then(process_start_time_ms),
+            creation_time_100ns: process_handle.and_then(process_creation_time_100ns),
+            normalized_image_path,
             child_process_count: 0,
             descendant_process_count: 0,
             workspace_hint,
@@ -1004,6 +1137,24 @@ mod windows_impl {
         filetime_to_unix_ms(creation_time)
     }
 
+    fn process_creation_time_100ns(process_handle: HANDLE) -> Option<String> {
+        let mut creation_time = FILETIME::default();
+        let mut exit_time = FILETIME::default();
+        let mut kernel_time = FILETIME::default();
+        let mut user_time = FILETIME::default();
+        unsafe {
+            GetProcessTimes(
+                process_handle,
+                &mut creation_time,
+                &mut exit_time,
+                &mut kernel_time,
+                &mut user_time,
+            )
+            .ok()?;
+        }
+        Some(filetime_ticks(creation_time).to_string())
+    }
+
     fn process_memory_bytes(process_handle: HANDLE) -> Option<u64> {
         let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { zeroed() };
         counters.cb = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
@@ -1211,9 +1362,10 @@ mod windows_impl {
 mod tests {
     use super::{
         build_kill_guardrail_plan, cpu_percent_from_snapshots, dev_workspace_from_text,
-        enrich_process_tree, is_pid_killable, memory_percent_from_bytes,
+        enrich_process_tree, execute_kill_after_identity_revalidation, is_access_denied_status,
+        is_pid_killable, memory_percent_from_bytes, normalize_path_for_match,
         validate_kill_guardrail_execution, workspace_hint_from_metadata, ProcessCpuSnapshot,
-        ProcessInfo, ProcessKillConfirmation, ProcessWorkspaceHint,
+        ProcessIdentity, ProcessInfo, ProcessKillConfirmation, ProcessWorkspaceHint,
     };
     use std::time::{Duration, Instant};
 
@@ -1379,6 +1531,132 @@ mod tests {
     }
 
     #[test]
+    fn kill_guardrail_rejects_confirmation_with_stale_creation_time() {
+        let mut processes = vec![process(100, None, "node", true)];
+        processes[0].creation_time_100ns = Some("1337".to_string());
+        processes[0].normalized_image_path = Some("c:\\tools\\node.exe".to_string());
+        let mut confirmation = single_confirmation(100, &[], 0);
+        confirmation.creation_time_100ns = Some("7331".to_string());
+        confirmation.normalized_image_path = Some("c:\\tools\\node.exe".to_string());
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect_err("stale creation time should fail closed");
+
+        assert!(error.contains("stale identity"));
+    }
+
+    #[test]
+    fn kill_guardrail_rejects_confirmation_with_stale_image_path() {
+        let mut processes = vec![process(100, None, "node", true)];
+        processes[0].creation_time_100ns = Some("1337".to_string());
+        processes[0].normalized_image_path = Some("c:\\tools\\node.exe".to_string());
+        let mut confirmation = single_confirmation(100, &[], 0);
+        confirmation.creation_time_100ns = Some("1337".to_string());
+        confirmation.normalized_image_path = Some("c:\\evil\\node.exe".to_string());
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect_err("stale image path should fail closed");
+
+        assert!(error.contains("stale identity"));
+    }
+
+    #[test]
+    fn identity_limited_process_kill_fails_closed_without_explicit_policy() {
+        let mut processes = vec![process(100, None, "node", true)];
+        processes[0].creation_time_100ns = None;
+        processes[0].normalized_image_path = None;
+        let mut confirmation = single_confirmation(100, &[], 0);
+        confirmation.creation_time_100ns = None;
+        confirmation.normalized_image_path = None;
+
+        let error = validate_kill_guardrail_execution(&processes, 100, Some(&confirmation), 999)
+            .expect_err("missing identity should fail closed");
+
+        assert!(error.contains("identity-limited"));
+    }
+
+    #[test]
+    fn fake_kill_revalidation_identity_mismatch_does_not_call_terminate() {
+        let expected = ProcessIdentity {
+            creation_time_100ns: "1337".to_string(),
+            normalized_image_path: "c:\\tools\\node.exe".to_string(),
+        };
+        let changed = ProcessIdentity {
+            creation_time_100ns: "7331".to_string(),
+            normalized_image_path: "c:\\tools\\node.exe".to_string(),
+        };
+        let mut terminate_called = false;
+
+        let error = execute_kill_after_identity_revalidation(100, &expected, Some(changed), || {
+            terminate_called = true;
+            Ok(())
+        })
+        .expect_err("changed identity should reject before terminate");
+
+        assert!(error.contains("stale identity"));
+        assert!(!terminate_called);
+    }
+
+    #[test]
+    fn fake_kill_revalidation_query_failure_does_not_call_terminate() {
+        let expected = ProcessIdentity {
+            creation_time_100ns: "1337".to_string(),
+            normalized_image_path: "c:\\tools\\node.exe".to_string(),
+        };
+        let mut terminate_calls = 0;
+
+        let error = execute_kill_after_identity_revalidation(100, &expected, None, || {
+            terminate_calls += 1;
+            Ok(())
+        })
+        .expect_err("query failure should reject before terminate");
+
+        assert!(error.contains("identity-limited query failure"));
+        assert_eq!(terminate_calls, 0);
+    }
+
+    #[test]
+    fn fake_kill_revalidation_match_calls_terminate_once() {
+        let expected = ProcessIdentity {
+            creation_time_100ns: "1337".to_string(),
+            normalized_image_path: "c:\\tools\\node.exe".to_string(),
+        };
+        let mut terminate_calls = 0;
+
+        execute_kill_after_identity_revalidation(100, &expected, Some(expected.clone()), || {
+            terminate_calls += 1;
+            Ok(())
+        })
+        .expect("matching identity should terminate");
+
+        assert_eq!(terminate_calls, 1);
+    }
+
+    #[test]
+    fn access_denied_status_matches_raw_and_hresult_only() {
+        assert!(is_access_denied_status(5));
+        assert!(is_access_denied_status(0x8007_0005));
+        assert!(!is_access_denied_status(2));
+        assert!(!is_access_denied_status(0x8007_0002));
+    }
+
+    #[test]
+    fn path_match_normalization_strips_verbatim_prefixes_slashes_and_case() {
+        assert_eq!(
+            normalize_path_for_match(r"\\?\C:/Dev/JasonShell/bin.EXE"),
+            r"c:\dev\jasonshell\bin.exe"
+        );
+        assert_eq!(
+            normalize_path_for_match(r"\\?\UNC/Server/Share/Tool.EXE"),
+            r"\\server\share\tool.exe"
+        );
+        assert_eq!(
+            normalize_path_for_match(r"C:/Dev/JasonShell/bin.EXE"),
+            r"c:\dev\jasonshell\bin.exe"
+        );
+    }
+
+    #[test]
     fn kill_guardrail_execution_requires_workspace_warning_acknowledgement() {
         let mut processes = vec![process(100, None, "node", true)];
         processes[0].workspace_hint = Some(ProcessWorkspaceHint {
@@ -1430,6 +1708,8 @@ mod tests {
             gpu_percent: None,
             thread_count: None,
             start_time_ms: None,
+            creation_time_100ns: Some("1337".to_string()),
+            normalized_image_path: Some("c:\\tools\\process.exe".to_string()),
             child_process_count: 0,
             descendant_process_count: 0,
             workspace_hint: None,
@@ -1451,6 +1731,8 @@ mod tests {
             acknowledged_warning_count,
             requires_second_confirmation: true,
             can_execute: true,
+            creation_time_100ns: Some("1337".to_string()),
+            normalized_image_path: Some("c:\\tools\\process.exe".to_string()),
         }
     }
 }

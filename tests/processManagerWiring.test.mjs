@@ -57,11 +57,15 @@ test('process manager surface and commands are routed through app and Rust comma
   assert.match(processWrapper, /iconDataUrl\?: string \| null/);
   assert.match(processWrapper, /taskbarActive/);
   assert.match(processWrapper, /invoke\(IPC_COMMANDS\.killProcess, \{ pid, confirmation \}\)/);
+  assert.match(processWrapper, /creationTime100ns\?: string \| null/);
+  assert.match(processWrapper, /normalizedImagePath\?: string \| null/);
   assert.match(taskbarWindows, /processId/);
   assert.match(taskbarWindows, /listTaskbarProcessWindows/);
   assert.match(taskWindowsMod, /pub process_id: u32/);
   assert.match(taskWindowsMod, /list_taskbar_process_windows/);
   assert.match(processManager, /start_time_ms: process_handle\.and_then\(process_start_time_ms\)/);
+  assert.match(processManager, /creation_time_100ns: process_handle\.and_then\(process_creation_time_100ns\)/);
+  assert.match(processManager, /let normalized_image_path = executable_path\.as_deref\(\)\.map\(normalize_path_for_match\)/);
   assert.match(processManager, /let command_line = process_handle\.and_then\(process_command_line\)/);
   assert.match(processManager, /command_line,/);
   assert.match(processManager, /listening_ports: listening_ports\.get\(&pid\)/);

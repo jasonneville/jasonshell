@@ -41,7 +41,41 @@ export type ProcessKillPlan = {
   warnings: string[];
   requiresSecondConfirmation: boolean;
   canExecute: boolean;
+  creationTime100ns?: string | null;
+  normalizedImagePath?: string | null;
 };
+
+export type ProcessKillConfirmationPayload = {
+  confirmedTargetPid: number;
+  mode: ProcessKillPlan['mode'];
+  affectedPids: number[];
+  descendantPids: number[];
+  acknowledgedWarningCount: number;
+  requiresSecondConfirmation: boolean;
+  canExecute: boolean;
+  creationTime100ns?: string | null;
+  normalizedImagePath?: string | null;
+};
+
+export function killConfirmationFromPlan(killPlan: ProcessKillPlan): ProcessKillConfirmationPayload {
+  return {
+    confirmedTargetPid: killPlan.targetPid,
+    mode: killPlan.mode,
+    affectedPids: killPlan.affectedPids,
+    descendantPids: killPlan.descendantPids,
+    acknowledgedWarningCount: killPlan.warnings.length,
+    requiresSecondConfirmation: killPlan.requiresSecondConfirmation,
+    canExecute: killPlan.canExecute,
+    creationTime100ns: killPlan.creationTime100ns,
+    normalizedImagePath: killPlan.normalizedImagePath
+  };
+}
+
+export function processKillErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const bounded = message.replace(/\s+/g, ' ').trim().slice(0, 240);
+  return bounded || 'Process termination failed';
+}
 
 export function enrichProcessesWithTaskbarWindows(
   processes: readonly ProcessInfo[],
@@ -277,7 +311,9 @@ export function buildProcessKillPlan(
         'Tree kill is guarded and plan-only; JasonShell does not terminate descendants by default.'
       ],
       requiresSecondConfirmation: true,
-      canExecute: false
+      canExecute: false,
+      creationTime100ns: process.creationTime100ns ?? null,
+      normalizedImagePath: process.normalizedImagePath ?? null
     };
   }
 
@@ -293,7 +329,9 @@ export function buildProcessKillPlan(
         : [])
     ],
     requiresSecondConfirmation: true,
-    canExecute: process.isKillable
+    canExecute: process.isKillable,
+    creationTime100ns: process.creationTime100ns ?? null,
+    normalizedImagePath: process.normalizedImagePath ?? null
   };
 }
 

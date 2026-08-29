@@ -17,6 +17,7 @@ import {
   processDeveloperSummary,
   sortProcesses
 } from '../dist-tests/lib/processManagerState.js';
+import { buildProcessKillPlan } from '../dist-tests/features/process-manager/processManagerUxState.js';
 
 const processes = [
   { pid: 20, name: 'zeta', cpuPercent: 1.5, memoryBytes: 2048, threadCount: 2, startTimeMs: 1_700_000_000_000, status: 'running', isKillable: true, listeningPorts: [5173] },
@@ -207,4 +208,21 @@ test('processDeveloperSummary includes ports workspace parent descendants and co
     }),
     'ports 5173 • workspace jasonshell • parent pwsh (20) • 2 descendants • node C:/dev/jasonshell/server.js'
   );
+});
+
+test('killConfirmationIncludesImmutableIdentity plan carries creation time and normalized image path', () => {
+  const process = {
+    pid: 100,
+    name: 'node',
+    status: 'running',
+    isKillable: true,
+    creationTime100ns: '1337',
+    normalizedImagePath: 'c:\\tools\\node.exe'
+  };
+
+  const plan = buildProcessKillPlan([process], process, false);
+
+  assert.equal(plan.targetPid, 100);
+  assert.equal(plan.creationTime100ns, '1337');
+  assert.equal(plan.normalizedImagePath, 'c:\\tools\\node.exe');
 });
