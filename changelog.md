@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-08-28 `[CODE]` FIXED: Restored the complete Stack Git backend module lost during merge resolution and changed History commit files to first-parent show output so merge commits no longer appear empty.
+- 2026-08-28 `[TOOL]` TESTED: Added focused Rust coverage for root and merge commit file lists plus first-parent Git argv contracts.
 - 2026-08-28 `[CODE]` FIXED: Stack popup now explicitly places file and Git surfaces in its remaining-height grid row, preventing sparse Git Changes views from ending at the Commit section and shortening the branch dropdown.
 - 2026-08-28 `[TOOL]` TESTED: Added focused Stack Git layout contract coverage for optional inline-editor and main-surface grid row ownership.
 - 2026-08-28 `[CODE]` CHANGED: Stack Git branch dropdown now uses all measured vertical space remaining in the panel instead of stopping at a fixed 42rem ceiling.
