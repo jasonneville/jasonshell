@@ -1,4 +1,116 @@
 ## Change Ledger
+- 2026-08-28 `[CODE]` FIXED: Stack popup now explicitly places file and Git surfaces in its remaining-height grid row, preventing sparse Git Changes views from ending at the Commit section and shortening the branch dropdown.
+- 2026-08-28 `[TOOL]` TESTED: Added focused Stack Git layout contract coverage for optional inline-editor and main-surface grid row ownership.
+- 2026-08-28 `[CODE]` CHANGED: Stack Git branch dropdown now uses all measured vertical space remaining in the panel instead of stopping at a fixed 42rem ceiling.
+- 2026-08-28 `[TOOL]` TESTED: Updated focused Stack Git source-contract coverage to reject a fixed branch-dropdown height ceiling.
+- 2026-08-28 `[CODE]` FIXED: Stack Git branch dropdown now caps with border-box sizing so padding/border stay inside the measured height, and live panel/branch-picker ResizeObserver coverage keeps the open menu aligned when shell geometry changes.
+- 2026-08-28 `[TOOL]` TESTED: Added focused Stack Git source-contract coverage for branch-dropdown box sizing, geometry observers, and cleanup lifecycle.
+- 2026-08-28 `[CODE]` FIXED: Stack Git remote repository links now open the current checked-out branch on supported browser remotes, with safe branch-path escaping and provider-aware branch routes instead of the bare repository root.
+- 2026-08-28 `[TEST]` TESTED: Added focused Rust coverage for supported remote routing, branch escaping, and repo-root fallback behavior.
+- 2026-08-28 `[CODE]` ADDED: Stack Git workbench now shows operation status below the header, explicit mutation step labels, Commit & Push commit/push transitions, expandable successful command output, contextual bounded backend errors, and operation-state-driven mutation/`aria-busy` gating; `StackGitOperationResult` now carries bounded stdout/stderr output with existing 64 KiB per-stream caps.
+- 2026-08-28 `[TEST]` TESTED: Focused Node tests, `cargo check`, focused Rust output test, and `svelte-check` known-result run covered the Stack Git operation status/output change.
+- 2026-08-27 `[CODE]` CHANGED: Stack Git Changes, History, and Stashes diff drawers now hide Git patch transport headers and hunk coordinates while preserving source line numbering and useful binary, truncation, and no-newline notices.
+- 2026-08-27 `[TEST]` TESTED: Added parser contracts proving patch headers are omitted without breaking multi-hunk counters or file-boundary resets.
+- 2026-08-27 `[CODE]` CHANGED: Stack Git diff files now preserve unwrapped line lengths, size every semantic row to the longest line, and expose drawer-level horizontal scrolling across Changes, History, and Stashes.
+- 2026-08-27 `[TEST]` TESTED: Added layout contracts for natural-width diff canvases, shared full-width rows, no-wrap lines, and horizontal drawer scrolling.
+- 2026-08-27 `[CODE]` ADDED: Stack Git Changes, History, and Stashes unified diffs now show one centered OpenChamber-style line-number gutter, using old numbers for deletions and new numbers for additions/context while leaving non-source rows blank.
+- 2026-08-27 `[TEST]` TESTED: Added RED-first parser and shared-renderer contracts covering hunk offsets, omitted counts, multi-hunk resets, malformed input, source-side number selection, one centered gutter, and all four diff drawer render sites.
+- 2026-08-27 `[CODE]` FIXED: Staged/unstaged header chevrons now rotate with expanded state like file-row chevrons.
+- 2026-08-27 `[CODE]` FIXED: Changes-view staged/unstaged headers now use directly tracked Svelte collapse state, restoring working file-list collapse and expansion while defaulting both groups open.
+- 2026-08-27 `[CODE]` CHANGED: Staged/unstaged headers now show pluralized file counts and align their right-edge chevrons with file rows.
+- 2026-08-27 `[CODE]` FIXED: Removed overlapping Unicode arrows from staged and unstaged disclosure chevrons, eliminating the artifact beside the CSS-drawn icon.
+- 2026-08-27 `[CODE]` FIXED: Staged and unstaged group hover/focus highlighting now covers the bulk `+`/`-` action area and disclosure label uniformly.
+- 2026-08-27 `[CODE]` FIXED: Stack Git file paths now display forward slashes consistently, including paths received with Windows backslashes.
+- 2026-08-27 `[CODE]` FIXED: Stack Git file-path emphasis now recognizes Windows backslashes as well as Git forward slashes, so Changes mutes intermediate folders and keeps only the basename plus extension prominent.
+- 2026-08-27 `[TOOL]` VALIDATED: Added RED-first separator coverage; focused Stack Git contracts pass 31/31 and `svelte-check` reports zero errors.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes group headers now keep the bulk action and disclosure in one unified shell, with the bulk button before the title and the staged/unstaged glyph placed directly before the label text.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes file rows now keep the stage/unstage action at far left, the diff disclosure button transparent in the center, and discard aligned at the right edge inside one shared row shell.
+- 2026-08-27 `[TEST]` TESTED: Updated focused source-contract assertions for unified header shells, action-before-title order, transparent central file buttons, action placement, and centered discard alignment.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes rows now use a three-column shell with stage/unstage at far left, diff disclosure in the center, discard at far right, and full-width in-flow drawer alignment under the same row shell.
+- 2026-08-27 `[TEST]` TESTED: Updated focused source-contract assertions for action order, shared row-shell grid columns, discard placement, and drawer full-span geometry.
+- 2026-08-27 `[CODE]` FIXED: Stack Git Changes, History, and Stashes file rows now show additions/deletions badges in `+N -M` form beside the action edge, and commit/stash file payloads now include numstat counts from Rust so the UI can render them consistently.
+- 2026-08-27 `[TOOL]` TESTED: Added focused source-contract coverage for Stack Git row stats and OpenChamber color usage.
+
+- 2026-08-27 `[CODE]` FIXED: Stack Git stash drawers now use the same vertical outer wrapper and file-list geometry as History, with the file list opening below the closed row shell instead of nesting inside the horizontal row shell.
+- 2026-08-27 `[TEST]` TESTED: Added focused source-contract coverage for stash drawer placement, row-shell closure before drawer render, and reuse of History file-list/file-shell/file classes.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git Stashes now uses a 2-layer in-flow drawer model matching History: stash rows open nested file lists, stash file rows open nested diffs, and Apply/Pop/Drop stay mutation-only.
+- 2026-08-26 `[TOOL]` TESTED: Added focused Stack Git contracts covering dedicated stash file-list/file-diff IPC, stash-ref validation, and the rejection of commit-hash validators for stash refs.
+- 2026-08-26 `[CODE]` FIXED: Stash refresh now reconciles invalid selected refs to the first current stash or clears stash/file/diff/loading/error state when empty, preventing stale loading or async repopulation after drop/pop/external stash changes.
+- 2026-08-26 `[TOOL]` TESTED: Added focused Stack Git source-contract coverage for stash-selection reconciliation and loading-state reset.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git panel removed the 3-dot repository views menu, moved Changes/History/Stashes/Branches into compact accessible tabs beside Fetch/Pull/Push, and keeps the panel defaulting to Changes.
+
+- 2026-08-26 `[TOOL]` TESTED: Updated focused Stack Git panel source-contract coverage for no repository summary/details menu, visible tablist tabs, sync-actions-before-tabs layout, and default `activeView='changes'`.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git History commit files now render as a full-width vertical disclosure list with nested per-file diff drawers, readable status badges, truncated paths, responsive indentation, and bounded diff scrolling.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git History now uses typed commit-file wrappers, stale-safe loading/error state, friendly commit-file status badges, and accessible row/diff disclosure with no empty-commit infinite loading.
+- 2026-08-26 `[TEST]` TESTED: Added focused contract assertions for History loading, diff fallback, keyboard disclosure, status labels, and dead selection helper cleanup.
+
+- 2026-08-26 `[CODE]` FIXED: Forced linked-worktree deletion now handles locked worktrees with repeated `--force` and cleans residual Windows directories with bounded retries before pruning stale Git worktree metadata.
+
+- 2026-08-26 `[CODE]` CHANGED: Local branch deletion now uses one destructive confirmation, immediately removes the branch row, and finishes forced deletion asynchronously in the backend.
+- 2026-08-26 `[CODE]` ADDED: Confirmed deletion of a branch in another worktree now freshly verifies its linked path, force-removes that worktree with fixed argv, then force-deletes the branch; confirmation names the directory and warns that uncommitted changes will be lost.
+- 2026-08-26 `[TEST]` TESTED: Added frontend/backend contracts and Rust argv/mutation-timeout coverage for optimistic forced branch and linked-worktree deletion.
+
+- 2026-08-26 `[CODE]` ADDED: Stack Git local branch rows now mark branches checked out in another worktree and expose the linked path in a tooltip, using fixed `git worktree list --porcelain -z` discovery.
+- 2026-08-26 `[TEST]` TESTED: Added RED-first TS/Svelte contracts and Rust parser coverage for current-vs-other worktree annotation, detached records, remote exclusion, and paths containing spaces.
+
+- 2026-08-26 `[CODE]` FIXED: Stack Git branch deletion now keeps the picker open, shows safe-delete Git stderr inside the branch dropdown, and requires an explicit force-delete click before using `git branch -D -- <branch>`.
+- 2026-08-26 `[TEST]` TESTED: Added RED-first frontend/backend contracts for force-delete plumbing and bounded branch-delete error surfacing, then passed focused Node and Rust Git-status tests.
+
+- 2026-08-25 `[CODE]` FIXED: Stack Git branch selector title now uses an explicit Svelte reactive value derived from `status.branch` and reconciles from post-checkout `currentBranch`; branch changes render immediately without reopening the view.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first contracts requiring reset branch refreshes to update `status.branch` and rendered labels to consume its reactive scalar directly rather than a hidden function dependency.
+
+- 2026-08-25 `[CODE]` ADDED: Stack Git branch picker now shows an accessible red trash action for non-current local branches, requires confirmation, and refreshes branch/status state after deletion.
+- 2026-08-25 `[CODE]` SECURED: Added authorized `stack_git_delete_branch` IPC with server-side local/current protections and fixed `git branch -d -- <branch>` argv, preserving Git's unmerged-branch safeguard; remote deletion remains unsupported.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first frontend/backend contracts plus Rust fixed-argv coverage for local branch deletion.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Stack Git contracts passed 32/32; focused Rust Git-status tests passed 23/23; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; final review confirmed exact local-ref verification and mutation timeout classification with no blockers.
+
+- 2026-08-25 `[CODE]` FIXED: Stack Git checkout/create now refreshes changed-file status and branch-list state together, resetting dropdown current markers and source selection to the newly checked-out branch before the surrounding browser refreshes.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first contract proving checkout awaits status refresh, branch refresh, dropdown reset, and parent file-list refresh in order.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Stack Git contracts passed 29/29; `npm run check` passed with zero errors and only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; adversarial review found no blocker (Branches view may issue one harmless token-guarded duplicate branch fetch).
+
+- 2026-08-25 `[CODE]` FIXED: Stack Git branch discovery now uses Git's supported `%09` tab escape and full refs instead of literal `%x1f`, restoring correctly classified local and remote rows in the header branch picker while excluding remote `HEAD` pseudo-refs.
+- 2026-08-25 `[CODE]` TESTED: Updated branch parser regressions to use exact tab-delimited full refs produced by `git branch --all --format`, including remote classification and symbolic `HEAD` filtering.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Rust Git-status tests passed 22/22; Stack Git Node contracts passed 28/28; `npm run check` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; final review confirmed full-ref classification and checkout compatibility after symbolic remote `HEAD` filtering.
+
+- 2026-08-25 `[CODE]` ADDED: Stack Git header branch selector now opens an anchored picker grouped into local and remote branches, supports row checkout, and creates new branches from a selectable local or remote source ref while retaining dirty-worktree confirmations.
+- 2026-08-25 `[CODE]` CHANGED: Extended Stack Git branch creation IPC with an optional validated source ref and fixed Git argv for source-based create-and-checkout or create-only operations.
+- 2026-08-25 `[CODE]` TESTED: Added RED-first source contracts plus Rust argv/validation coverage for grouped branch picking, remote checkout, and source-based branch creation.
+- 2026-08-25 `[TOOL]` VALIDATED: Focused Stack Git contracts passed 28/28; focused Rust Git-status tests passed 21/21; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; adversarial review found and verified fixes for loader races, hidden source state, and remote/local checkout collisions.
+
+- 2026-08-24 `[CODE]` FIXED: Aligned Stack Git header bulk stage/unstage glyph centers with individual file-row action glyphs using the same horizontal gutter.
+
+- 2026-08-24 `[CODE]` FIXED: Moved individual Stack Git file-row surface and hover styling onto the full row so stage, unstage, filename, and discard controls share one continuous background.
+
+- 2026-08-24 `[CODE]` CHANGED: Flattened Stack Git stage, unstage, and discard controls into bare glyph buttons with specificity-safe resets for border, fill, radius, minimum height, and hover color while preserving keyboard focus visibility.
+
+- 2026-08-24 `[CODE]` FIXED: Increased Stack Browser Git diff contrast with full semantic theme fills, wider status rails, and emphasized add/delete/hunk prefixes.
+- 2026-08-24 `[TEST]` Locked prominent theme-token diff coloring and rail width in Stack Git source contracts.
+
+- 2026-08-24 `[CODE]` FIXED: Removed explicit newline text nodes between Stack Git semantic diff rows so file lines render at normal density and consecutive addition/deletion backgrounds remain contiguous.
+
+- 2026-08-24 `[CODE]` FIXED: Stack Git diff drawers now use a restrained transcript-like shell with app-theme surfaces, semantic unified-diff line styling, readable addition/deletion/hunk/meta rails, compact-width padding, and a 4,000-line rich-render cap instead of a hardcoded dark block.
+- 2026-08-24 `[TOOL]` TESTED: Updated focused Stack Git contracts for themed semantic rendering, accessibility, stale-response guards, current drawer geometry, and large-diff bounding; verified check/build gates.
+
+- 2026-08-24 `[CODE]` CHANGED: Removed duplicate filename/status headers and close buttons from staged/unstaged diff drawers. Diff content now starts directly beneath the active file row; clicking that row again or pressing Escape closes the drawer.
+- 2026-08-24 `[CODE]` TESTED: Drawer source contract now rejects duplicate diff headers and close controls and requires the diff body as the drawer's first child.
+- 2026-08-24 `[TOOL]` VALIDATED: Drawer chrome contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning.
+
+- 2026-08-24 `[CODE]` FIXED: Git diff drawers no longer create a capped nested vertical scroller. Expanded diff content now flows through the Git panel's single contained vertical scroll surface, while long code retains independent horizontal scrolling and the panel scrollbar reserves stable space.
+- 2026-08-24 `[CODE]` TESTED: Added source-contract coverage for contained panel overscroll, uncapped diff height, and horizontal-only diff code scrolling.
+- 2026-08-24 `[TOOL]` VALIDATED: Scrolling contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` accessibility warning; independent review found no remaining blocker, with live Tauri wheel/trackpad interaction as the residual smoke-test gap.
+
+- 2026-08-24 `[CODE]` CHANGED: Superseded the right-side modal Git diff overlay with OpenChamber-style in-flow drawers inserted directly beneath the clicked staged/unstaged file row and before the next row. Clicking the same row toggles it closed; opening another row moves the single drawer; partially staged paths retain the clicked staged/working-tree diff context.
+- 2026-08-24 `[CODE]` TESTED: Replaced modal drawer source contracts with RED-first coverage for row-local insertion, staged-context matching, same-row toggle, region semantics, Escape precedence, reduced motion, and removal of backdrop/modal behavior.
+- 2026-08-24 `[CODE]` FIXED: Hardened in-flow Git diff drawer lifecycle: status mutations close drawers whose staged/unstaged source row disappeared, folder changes reject stale async diff replies, and partially staged paths expose pressed state only on the active context row.
+- 2026-08-24 `[TOOL]` VALIDATED: Final in-flow drawer contract passed 13/13; `npm run check` and `npm run build` passed with only the pre-existing unrelated `CommandPanelSurface.svelte` non-interactive-section warning.
+
+- 2026-08-24 `[CODE]` FIXED: Stack Browser Git staged/unstaged file diffs now open only in an explicit right-side drawer overlay with backdrop, accessible dialog semantics, close button/backdrop/Escape dismissal, close-button focus on open, and best-effort row focus restore; status refresh/default selection and stage/unstage/discard actions no longer render or open inline diff below lists.
+- 2026-08-24 `[CODE]` TESTED: Added RED-first source-contract coverage for staged/unstaged diff drawer ownership, Escape precedence, responsive drawer geometry, action isolation, and removal of normal-flow diff aside.
+- 2026-08-24 `[TOOL]` VALIDATED: Independent final evidence: `node --test tests/stackGitPanelRedContract.test.mjs` passed 13/13; `npm run check` passed with 0 errors and 1 pre-existing `CommandPanelSurface.svelte` a11y warning; `npm run build` passed with the same warning; `git diff --check` could not pass due pre-existing unrelated trailing whitespace at `src/components/StackPopupSurface.svelte:2635`, untouched.
 
 - 2026-08-27 `[CODE]` FIXED: Stack Browser Git Changes can stage tracked deletions from missing absolute status paths without weakening canonical containment for existing files; missing paths require component-safe repo containment and an exact current-status match.
 - 2026-08-27 `[CODE]` IMPROVED: Git Changes now omits empty Staged or Unstaged groups while preserving Add selected behavior for mixed index/worktree states.
@@ -138,6 +250,14 @@
 
 - 2026-08-17 `[CODE]` DOCS: Documented current bottom-bar/task-preview task-window close behavior: normal WM_CLOSE/post/terminate ladder, AccessDenied-only one-shot same-exe `runas` helper, helper HWND/PID/creation-time/canonical-image identity checks, UAC cancellation/error mapping, internal JasonShell close rejection for all close callers, and no SeDebugPrivilege/taskkill/tree/full elevation.
 - 2026-08-17 `[TOOL]` REVIEWED: Docs-only pass after inspecting current `task_windows` implementation and taskbar/preview close source-contract tests; no validation commands run.
+- 2026-08-17 `[CODE]` FIXED: Stack Browser Git now replaces the file-grid region with an opaque in-flow surface; file rows no longer remain visible beneath it, and closing Git restores the file grid.
+
+- 2026-08-17 `[CODE]` REFINED/FIXED: Reworked Stack Browser Git surface to match OpenChamber's edge-to-edge branch-first display with compact repository/sync toolbar, flat staged/unstaged rows, inline diff, and compact commit footer while retaining no-AI History/Stashes/Branches workflows; editable controls now bypass popup navigation so Backspace edits commit text instead of opening the parent folder.
+- 2026-08-17 `[TOOL]` VALIDATED: `npm run check`, `npm run build`, focused 23-test Stack Browser Git suite, and `git diff --check` passed after adversarial UI/runtime review; status-filter wiring, untracked-diff messaging, dialog focus containment/restoration, and staged/unstaged diff-side handling were rechecked.
+
+- 2026-08-17 `[CODE]` IMPLEMENTED: Replaced inline Stack Browser Git workbench with dense extracted no-AI Git panel offering Changes, History, Stashes, and Branches; added independent staged/unstaged state, stage/unstage, confirmed tracked discard, file diff, commit/commit-and-push, sync, branch warnings, and stash create/apply/pop/drop.
+- 2026-08-17 `[CODE]` HARDENED: Added stack-popup-guarded fixed-argv Rust/IPC commands for unstage, tracked discard, diff, and stashes; path mutations use NUL stdin pathspecs, untracked deletion stays blocked, stash messages are bounded, and stash refs accept only `stash@{N}`.
+- 2026-08-17 `[TOOL]` VALIDATED: `npm run check`, `npm run build`, focused 19-test Git Node suite, `cargo check --manifest-path src-tauri/Cargo.toml`, focused stash Rust tests, and `git diff --check` passed. Full suites retain documented unrelated failures: two Stack Popup sort assertions and environment-dependent VS Code resolver discovery; repo-wide Rust format check remains blocked by pre-existing formatting drift outside this change.
 
 - 2026-08-17 `[CODE]` FIXED: Bottom-bar task clicks now apply predicted active/minimized highlighting immediately after native activation succeeds, then reconcile through the authoritative snapshot stream instead of overwriting UI with a fresh cached read.
 

@@ -117,7 +117,19 @@ pub mod commands {
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
     pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
+    pub const STACK_GIT_UNSTAGE_PATHS: &str = "stack_git_unstage_paths";
+    pub const STACK_GIT_REVERT_PATHS: &str = "stack_git_revert_paths";
+    pub const STACK_GIT_DIFF: &str = "stack_git_diff";
+    pub const STACK_GIT_STASHES: &str = "stack_git_stashes";
+    pub const STACK_GIT_STASH: &str = "stack_git_stash";
+    pub const STACK_GIT_STASH_APPLY: &str = "stack_git_stash_apply";
+    pub const STACK_GIT_STASH_POP: &str = "stack_git_stash_pop";
+    pub const STACK_GIT_STASH_DROP: &str = "stack_git_stash_drop";
     pub const STACK_GIT_COMMIT: &str = "stack_git_commit";
+    pub const STACK_GIT_COMMIT_FILES: &str = "stack_git_commit_files";
+    pub const STACK_GIT_COMMIT_FILE_DIFF: &str = "stack_git_commit_file_diff";
+    pub const STACK_GIT_STASH_FILES: &str = "stack_git_stash_files";
+    pub const STACK_GIT_STASH_FILE_DIFF: &str = "stack_git_stash_file_diff";
     pub const STACK_GIT_LOG: &str = "stack_git_log";
     pub const STACK_GIT_TREE: &str = "stack_git_tree";
     pub const STACK_GIT_BRANCHES: &str = "stack_git_branches";
@@ -126,6 +138,7 @@ pub mod commands {
     pub const STACK_GIT_PUSH: &str = "stack_git_push";
     pub const STACK_GIT_CHECKOUT_BRANCH: &str = "stack_git_checkout_branch";
     pub const STACK_GIT_CREATE_BRANCH: &str = "stack_git_create_branch";
+    pub const STACK_GIT_DELETE_BRANCH: &str = "stack_git_delete_branch";
     pub const SUGGEST_STACK_PATHS: &str = "suggest_stack_paths";
     pub const RESOLVE_STACK_ITEM_ICONS: &str = "resolve_stack_item_icons";
     pub const OPEN_STACK_ITEM: &str = "open_stack_item";
@@ -263,7 +276,17 @@ pub mod commands {
         GET_STACK_GIT_STATUS,
         OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
+        STACK_GIT_UNSTAGE_PATHS,
+        STACK_GIT_REVERT_PATHS,
+        STACK_GIT_DIFF,
+        STACK_GIT_STASHES,
+        STACK_GIT_STASH,
+        STACK_GIT_STASH_APPLY,
+        STACK_GIT_STASH_POP,
+        STACK_GIT_STASH_DROP,
         STACK_GIT_COMMIT,
+        STACK_GIT_STASH_FILES,
+        STACK_GIT_STASH_FILE_DIFF,
         STACK_GIT_LOG,
         STACK_GIT_TREE,
         STACK_GIT_BRANCHES,
@@ -272,6 +295,7 @@ pub mod commands {
         STACK_GIT_PUSH,
         STACK_GIT_CHECKOUT_BRANCH,
         STACK_GIT_CREATE_BRANCH,
+        STACK_GIT_DELETE_BRANCH,
         SUGGEST_STACK_PATHS,
         RESOLVE_STACK_ITEM_ICONS,
         OPEN_STACK_ITEM,
@@ -479,6 +503,8 @@ mod tests {
         assert!(unique.contains("get_stack_git_status"));
         assert!(unique.contains("stack_git_add_paths"));
         assert!(unique.contains("stack_git_commit"));
+        assert!(unique.contains("stack_git_commit_files"));
+        assert!(unique.contains("stack_git_commit_file_diff"));
         assert!(unique.contains("stack_git_log"));
         assert!(unique.contains("stack_git_tree"));
         assert!(unique.contains("stack_git_branches"));
@@ -487,6 +513,7 @@ mod tests {
         assert!(unique.contains("stack_git_push"));
         assert!(unique.contains("stack_git_checkout_branch"));
         assert!(unique.contains("stack_git_create_branch"));
+        assert!(unique.contains("stack_git_delete_branch"));
         assert!(unique.contains("list_stack_open_with_candidates"));
         assert!(unique.contains("open_stack_item_with_app"));
         assert!(unique.contains("prepare_stack_file_drag"));

@@ -35,10 +35,14 @@ pub(crate) use auth::{
 };
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
-    StackGitBranches, StackGitCommitRequest, StackGitLog, StackGitLogRequest,
-    StackGitOperationResult, StackGitStageRequest, StackGitStatus, StackGitTree,
-    StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
-    StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
+    StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
+    StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest, StackGitLog,
+    StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest,
+    StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
+    StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
+    StackGitStatus, StackGitTree, StackGitTreeRequest, StackItem, StackItemIconResolutionBatch,
+    StackNativeDragPreparation, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize,
+    StackPopupRuntimeState,
 };
 pub use terminal::{
     StackTerminalPollResult, StackTerminalRenameRequest, StackTerminalResizeRequest,
@@ -457,6 +461,134 @@ pub async fn stack_git_add_paths(
 }
 
 #[tauri::command]
+pub async fn stack_git_unstage_paths(
+    window: WebviewWindow,
+    request: StackGitStageRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_UNSTAGE_PATHS,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_unstage_paths_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_revert_paths(
+    window: WebviewWindow,
+    request: StackGitRevertRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_REVERT_PATHS,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_revert_paths_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_diff(
+    window: WebviewWindow,
+    request: StackGitDiffRequest,
+) -> Result<StackGitDiff, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_DIFF,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_diff_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stashes(
+    window: WebviewWindow,
+    folder_path: String,
+) -> Result<StackGitStashes, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASHES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stashes_async(folder_path).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash(
+    window: WebviewWindow,
+    request: StackGitStashRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_apply(
+    window: WebviewWindow,
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_APPLY,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_apply_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_pop(
+    window: WebviewWindow,
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_POP,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_pop_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_drop(
+    window: WebviewWindow,
+    request: StackGitStashRefRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_DROP,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_drop_async(request).await
+}
+
+#[tauri::command]
 pub async fn stack_git_commit(
     window: WebviewWindow,
     request: StackGitCommitRequest,
@@ -470,6 +602,70 @@ pub async fn stack_git_commit(
     )
     .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_commit_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_commit_files(
+    window: WebviewWindow,
+    request: StackGitCommitFilesRequest,
+) -> Result<StackGitCommitFiles, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_COMMIT_FILES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_commit_files_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_commit_file_diff(
+    window: WebviewWindow,
+    request: StackGitCommitFileDiffRequest,
+) -> Result<StackGitCommitFileDiff, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_COMMIT_FILE_DIFF,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_commit_file_diff_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_files(
+    window: WebviewWindow,
+    request: StackGitStashFilesRequest,
+) -> Result<StackGitStashFiles, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_FILES,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_files_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_stash_file_diff(
+    window: WebviewWindow,
+    request: StackGitStashFileDiffRequest,
+) -> Result<StackGitStashFileDiff, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_STASH_FILE_DIFF,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_stash_file_diff_async(request).await
 }
 
 #[tauri::command]
@@ -598,6 +794,22 @@ pub async fn stack_git_create_branch(
     )
     .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_create_branch_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_delete_branch(
+    window: WebviewWindow,
+    request: StackGitBranchRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_DELETE_BRANCH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_delete_branch_async(request).await
 }
 
 #[tauri::command]

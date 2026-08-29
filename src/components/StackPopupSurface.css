@@ -223,142 +223,6 @@
   padding-inline: 0.18rem;
 }
 
-.stack-git-popup {
-  background: color-mix(in srgb, var(--js-color-surface-raised) 94%, #101827);
-  border: 1px solid color-mix(in srgb, var(--js-color-border) 76%, var(--js-color-accent-border));
-  border-radius: var(--js-radius-md);
-  box-shadow: var(--js-shadow-panel);
-  container-type: inline-size;
-  display: grid;
-  gap: var(--js-space-2);
-  grid-template-rows: auto auto minmax(0, 1fr);
-  height: min(32rem, calc(100% - 2rem));
-  left: var(--js-space-4);
-  max-height: calc(100% - 2rem);
-  max-width: calc(100% - 2rem);
-  min-height: 20rem;
-  min-width: min(34rem, calc(100% - 2rem));
-  overflow: hidden;
-  padding: 0;
-  position: absolute;
-  resize: both;
-  top: 5.8rem;
-  width: min(48rem, calc(100% - 2rem));
-  z-index: 30;
-}
-
-.stack-git-popup.expanded {
-  height: calc(100% - 2rem);
-  left: var(--js-space-4);
-  top: var(--js-space-4);
-  width: calc(100% - 2rem);
-}
-
-.stack-git-popup header,
-.stack-git-popup-toolbar,
-.stack-git-commit > div {
-  align-items: center;
-  display: flex;
-  gap: var(--js-space-2);
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.stack-git-popup header {
-  background: color-mix(in srgb, var(--js-color-surface-overlay) 86%, transparent);
-  border-bottom: 1px solid var(--js-color-border-soft);
-  padding: var(--js-space-3) var(--js-space-3) var(--js-space-2);
-}
-
-.stack-git-window-actions,
-.stack-git-remote-actions {
-  align-items: center;
-  display: flex;
-  gap: var(--js-space-2);
-  min-width: 0;
-}
-
-.stack-git-remote-actions {
-  background: color-mix(in srgb, var(--js-color-surface-sunken) 72%, transparent);
-  border-bottom: 1px solid var(--js-color-border-soft);
-  min-height: 2.25rem;
-  padding: 0.38rem var(--js-space-3);
-}
-
-.stack-git-remote-actions span {
-  color: var(--js-color-text-muted);
-  flex: 1 1 auto;
-  font-size: 0.62rem;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stack-git-popup h2 {
-  color: var(--js-color-text-strong);
-  font-size: 0.95rem;
-  letter-spacing: 0;
-  margin: 0;
-}
-
-.stack-git-popup p {
-  color: var(--js-color-text-muted);
-  font-size: 0.62rem;
-  margin: 0.12rem 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stack-git-popup button {
-  background: color-mix(in srgb, var(--js-bg-control) 88%, var(--js-color-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--js-color-border) 78%, transparent);
-  border-radius: var(--js-radius-sm);
-  color: var(--js-color-text);
-  font-size: 0.62rem;
-  font-weight: 750;
-  min-height: 1.65rem;
-  padding: 0 0.58rem;
-}
-
-.stack-git-popup button:not(:disabled):hover,
-.stack-git-popup button:not(:disabled):focus-visible,
-.stack-git-popup button.active {
-  background: color-mix(in srgb, var(--js-color-control-hover) 82%, var(--js-color-accent-border));
-  border-color: var(--js-color-accent-border);
-  color: var(--js-color-text-strong);
-}
-
-.stack-git-popup-tabs {
-  background: var(--js-color-surface-sunken);
-  border: 1px solid var(--js-color-border-soft);
-  border-radius: var(--js-radius-sm);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.16rem;
-  padding: 0.18rem;
-}
-
-.stack-git-popup-tabs button {
-  background: transparent;
-  border-color: transparent;
-  flex: 0 0 auto;
-}
-
-.stack-git-popup-tabs button.active {
-  background: var(--js-bg-active);
-  border-color: var(--js-color-accent-border);
-}
-
-.stack-git-workbench {
-  display: grid;
-  gap: 0;
-  grid-template-columns: minmax(11rem, 0.34fr) minmax(0, 1fr);
-  min-height: 0;
-  min-width: 0;
-}
-
 .stack-git-workbench-sidebar {
   background: color-mix(in srgb, var(--js-color-surface-sunken) 82%, transparent);
   border-right: 1px solid var(--js-color-border-soft);
@@ -475,6 +339,7 @@
 
 .stack-git-change-group {
   display: grid;
+  gap: 0;
 }
 
 .stack-git-change-group + .stack-git-change-group {
@@ -485,10 +350,16 @@
   align-items: center;
   background: color-mix(in srgb, var(--js-color-surface-overlay) 66%, transparent);
   border-bottom: 1px solid var(--js-color-border-soft);
-  color: var(--js-color-text-muted);
   display: flex;
+  gap: var(--js-space-2);
   justify-content: space-between;
-  padding: 0.32rem 0.48rem;
+  padding: 0.36rem 0.48rem;
+}
+
+.stack-git-change-group-header > div {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
 }
 
 .stack-git-change-group-header h3 {
@@ -499,9 +370,16 @@
   text-transform: uppercase;
 }
 
-.stack-git-change-group-header span {
+.stack-git-change-group-header p {
+  color: var(--js-color-text-muted);
   font-size: 0.56rem;
   font-weight: 760;
+  margin: 0;
+}
+
+.stack-git-change-group-header__bulk {
+  min-width: 1.35rem;
+  padding-inline: 0.28rem;
 }
 
 .stack-git-change-group-list {
@@ -1012,6 +890,7 @@
   border-radius: var(--js-radius-md);
   display: flex;
   gap: 0.4rem;
+  grid-row: 3;
   margin-bottom: 0.45rem;
   padding: 0.38rem;
 }
@@ -1050,6 +929,11 @@
   font-weight: 750;
   min-height: 1.55rem;
   padding: 0 0.5rem;
+}
+
+.details-table,
+.stack-popup > .stack-git-panel {
+  grid-row: 4;
 }
 
 .details-table {
