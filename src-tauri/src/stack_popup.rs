@@ -1892,16 +1892,25 @@ mod tests {
         let second_page = read_stack_folder_page_with_session(
             root.to_str().unwrap(),
             Some(&session_id),
+            200,
             500,
+        )
+        .unwrap();
+        let third_page = read_stack_folder_page_with_session(
+            root.to_str().unwrap(),
+            Some(&session_id),
+            400,
             500,
         )
         .unwrap();
 
         assert_eq!(first_page.total, 505);
-        assert_eq!(first_page.items.len(), 500);
+        assert_eq!(first_page.items.len(), 200);
         assert!(first_page.has_more);
-        assert_eq!(second_page.items.len(), 5);
-        assert!(!second_page.has_more);
+        assert_eq!(second_page.items.len(), 200);
+        assert!(second_page.has_more);
+        assert_eq!(third_page.items.len(), 105);
+        assert!(!third_page.has_more);
         fs::remove_dir_all(root).ok();
     }
 

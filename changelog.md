@@ -1,4 +1,8 @@
 ## Change Ledger
+- 2026-08-29 `[CODE]` DOCS: Documented current Stack Browser paging caps, limit clamping, retained-snapshot sorting/warnings, bounded session eviction, slice cloning, stale/path semantics, and overflow/beyond-total behavior without promising complete global sort past caps.
+- 2026-08-29 `[TOOL]` VALIDATED: Focused evidence recorded from implementation pass: Rust Stack Browser paging boundary tests passed 19/19 and Stack Node source contracts passed 60/60.
+- 2026-08-29 `[CODE]` SECURED: Adversarial Stack paging follow-up bounds ZIP entry names before normalization and prevents oversized snapshots from self-evicting before their first page; retained-cap warnings no longer echo archive-controlled names.
+- 2026-08-29 `[TOOL]` VALIDATED: Final Stack paging tests pass 21/21, full Rust passes 604 with 3 ignored, Node/source checks and `npm run validate` pass; adversarial re-review reports no blockers.
 - 2026-08-29 `[CODE]` FIXED: AppBar activation now keeps Win32/Tauri work and guard startup outside the shared shell-state mutex, rejects overlapping lifecycle operations, and retains partial desktop ownership for cleanup retry after activation or rollback failure.
 - 2026-08-29 `[TOOL]` TESTED: Added RED-first AppBar lock, race, phase, and rollback ownership coverage; focused Rust AppBar tests pass 42/42 and focused Explorer/source lock contracts pass 7/7 with the repo-local TypeScript compiler.
 - 2026-08-29 `[CODE]` FIXED: Removed a parallel-test race from app-index cache classification by snapshotting refresh-in-flight state once at the production boundary and supplying explicit state to the pure cache classifier; runtime stale-row and async-refresh behavior is unchanged.
