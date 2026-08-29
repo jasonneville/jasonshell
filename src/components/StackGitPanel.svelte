@@ -115,6 +115,11 @@
   let branchDropdownOpen = false;
   let branchPickerElement: HTMLDivElement | null = null;
   let branchPickerButton: HTMLButtonElement | null = null;
+  let branchDropdownElement: HTMLDivElement | null = null;
+  let branchDropdownMaxHeight: string | null = null;
+  let branchDropdownResizeObserver: ResizeObserver | null = null;
+  let branchDropdownObservedPanel: HTMLElement | null = null;
+  let branchDropdownObservedPicker: HTMLDivElement | null = null;
   let branchDeleteInProgress = false;
 
   $: groupedEntries = groupStackGitEntries(status?.entries ?? []);
@@ -136,12 +141,62 @@
     void refreshStatus();
   }
 
+  $: if (!branchDropdownOpen) {
+    branchDropdownMaxHeight = null;
+  }
+
+  function disconnectBranchDropdownResizeObserver() {
+    branchDropdownResizeObserver?.disconnect();
+    branchDropdownObservedPanel = null;
+    branchDropdownObservedPicker = null;
+  }
+
+  function syncBranchDropdownResizeObserver() {
+    if (!branchDropdownResizeObserver || !branchDropdownOpen) {
+      disconnectBranchDropdownResizeObserver();
+      return;
+    }
+
+    const panel = branchPickerElement?.closest<HTMLElement>('.stack-git-panel') ?? null;
+    const picker = branchPickerElement;
+
+    if (branchDropdownObservedPanel !== panel) {
+      if (branchDropdownObservedPanel) branchDropdownResizeObserver.unobserve(branchDropdownObservedPanel);
+      branchDropdownObservedPanel = panel;
+      if (panel) branchDropdownResizeObserver.observe(panel);
+    }
+
+    if (branchDropdownObservedPicker !== picker) {
+      if (branchDropdownObservedPicker) branchDropdownResizeObserver.unobserve(branchDropdownObservedPicker);
+      branchDropdownObservedPicker = picker;
+      if (picker) branchDropdownResizeObserver.observe(picker);
+    }
+  }
+
   onMount(() => {
     mounted = true;
+    branchDropdownResizeObserver = new ResizeObserver(() => {
+      if (branchDropdownOpen) updateBranchDropdownMaxHeight();
+    });
+    syncBranchDropdownResizeObserver();
+
+    function handleBranchDropdownResize() {
+      if (!branchDropdownOpen) return;
+      updateBranchDropdownMaxHeight();
+    }
+
+    window.addEventListener('resize', handleBranchDropdownResize);
+
+    return () => {
+      window.removeEventListener('resize', handleBranchDropdownResize);
+      disconnectBranchDropdownResizeObserver();
+      branchDropdownResizeObserver = null;
+    };
   });
 
   afterUpdate(() => {
     resizeCommitTextarea();
+    syncBranchDropdownResizeObserver();
   });
 
   function formatDate(value: string | number | null | undefined) {
@@ -255,6 +310,18 @@
   async function focusBranchPickerButton() {
     await tick();
     if (branchPickerButton?.isConnected && !branchPickerButton.disabled) branchPickerButton.focus();
+  }
+
+  function updateBranchDropdownMaxHeight() {
+    if (!branchDropdownOpen || !branchDropdownElement || !branchPickerElement) {
+      branchDropdownMaxHeight = null;
+      return;
+    }
+
+    const dropdownTop = branchDropdownElement.getBoundingClientRect().top;
+    const panelBottom = branchPickerElement.closest<HTMLElement>('.stack-git-panel')?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const availableHeight = Math.max(0, Math.floor(Math.min(panelBottom, window.innerHeight) - dropdownTop));
+    branchDropdownMaxHeight = `${availableHeight}px`;
   }
 
   function gitStatusSymbol(statusKind: StackGitFileStatus['status'] | null | undefined) {
@@ -918,6 +985,7 @@
     branchDropdownOpen = !branchDropdownOpen;
     if (branchDropdownOpen) {
       void refreshBranches();
+      void tick().then(updateBranchDropdownMaxHeight);
     }
   }
 
@@ -1249,7 +1317,7 @@
         </button>
 
         {#if branchDropdownOpen}
-          <div id="stack-git-branch-dropdown" class="stack-git-branch-dropdown" aria-label="Branch picker" role="region">
+          <div id="stack-git-branch-dropdown" bind:this={branchDropdownElement} class="stack-git-branch-dropdown" aria-label="Branch picker" role="region" style:--stack-git-branch-dropdown-max-height={branchDropdownMaxHeight}>
             {#if branchDeleteErrorMessage}
               <div class="stack-git-empty stack-git-branch-dropdown__state stack-git-branch-dropdown__state--error">{branchDeleteErrorMessage}</div>
             {/if}
@@ -1872,7 +1940,8 @@
     display: grid;
     gap: 10px;
     left: 0;
-    max-height: min(72vh, 42rem);
+    box-sizing: border-box;
+    max-height: var(--stack-git-branch-dropdown-max-height, 72vh);
     min-width: min(24rem, calc(100vw - 1.5rem));
     overflow: auto;
     padding: 10px;

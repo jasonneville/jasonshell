@@ -10,6 +10,7 @@ function readRepoFile(path) {
 const commands = readRepoFile('src/ipc/commands.ts');
 const api = readRepoFile('src/lib/stackPopup.ts');
 const surface = readRepoFile('src/components/StackPopupSurface.svelte');
+const surfaceCss = readRepoFile('src/components/StackPopupSurface.css');
 const panel = readRepoFile('src/components/StackGitPanel.svelte');
 const panelState = readRepoFile('src/lib/stackGitPanelState.ts');
 const models = readRepoFile('src-tauri/src/stack_popup/models.rs');
@@ -361,6 +362,36 @@ test('StackGitPanel branch dropdown rows checkout and create branch from selecte
   assert.match(panel, /let branchToken = 0;/);
   assert.match(panel, /const token = \+\+branchToken;/);
   assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| operationBusy \? 'true' : 'false'\}/);
+});
+
+test('StackGitPanel branch dropdown measures available space and cleans resize listener lifecycle', () => {
+  assert.match(surfaceCss, /\.inline-editor\s*\{[\s\S]*?grid-row:\s*3;/);
+  assert.match(surfaceCss, /\.details-table,\s*\.stack-popup\s*>\s*\.stack-git-panel\s*\{[\s\S]*?grid-row:\s*4;/);
+  assert.match(panel, /let branchDropdownOpen = false;/);
+  assert.match(panel, /let branchPickerElement: HTMLDivElement \| null = null;/);
+  assert.match(panel, /let branchPickerButton: HTMLButtonElement \| null = null;/);
+  assert.match(panel, /let branchDropdownElement: HTMLDivElement \| null = null;/);
+  assert.match(panel, /let branchDropdownMaxHeight: string \| null = null;/);
+  assert.match(panel, /let branchDropdownResizeObserver: ResizeObserver \| null = null;/);
+  assert.match(panel, /let branchDropdownObservedPanel: HTMLElement \| null = null;/);
+  assert.match(panel, /let branchDropdownObservedPicker: HTMLDivElement \| null = null;/);
+  assert.match(panel, /function updateBranchDropdownMaxHeight\(\)/);
+  assert.match(panel, /const dropdownTop = branchDropdownElement\.getBoundingClientRect\(\)\.top;/);
+  assert.match(panel, /const panelBottom = branchPickerElement\.closest<HTMLElement>\('\.stack-git-panel'\)\?\.getBoundingClientRect\(\)\.bottom \?\? window\.innerHeight;/);
+  assert.match(panel, /const availableHeight = Math\.max\(0, Math\.floor\(Math\.min\(panelBottom, window\.innerHeight\) - dropdownTop\)\);/);
+  assert.match(panel, /branchDropdownMaxHeight = `\$\{availableHeight\}px`;/);
+  assert.match(panel, /function disconnectBranchDropdownResizeObserver\(\)/);
+  assert.match(panel, /function syncBranchDropdownResizeObserver\(\)/);
+  assert.match(panel, /branchDropdownResizeObserver = new ResizeObserver\(\(\) => \{\s*if \(branchDropdownOpen\) updateBranchDropdownMaxHeight\(\);\s*\}\);/);
+  assert.match(panel, /branchDropdownResizeObserver\.observe\(panel\);/);
+  assert.match(panel, /branchDropdownResizeObserver\.observe\(picker\);/);
+  assert.match(panel, /window\.addEventListener\('resize', handleBranchDropdownResize\);/);
+  assert.match(panel, /window\.removeEventListener\('resize', handleBranchDropdownResize\);/);
+  assert.match(panel, /disconnectBranchDropdownResizeObserver\(\);\s*branchDropdownResizeObserver = null;/);
+  assert.match(panel, /style:--stack-git-branch-dropdown-max-height=\{branchDropdownMaxHeight\}/);
+  assert.match(panel, /max-height:\s*var\(--stack-git-branch-dropdown-max-height, 72vh\);/);
+  assert.doesNotMatch(panel, /max-height:\s*min\(var\(--stack-git-branch-dropdown-max-height/);
+  assert.match(panel, /box-sizing:\s*border-box;/);
 });
 
 test('StackGitPanel marks local branches checked out in another worktree', () => {

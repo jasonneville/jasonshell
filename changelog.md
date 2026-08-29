@@ -1,4 +1,10 @@
 ## Change Ledger
+- 2026-08-28 `[CODE]` FIXED: Stack popup now explicitly places file and Git surfaces in its remaining-height grid row, preventing sparse Git Changes views from ending at the Commit section and shortening the branch dropdown.
+- 2026-08-28 `[TOOL]` TESTED: Added focused Stack Git layout contract coverage for optional inline-editor and main-surface grid row ownership.
+- 2026-08-28 `[CODE]` CHANGED: Stack Git branch dropdown now uses all measured vertical space remaining in the panel instead of stopping at a fixed 42rem ceiling.
+- 2026-08-28 `[TOOL]` TESTED: Updated focused Stack Git source-contract coverage to reject a fixed branch-dropdown height ceiling.
+- 2026-08-28 `[CODE]` FIXED: Stack Git branch dropdown now caps with border-box sizing so padding/border stay inside the measured height, and live panel/branch-picker ResizeObserver coverage keeps the open menu aligned when shell geometry changes.
+- 2026-08-28 `[TOOL]` TESTED: Added focused Stack Git source-contract coverage for branch-dropdown box sizing, geometry observers, and cleanup lifecycle.
 - 2026-08-28 `[CODE]` FIXED: Stack Git remote repository links now open the current checked-out branch on supported browser remotes, with safe branch-path escaping and provider-aware branch routes instead of the bare repository root.
 - 2026-08-28 `[TEST]` TESTED: Added focused Rust coverage for supported remote routing, branch escaping, and repo-root fallback behavior.
 - 2026-08-28 `[CODE]` ADDED: Stack Git workbench now shows operation status below the header, explicit mutation step labels, Commit & Push commit/push transitions, expandable successful command output, contextual bounded backend errors, and operation-state-driven mutation/`aria-busy` gating; `StackGitOperationResult` now carries bounded stdout/stderr output with existing 64 KiB per-stream caps.
