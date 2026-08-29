@@ -21,9 +21,11 @@ test('preview header separates primary title from secondary process text', () =>
 });
 
 test('preview close button stays out of text flow with reserved header space', () => {
+  const headerRule = cssRule(previewCss, '.preview-header');
   const closeButtonRule = cssRule(previewCss, '.preview-close-button');
   assert.match(previewSource, /class="preview-header"/);
-  assert.match(previewCss, /\.preview-header\s*\{[\s\S]*padding-right:\s*2\.1rem/);
+  const reservedSpace = Number(headerRule.match(/padding-right:\s*([\d.]+)rem/)?.[1]);
+  assert.ok(reservedSpace >= 2.1, 'preview header reserves at least the close button footprint');
   assert.match(previewCss, /\.preview-copy\s*\{[\s\S]*min-width:\s*0/);
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /z-index:\s*4/);

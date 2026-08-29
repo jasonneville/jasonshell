@@ -52,6 +52,8 @@ Use this exact PowerShell bootstrap on first run:
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
 ```
 
+Use the bootstrap rather than `npm install`; it preserves the lockfile-safe `npm ci` dependency path.
+
 On managed machines, review the script first. It can request UAC elevation to install missing Node.js, Rust, Visual Studio Build Tools, or WebView2.
 
 What it does:

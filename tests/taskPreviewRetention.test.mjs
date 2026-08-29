@@ -99,7 +99,7 @@ test('task window close falls back to terminating the owning process', () => {
   assert.match(taskWindowActionsRs, /spawn_task_window_helper/);
   assert.match(taskWindowHelperRs, /WM_CLOSE/);
   assert.match(taskWindowHelperRs, /PostMessageW\(Some\(hwnd\), WM_CLOSE/);
-  assert.match(taskWindowHelperRs, /OpenProcess\(PROCESS_TERMINATE \| PROCESS_QUERY_LIMITED_INFORMATION, false, pid\)/);
+  assert.match(taskWindowHelperRs, /OpenProcess\(\s*PROCESS_TERMINATE \| PROCESS_QUERY_LIMITED_INFORMATION,\s*false,\s*pid,?\s*\)/);
   assert.match(taskWindowHelperRs, /TerminateProcess\(process_handle, 1\)/);
   assert.match(taskWindowHelperRs, /creation_time/);
   assert.match(taskWindowHelperRs, /canonical_image_path/);
@@ -111,6 +111,6 @@ test('task window close falls back to terminating the owning process', () => {
   assert.match(taskWindowHelperRs, /--task-window-helper/);
   assert.match(mainRs, /task_windows::handle_task_window_helper_args/);
   assert.match(mainRs, /match launchers::handle_launch_pinned_taskbar_helper_args\(\)/);
-  assert.match(mainRs, /Err\(error\) => \{\n\s*eprintln!/);
+  assert.match(mainRs, /Err\(error\) => \{\r?\n\s*eprintln!/);
   assert.doesNotMatch(mainRs, /tauri::Builder::default\(\)[\s\S]*handle_launch_pinned_taskbar_helper_args/);
 });

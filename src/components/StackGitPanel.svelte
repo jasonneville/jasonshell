@@ -1889,7 +1889,7 @@
   }
 
   .stack-git-panel-header {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--js-color-surface-overlay) 84%, transparent), color-mix(in srgb, var(--js-color-surface-overlay) 68%, transparent));
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 76%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--js-color-border-soft) 88%, transparent);
     display: grid;
     gap: 10px;
@@ -2169,7 +2169,7 @@
 
   .stack-git-operation-status {
     align-items: start;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--js-color-surface-overlay) 82%, transparent), color-mix(in srgb, var(--js-color-surface-overlay) 66%, transparent));
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 74%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--js-color-border-soft) 88%, transparent);
     color: var(--js-color-text-muted);
     display: grid;
@@ -2279,7 +2279,7 @@
 
   .stack-git-change-group-header {
     align-items: center;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--js-color-surface-overlay) 82%, transparent), color-mix(in srgb, var(--js-color-surface-overlay) 64%, transparent));
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 73%, transparent);
     backdrop-filter: blur(8px);
     display: flex;
     gap: 8px;
@@ -2897,7 +2897,7 @@
 
   .stack-git-commit {
     border-top: 1px solid color-mix(in srgb, var(--js-color-border-soft) 88%, transparent);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--js-color-surface-overlay) 76%, transparent), color-mix(in srgb, var(--js-color-surface-overlay) 64%, transparent));
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 70%, transparent);
     display: grid;
     gap: 10px;
     padding: 12px;

@@ -499,9 +499,17 @@ export function sortStackEntries(
 ): StackEntry[] {
   const factor = direction === 'asc' ? 1 : -1;
   return [...entries].sort((a, b) => {
-    const folderOrder = column === 'modified' ? 0 : folderRank(a) - folderRank(b);
+    const folderOrder = column === 'modified' && direction === 'desc' ? 0 : folderRank(a) - folderRank(b);
     if (folderOrder !== 0) {
       return folderOrder;
+    }
+    if (column === 'size' || column === 'modified') {
+      const aValue = column === 'size' ? a.size : a.modifiedMs;
+      const bValue = column === 'size' ? b.size : b.modifiedMs;
+      const nullOrder = compareNullablePresence(aValue, bValue);
+      if (nullOrder !== 0) {
+        return nullOrder;
+      }
     }
     return factor * compareStackEntries(a, b, column);
   });
@@ -540,6 +548,12 @@ function compareNullableNumbers(a: number | null | undefined, b: number | null |
     return -1;
   }
   return a - b;
+}
+
+function compareNullablePresence(a: number | null | undefined, b: number | null | undefined) {
+  const aMissing = a === null || a === undefined;
+  const bMissing = b === null || b === undefined;
+  return aMissing === bMissing ? 0 : aMissing ? 1 : -1;
 }
 
 export function clearStackSelection(current: StackPopupViewState): StackPopupViewState {

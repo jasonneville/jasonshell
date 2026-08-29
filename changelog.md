@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-08-29 `[CODE]` FIXED: Restored the validation baseline by repairing Stack Browser sort ordering/null placement, conditional Melt tooltip content, bootstrap guidance, no-gradient UI policy, exact-window bright amber taskbar attention, and the declared command registry; retained current terminal and Stack Git behavior.
+- 2026-08-29 `[TOOL]` TESTED: Replaced stale formatting/environment-only assertions with contract checks while preserving auth ordering, scoped-event, process-identity, taskbar, preview, and fixed VS Code candidate invariants; focused tests, full Node, Svelte check/build, Rust tests/check, and `npm run validate` pass.
 - 2026-08-28 `[CODE]` FIXED: Restored the complete Stack Git backend module lost during merge resolution and changed History commit files to first-parent show output so merge commits no longer appear empty.
 - 2026-08-28 `[TOOL]` TESTED: Added focused Rust coverage for root and merge commit file lists plus first-parent Git argv contracts.
 - 2026-08-28 `[CODE]` FIXED: Stack popup now explicitly places file and Git surfaces in its remaining-height grid row, preventing sparse Git Changes views from ending at the Commit section and shortening the branch dropdown.

@@ -407,12 +407,30 @@ mod tests {
 
     #[test]
     fn vscode_resolver_uses_standard_candidate_order() {
-        let resolved = resolve_vscode_executable_with(|candidate| match candidate {
-            "code.cmd" => Some(PathBuf::from(r"C:\Tools\code.cmd")),
-            _ => None,
+        let candidate_index = std::cell::Cell::new(0);
+        let expected_candidates = [
+            r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe",
+            r"%ProgramFiles%\Microsoft VS Code\Code.exe",
+        ];
+        let resolved = resolve_vscode_executable_with(|candidate| {
+            let index = candidate_index.get();
+            assert_eq!(candidate, expected_candidates[index]);
+            candidate_index.set(index + 1);
+            match candidate {
+                r"%ProgramFiles%\Microsoft VS Code\Code.exe" => Some(PathBuf::from(
+                    r"C:\Program Files\Microsoft VS Code\Code.exe",
+                )),
+                _ => None,
+            }
         });
 
-        assert_eq!(resolved, Some(PathBuf::from(r"C:\Tools\code.cmd")));
+        assert_eq!(candidate_index.get(), expected_candidates.len());
+        assert_eq!(
+            resolved,
+            Some(PathBuf::from(
+                r"C:\Program Files\Microsoft VS Code\Code.exe"
+            ))
+        );
     }
 
     #[test]

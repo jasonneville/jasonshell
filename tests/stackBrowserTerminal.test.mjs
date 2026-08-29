@@ -275,10 +275,10 @@ test('terminal auth precedes side effects in poll and stop, with no drain/remove
   const requestStopStart = rustTerminal.indexOf('fn request_terminal_stop');
   const pollBody = rustTerminal.slice(pollStart, stopStart);
   const stopBody = rustTerminal.slice(stopStart, requestStopStart);
-  assert.match(pollBody, /authorize_stack_terminal_session_target\(caller_label, &session\.target_label, crate::contracts::commands::POLL_STACK_TERMINAL_SESSION\)\?/);
+  assert.match(pollBody, /authorize_stack_terminal_session_target\(\s*caller_label,\s*&session\.target_label,\s*crate::contracts::commands::POLL_STACK_TERMINAL_SESSION,?\s*\)\?/);
   assert.ok(pollBody.indexOf('authorize_stack_terminal_session_target') < pollBody.indexOf('drain_terminal_output'));
   assert.ok(pollBody.indexOf('authorize_stack_terminal_session_target') < pollBody.indexOf('refresh_session_running'));
-  assert.match(stopBody, /authorize_stack_terminal_session_target\(caller_label, &session\.target_label, crate::contracts::commands::STOP_STACK_TERMINAL\)\?/);
+  assert.match(stopBody, /authorize_stack_terminal_session_target\(\s*caller_label,\s*&session\.target_label,\s*crate::contracts::commands::STOP_STACK_TERMINAL,?\s*\)\?/);
   assert.ok(stopBody.indexOf('authorize_stack_terminal_session_target') < stopBody.indexOf('request_terminal_stop'));
 });
 

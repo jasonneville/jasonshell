@@ -98,13 +98,12 @@ test('WP0 scoped Phase 1 handlers authorize before side effects with window inje
     ['show_stack_item_properties', 'SHOW_STACK_ITEM_PROPERTIES'],
   ];
   for (const [fnName, commandConst] of checks) {
-    const start = stackPopupSource.indexOf(`pub`);
     const fnStart = stackPopupSource.indexOf(`fn ${fnName}`);
     assert.ok(fnStart >= 0, `${fnName} missing`);
     const nextFn = stackPopupSource.indexOf('\n#[tauri::command]', fnStart + 1);
     const body = stackPopupSource.slice(fnStart, nextFn > 0 ? nextFn : undefined);
     assert.match(body, /window:\s*WebviewWindow/);
-    assert.match(body, new RegExp(`authorize_stack_command\\(\\&window,\\s*StackCommandAuth::[\\s\\S]*${commandConst}`));
+    assert.match(body, new RegExp(`authorize_stack_command\\(\\s*\\&window,\\s*StackCommandAuth::[\\s\\S]*${commandConst}`));
     assert.ok(body.indexOf('authorize_stack_command') < body.indexOf('shell_paths::open_shell_path_with_picker') || !body.includes('shell_paths::open_shell_path_with_picker'));
   }
 });
