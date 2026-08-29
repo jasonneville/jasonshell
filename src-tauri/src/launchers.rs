@@ -1144,12 +1144,22 @@ mod imp {
         #[test]
         fn target_icon_stage_only_blocks_exact_apps_folder_explorer_proxies() {
             assert!(should_extract_target_icon(
-                Ok("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe".to_string()),
-                Path::new("C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe")
+                Ok(
+                    "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+                        .to_string()
+                ),
+                Path::new(
+                    "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+                )
             ));
             assert!(should_extract_target_icon(
-                Ok("C:\\Users\\jane\\AppData\\Local\\Programs\\Ableton\\Ableton Live 12 Suite.exe".to_string()),
-                Path::new("C:\\Users\\jane\\AppData\\Local\\Programs\\Ableton\\Ableton Live 12 Suite.exe")
+                Ok(
+                    "C:\\Users\\jane\\AppData\\Local\\Programs\\Ableton\\Ableton Live 12 Suite.exe"
+                        .to_string()
+                ),
+                Path::new(
+                    "C:\\Users\\jane\\AppData\\Local\\Programs\\Ableton\\Ableton Live 12 Suite.exe"
+                )
             ));
             assert!(!should_extract_target_icon(
                 Ok("shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify".to_string()),

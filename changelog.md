@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-08-29 `[CODE]` FIXED: AppBar activation now keeps Win32/Tauri work and guard startup outside the shared shell-state mutex, rejects overlapping lifecycle operations, and retains partial desktop ownership for cleanup retry after activation or rollback failure.
+- 2026-08-29 `[TOOL]` TESTED: Added RED-first AppBar lock, race, phase, and rollback ownership coverage; focused Rust AppBar tests pass 42/42 and focused Explorer/source lock contracts pass 7/7 with the repo-local TypeScript compiler.
 - 2026-08-29 `[CODE]` FIXED: Removed a parallel-test race from app-index cache classification by snapshotting refresh-in-flight state once at the production boundary and supplying explicit state to the pure cache classifier; runtime stale-row and async-refresh behavior is unchanged.
 - 2026-08-29 `[TOOL]` TESTED: App-cache fixtures no longer mutate the process-global refresh flag; focused app-provider tests pass 14/14, full Rust tests pass 577 with 3 ignored, and Cargo check passes with existing warnings.
 - 2026-08-29 `[CODE]` FIXED: Restored the validation baseline by repairing Stack Browser sort ordering/null placement, conditional Melt tooltip content, bootstrap guidance, no-gradient UI policy, exact-window bright amber taskbar attention, and the declared command registry; retained current terminal and Stack Git behavior.

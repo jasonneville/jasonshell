@@ -36,9 +36,9 @@ pub(crate) use auth::{
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
     StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
-    StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest, StackGitLog,
-    StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest,
-    StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
+    StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
+    StackGitLog, StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest,
+    StackGitStageRequest, StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
     StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
     StackGitStatus, StackGitTree, StackGitTreeRequest, StackItem, StackItemIconResolutionBatch,
     StackNativeDragPreparation, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize,

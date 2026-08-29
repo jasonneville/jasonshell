@@ -1199,7 +1199,10 @@ fn decode_terminal_text_stateful(chunk: &[u8], carry: &mut AnsiCarry, eof: bool)
                         break;
                     }
                 }
-                if i >= carry.bytes.len() && !matches!(carry.bytes.last(), Some(b'@'..=b'~')) { i = escape_start; break; }
+                if i >= carry.bytes.len() && !matches!(carry.bytes.last(), Some(b'@'..=b'~')) {
+                    i = escape_start;
+                    break;
+                }
             }
             b']' | b'P' | b'^' | b'_' => {
                 i += 2;
@@ -1215,10 +1218,16 @@ fn decode_terminal_text_stateful(chunk: &[u8], carry: &mut AnsiCarry, eof: bool)
                     }
                     i += 1;
                 }
-                if i >= carry.bytes.len() { i = escape_start; break; }
+                if i >= carry.bytes.len() {
+                    i = escape_start;
+                    break;
+                }
             }
             b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => {
-                if i + 2 >= carry.bytes.len() { i = escape_start; break; }
+                if i + 2 >= carry.bytes.len() {
+                    i = escape_start;
+                    break;
+                }
                 i += 3;
             }
             b'7' | b'8' | b'c' => {
@@ -1231,7 +1240,9 @@ fn decode_terminal_text_stateful(chunk: &[u8], carry: &mut AnsiCarry, eof: bool)
     }
     let keep_from = i.min(carry.bytes.len());
     carry.bytes.drain(..keep_from);
-    if eof { carry.bytes.clear(); }
+    if eof {
+        carry.bytes.clear();
+    }
     String::from_utf8_lossy(&out).into_owned()
 }
 

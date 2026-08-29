@@ -809,9 +809,18 @@ mod tests {
             first_id("personalization settings").as_deref(),
             Some("setting:personalization")
         );
-        assert_eq!(first_id("night light").as_deref(), Some("setting:night-light"));
-        assert_eq!(first_id("default apps").as_deref(), Some("setting:default-apps"));
-        assert_eq!(first_id("startup apps").as_deref(), Some("setting:startup-apps"));
+        assert_eq!(
+            first_id("night light").as_deref(),
+            Some("setting:night-light")
+        );
+        assert_eq!(
+            first_id("default apps").as_deref(),
+            Some("setting:default-apps")
+        );
+        assert_eq!(
+            first_id("startup apps").as_deref(),
+            Some("setting:startup-apps")
+        );
         assert_eq!(
             first_id("optional features").as_deref(),
             Some("setting:optional-features")

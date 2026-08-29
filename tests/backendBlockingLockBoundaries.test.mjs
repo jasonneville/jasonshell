@@ -6,6 +6,7 @@ const stackPopup = readFileSync('src-tauri/src/stack_popup.rs', 'utf8');
 const stackClipboard = readFileSync('src-tauri/src/stack_popup/clipboard.rs', 'utf8');
 const processManager = readFileSync('src-tauri/src/process_manager.rs', 'utf8');
 const taskPreview = readFileSync('src-tauri/src/task_preview.rs', 'utf8');
+const appbar = readFileSync('src-tauri/src/appbar.rs', 'utf8');
 
 function extractFunction(source, name) {
   const marker = new RegExp(`(?:pub(?:\\(crate\\))?\\s+)?(?:async\\s+)?fn\\s+${name}(?:<[^>]+>)?\\s*\\(`);
@@ -76,4 +77,35 @@ test('task preview window operations happen after runtime guard is dropped', () 
   assert.match(guardHelper, /state\s*\.lock\(\)[\s\S]*preview_request_is_current/);
   assert.match(body, /preview_window\s*\.emit\(/);
   assert.doesNotMatch(body, /let\s+mut\s+state\s*=\s*state\s*\.lock\(\)[\s\S]*preview_window\s*\.(emit|set_position|show|hide|set_focus)\(/);
+});
+
+test('appbar activation and cleanup native side effects happen outside runtime mutex guard', () => {
+  const activate = extractFunction(appbar, 'activate_shell_surfaces');
+  assert.match(activate, /let\s+plan\s*=\s*\{[\s\S]*begin_activation_plan/);
+  assert.match(activate, /run_activation_side_effects\(/);
+  assert.match(activate, /commit_activation_plan/);
+  assert.doesNotMatch(activate, /let\s+mut\s+state\s*=\s*state\.lock\(\)[\s\S]*\.(show|hide)\(\)/);
+  assert.doesNotMatch(activate, /let\s+mut\s+state\s*=\s*state\.lock\(\)[\s\S]*register_appbar\(/);
+  assert.doesNotMatch(activate, /let\s+mut\s+state\s*=\s*state\.lock\(\)[\s\S]*reserve_appbar\(/);
+
+  const cleanup = extractFunction(appbar, 'cleanup_shell_surfaces');
+  assert.match(cleanup, /let\s+mut\s+side_effects\s*=\s+begin_cleanup_plan/);
+  assert.match(cleanup, /run_cleanup_side_effects/);
+  assert.doesNotMatch(cleanup, /let\s+mut\s+state\s*=\s*state\.lock\(\)[\s\S]*unregister_appbar\(/);
+  assert.doesNotMatch(cleanup, /let\s+mut\s+state\s*=\s*state\.lock\(\)[\s\S]*restore_taskbar\(/);
+});
+
+test('appbar cleanup planning extracts guards but stop and join stay outside planner', () => {
+  const beginCleanup = extractFunction(appbar, 'begin_cleanup_plan');
+  const takeHandles = extractFunction(appbar, 'take_runtime_guard_handles');
+  const stopHandles = extractFunction(appbar, 'stop_runtime_guard_handles');
+
+  assert.match(beginCleanup, /take_runtime_guard_handles\(&mut state\)/);
+  assert.match(beginCleanup, /drop\(state\);\s*stop_runtime_guard_handles\(handles\)/);
+  assert.doesNotMatch(beginCleanup, /stop_fullscreen_guard\(/);
+  assert.doesNotMatch(beginCleanup, /stop_taskbar_guard\(/);
+  assert.doesNotMatch(takeHandles, /\.store\(true, Ordering::Relaxed\)/);
+  assert.doesNotMatch(takeHandles, /\.join\(\)/);
+  assert.match(stopHandles, /\.store\(true, Ordering::Relaxed\)/);
+  assert.match(stopHandles, /\.join\(\)/);
 });

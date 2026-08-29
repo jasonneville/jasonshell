@@ -244,7 +244,11 @@ fn emit_app_index_refreshed(entry_count: usize) {
 fn cached_app_entries(now_epoch_secs: u64) -> CachedAppEntriesSnapshot {
     if let Ok(guard) = app_index_runtime().lock() {
         let refresh_in_flight = APP_INDEX_REFRESH_IN_FLIGHT.load(Ordering::Acquire);
-        return cached_app_entries_from_cache(guard.cache.as_ref(), now_epoch_secs, refresh_in_flight);
+        return cached_app_entries_from_cache(
+            guard.cache.as_ref(),
+            now_epoch_secs,
+            refresh_in_flight,
+        );
     }
     CachedAppEntriesSnapshot {
         entries: Vec::new(),
@@ -260,14 +264,12 @@ fn cached_app_entries_from_cache(
     refresh_in_flight: bool,
 ) -> CachedAppEntriesSnapshot {
     match cached {
-        Some(cached) if refresh_in_flight => {
-            CachedAppEntriesSnapshot {
-                entries: cached.entries.clone(),
-                cache_state: SearchProviderCacheState::Refresh,
-                cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
-                refresh_needed: false,
-            }
-        }
+        Some(cached) if refresh_in_flight => CachedAppEntriesSnapshot {
+            entries: cached.entries.clone(),
+            cache_state: SearchProviderCacheState::Refresh,
+            cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
+            refresh_needed: false,
+        },
         Some(cached) if cached.is_fresh(now_epoch_secs) => CachedAppEntriesSnapshot {
             entries: cached.entries.clone(),
             cache_state: SearchProviderCacheState::Hit,

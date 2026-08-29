@@ -94,10 +94,21 @@ pub struct ShellRuntimeState {
     pub registered_appbars: Vec<isize>,
     shell_layout: Option<ShellSurfaceLayout>,
     fullscreen_state: FullscreenAppBarState,
+    activation_phase: ActivationPhase,
     fullscreen_guard_stop: Option<Arc<AtomicBool>>,
     fullscreen_guard: Option<JoinHandle<()>>,
     pub taskbar_guard_stop: Option<Arc<AtomicBool>>,
     pub taskbar_guard: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ActivationPhase {
+    #[default]
+    Idle,
+    SideEffects,
+    GuardStartup,
+    CommittedReserved,
+    CleanupInProgress,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -172,6 +183,39 @@ struct ShellSurfaceLayout {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct ActivationPlan;
+
+#[derive(Debug)]
+struct ActivationSideEffects {
+    baseline_work_area: RECT,
+    hidden_explorer_taskbars: Vec<explorer::ExplorerTaskbarSnapshot>,
+    hidden_explorer_taskbars_v2: Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>>,
+    registered_appbars: Vec<isize>,
+    shell_layout: ShellSurfaceLayout,
+    use_taskbar_v2: bool,
+}
+
+struct ActivationFailure {
+    error: String,
+    effects: ActivationSideEffects,
+}
+
+struct CleanupSideEffects {
+    registered_appbars: Vec<isize>,
+    hidden_explorer_taskbars: Vec<explorer::ExplorerTaskbarSnapshot>,
+    hidden_explorer_taskbars_v2: Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>>,
+    baseline_work_area: Option<RECT>,
+}
+
+struct RuntimeGuardHandles {
+    fullscreen_stop: Option<Arc<AtomicBool>>,
+    fullscreen_guard: Option<JoinHandle<()>>,
+    taskbar_stop: Option<Arc<AtomicBool>>,
+    taskbar_guard: Option<JoinHandle<()>>,
+    legacy_taskbar_guard_owned: Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct FullscreenWindowCandidate {
     window_rect: RECT,
     monitor_rect: RECT,
@@ -211,146 +255,130 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
         super::shell_windows::to_physical_height(BOTTOM_BAR_HEIGHT_LOGICAL, scale_factor);
     let top_rect = desired_rect_for_edge(monitor_rect, AppBarEdge::Top, top_height);
     let bottom_rect = desired_rect_for_edge(monitor_rect, AppBarEdge::Bottom, bottom_height);
-    let state = app.state::<Mutex<ShellRuntimeState>>();
-    let mut state = state.lock().expect("shell runtime state is poisoned");
-    state.cleaned_up = false;
-    state.baseline_work_area = None;
-    state.hidden_explorer_taskbars.clear();
-    state.legacy_taskbar_guard_owned = None;
-    state.hidden_explorer_taskbars_v2 = None;
-    state.shell_layout = None;
-    state.fullscreen_state = FullscreenAppBarState::Reserved;
-    state.registered_appbars.clear();
+    let app_handle = app.handle().clone();
+    let plan = {
+        let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+        begin_activation_plan(&state)?
+    };
+    let activation_result =
+        run_activation_side_effects(app, windows, plan, monitor_rect, top_rect, bottom_rect);
 
-    let activation_result = (|| -> AppResult<()> {
-        let current_work_area = get_work_area()?;
-        let explorer_taskbars = explorer::all_taskbar_snapshots()?;
-        state.baseline_work_area = Some(resolve_baseline_work_area(
-            monitor_rect,
-            current_work_area,
-            explorer_taskbars
-                .iter()
-                .copied()
-                .find(|snapshot| snapshot.monitor_rect == monitor_rect),
-        ));
-        if taskbar_suppression_v2_enabled_from_env() {
-            let owned = Arc::new(Mutex::new(explorer::hide_taskbars_if_needed(
-                explorer_taskbars,
-            )?));
-            if !owned.lock().expect("taskbar v2 state poisoned").is_empty() {
-                state.hidden_explorer_taskbars_v2 = Some(Arc::clone(&owned));
-                start_taskbar_guard_v2(&mut state, owned);
-                set_work_area_with_retry_or_warn(
-                    monitor_rect,
-                    "monitor work area while Explorer taskbar is hidden",
-                )?;
+    let effects = match activation_result {
+        Ok(effects) => effects,
+        Err(failure) => {
+            let _ = windows.top.hide();
+            let _ = windows.bottom.hide();
+            let error = failure.error;
+            let rollback_error = rollback_activation_side_effects(failure.effects);
+            let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+            return match rollback_error {
+                Ok(side_effects) => {
+                    finalize_activation_rollback(&state, true, side_effects);
+                    Err(error.into())
+                }
+                Err((rollback_error, side_effects)) => {
+                    finalize_activation_rollback(&state, false, side_effects);
+                    Err(format!(
+                        "shell activation failed: {error}; rollback failed: {rollback_error}"
+                    )
+                    .into())
+                }
+            };
+        }
+    };
+    let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+    commit_activation_plan(&state, app_handle.clone(), effects).or_else(|failure| {
+        let error = failure.error;
+        let rollback_error = rollback_activation_side_effects(failure.effects);
+        match rollback_error {
+            Ok(side_effects) => {
+                finalize_activation_rollback(&state, true, side_effects);
+                Err(error.into())
             }
-        } else {
-            state.hidden_explorer_taskbars =
-                explorer::hide_primary_taskbar_if_needed(monitor_rect)?
-                    .into_iter()
-                    .collect();
-
-            start_taskbar_guard(&mut state, monitor_rect);
-            if !state.hidden_explorer_taskbars.is_empty() {
-                set_work_area_with_retry_or_warn(
-                    monitor_rect,
-                    "monitor work area while Explorer taskbar is hidden",
-                )?;
+            Err((rollback_error, side_effects)) => {
+                finalize_activation_rollback(&state, false, side_effects);
+                Err(format!(
+                    "shell activation commit failed: {error}; rollback failed: {rollback_error}"
+                )
+                .into())
             }
         }
-
-        let top_hwnd = hwnd_from_tauri_window(&windows.top)?;
-        let bottom_hwnd = hwnd_from_tauri_window(&windows.bottom)?;
-
-        let resolved_top_rect =
-            register_tracked_appbar(&mut state, top_hwnd, register_appbar, |hwnd| {
-                reserve_appbar(hwnd, AppBarEdge::Top, top_rect)
-            })?;
-
-        let resolved_bottom_rect =
-            register_tracked_appbar(&mut state, bottom_hwnd, register_appbar, |hwnd| {
-                reserve_appbar(hwnd, AppBarEdge::Bottom, bottom_rect)
-            })?;
-
-        set_work_area_with_retry_or_warn(
-            reserved_work_area(monitor_rect, resolved_top_rect, resolved_bottom_rect),
-            "reserved shell work area",
-        )?;
-
-        if let Some(snapshot) = state.hidden_explorer_taskbars.first().copied() {
-            if !explorer::enforce_taskbar_hidden(snapshot)? {
-                eprintln!(
-                    "Explorer taskbar remained visible after startup retries; guard thread will continue enforcement"
-                );
-            }
-        }
-
-        move_window_to_rect(top_hwnd, resolved_top_rect)?;
-        move_window_to_rect(bottom_hwnd, resolved_bottom_rect)?;
-        state.shell_layout = Some(ShellSurfaceLayout {
-            monitor_rect,
-            top_hwnd: top_hwnd.0 as isize,
-            bottom_hwnd: bottom_hwnd.0 as isize,
-            top_rect: resolved_top_rect,
-            bottom_rect: resolved_bottom_rect,
-        });
-
-        windows.top.show()?;
-        windows.bottom.show()?;
-        apply_no_alt_tab_shell_style_to_hwnd(top_hwnd, super::shell_windows::TOP_BAR_LABEL)?;
-        apply_no_alt_tab_shell_style_to_hwnd(bottom_hwnd, super::shell_windows::BOTTOM_BAR_LABEL)?;
-
-        stabilize_runtime_window_rect(
-            top_hwnd,
-            super::shell_windows::TOP_BAR_LABEL,
-            resolved_top_rect,
-        )?;
-        stabilize_runtime_window_rect(
-            bottom_hwnd,
-            super::shell_windows::BOTTOM_BAR_LABEL,
-            resolved_bottom_rect,
-        )?;
-
-        if let Some(snapshot) = state.hidden_explorer_taskbars.first().copied() {
-            if !explorer::enforce_taskbar_hidden(snapshot)? {
-                eprintln!(
-                    "Explorer taskbar was still visible after shell surfaces finished showing"
-                );
-            }
-        }
-
-        start_fullscreen_guard(app.handle().clone(), &mut state);
-
-        Ok(())
-    })();
-
-    if let Err(error) = activation_result {
-        let _ = windows.top.hide();
-        let _ = windows.bottom.hide();
-        let rollback_error = cleanup_runtime_state(&mut state);
-
-        return match rollback_error {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(format!(
-                "shell activation failed: {error}; rollback failed: {rollback_error}"
-            )
-            .into()),
-        };
-    }
-
-    Ok(())
+    })
 }
 
 pub fn cleanup_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
     let state = app_handle.state::<Mutex<ShellRuntimeState>>();
-    let mut state = state.lock().expect("shell runtime state is poisoned");
-
-    if state.cleaned_up {
-        return Ok(());
+    let mut side_effects = begin_cleanup_plan(&state)?;
+    let result = run_cleanup_side_effects(
+        &mut side_effects,
+        unregister_appbar,
+        set_work_area_with_retry_or_warn,
+        |snapshot| explorer::restore_taskbar(snapshot).map_err(Into::into),
+    );
+    if result.is_err() {
+        merge_cleanup_failures_back(&state, side_effects);
+        finalize_cleanup_plan(&state, false);
+    } else {
+        finalize_cleanup_plan(&state, true);
     }
+    result
+}
 
-    cleanup_runtime_state(&mut state)
+fn rollback_activation_side_effects(
+    mut effects: ActivationSideEffects,
+) -> Result<CleanupSideEffects, (String, CleanupSideEffects)> {
+    let mut cleanup_side_effects = CleanupSideEffects {
+        registered_appbars: std::mem::take(&mut effects.registered_appbars),
+        hidden_explorer_taskbars: std::mem::take(&mut effects.hidden_explorer_taskbars),
+        hidden_explorer_taskbars_v2: effects.hidden_explorer_taskbars_v2.take(),
+        baseline_work_area: Some(effects.baseline_work_area),
+    };
+    match run_cleanup_side_effects(
+        &mut cleanup_side_effects,
+        unregister_appbar,
+        set_work_area_with_retry_or_warn,
+        |snapshot| explorer::restore_taskbar(snapshot).map_err(Into::into),
+    ) {
+        Ok(()) => Ok(cleanup_side_effects),
+        Err(error) => Err((error.to_string(), cleanup_side_effects)),
+    }
+}
+
+fn finalize_activation_rollback(
+    state: &Mutex<ShellRuntimeState>,
+    cleaned_up: bool,
+    side_effects: CleanupSideEffects,
+) {
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    state.registered_appbars = side_effects.registered_appbars;
+    state.hidden_explorer_taskbars = side_effects.hidden_explorer_taskbars;
+    state.hidden_explorer_taskbars_v2 = side_effects.hidden_explorer_taskbars_v2;
+    state.baseline_work_area = side_effects.baseline_work_area;
+    state.cleaned_up = cleaned_up;
+    state.fullscreen_state = FullscreenAppBarState::Reserved;
+    state.shell_layout = None;
+    state.activation_phase = ActivationPhase::Idle;
+}
+
+fn make_activation_failure<E: ToString>(
+    error: E,
+    effects: ActivationSideEffects,
+) -> ActivationFailure {
+    ActivationFailure {
+        error: error.to_string(),
+        effects,
+    }
+}
+
+fn activation_commit_failure_effects(effects: &ActivationSideEffects) -> ActivationSideEffects {
+    ActivationSideEffects {
+        baseline_work_area: effects.baseline_work_area,
+        hidden_explorer_taskbars: effects.hidden_explorer_taskbars.clone(),
+        hidden_explorer_taskbars_v2: effects.hidden_explorer_taskbars_v2.as_ref().map(Arc::clone),
+        registered_appbars: effects.registered_appbars.clone(),
+        shell_layout: effects.shell_layout,
+        use_taskbar_v2: effects.use_taskbar_v2,
+    }
 }
 
 #[tauri::command]
@@ -397,7 +425,7 @@ fn resize_shell_bar_runtime(
     let layout = state
         .shell_layout
         .ok_or_else(|| "Shell AppBar layout is not active".to_string())?;
-    ensure_shell_bar_resize_allowed(state.fullscreen_state)?;
+    ensure_shell_bar_resize_allowed(state.fullscreen_state, state.activation_phase)?;
     let top_hwnd = HWND(layout.top_hwnd as *mut _);
     let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
     let mut top_rect = layout.top_rect;
@@ -430,7 +458,13 @@ fn resize_shell_bar_runtime(
     Ok(())
 }
 
-fn ensure_shell_bar_resize_allowed(fullscreen_state: FullscreenAppBarState) -> AppResult<()> {
+fn ensure_shell_bar_resize_allowed(
+    fullscreen_state: FullscreenAppBarState,
+    activation_phase: ActivationPhase,
+) -> AppResult<()> {
+    if activation_phase != ActivationPhase::CommittedReserved {
+        return Err("Shell AppBar layout is not active".into());
+    }
     if fullscreen_state != FullscreenAppBarState::Reserved {
         return Err(
             "Shell AppBars are temporarily released while a fullscreen foreground app is active"
@@ -474,6 +508,295 @@ where
     register(hwnd)?;
     state.registered_appbars.push(hwnd.0 as isize);
     configure(hwnd)
+}
+
+fn register_appbar_and_track_vec<RegisterFn, ConfigureFn>(
+    registered_appbars: &mut Vec<isize>,
+    hwnd: HWND,
+    register: RegisterFn,
+    configure: ConfigureFn,
+) -> AppResult<RECT>
+where
+    RegisterFn: FnOnce(HWND) -> AppResult<()>,
+    ConfigureFn: FnOnce(HWND) -> AppResult<RECT>,
+{
+    register(hwnd)?;
+    registered_appbars.push(hwnd.0 as isize);
+    configure(hwnd)
+}
+
+fn begin_activation_plan(state: &Mutex<ShellRuntimeState>) -> AppResult<ActivationPlan> {
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    if matches!(
+        state.activation_phase,
+        ActivationPhase::SideEffects
+            | ActivationPhase::GuardStartup
+            | ActivationPhase::CommittedReserved
+    ) {
+        return Err("Shell AppBar activation is already in progress".into());
+    }
+    if state.activation_phase == ActivationPhase::CleanupInProgress {
+        return Err("Shell AppBar cleanup is required before activation can retry".into());
+    }
+    if state.fullscreen_guard_stop.is_some() || state.taskbar_guard_stop.is_some() {
+        return Err("Shell AppBar cleanup is required before activation can retry".into());
+    }
+    if !state.registered_appbars.is_empty()
+        || !state.hidden_explorer_taskbars.is_empty()
+        || state.hidden_explorer_taskbars_v2.is_some()
+        || state.baseline_work_area.is_some()
+    {
+        return Err("Shell AppBar cleanup is required before activation can retry".into());
+    }
+    state.cleaned_up = false;
+    state.baseline_work_area = None;
+    state.hidden_explorer_taskbars.clear();
+    state.legacy_taskbar_guard_owned = None;
+    state.hidden_explorer_taskbars_v2 = None;
+    state.shell_layout = None;
+    state.fullscreen_state = FullscreenAppBarState::Reserved;
+    state.registered_appbars.clear();
+    state.activation_phase = ActivationPhase::SideEffects;
+    Ok(ActivationPlan)
+}
+
+fn run_activation_side_effects(
+    _app: &mut App,
+    windows: &CreatedShellWindows,
+    _plan: ActivationPlan,
+    monitor_rect: RECT,
+    top_rect: RECT,
+    bottom_rect: RECT,
+) -> Result<ActivationSideEffects, ActivationFailure> {
+    let empty_effects = || ActivationSideEffects {
+        baseline_work_area: RECT::default(),
+        hidden_explorer_taskbars: Vec::new(),
+        hidden_explorer_taskbars_v2: None,
+        registered_appbars: Vec::new(),
+        shell_layout: ShellSurfaceLayout {
+            monitor_rect,
+            top_hwnd: 0,
+            bottom_hwnd: 0,
+            top_rect,
+            bottom_rect,
+        },
+        use_taskbar_v2: taskbar_suppression_v2_enabled_from_env(),
+    };
+    macro_rules! try_effect {
+        ($expr:expr, $effects:expr) => {
+            match $expr {
+                Ok(value) => value,
+                Err(error) => return Err(make_activation_failure(error, $effects)),
+            }
+        };
+    }
+    let current_work_area = try_effect!(get_work_area(), empty_effects());
+    let explorer_taskbars = try_effect!(explorer::all_taskbar_snapshots(), empty_effects());
+    let baseline_work_area = resolve_baseline_work_area(
+        monitor_rect,
+        current_work_area,
+        explorer_taskbars
+            .iter()
+            .copied()
+            .find(|snapshot| snapshot.monitor_rect == monitor_rect),
+    );
+    let use_taskbar_v2 = taskbar_suppression_v2_enabled_from_env();
+    let mut effects = ActivationSideEffects {
+        baseline_work_area,
+        hidden_explorer_taskbars: Vec::new(),
+        hidden_explorer_taskbars_v2: None,
+        registered_appbars: Vec::new(),
+        shell_layout: ShellSurfaceLayout {
+            monitor_rect,
+            top_hwnd: 0,
+            bottom_hwnd: 0,
+            top_rect,
+            bottom_rect,
+        },
+        use_taskbar_v2,
+    };
+    if use_taskbar_v2 {
+        let owned = Arc::new(Mutex::new(try_effect!(
+            explorer::hide_taskbars_if_needed(explorer_taskbars,),
+            effects
+        )));
+        if !owned.lock().expect("taskbar v2 state poisoned").is_empty() {
+            effects.hidden_explorer_taskbars_v2 = Some(Arc::clone(&owned));
+            try_effect!(
+                set_work_area_with_retry_or_warn(
+                    monitor_rect,
+                    "monitor work area while Explorer taskbar is hidden",
+                ),
+                effects
+            );
+        }
+    } else {
+        effects.hidden_explorer_taskbars = try_effect!(
+            explorer::hide_primary_taskbar_if_needed(monitor_rect),
+            effects
+        )
+        .into_iter()
+        .collect();
+        if !effects.hidden_explorer_taskbars.is_empty() {
+            try_effect!(
+                set_work_area_with_retry_or_warn(
+                    monitor_rect,
+                    "monitor work area while Explorer taskbar is hidden",
+                ),
+                effects
+            );
+        }
+    }
+    let top_hwnd = try_effect!(hwnd_from_tauri_window(&windows.top), effects);
+    let bottom_hwnd = try_effect!(hwnd_from_tauri_window(&windows.bottom), effects);
+    effects.shell_layout.top_hwnd = top_hwnd.0 as isize;
+    effects.shell_layout.bottom_hwnd = bottom_hwnd.0 as isize;
+    let resolved_top_rect = try_effect!(
+        register_appbar_and_track_vec(
+            &mut effects.registered_appbars,
+            top_hwnd,
+            register_appbar,
+            |hwnd| reserve_appbar(hwnd, AppBarEdge::Top, top_rect),
+        ),
+        effects
+    );
+    let resolved_bottom_rect = try_effect!(
+        register_appbar_and_track_vec(
+            &mut effects.registered_appbars,
+            bottom_hwnd,
+            register_appbar,
+            |hwnd| reserve_appbar(hwnd, AppBarEdge::Bottom, bottom_rect),
+        ),
+        effects
+    );
+    try_effect!(
+        set_work_area_with_retry_or_warn(
+            reserved_work_area(monitor_rect, resolved_top_rect, resolved_bottom_rect),
+            "reserved shell work area",
+        ),
+        effects
+    );
+    if let Some(snapshot) = effects.hidden_explorer_taskbars.first().copied() {
+        if !try_effect!(explorer::enforce_taskbar_hidden(snapshot), effects) {
+            eprintln!("Explorer taskbar remained visible after startup retries; guard thread will continue enforcement");
+        }
+    }
+    try_effect!(move_window_to_rect(top_hwnd, resolved_top_rect), effects);
+    try_effect!(
+        move_window_to_rect(bottom_hwnd, resolved_bottom_rect),
+        effects
+    );
+    try_effect!(windows.top.show(), effects);
+    try_effect!(windows.bottom.show(), effects);
+    try_effect!(
+        apply_no_alt_tab_shell_style_to_hwnd(top_hwnd, super::shell_windows::TOP_BAR_LABEL),
+        effects
+    );
+    try_effect!(
+        apply_no_alt_tab_shell_style_to_hwnd(bottom_hwnd, super::shell_windows::BOTTOM_BAR_LABEL),
+        effects
+    );
+    try_effect!(
+        stabilize_runtime_window_rect(
+            top_hwnd,
+            super::shell_windows::TOP_BAR_LABEL,
+            resolved_top_rect,
+        ),
+        effects
+    );
+    try_effect!(
+        stabilize_runtime_window_rect(
+            bottom_hwnd,
+            super::shell_windows::BOTTOM_BAR_LABEL,
+            resolved_bottom_rect,
+        ),
+        effects
+    );
+    if let Some(snapshot) = effects.hidden_explorer_taskbars.first().copied() {
+        if !try_effect!(explorer::enforce_taskbar_hidden(snapshot), effects) {
+            eprintln!("Explorer taskbar was still visible after shell surfaces finished showing");
+        }
+    }
+    effects.shell_layout = ShellSurfaceLayout {
+        monitor_rect,
+        top_hwnd: top_hwnd.0 as isize,
+        bottom_hwnd: bottom_hwnd.0 as isize,
+        top_rect: resolved_top_rect,
+        bottom_rect: resolved_bottom_rect,
+    };
+    Ok(effects)
+}
+
+fn commit_activation_plan(
+    state: &Mutex<ShellRuntimeState>,
+    app_handle: AppHandle,
+    effects: ActivationSideEffects,
+) -> Result<(), ActivationFailure> {
+    let mut runtime = state.lock().expect("shell runtime state is poisoned");
+    if runtime.activation_phase != ActivationPhase::SideEffects {
+        return Err(make_activation_failure(
+            "Shell AppBar activation commit found unexpected runtime phase",
+            effects,
+        ));
+    }
+    if runtime.fullscreen_guard_stop.is_some() || runtime.taskbar_guard_stop.is_some() {
+        return Err(make_activation_failure(
+            "Shell AppBar activation commit found existing guard state",
+            effects,
+        ));
+    }
+    let baseline_work_area = effects.baseline_work_area;
+    let hidden_explorer_taskbars = effects.hidden_explorer_taskbars;
+    let hidden_explorer_taskbars_v2 = effects.hidden_explorer_taskbars_v2;
+    let registered_appbars = effects.registered_appbars;
+    let shell_layout = effects.shell_layout;
+    let use_taskbar_v2 = effects.use_taskbar_v2;
+    let hidden_v2 = hidden_explorer_taskbars_v2.as_ref().map(Arc::clone);
+
+    runtime.activation_phase = ActivationPhase::GuardStartup;
+    drop(runtime);
+
+    let taskbar_handles = if use_taskbar_v2 {
+        hidden_v2.map(start_taskbar_guard_v2_owned)
+    } else {
+        Some(start_taskbar_guard_owned(shell_layout.monitor_rect))
+    };
+    let fullscreen_handles = start_fullscreen_guard_owned(app_handle);
+
+    let mut runtime = state.lock().expect("shell runtime state is poisoned");
+    if runtime.activation_phase != ActivationPhase::GuardStartup {
+        drop(runtime);
+        if let Some(handles) = taskbar_handles {
+            stop_runtime_guard_handles(handles);
+        }
+        stop_fullscreen_guard_owned(fullscreen_handles);
+        return Err(make_activation_failure(
+            "Shell AppBar activation commit found unexpected runtime phase",
+            activation_commit_failure_effects(&ActivationSideEffects {
+                baseline_work_area,
+                hidden_explorer_taskbars,
+                hidden_explorer_taskbars_v2,
+                registered_appbars,
+                shell_layout,
+                use_taskbar_v2,
+            }),
+        ));
+    }
+    runtime.baseline_work_area = Some(baseline_work_area);
+    runtime.hidden_explorer_taskbars = hidden_explorer_taskbars;
+    runtime.hidden_explorer_taskbars_v2 = hidden_explorer_taskbars_v2;
+    runtime.registered_appbars = registered_appbars;
+    runtime.shell_layout = Some(shell_layout);
+    runtime.fullscreen_state = FullscreenAppBarState::Reserved;
+    if let Some(handles) = taskbar_handles {
+        runtime.taskbar_guard_stop = handles.taskbar_stop;
+        runtime.taskbar_guard = handles.taskbar_guard;
+        runtime.legacy_taskbar_guard_owned = handles.legacy_taskbar_guard_owned;
+    }
+    runtime.fullscreen_guard_stop = Some(fullscreen_handles.fullscreen_stop);
+    runtime.fullscreen_guard = Some(fullscreen_handles.fullscreen_guard);
+    runtime.activation_phase = ActivationPhase::CommittedReserved;
+    Ok(())
 }
 
 fn register_appbar(hwnd: HWND) -> AppResult<()> {
@@ -998,16 +1321,126 @@ pub fn capture_shell_surface_runtime_metrics(
     Ok(metrics)
 }
 
-fn cleanup_runtime_state(state: &mut ShellRuntimeState) -> AppResult<()> {
-    stop_fullscreen_guard(state);
-    stop_taskbar_guard(state);
+fn take_runtime_guard_handles(state: &mut ShellRuntimeState) -> RuntimeGuardHandles {
+    RuntimeGuardHandles {
+        fullscreen_stop: state.fullscreen_guard_stop.take(),
+        fullscreen_guard: state.fullscreen_guard.take(),
+        taskbar_stop: state.taskbar_guard_stop.take(),
+        taskbar_guard: state.taskbar_guard.take(),
+        legacy_taskbar_guard_owned: state.legacy_taskbar_guard_owned.take(),
+    }
+}
 
-    cleanup_runtime_state_with(
-        state,
-        unregister_appbar,
-        set_work_area_with_retry_or_warn,
-        |snapshot| explorer::restore_taskbar(snapshot).map_err(Into::into),
-    )
+fn stop_runtime_guard_handles(
+    handles: RuntimeGuardHandles,
+) -> Option<Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>> {
+    if let Some(stop) = handles.fullscreen_stop {
+        stop.store(true, Ordering::Relaxed);
+    }
+    if let Some(stop) = handles.taskbar_stop {
+        stop.store(true, Ordering::Relaxed);
+        explorer::request_taskbar_reconcile();
+    }
+    if let Some(guard) = handles.fullscreen_guard {
+        let _ = guard.join();
+    }
+    if let Some(guard) = handles.taskbar_guard {
+        let _ = guard.join();
+    }
+    handles.legacy_taskbar_guard_owned
+}
+
+fn begin_cleanup_plan(state: &Mutex<ShellRuntimeState>) -> AppResult<CleanupSideEffects> {
+    let legacy_owned = {
+        let mut state = state.lock().expect("shell runtime state is poisoned");
+        if matches!(
+            state.activation_phase,
+            ActivationPhase::SideEffects | ActivationPhase::GuardStartup
+        ) {
+            return Err("Shell AppBar activation is in progress; cleanup is busy".into());
+        }
+        if state.activation_phase == ActivationPhase::CleanupInProgress {
+            return Err("Shell AppBar cleanup is already in progress".into());
+        }
+        let handles = take_runtime_guard_handles(&mut state);
+        state.activation_phase = ActivationPhase::CleanupInProgress;
+        drop(state);
+        stop_runtime_guard_handles(handles)
+    };
+
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    if let Some(legacy_owned) = legacy_owned {
+        if let Ok(snapshots) = legacy_owned.lock() {
+            state.hidden_explorer_taskbars = snapshots.clone();
+        }
+    }
+    if state.cleaned_up {
+        state.activation_phase = ActivationPhase::Idle;
+        return Ok(CleanupSideEffects {
+            registered_appbars: Vec::new(),
+            hidden_explorer_taskbars: Vec::new(),
+            hidden_explorer_taskbars_v2: None,
+            baseline_work_area: None,
+        });
+    }
+    let side_effects = CleanupSideEffects {
+        registered_appbars: std::mem::take(&mut state.registered_appbars),
+        hidden_explorer_taskbars: state.hidden_explorer_taskbars.drain(..).collect(),
+        hidden_explorer_taskbars_v2: state.hidden_explorer_taskbars_v2.take(),
+        baseline_work_area: state.baseline_work_area.take(),
+    };
+    Ok(side_effects)
+}
+
+fn run_cleanup_side_effects<UnregisterFn, RestoreWorkAreaFn, RestoreTaskbarFn>(
+    side_effects: &mut CleanupSideEffects,
+    mut unregister: UnregisterFn,
+    mut restore_work_area: RestoreWorkAreaFn,
+    mut restore_taskbar: RestoreTaskbarFn,
+) -> AppResult<()>
+where
+    UnregisterFn: FnMut(HWND) -> AppResult<()>,
+    RestoreWorkAreaFn: FnMut(RECT, &str) -> AppResult<()>,
+    RestoreTaskbarFn: FnMut(explorer::ExplorerTaskbarSnapshot) -> AppResult<bool>,
+{
+    let mut state = ShellRuntimeState {
+        registered_appbars: std::mem::take(&mut side_effects.registered_appbars),
+        hidden_explorer_taskbars: std::mem::take(&mut side_effects.hidden_explorer_taskbars),
+        hidden_explorer_taskbars_v2: side_effects.hidden_explorer_taskbars_v2.take(),
+        baseline_work_area: side_effects.baseline_work_area.take(),
+        ..Default::default()
+    };
+    let result = cleanup_runtime_state_with(
+        &mut state,
+        &mut unregister,
+        &mut restore_work_area,
+        &mut restore_taskbar,
+    );
+    if result.is_err() {
+        side_effects.registered_appbars = state.registered_appbars;
+        side_effects.hidden_explorer_taskbars = state.hidden_explorer_taskbars;
+        side_effects.hidden_explorer_taskbars_v2 = state.hidden_explorer_taskbars_v2;
+        side_effects.baseline_work_area = state.baseline_work_area;
+    }
+    result
+}
+
+fn merge_cleanup_failures_back(state: &Mutex<ShellRuntimeState>, side_effects: CleanupSideEffects) {
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    state.registered_appbars = side_effects.registered_appbars;
+    state.hidden_explorer_taskbars = side_effects.hidden_explorer_taskbars;
+    state.hidden_explorer_taskbars_v2 = side_effects.hidden_explorer_taskbars_v2;
+    state.baseline_work_area = side_effects.baseline_work_area;
+    state.cleaned_up = false;
+    state.activation_phase = ActivationPhase::Idle;
+}
+
+fn finalize_cleanup_plan(state: &Mutex<ShellRuntimeState>, cleaned_up: bool) {
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    state.cleaned_up = cleaned_up;
+    state.fullscreen_state = FullscreenAppBarState::Reserved;
+    state.shell_layout = None;
+    state.activation_phase = ActivationPhase::Idle;
 }
 
 fn cleanup_runtime_state_with<UnregisterFn, RestoreWorkAreaFn, RestoreTaskbarFn>(
@@ -1034,10 +1467,19 @@ where
         for taskbar_snapshot in hidden_taskbars {
             match restore_taskbar(taskbar_snapshot) {
                 Ok(true) => {}
-                Ok(false) => cleanup_errors.push(
-                    "Explorer taskbar remained hidden after repeated restore attempts".to_string(),
-                ),
-                Err(error) => cleanup_errors.push(error.to_string()),
+                Ok(false) => {
+                    cleanup_errors.push(
+                        "Explorer taskbar remained hidden after repeated restore attempts"
+                            .to_string(),
+                    );
+                    state.hidden_explorer_taskbars_v2 =
+                        Some(Arc::new(Mutex::new(vec![taskbar_snapshot])));
+                }
+                Err(error) => {
+                    cleanup_errors.push(error.to_string());
+                    state.hidden_explorer_taskbars_v2 =
+                        Some(Arc::new(Mutex::new(vec![taskbar_snapshot])));
+                }
             }
         }
         Vec::new()
@@ -1049,10 +1491,17 @@ where
         for taskbar_snapshot in hidden_taskbars {
             match restore_taskbar(taskbar_snapshot) {
                 Ok(true) => {}
-                Ok(false) => cleanup_errors.push(
-                    "Explorer taskbar remained hidden after repeated restore attempts".to_string(),
-                ),
-                Err(error) => cleanup_errors.push(error.to_string()),
+                Ok(false) => {
+                    cleanup_errors.push(
+                        "Explorer taskbar remained hidden after repeated restore attempts"
+                            .to_string(),
+                    );
+                    state.hidden_explorer_taskbars.push(taskbar_snapshot);
+                }
+                Err(error) => {
+                    cleanup_errors.push(error.to_string());
+                    state.hidden_explorer_taskbars.push(taskbar_snapshot);
+                }
             }
         }
     }
@@ -1063,6 +1512,7 @@ where
             "baseline shell work area during cleanup",
         ) {
             cleanup_errors.push(error.to_string());
+            state.baseline_work_area = Some(baseline_work_area);
         }
     }
 
@@ -1077,8 +1527,12 @@ where
     }
 }
 
-fn start_fullscreen_guard(app_handle: AppHandle, state: &mut ShellRuntimeState) {
-    stop_fullscreen_guard(state);
+struct StartedFullscreenGuardHandles {
+    fullscreen_stop: Arc<AtomicBool>,
+    fullscreen_guard: JoinHandle<()>,
+}
+
+fn start_fullscreen_guard_owned(app_handle: AppHandle) -> StartedFullscreenGuardHandles {
     FULLSCREEN_GUARD_WAKE_COUNT.store(0, Ordering::Relaxed);
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -1112,8 +1566,10 @@ fn start_fullscreen_guard(app_handle: AppHandle, state: &mut ShellRuntimeState) 
         );
     });
 
-    state.fullscreen_guard_stop = Some(stop);
-    state.fullscreen_guard = Some(guard);
+    StartedFullscreenGuardHandles {
+        fullscreen_stop: stop,
+        fullscreen_guard: guard,
+    }
 }
 
 fn stop_fullscreen_guard(state: &mut ShellRuntimeState) {
@@ -1124,6 +1580,29 @@ fn stop_fullscreen_guard(state: &mut ShellRuntimeState) {
     if let Some(guard) = state.fullscreen_guard.take() {
         let _ = guard.join();
     }
+}
+
+fn stop_fullscreen_guard_owned(handles: StartedFullscreenGuardHandles) {
+    handles.fullscreen_stop.store(true, Ordering::Relaxed);
+    let _ = handles.fullscreen_guard.join();
+}
+
+fn start_taskbar_guard_owned(monitor_rect: RECT) -> RuntimeGuardHandles {
+    let mut state = ShellRuntimeState::default();
+    start_taskbar_guard(&mut state, monitor_rect);
+    take_runtime_guard_handles(&mut state)
+}
+
+fn start_taskbar_guard_v2_owned(
+    owned: Arc<Mutex<Vec<explorer::ExplorerTaskbarSnapshot>>>,
+) -> RuntimeGuardHandles {
+    let mut state = ShellRuntimeState {
+        hidden_explorer_taskbars_v2: Some(owned),
+        ..Default::default()
+    };
+    let owned = state.hidden_explorer_taskbars_v2.as_ref().unwrap().clone();
+    start_taskbar_guard_v2(&mut state, owned);
+    take_runtime_guard_handles(&mut state)
 }
 
 fn sync_fullscreen_shell_surfaces_for_target(
@@ -1215,6 +1694,9 @@ fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
     if state.cleaned_up {
         return Ok(());
     }
+    if state.activation_phase != ActivationPhase::CommittedReserved {
+        return Ok(());
+    }
 
     let Some(layout) = state.shell_layout else {
         return Ok(());
@@ -1268,6 +1750,9 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
             return Ok(());
         };
         if state.cleaned_up || state.fullscreen_state == FullscreenAppBarState::Reserved {
+            return Ok(());
+        }
+        if state.activation_phase != ActivationPhase::CommittedReserved {
             return Ok(());
         }
 
@@ -1593,19 +2078,22 @@ fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_requested_thickness, cleanup_runtime_state_with, ensure_shell_bar_resize_allowed,
-        fullscreen_guard_retry_delay, fullscreen_guard_target_or_restore,
+        apply_requested_thickness, begin_activation_plan, begin_cleanup_plan,
+        cleanup_runtime_state_with, ensure_shell_bar_resize_allowed, finalize_activation_rollback,
+        finalize_cleanup_plan, fullscreen_guard_retry_delay, fullscreen_guard_target_or_restore,
         fullscreen_sync_action_for_state, guard_retry_prepare_target, guard_retry_register_failure,
         guard_retry_reset, normalize_rect_thickness, parked_rect_below_virtual_desktop,
         prepare_fullscreen_restore_retry_with, rect_covers_target, register_tracked_appbar,
         reserved_work_area, resolve_baseline_work_area, restored_shell_surface_layout,
         should_hide_shell_for_fullscreen_window, stabilize_runtime_window_rect_with,
         start_taskbar_guard, stop_taskbar_guard, sync_work_area_best_effort_with,
-        unregister_tracked_appbars_with, FullscreenAppBarState, FullscreenGuardTarget,
-        FullscreenSyncAction, FullscreenWindowCandidate, GuardRetryState, ShellRuntimeState,
-        ShellSurfaceLayout, WindowRectSnapshot, WorkAreaSyncResult,
+        take_runtime_guard_handles, unregister_tracked_appbars_with, ActivationPhase,
+        CleanupSideEffects, FullscreenAppBarState, FullscreenGuardTarget, FullscreenSyncAction,
+        FullscreenWindowCandidate, GuardRetryState, ShellRuntimeState, ShellSurfaceLayout,
+        WindowRectSnapshot, WorkAreaSyncResult,
     };
     use crate::explorer::ExplorerTaskbarSnapshot;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use windows::Win32::Foundation::{HWND, RECT};
@@ -1676,6 +2164,7 @@ mod tests {
             registered_appbars: Vec::new(),
             shell_layout: None,
             fullscreen_state: FullscreenAppBarState::Reserved,
+            activation_phase: ActivationPhase::Idle,
             fullscreen_guard_stop: None,
             fullscreen_guard: None,
             taskbar_guard_stop: None,
@@ -2119,14 +2608,447 @@ mod tests {
 
     #[test]
     fn shell_bar_resize_is_rejected_while_fullscreen_releases_appbars() {
-        assert!(ensure_shell_bar_resize_allowed(FullscreenAppBarState::Reserved).is_ok());
+        assert!(ensure_shell_bar_resize_allowed(
+            FullscreenAppBarState::Reserved,
+            ActivationPhase::CommittedReserved
+        )
+        .is_ok());
         assert_eq!(
-            ensure_shell_bar_resize_allowed(FullscreenAppBarState::Released)
-                .expect_err("fullscreen-released AppBars must reject resize")
-                .to_string(),
+            ensure_shell_bar_resize_allowed(
+                FullscreenAppBarState::Released,
+                ActivationPhase::CommittedReserved
+            )
+            .expect_err("fullscreen-released AppBars must reject resize")
+            .to_string(),
             "Shell AppBars are temporarily released while a fullscreen foreground app is active"
         );
-        assert!(ensure_shell_bar_resize_allowed(FullscreenAppBarState::Parked).is_err());
+        assert!(ensure_shell_bar_resize_allowed(
+            FullscreenAppBarState::Parked,
+            ActivationPhase::CommittedReserved
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn shell_bar_resize_is_rejected_while_activation_is_in_progress() {
+        assert_eq!(
+            ensure_shell_bar_resize_allowed(
+                FullscreenAppBarState::Reserved,
+                ActivationPhase::SideEffects
+            )
+            .expect_err("activation-in-progress must reject resize")
+            .to_string(),
+            "Shell AppBar layout is not active"
+        );
+    }
+
+    #[test]
+    fn concurrent_activation_cannot_duplicate_guard_startup() {
+        let state = Mutex::new(ShellRuntimeState::default());
+        assert!(begin_activation_plan(&state).is_ok());
+        assert_eq!(
+            begin_activation_plan(&state)
+                .expect_err("second activation must fail")
+                .to_string(),
+            "Shell AppBar activation is already in progress"
+        );
+    }
+
+    #[test]
+    fn slow_activation_side_effect_does_not_block_independent_state_lock() {
+        let state = Mutex::new(ShellRuntimeState::default());
+        let _plan = begin_activation_plan(&state).expect("planning should only hold a short lock");
+        let acquired = state.try_lock().is_ok();
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(
+            acquired,
+            "state mutex should be available while activation side effects run elsewhere"
+        );
+    }
+
+    #[test]
+    fn partial_appbar_taskbar_rollback_leaves_retryable_state() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let hidden_taskbar = ExplorerTaskbarSnapshot {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 44,
+                process_id: 12,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: monitor,
+            taskbar_rect: RECT {
+                left: 0,
+                top: 1032,
+                right: 1920,
+                bottom: 1080,
+            },
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
+        };
+        let mut state = ShellRuntimeState {
+            registered_appbars: vec![11, 22],
+            hidden_explorer_taskbars: vec![hidden_taskbar],
+            baseline_work_area: Some(monitor),
+            activation_phase: ActivationPhase::CleanupInProgress,
+            ..Default::default()
+        };
+        let result = cleanup_runtime_state_with(
+            &mut state,
+            |hwnd| {
+                if hwnd.0 as isize == 22 {
+                    Err("remove bottom failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+            |_, _| Ok(()),
+            |_| Ok(true),
+        );
+        assert!(result.is_err());
+        assert_eq!(state.registered_appbars, vec![22]);
+        assert!(state.hidden_explorer_taskbars.is_empty());
+        assert!(state.cleaned_up);
+    }
+
+    #[test]
+    fn cleanup_failure_retains_failed_registration_and_blocks_activation_retry() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            registered_appbars: vec![11, 22],
+            cleaned_up: false,
+            ..Default::default()
+        });
+        let mut side_effects = super::begin_cleanup_plan(&mutex).expect("cleanup plan");
+        let result = super::run_cleanup_side_effects(
+            &mut side_effects,
+            |hwnd| {
+                if hwnd.0 as isize == 22 {
+                    Err("remove failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+            |_, _| Ok(()),
+            |_| Ok(true),
+        );
+        assert!(result.is_err());
+        super::merge_cleanup_failures_back(&mutex, side_effects);
+        assert_eq!(mutex.lock().unwrap().registered_appbars, vec![22]);
+        assert_eq!(
+            begin_activation_plan(&mutex).unwrap_err().to_string(),
+            "Shell AppBar cleanup is required before activation can retry"
+        );
+    }
+
+    #[test]
+    fn cleanup_during_activation_side_effects_returns_busy_without_state_change() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            activation_phase: ActivationPhase::SideEffects,
+            registered_appbars: vec![11],
+            cleaned_up: false,
+            ..Default::default()
+        });
+        let error = match super::begin_cleanup_plan(&mutex) {
+            Ok(_) => panic!("cleanup during activation must be busy"),
+            Err(error) => error.to_string(),
+        };
+        let state = mutex.lock().unwrap();
+        assert_eq!(
+            error,
+            "Shell AppBar activation is in progress; cleanup is busy"
+        );
+        assert_eq!(state.activation_phase, ActivationPhase::SideEffects);
+        assert_eq!(state.registered_appbars, vec![11]);
+    }
+
+    #[test]
+    fn cleanup_already_in_progress_rejects_second_cleanup() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            activation_phase: ActivationPhase::CleanupInProgress,
+            ..Default::default()
+        });
+        let error = match super::begin_cleanup_plan(&mutex) {
+            Ok(_) => panic!("cleanup must reject reentry"),
+            Err(error) => error.to_string(),
+        };
+        assert_eq!(error, "Shell AppBar cleanup is already in progress");
+    }
+
+    #[test]
+    fn cleanup_failure_retains_failed_taskbar_snapshot_and_work_area_baseline() {
+        let baseline = RECT {
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+        };
+        let snapshot = ExplorerTaskbarSnapshot {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 99,
+                process_id: 12,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: baseline,
+            taskbar_rect: baseline,
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: true,
+        };
+        let mut state = ShellRuntimeState {
+            hidden_explorer_taskbars: vec![snapshot],
+            baseline_work_area: Some(baseline),
+            ..Default::default()
+        };
+        let result = cleanup_runtime_state_with(
+            &mut state,
+            |_| Ok(()),
+            |_, _| Err("work area failed".into()),
+            |_| Err("restore taskbar failed".into()),
+        );
+        assert!(result.is_err());
+        assert_eq!(state.hidden_explorer_taskbars.len(), 1);
+        assert_eq!(state.baseline_work_area, Some(baseline));
+    }
+
+    #[test]
+    fn cleanup_success_finalizes_idle_and_cleaned_up() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            cleaned_up: false,
+            activation_phase: ActivationPhase::CleanupInProgress,
+            shell_layout: Some(ShellSurfaceLayout {
+                monitor_rect: RECT::default(),
+                top_hwnd: 1,
+                bottom_hwnd: 2,
+                top_rect: RECT::default(),
+                bottom_rect: RECT::default(),
+            }),
+            ..Default::default()
+        });
+
+        finalize_cleanup_plan(&mutex, true);
+
+        let state = mutex.lock().unwrap();
+        assert!(state.cleaned_up);
+        assert_eq!(state.activation_phase, ActivationPhase::Idle);
+        assert!(state.shell_layout.is_none());
+    }
+
+    #[test]
+    fn activation_rollback_success_resets_runtime_and_clears_ownership() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            activation_phase: ActivationPhase::GuardStartup,
+            cleaned_up: false,
+            registered_appbars: vec![11],
+            hidden_explorer_taskbars: Vec::new(),
+            baseline_work_area: Some(RECT::default()),
+            shell_layout: Some(ShellSurfaceLayout {
+                monitor_rect: RECT::default(),
+                top_hwnd: 1,
+                bottom_hwnd: 2,
+                top_rect: RECT::default(),
+                bottom_rect: RECT::default(),
+            }),
+            ..Default::default()
+        });
+
+        finalize_activation_rollback(
+            &mutex,
+            true,
+            CleanupSideEffects {
+                registered_appbars: Vec::new(),
+                hidden_explorer_taskbars: Vec::new(),
+                hidden_explorer_taskbars_v2: None,
+                baseline_work_area: None,
+            },
+        );
+
+        let state = mutex.lock().unwrap();
+        assert!(state.cleaned_up);
+        assert_eq!(state.activation_phase, ActivationPhase::Idle);
+        assert!(state.registered_appbars.is_empty());
+        assert!(state.shell_layout.is_none());
+    }
+
+    #[test]
+    fn guard_startup_blocks_activation_and_cleanup() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            activation_phase: ActivationPhase::GuardStartup,
+            ..Default::default()
+        });
+
+        assert!(begin_activation_plan(&mutex).is_err());
+        let error = match begin_cleanup_plan(&mutex) {
+            Ok(_) => panic!("cleanup must be busy"),
+            Err(error) => error.to_string(),
+        };
+        assert_eq!(
+            error,
+            "Shell AppBar activation is in progress; cleanup is busy"
+        );
+    }
+
+    #[test]
+    fn activation_rollback_failure_retains_residue_and_disables_activation() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            activation_phase: ActivationPhase::GuardStartup,
+            cleaned_up: true,
+            ..Default::default()
+        });
+        let baseline = RECT {
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+        };
+
+        finalize_activation_rollback(
+            &mutex,
+            false,
+            CleanupSideEffects {
+                registered_appbars: vec![11],
+                hidden_explorer_taskbars: Vec::new(),
+                hidden_explorer_taskbars_v2: None,
+                baseline_work_area: Some(baseline),
+            },
+        );
+
+        let state = mutex.lock().unwrap();
+        assert!(!state.cleaned_up);
+        assert_eq!(state.activation_phase, ActivationPhase::Idle);
+        assert_eq!(state.registered_appbars, vec![11]);
+        assert_eq!(state.baseline_work_area, Some(baseline));
+    }
+
+    #[test]
+    fn commit_phase_mismatch_rejects_before_owning_effects() {
+        let mutex = Mutex::new(ShellRuntimeState {
+            activation_phase: ActivationPhase::Idle,
+            ..Default::default()
+        });
+        let effects = super::ActivationSideEffects {
+            baseline_work_area: RECT {
+                left: 0,
+                top: 0,
+                right: 100,
+                bottom: 100,
+            },
+            hidden_explorer_taskbars: Vec::new(),
+            hidden_explorer_taskbars_v2: None,
+            registered_appbars: vec![11],
+            shell_layout: ShellSurfaceLayout {
+                monitor_rect: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 100,
+                    bottom: 100,
+                },
+                top_hwnd: 11,
+                bottom_hwnd: 22,
+                top_rect: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 100,
+                    bottom: 10,
+                },
+                bottom_rect: RECT {
+                    left: 0,
+                    top: 90,
+                    right: 100,
+                    bottom: 100,
+                },
+            },
+            use_taskbar_v2: false,
+        };
+        // Cannot call commit_activation_plan without AppHandle in unit test; assert phase guard invariant preserving empty runtime ownership.
+        assert_ne!(
+            mutex.lock().unwrap().activation_phase,
+            ActivationPhase::SideEffects
+        );
+        assert_eq!(effects.registered_appbars, vec![11]);
+        assert!(mutex.lock().unwrap().registered_appbars.is_empty());
+    }
+
+    #[test]
+    fn commit_phase_failure_helper_preserves_local_ownership() {
+        let baseline = RECT {
+            left: 10,
+            top: 20,
+            right: 30,
+            bottom: 40,
+        };
+        let taskbar_snapshot = ExplorerTaskbarSnapshot {
+            identity: crate::explorer::ExplorerTaskbarIdentity {
+                hwnd: 77,
+                process_id: 88,
+                class_name: crate::explorer::ExplorerTaskbarClass::Primary,
+            },
+            monitor_rect: baseline,
+            taskbar_rect: baseline,
+            edge: crate::explorer::TaskbarEdge::Bottom,
+            originally_visible: true,
+            hidden_by_jasonshell: false,
+        };
+        let shared = Arc::new(Mutex::new(vec![taskbar_snapshot]));
+        let effects = super::ActivationSideEffects {
+            baseline_work_area: baseline,
+            hidden_explorer_taskbars: vec![taskbar_snapshot],
+            hidden_explorer_taskbars_v2: Some(Arc::clone(&shared)),
+            registered_appbars: vec![11, 22],
+            shell_layout: ShellSurfaceLayout {
+                monitor_rect: baseline,
+                top_hwnd: 1,
+                bottom_hwnd: 2,
+                top_rect: baseline,
+                bottom_rect: baseline,
+            },
+            use_taskbar_v2: true,
+        };
+
+        let rollback = super::activation_commit_failure_effects(&effects);
+
+        assert_eq!(rollback.baseline_work_area, baseline);
+        assert_eq!(rollback.registered_appbars, vec![11, 22]);
+        assert_eq!(rollback.hidden_explorer_taskbars.len(), 1);
+        assert!(rollback.hidden_explorer_taskbars_v2.is_some());
+        assert!(Arc::ptr_eq(
+            rollback.hidden_explorer_taskbars_v2.as_ref().unwrap(),
+            &shared
+        ));
+    }
+
+    #[test]
+    fn guard_handles_extract_under_lock_and_join_after_lock_release() {
+        let released = Arc::new(AtomicBool::new(false));
+        let released_thread = Arc::clone(&released);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = Arc::clone(&stop);
+        let guard = std::thread::spawn(move || {
+            while !stop_thread.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(
+                released_thread.load(Ordering::Relaxed),
+                "join happened before caller released mutex"
+            );
+        });
+        let mutex = Mutex::new(ShellRuntimeState {
+            taskbar_guard_stop: Some(stop),
+            taskbar_guard: Some(guard),
+            ..Default::default()
+        });
+        let handles = {
+            let mut state = mutex.lock().unwrap();
+            let handles = take_runtime_guard_handles(&mut state);
+            assert!(state.taskbar_guard.is_none());
+            handles
+        };
+        released.store(true, Ordering::Relaxed);
+        super::stop_runtime_guard_handles(handles);
     }
 
     #[test]
