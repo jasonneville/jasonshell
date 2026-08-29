@@ -231,3 +231,11 @@ test('command panel close lifecycle avoids resize and minimize/maximize disappea
   assert.doesNotMatch(mainSource, /COMMAND_PANEL_LABEL[\s\S]*WindowEvent::Minimized/);
 });
 
+test('command panel transcript host remains a labelled read-only focusable textbox with copy and context handlers', () => {
+  assert.match(
+    commandPanelSource,
+    /<div class="command-transcript-shell"[^>]*role="textbox"[^>]*aria-readonly="true"[^>]*aria-multiline="true"[^>]*tabindex="0"[^>]*aria-label="Merged transcript"[^>]*on:keydown=\{handleTranscriptKeydown\}[^>]*on:contextmenu=\{handleTranscriptContextMenu\}/,
+    'transcript shell should be a focusable labelled read-only textbox and keep copy/context handlers'
+  );
+});
+

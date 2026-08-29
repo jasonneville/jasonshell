@@ -77,6 +77,7 @@
   let transcriptSegmentCache = new Map<string, TranscriptSegment[]>();
   let transcriptSegmentCacheOrder: string[] = [];
   let shellSurfaceHotkeyHandled = false;
+  let disposed = false;
 
   type TranscriptTokenKind = 'prompt' | 'path' | 'url' | 'level-error' | 'level-warning' | 'level-success' | 'level-info';
   type TranscriptSegment = { text: string; kind: TranscriptTokenKind | null };
@@ -112,10 +113,12 @@
   }
 
   async function refreshEntries() {
+    if (disposed) return;
     loading = true;
     panelError = '';
     try {
       const quickCommands = await loadQuickCommandsSettings();
+      if (disposed) return;
       entries = sortedEntries(quickCommands.entries);
       allHistory = quickCommands.history;
       listWidth = quickCommands.listWidth;
@@ -123,14 +126,17 @@
       updatePendingInputFromHistory();
       if (editor.id && !entries.some((entry) => entry.id === editor.id)) editor = blankEditor();
     } catch (error) {
+      if (disposed) return;
       panelError = 'Quick command settings are unavailable.';
       console.error('Failed to load quick commands', error);
     } finally {
+      if (disposed) return;
       loading = false;
     }
   }
 
   async function saveEntry() {
+    if (disposed) return;
     if (saving) return;
     formErrors = validateEditor();
     if (formErrors.length) return;
@@ -142,15 +148,18 @@
     try {
       const nextEntries = [...entries.filter((entry) => entry.id !== id), nextEntry];
       const saved = await saveQuickCommandsSettings({ entries: nextEntries, history: allHistory, listWidth });
+      if (disposed) return;
       entries = sortedEntries(saved.entries);
       allHistory = saved.history;
       startEditEntry(nextEntry);
     } catch (error) {
+      if (disposed) return;
       formErrors = [error instanceof Error ? error.message : String(error)];
-    } finally { saving = false; }
+    } finally { if (!disposed) saving = false; }
   }
 
   async function deleteEntry(id: string, event?: MouseEvent) {
+    if (disposed) return;
     const entry = entries.find((current) => current.id === id);
     if (!entry || deleteConfirmationBusy) return;
     const trigger = event?.currentTarget;
@@ -161,41 +170,46 @@
   }
 
   function getDeleteConfirmationButtons(): HTMLButtonElement[] { return Array.from(deleteConfirmationDialog?.querySelectorAll('button') ?? []) as HTMLButtonElement[]; }
-  async function focusDeleteConfirmation() { await tick(); if (!deleteConfirmation || deleteConfirmationBusy) return; getDeleteConfirmationButtons()[0]?.focus(); }
-  async function restoreDeleteTriggerFocus() { const trigger = deleteTriggerElement; deleteTriggerElement = null; await tick(); if (trigger?.isConnected) trigger.focus(); else panelElement?.focus(); }
+  async function focusDeleteConfirmation() { if (disposed) return; await tick(); if (disposed || !deleteConfirmation || deleteConfirmationBusy) return; getDeleteConfirmationButtons()[0]?.focus(); }
+  async function restoreDeleteTriggerFocus() { if (disposed) return; const trigger = deleteTriggerElement; deleteTriggerElement = null; await tick(); if (disposed) return; if (trigger?.isConnected) trigger.focus(); else panelElement?.focus(); }
   function focusDeleteConfirmationButton(direction: 1 | -1) { const buttons = getDeleteConfirmationButtons().filter((button) => !button.disabled); if (!buttons.length) { deleteConfirmationDialog?.focus(); return; } const activeButton = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null; const currentIndex = activeButton ? buttons.indexOf(activeButton) : -1; const nextIndex = currentIndex < 0 ? (direction > 0 ? 0 : buttons.length - 1) : (currentIndex + direction + buttons.length) % buttons.length; buttons[nextIndex]?.focus(); }
 
   async function confirmDeleteEntry() {
+    if (disposed) return;
     if (!deleteConfirmation || deleteConfirmationBusy) return;
     const id = deleteConfirmation.id;
     deleteConfirmationBusy = true; saving = true; formErrors = []; panelError = '';
     try {
       const latestRuns = await listQuickCommandHistory({ id });
+      if (disposed) return;
       if (latestRuns.some((run) => run.running)) { panelError = 'Cannot delete quick command while it is running.'; return; }
       const saved = await saveQuickCommandsSettings({ entries: entries.filter((entry) => entry.id !== id), history: allHistory, listWidth });
+      if (disposed) return;
       entries = sortedEntries(saved.entries);
       allHistory = saved.history;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
       if (editor.id === id) editor = blankEditor();
       deleteConfirmation = null;
       await restoreDeleteTriggerFocus();
-    } catch (error) { panelError = error instanceof Error ? error.message : String(error); } finally { deleteConfirmationBusy = false; saving = false; }
+    } catch (error) { if (disposed) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed) { deleteConfirmationBusy = false; saving = false; } }
   }
 
   function cancelDeleteEntry() { if (deleteConfirmationBusy) return; deleteConfirmation = null; void restoreDeleteTriggerFocus(); }
   function handleDeleteConfirmationKeydown(event: KeyboardEvent) { if (event.key === 'Escape') { event.preventDefault(); cancelDeleteEntry(); return; } if (event.key !== 'Tab') return; event.preventDefault(); if (deleteConfirmationBusy) { deleteConfirmationDialog?.focus(); return; } focusDeleteConfirmationButton(event.shiftKey ? -1 : 1); }
 
   async function runEntry(entry: QuickCommandEntry) {
+    if (disposed) return;
     runningId = entry.id; panelError = ''; formErrors = [];
     try {
       const { runId } = await runQuickCommand(quickCommandRunRequest(entry.id));
+      if (disposed) return;
       activeCommandIds = new Set([...activeCommandIds, entry.id]);
       activeRunIds = new Set([...activeRunIds, runId]);
       expandedRunIds = new Set([...expandedRunIds, runId]);
       selectCommand(entry);
       activeTab = 'previousRuns';
       await refreshHistory();
-    } catch (error) { panelError = error instanceof Error ? error.message : String(error); } finally { runningId = null; }
+    } catch (error) { if (disposed) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed) runningId = null; }
   }
 
   function commandLabelFor(commandId: string): string { return entries.find((entry) => entry.id === commandId)?.label ?? commandId; }
@@ -205,11 +219,13 @@
   function formatRunTime(epochMs: number): string { return new Date(epochMs).toLocaleString(); }
 
   async function refreshHistory(): Promise<void> {
+    if (disposed) return;
     const requestId = ++historyRequestId;
     const selectedId = editor.id;
     historyLoading = true;
     try {
       const allRuns = await listQuickCommandHistory();
+      if (disposed) return;
       if (requestId !== historyRequestId || editor.id !== selectedId) return;
       allHistory = mergeQuickCommandRunHistoryEntries(allHistory, allRuns);
       history = selectedId ? allHistory.filter((run) => run.commandId === selectedId) : [];
@@ -219,17 +235,20 @@
       for (const run of allHistory) if (run.commandId === selectedId && run.running) nextExpandedIds.add(historyRunKey(run));
       expandedRunIds = nextExpandedIds;
       updatePendingInputFromHistory();
-    } catch (error) { if (requestId !== historyRequestId || editor.id !== selectedId) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (requestId === historyRequestId && editor.id === selectedId) historyLoading = false; }
+    } catch (error) { if (disposed) return; if (requestId !== historyRequestId || editor.id !== selectedId) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed && requestId === historyRequestId && editor.id === selectedId) historyLoading = false; }
   }
 
   async function stopEntry(id: string) {
+    if (disposed) return;
     stoppingId = id; panelError = '';
     try {
       const activeRun = (await listQuickCommandHistory()).find((run) => run.commandId === id && run.running);
+      if (disposed) return;
       if (!activeRun) { await refreshHistory(); return; }
       await stopQuickCommand({ id, processId: activeRun.processId, runId: activeRun.runId });
+      if (disposed) return;
       await refreshHistory();
-    } catch (error) { panelError = error instanceof Error ? error.message : String(error); } finally { stoppingId = null; }
+    } catch (error) { if (disposed) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed) stoppingId = null; }
   }
 
   function isRunExpanded(run: QuickCommandRunHistoryEntry): boolean { return expandedRunIds.has(historyRunKey(run)); }
@@ -343,6 +362,7 @@
   }
 
   function handleQuickCommandRunUpdated(payload: QuickCommandRunUpdatedEvent) {
+    if (disposed) return;
     const existing = allHistory.find((run) => run.runId === payload.runId) ?? null;
     const nextHistory = mergeQuickCommandRunHistoryEntries(allHistory, [{
       runId: payload.runId,
@@ -364,6 +384,7 @@
     if (historyUpdateFrame !== null) return;
     historyUpdateQueued = true;
     historyUpdateFrame = window.requestAnimationFrame(() => {
+      if (disposed) return;
       historyUpdateFrame = null;
       if (!historyUpdateQueued) return;
       historyUpdateQueued = false;
@@ -373,6 +394,7 @@
   }
 
   async function submitPendingInput() {
+    if (disposed) return;
     if (!pendingInputRequest || pendingInputBusy) return;
     pendingInputBusy = true; pendingInputError = '';
     try {
@@ -380,18 +402,36 @@
       const value = normalizeDraftLength(pendingInputDraft, maxLength);
       pendingInputDraft = value;
       await sendQuickCommandInput({ id: pendingInputRequest.commandId, runId: pendingInputRequest.runId, processId: pendingInputRequest.processId, requestId: pendingInputRequest.requestId, value, secret: pendingInputRequest.secret, maxLength });
+      if (disposed) return;
       pendingInputDraft = '';
       await refreshHistory();
-    } catch (error) { pendingInputError = error instanceof Error ? error.message : String(error); } finally { pendingInputBusy = false; }
+    } catch (error) { if (disposed) return; pendingInputError = error instanceof Error ? error.message : String(error); } finally { if (!disposed) pendingInputBusy = false; }
   }
 
   function clearPendingInputDraft() { pendingInputDraft = ''; }
   function handlePendingInputKeydown(event: KeyboardEvent) { if (event.key === 'Escape') { event.preventDefault(); clearPendingInputDraft(); return; } if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPendingInput(); } }
 
   onMount(() => {
+    const unlisteners: Array<() => void> = [];
+    disposed = false;
+    function registerAsyncUnlistener(registration: Promise<() => void>) {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      }).catch((error) => {
+        if (!disposed) console.error('Failed to register command panel listener', error);
+      });
+    }
+
     void refreshEntries();
     void refreshHistory();
-    const unlistenPromise = listen(IPC_EVENTS.quickCommandRunUpdated, (event: { payload: unknown }) => handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent));
+    registerAsyncUnlistener(listen(IPC_EVENTS.quickCommandRunUpdated, (event: { payload: unknown }) => {
+      if (disposed) return;
+      handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent);
+    }));
     const keydownHandler = (event: KeyboardEvent) => handleCtrlSpaceHotkey(event);
     const keyupHandler = (event: KeyboardEvent) => {
       if (event.code === 'Space' && shellSurfaceHotkeyHandled) {
@@ -403,7 +443,7 @@
     window.addEventListener('keydown', keydownHandler, true);
     window.addEventListener('keyup', keyupHandler, true);
     historyPollTimer = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
-    return () => { if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); void unlistenPromise.then((unlisten: () => void) => unlisten()).catch(() => undefined); };
+    return () => { disposed = true; if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); while (unlisteners.length) { try { unlisteners.pop()?.(); } catch (error) { console.error('Failed to dispose command panel listener', error); } } };
   });
 </script>
 
@@ -448,7 +488,7 @@
       {#if activeTab === 'configuration'}
         <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton class="command-text-button" ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}>{saving ? 'Saving…' : 'Save'}</MeltActionButton><MeltActionButton class="command-text-button" ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}>Clear</MeltActionButton></div></div>
       {:else}
-        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host"><p class="command-history-notice">One merged transcript. History recovery keyed by runId and transcript sequence.</p>{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)} on:toggle={(event) => handleHistoryRunToggle(event, run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} ><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><section class="command-transcript-shell" aria-label="Merged transcript" on:keydown={handleTranscriptKeydown} on:contextmenu={handleTranscriptContextMenu}>{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(run.runId, line.sequence, `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`, line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</section></div></details>{/each}{/if}</div></div></div>
+        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host"><p class="command-history-notice">One merged transcript. History recovery keyed by runId and transcript sequence.</p>{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)} on:toggle={(event) => handleHistoryRunToggle(event, run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} ><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><div class="command-transcript-shell" role="textbox" aria-readonly="true" aria-multiline="true" tabindex="0" aria-label="Merged transcript" on:keydown={handleTranscriptKeydown} on:contextmenu={handleTranscriptContextMenu}>{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(run.runId, line.sequence, `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`, line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</div></div></details>{/each}{/if}</div></div></div>
       {/if}
     </section>
   </section>

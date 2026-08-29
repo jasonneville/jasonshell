@@ -59,6 +59,22 @@ function assertDisposedGuard(source, componentName) {
   );
 }
 
+function assertAsyncListenerLifecycleContract(source, componentName) {
+  const mountBody = firstOnMountBody(source);
+  assert.match(mountBody, /const unlisteners: Array<\(\) => void> = \[\]/, `${componentName} should collect async unlisteners in onMount`);
+  assert.match(mountBody, /disposed = false/, `${componentName} should reset mounted disposed state`);
+  assert.match(mountBody, /function registerAsyncUnlistener\(registration: Promise<\(\) => void>\)/, `${componentName} should centralize async listener registration`);
+  assert.match(mountBody, /registration\.then\(\(unlisten\) => \{[\s\S]*if \(disposed\) \{\s*unlisten\(\);\s*return;\s*\}[\s\S]*unlisteners\.push\(unlisten\)/, `${componentName} should immediately unlisten listeners that resolve after destroy`);
+  assert.match(mountBody, /\.catch\(\(error\) => \{[\s\S]*if \(!disposed\) console\.error/, `${componentName} should handle async listener registration rejection while mounted`);
+  assert.match(mountBody, /return \(\) => \{\s*disposed = true;[\s\S]*while \(unlisteners\.length\) \{[\s\S]*unlisteners\.pop\(\)\?\.\(\);[\s\S]*\}/, `${componentName} cleanup should mark disposed first and drain unlisteners exactly once`);
+  assert.match(mountBody, /while \(unlisteners\.length\) \{[\s\S]*try \{[\s\S]*unlisteners\.pop\(\)\?\.\(\);[\s\S]*\} catch \(error\)/, `${componentName} cleanup should continue draining if one unlistener throws`);
+}
+
+function assertCallbackDisposedGuard(source, componentName, callbackName) {
+  const body = source.match(new RegExp(`(?:async )?function ${callbackName}\\([^)]*\\)(?::[^\\{]+)? \\{[\\s\\S]*?\\n  \\}`))?.[0] ?? '';
+  assert.match(body, /if \(disposed\) return;/, `${componentName} ${callbackName} should return before state mutation after destroy`);
+}
+
 test('audio panel stays idle on hidden persistent mount', () => {
   const mountBodyBeforeOpen = audioPanelSource.match(/onMount\(\(\) => \{[\s\S]*?void listen\(AUDIO_PANEL_OPEN_EVENT/)?.[0] ?? '';
 
@@ -140,3 +156,30 @@ for (const componentName of [
     assertDisposedGuard(readComponent(componentName), componentName);
   });
 }
+
+for (const componentName of [
+  'CommandPanelSurface.svelte',
+  'TrayPanelSurface.svelte'
+]) {
+  test(`${componentName} uses guarded async listener lifecycle for persistent surface mount`, () => {
+    assertAsyncListenerLifecycleContract(readComponent(componentName), componentName);
+  });
+}
+
+test('command panel async callbacks return when disposed before mutating state', () => {
+  const source = readComponent('CommandPanelSurface.svelte');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'refreshEntries');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'refreshHistory');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'handleQuickCommandRunUpdated');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'saveEntry');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'confirmDeleteEntry');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'runEntry');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'stopEntry');
+  assertCallbackDisposedGuard(source, 'CommandPanelSurface.svelte', 'submitPendingInput');
+});
+
+test('tray panel async callbacks return when disposed before mutating state', () => {
+  const source = readComponent('TrayPanelSurface.svelte');
+  assertCallbackDisposedGuard(source, 'TrayPanelSurface.svelte', 'loadTrayIcons');
+  assertCallbackDisposedGuard(source, 'TrayPanelSurface.svelte', 'triggerTrayIcon');
+});

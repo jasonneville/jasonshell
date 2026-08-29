@@ -15,21 +15,28 @@
   let invokeError = '';
   let activeIconId: string | null = null;
   let isInvokingTrayIcon = false;
+  let disposed = false;
 
   async function loadTrayIcons() {
+    if (disposed) return;
     loading = true;
     loadError = '';
     try {
-      icons = await listTrayPanelIcons();
+      const nextIcons = await listTrayPanelIcons();
+      if (disposed) return;
+      icons = nextIcons;
     } catch (error) {
+      if (disposed) return;
       loadError = 'Notification area is unavailable';
       console.error('Failed to load tray icons', error);
     } finally {
+      if (disposed) return;
       loading = false;
     }
   }
 
   async function triggerTrayIcon(icon: SystemTrayIconSnapshot, button: 'left' | 'right') {
+    if (disposed) return;
     if (isInvokingTrayIcon) {
       return;
     }
@@ -38,11 +45,14 @@
     invokeError = '';
     try {
       await invokeTrayPanelIcon(icon.id, button);
+      if (disposed) return;
       await loadTrayIcons();
     } catch (error) {
+      if (disposed) return;
       invokeError = 'Tray icon action failed. Notification area remains open.';
       console.error(`Failed to invoke tray icon ${icon.id}`, error);
     } finally {
+      if (disposed) return;
       activeIconId = null;
       isInvokingTrayIcon = false;
     }
@@ -54,15 +64,34 @@
   }
 
   onMount(() => {
-    let unlistenOpen: (() => void) | null = null;
-    void listen(TRAY_PANEL_OPEN_EVENT, () => {
+    const unlisteners: Array<() => void> = [];
+    disposed = false;
+    function registerAsyncUnlistener(registration: Promise<() => void>) {
+      void registration.then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      }).catch((error) => {
+        if (!disposed) console.error('Failed to register tray panel listener', error);
+      });
+    }
+
+    registerAsyncUnlistener(listen(TRAY_PANEL_OPEN_EVENT, () => {
+      if (disposed) return;
       void loadTrayIcons();
-    }).then((unlisten) => {
-      unlistenOpen = unlisten;
-    });
+    }));
 
     return () => {
-      unlistenOpen?.();
+      disposed = true;
+      while (unlisteners.length) {
+        try {
+          unlisteners.pop()?.();
+        } catch (error) {
+          console.error('Failed to dispose tray panel listener', error);
+        }
+      }
     };
   });
 </script>
