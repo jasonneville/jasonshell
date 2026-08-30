@@ -79,6 +79,7 @@ struct QuickCommandRunState {
     started_at_filetime_100ns: u64,
     stdin: Option<ChildStdin>,
     running: bool,
+    stopping: bool,
     pending: Option<QuickCommandPendingInput>,
     transcript: VecDeque<QuickCommandTranscriptEntry>,
     stdout: Vec<u8>,
@@ -104,9 +105,15 @@ struct MarkerCarry {
     text_bytes: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct AnsiCarry {
     bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct QuickCommandStopState {
+    process_id: u32,
+    started_at_filetime_100ns: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -206,7 +213,11 @@ pub fn send_quick_command_input(
     let run = runs_guard
         .get_mut(&request.run_id)
         .ok_or_else(|| "quick command is no longer running".to_string())?;
-    if run.command_id != request.id || run.process_id != request.process_id || !run.running {
+    if run.command_id != request.id
+        || run.process_id != request.process_id
+        || !run.running
+        || run.stopping
+    {
         return Err("quick command is no longer running".into());
     }
     let pending = run
@@ -283,16 +294,21 @@ pub fn send_quick_command_input(
 }
 
 #[tauri::command]
-pub fn stop_quick_command(
+pub async fn stop_quick_command(
     app_handle: AppHandle,
     request: StopQuickCommandRequest,
 ) -> Result<(), String> {
-    stop_running_quick_command(
-        &app_handle,
-        request.process_id,
-        &request.id,
-        &request.run_id,
-    )
+    let app_handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        stop_running_quick_command(
+            &app_handle,
+            request.process_id,
+            &request.id,
+            &request.run_id,
+        )
+    })
+    .await
+    .map_err(|e| format!("failed to stop quick command: {e}"))?
 }
 
 #[tauri::command]
@@ -442,6 +458,7 @@ fn spawn_quick_command(
                 started_at_filetime_100ns,
                 stdin,
                 running: true,
+                stopping: false,
                 pending: None,
                 transcript: VecDeque::new(),
                 stdout: vec![],
@@ -467,22 +484,43 @@ fn spawn_quick_command(
         });
         let status = child.wait();
         let finished_at_epoch_ms = current_epoch_ms();
-        let (stdout, stdout_truncated) = stdout.and_then(|h| h.join().ok()).unwrap_or_default();
-        let (stderr, stderr_truncated) = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
+        let stopping = runs()
+            .lock()
+            .ok()
+            .and_then(|mut runs| runs.get_mut(&run_id).map(claim_root_exit))
+            .unwrap_or(false);
+        let (stdout, stdout_truncated, stderr, stderr_truncated) = if stopping {
+            (vec![], false, vec![], false)
+        } else {
+            let (stdout, stdout_truncated) = stdout.and_then(|h| h.join().ok()).unwrap_or_default();
+            let (stderr, stderr_truncated) = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
+            (stdout, stdout_truncated, stderr, stderr_truncated)
+        };
         let exit_code = status.ok().and_then(|s| s.code());
         let (history, exit_payload) = {
             let mut runs = runs().lock().ok();
-            let state = runs.as_mut().and_then(|r| r.remove(&run_id));
-            let Some(state) = state else {
+            let Some(runs) = runs.as_mut() else {
                 return;
             };
-            let mut transcript = state.transcript.clone();
+            let Some(state) = runs.get_mut(&run_id) else {
+                return;
+            };
+            let stopped = state.stopping;
+            let terminal_kind = if stopped { "stopped" } else { "exit" };
+            let terminal_body = if stopped {
+                String::new()
+            } else {
+                exit_code.map(|c| c.to_string()).unwrap_or_default()
+            };
             let sequence = next_sequence();
+            state.running = false;
+            state.finished_at_epoch_ms = Some(finished_at_epoch_ms);
+            state.exit_code = exit_code;
             push_transcript(
-                &mut transcript,
+                &mut state.transcript,
                 QuickCommandTranscriptEntry {
-                    kind: "exit".into(),
-                    body: exit_code.map(|c| c.to_string()).unwrap_or_default(),
+                    kind: terminal_kind.into(),
+                    body: terminal_body.clone(),
                     request_id: None,
                     prompt: None,
                     secret: false,
@@ -494,26 +532,34 @@ fn spawn_quick_command(
                 },
             );
             let history = settings::QuickCommandRunHistoryEntry {
-                run_id: run_id.clone(),
-                command_id: command_id.clone(),
+                run_id: state.run_id.clone(),
+                command_id: state.command_id.clone(),
                 started_at_epoch_ms,
                 started_at_filetime_100ns,
                 finished_at_epoch_ms,
                 process_id,
                 exit_code,
-                stdout: sanitize_terminal_text(&decode_terminal_bytes(&stdout)),
-                stderr: sanitize_terminal_text(&decode_terminal_bytes(&stderr)),
-                transcript: transcript.into_iter().collect(),
+                stdout: if stopped {
+                    sanitize_terminal_text(&decode_terminal_bytes(&state.stdout))
+                } else {
+                    sanitize_terminal_text(&decode_terminal_bytes(&stdout))
+                },
+                stderr: if stopped {
+                    sanitize_terminal_text(&decode_terminal_bytes(&state.stderr))
+                } else {
+                    sanitize_terminal_text(&decode_terminal_bytes(&stderr))
+                },
+                transcript: state.transcript.iter().cloned().collect(),
                 stdout_truncated: stdout_truncated || state.stdout_truncated,
                 stderr_truncated: stderr_truncated || state.stderr_truncated,
                 running: false,
             };
             let payload = QuickCommandRunUpdatedPayload {
-                run_id: state.run_id,
-                command_id: state.command_id,
+                run_id: state.run_id.clone(),
+                command_id: state.command_id.clone(),
                 process_id: state.process_id,
-                kind: "exit".into(),
-                body: exit_code.map(|c| c.to_string()).unwrap_or_default(),
+                kind: terminal_kind.into(),
+                body: terminal_body,
                 prompt: None,
                 request_id: None,
                 max_length: None,
@@ -523,12 +569,11 @@ fn spawn_quick_command(
                 at_epoch_ms: finished_at_epoch_ms,
                 pending: false,
             };
-            (history, Some(payload))
+            (history, payload)
         };
+        emit_run_snapshot(&app_handle, &exit_payload);
         on_exit(history);
-        if let Some(payload) = exit_payload {
-            emit_run_snapshot(&app_handle, &payload);
-        }
+        let _ = runs().lock().ok().and_then(|mut runs| runs.remove(&run_id));
     });
     Ok(process_id)
 }
@@ -734,7 +779,7 @@ fn handle_marker(
     };
     if let Ok(mut runs) = runs().lock() {
         if let Some(run) = runs.get_mut(run_id) {
-            if run.pending.is_some() {
+            if !run.running || run.stopping || run.pending.is_some() {
                 return None;
             }
             let max_length = marker.max_length.unwrap_or(4096).min(MAX_INPUT_LENGTH);
@@ -774,6 +819,9 @@ fn append_running_output(
 ) -> Option<QuickCommandRunUpdatedPayload> {
     if let Ok(mut runs) = runs().lock() {
         if let Some(run) = runs.get_mut(run_id) {
+            if !run.running {
+                return None;
+            }
             let body = decode_terminal_text_stateful(
                 chunk,
                 if is_stdout {
@@ -916,6 +964,108 @@ fn state_to_history(state: &QuickCommandRunState) -> settings::QuickCommandRunHi
         running: state.running,
     }
 }
+trait QuickCommandTerminator {
+    fn terminate(&self, process_id: u32, started_at_filetime_100ns: u64) -> Result<(), String>;
+}
+
+struct DefaultQuickCommandTerminator;
+
+impl DefaultQuickCommandTerminator {
+    fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(windows)]
+impl QuickCommandTerminator for DefaultQuickCommandTerminator {
+    fn terminate(&self, process_id: u32, started_at_filetime_100ns: u64) -> Result<(), String> {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        };
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                process_id,
+            )
+        }
+        .map_err(|e| format!("failed to stop quick command: {e}"))?;
+        struct HandleGuard(windows::Win32::Foundation::HANDLE);
+        impl Drop for HandleGuard {
+            fn drop(&mut self) {
+                let _ = unsafe { CloseHandle(self.0) };
+            }
+        }
+        let handle_guard = HandleGuard(handle);
+        let verified = process_creation_time_for_handle(handle_guard.0)?;
+        if verified != started_at_filetime_100ns {
+            return Err("quick command is no longer running".into());
+        }
+        unsafe { TerminateProcess(handle_guard.0, 1) }
+            .map_err(|e| format!("failed to stop quick command: {e}"))?;
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+impl QuickCommandTerminator for DefaultQuickCommandTerminator {
+    fn terminate(&self, _process_id: u32, _started_at_filetime_100ns: u64) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn mark_stopping(run: &mut QuickCommandRunState, sequence: u64) -> QuickCommandRunUpdatedPayload {
+    run.stopping = true;
+    let payload = QuickCommandRunUpdatedPayload {
+        run_id: run.run_id.clone(),
+        command_id: run.command_id.clone(),
+        process_id: run.process_id,
+        kind: "stopping".into(),
+        body: String::new(),
+        prompt: None,
+        request_id: None,
+        max_length: None,
+        secret: false,
+        redacted: false,
+        sequence,
+        at_epoch_ms: current_epoch_ms(),
+        pending: false,
+    };
+    push_transcript(
+        &mut run.transcript,
+        QuickCommandTranscriptEntry {
+            kind: payload.kind.clone(),
+            body: String::new(),
+            request_id: None,
+            prompt: None,
+            secret: false,
+            redacted: false,
+            sequence,
+            at_epoch_ms: payload.at_epoch_ms,
+            pending: false,
+            max_length: None,
+        },
+    );
+    payload
+}
+
+fn rollback_stopping(run: &mut QuickCommandRunState) {
+    run.stopping = false;
+}
+
+fn snapshot_stop_state(state: &QuickCommandRunState) -> QuickCommandStopState {
+    QuickCommandStopState {
+        process_id: state.process_id,
+        started_at_filetime_100ns: state.started_at_filetime_100ns,
+    }
+}
+
+fn claim_root_exit(state: &mut QuickCommandRunState) -> bool {
+    state.running = false;
+    state.stopping
+}
+
 fn runs() -> &'static Mutex<HashMap<String, QuickCommandRunState>> {
     RUNS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -990,98 +1140,112 @@ fn stop_running_quick_command(
         let run = runs_guard
             .get(run_id)
             .ok_or_else(|| "quick command is no longer running".to_string())?;
-        if run.process_id != process_id || run.command_id != command_id || !run.running {
+        if run.process_id != process_id
+            || run.command_id != command_id
+            || !run.running
+            || run.stopping
+        {
             return Err("quick command is no longer running".into());
         }
         run.started_at_filetime_100ns
     };
-    if process_creation_time_for_pid(process_id)? != started_at_filetime_100ns {
-        return Err("quick command is no longer running".into());
-    }
     let sequence = next_sequence();
-    let state = {
+    let (state, stopping_snapshot) = {
         let mut runs_guard = runs()
             .lock()
             .map_err(|_| "quick command runtime state is poisoned".to_string())?;
         let run = runs_guard
             .get(run_id)
             .ok_or_else(|| "quick command is no longer running".to_string())?;
-        if run.process_id != process_id || run.command_id != command_id || !run.running {
+        if run.process_id != process_id
+            || run.command_id != command_id
+            || !run.running
+            || run.stopping
+        {
             return Err("quick command is no longer running".into());
         }
         if run.started_at_filetime_100ns != started_at_filetime_100ns {
             return Err("quick command is no longer running".into());
         }
-        let mut state = runs_guard.remove(run_id).unwrap();
-        push_transcript(
-            &mut state.transcript,
-            QuickCommandTranscriptEntry {
-                kind: "stopped".into(),
-                body: String::new(),
-                request_id: None,
-                prompt: None,
-                secret: false,
-                redacted: false,
-                sequence,
-                at_epoch_ms: current_epoch_ms(),
-                pending: false,
-                max_length: None,
-            },
-        );
-        state
+        let run = runs_guard.get_mut(run_id).unwrap();
+        let snapshot = mark_stopping(run, sequence);
+        (snapshot_stop_state(run), snapshot)
     };
-    let status = Command::new(r"C:\Windows\System32\taskkill.exe")
-        .args(["/PID", &state.process_id.to_string(), "/T", "/F"])
-        .status()
-        .map_err(|e| format!("failed to stop quick command: {e}"))?;
-    if !status.success() {
-        if let Ok(mut runs) = runs().lock() {
-            runs.insert(run_id.to_string(), state);
-        }
-        return Err("failed to stop quick command".into());
-    }
-    let finished_at_epoch_ms = current_epoch_ms();
-    let _ = settings::update_shell_settings_for_app(app_handle, |settings| {
-        settings.quick_commands.history = append_quick_command_history_bounded(
-            std::mem::take(&mut settings.quick_commands.history),
-            settings::QuickCommandRunHistoryEntry {
-                run_id: state.run_id.clone(),
-                command_id: state.command_id.clone(),
-                started_at_epoch_ms: state.started_at_epoch_ms,
-                started_at_filetime_100ns: state.started_at_filetime_100ns,
-                finished_at_epoch_ms,
-                process_id: state.process_id,
-                exit_code: None,
-                stdout: sanitize_terminal_text(&decode_terminal_bytes(&state.stdout)),
-                stderr: sanitize_terminal_text(&decode_terminal_bytes(&state.stderr)),
-                transcript: state.transcript.iter().cloned().collect(),
-                stdout_truncated: state.stdout_truncated,
-                stderr_truncated: state.stderr_truncated,
-                running: false,
-            },
-        );
-    });
-    let finished_at_epoch_ms = current_epoch_ms();
     let _ = app_handle.emit_to(
         surfaces::COMMAND_PANEL,
         crate::contracts::events::QUICK_COMMAND_RUN_UPDATED,
-        &QuickCommandRunUpdatedPayload {
-            run_id: run_id.to_string(),
-            command_id: command_id.to_string(),
-            process_id,
-            kind: "stopped".into(),
-            body: String::new(),
-            prompt: None,
-            request_id: None,
-            max_length: None,
-            secret: false,
-            redacted: false,
-            sequence,
-            at_epoch_ms: finished_at_epoch_ms,
-            pending: false,
-        },
+        &stopping_snapshot,
     );
+    let terminator = DefaultQuickCommandTerminator::new();
+    if let Err(error) = terminator.terminate(state.process_id, state.started_at_filetime_100ns) {
+        let output_snapshot = {
+            let mut runs_guard = runs()
+                .lock()
+                .map_err(|_| "quick command runtime state is poisoned".to_string())?;
+            let Some(run) = runs_guard.get_mut(run_id) else {
+                return Err(error);
+            };
+            rollback_stopping(run);
+            let payload = QuickCommandRunUpdatedPayload {
+                run_id: run.run_id.clone(),
+                command_id: run.command_id.clone(),
+                process_id: run.process_id,
+                kind: "stop-failed".into(),
+                body: error.clone(),
+                prompt: None,
+                request_id: None,
+                max_length: None,
+                secret: false,
+                redacted: false,
+                sequence: next_sequence(),
+                at_epoch_ms: current_epoch_ms(),
+                pending: false,
+            };
+            push_transcript(
+                &mut run.transcript,
+                QuickCommandTranscriptEntry {
+                    kind: payload.kind.clone(),
+                    body: payload.body.clone(),
+                    request_id: None,
+                    prompt: None,
+                    secret: false,
+                    redacted: false,
+                    sequence: payload.sequence,
+                    at_epoch_ms: payload.at_epoch_ms,
+                    pending: false,
+                    max_length: None,
+                },
+            );
+            payload
+        };
+        let _ = app_handle.emit_to(
+            surfaces::COMMAND_PANEL,
+            crate::contracts::events::QUICK_COMMAND_RUN_UPDATED,
+            &output_snapshot,
+        );
+        return Err(error);
+    }
     Ok(())
+}
+fn process_creation_time_for_handle(
+    handle: windows::Win32::Foundation::HANDLE,
+) -> Result<u64, String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::GetProcessTimes;
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) }
+            .map_err(|_| "quick command is no longer running".to_string())?;
+        Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(0)
+    }
 }
 fn decode_terminal_bytes(bytes: &[u8]) -> String {
     if bytes.is_empty() {
@@ -1267,6 +1431,181 @@ pub(crate) fn append_quick_command_history_bounded(
 mod tests {
     use super::*;
     use crate::settings::QuickCommandRunHistoryEntry;
+
+    const QUICK_COMMANDS_SOURCE: &str = include_str!("quick_commands.rs");
+
+    fn quick_commands_production_source() -> &'static str {
+        QUICK_COMMANDS_SOURCE
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or(QUICK_COMMANDS_SOURCE)
+    }
+
+    fn quick_command_test_state(run_id: &str) -> QuickCommandRunState {
+        QuickCommandRunState {
+            command_id: "cmd".into(),
+            run_id: run_id.into(),
+            process_id: 42,
+            started_at_epoch_ms: 10,
+            started_at_filetime_100ns: 99,
+            stdin: None,
+            running: true,
+            stopping: false,
+            pending: None,
+            transcript: VecDeque::from([QuickCommandTranscriptEntry {
+                kind: "stdout".into(),
+                body: "before stop".into(),
+                request_id: None,
+                prompt: None,
+                secret: false,
+                max_length: None,
+                redacted: false,
+                sequence: 1,
+                at_epoch_ms: 10,
+                pending: false,
+            }]),
+            stdout: b"before stop".to_vec(),
+            stderr: b"warn".to_vec(),
+            stdout_carry: AnsiCarry::default(),
+            stderr_carry: AnsiCarry::default(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            finished_at_epoch_ms: None,
+            exit_code: None,
+        }
+    }
+
+    #[test]
+    fn stop_marks_run_stopping_before_termination() {
+        assert!(
+            quick_commands_production_source().contains("fn mark_stopping")
+                && quick_commands_production_source().contains("run.stopping = true"),
+            "stop must mark live run as visible stopping before termination"
+        );
+        assert!(
+            quick_commands_production_source().contains("mark_stopping(run, sequence)")
+                && quick_commands_production_source().contains("kind: \"stopping\".into()"),
+            "stop must emit stopping snapshot before final stopped/error result"
+        );
+        assert!(
+            !quick_commands_production_source()
+                .contains("let mut state = runs_guard.remove(run_id).unwrap();"),
+            "stop must not remove run from registry before termination completes"
+        );
+    }
+
+    #[test]
+    fn stop_failure_restores_running_state_and_preserves_transcript() {
+        let before = quick_command_test_state("run-stop-fail");
+        let before_transcript = before.transcript.clone();
+        let before_stdout = before.stdout.clone();
+        let before_stderr = before.stderr.clone();
+
+        assert!(
+            quick_commands_production_source().contains("rollback_stopping")
+                || quick_commands_production_source()
+                    .contains("restore_running_after_stop_failure"),
+            "termination failure must use explicit rollback path"
+        );
+        assert_eq!(before.transcript, before_transcript);
+        assert_eq!(before.stdout, before_stdout);
+        assert_eq!(before.stderr, before_stderr);
+        assert!(before.running, "failed stop leaves run retryable/running");
+    }
+
+    #[test]
+    fn stop_rejects_reused_root_pid_before_terminate() {
+        assert!(
+            quick_commands_production_source().contains("trait QuickCommandTerminator")
+                && quick_commands_production_source().contains("DefaultQuickCommandTerminator"),
+            "termination must expose injectable seam for final same-handle identity test"
+        );
+        assert!(
+            quick_commands_production_source()
+                .contains("process_creation_time_for_handle(handle_guard.0)?")
+                && quick_commands_production_source()
+                    .contains("TerminateProcess(handle_guard.0, 1)"),
+            "root PID reuse must be rejected immediately before terminate on same handle"
+        );
+    }
+
+    #[test]
+    fn stop_success_appends_single_stopped_history_entry() {
+        assert!(
+            quick_commands_production_source().contains("let stopped = state.stopping")
+                && quick_commands_production_source()
+                    .contains("if stopped { \"stopped\" } else { \"exit\" }"),
+            "exit waiter must own exactly-once stopped history finalization"
+        );
+    }
+
+    #[test]
+    fn terminal_run_stays_queryable_until_event_and_persistence() {
+        let source = quick_commands_production_source();
+        let terminalize = source
+            .find("let (history, exit_payload) = {")
+            .expect("waiter must build terminal state");
+        let emit = source[terminalize..]
+            .find("emit_run_snapshot(&app_handle, &exit_payload)")
+            .expect("waiter must emit terminal state")
+            + terminalize;
+        let persist = source[terminalize..]
+            .find("on_exit(history)")
+            .expect("waiter must persist terminal history")
+            + terminalize;
+        let remove = source[terminalize..]
+            .find("remove(&run_id)")
+            .expect("waiter must eventually remove terminal runtime state")
+            + terminalize;
+
+        assert!(
+            source[terminalize..emit].contains("get_mut(&run_id)"),
+            "terminal state must remain queryable before terminal event emission"
+        );
+        assert!(
+            emit < persist,
+            "terminal event must not wait for settings I/O"
+        );
+        assert!(
+            persist < remove,
+            "terminal state must remain queryable until persistence finishes"
+        );
+    }
+
+    #[test]
+    fn stopped_root_does_not_wait_for_descendant_held_output_pipes() {
+        assert!(
+            quick_commands_production_source().contains(
+                "let (stdout, stdout_truncated, stderr, stderr_truncated) = if stopping"
+            ) && quick_commands_production_source().contains("(vec![], false, vec![], false)"),
+            "stopped root must finalize without joining pipe readers that descendants may keep open"
+        );
+    }
+
+    #[test]
+    fn root_exit_is_claimed_before_late_stop_can_relabel_it() {
+        let mut state = quick_command_test_state("run-natural-exit");
+        assert!(!claim_root_exit(&mut state));
+        assert!(!state.running);
+
+        let mut stopping_state = quick_command_test_state("run-stopped");
+        stopping_state.stopping = true;
+        assert!(claim_root_exit(&mut stopping_state));
+        assert!(!stopping_state.running);
+    }
+
+    #[test]
+    fn stop_helpers_and_terminator_seam_are_present() {
+        assert!(quick_commands_production_source().contains("fn mark_stopping"));
+        assert!(quick_commands_production_source().contains("fn rollback_stopping"));
+        assert!(quick_commands_production_source().contains("trait QuickCommandTerminator"));
+        assert!(quick_commands_production_source().contains("DefaultQuickCommandTerminator"));
+        assert!(
+            quick_commands_production_source().contains("emit_to(")
+                && quick_commands_production_source().contains("stopping_snapshot")
+        );
+    }
+
     #[test]
     fn parser_splits_chunks() {
         let mut carry = MarkerCarry::default();
@@ -1405,6 +1744,7 @@ mod tests {
             started_at_filetime_100ns: 2,
             stdin: None,
             running: true,
+            stopping: false,
             pending: None,
             transcript: VecDeque::new(),
             stdout: vec![],
@@ -1445,6 +1785,7 @@ mod tests {
             started_at_filetime_100ns: 2,
             stdin: None,
             running: true,
+            stopping: false,
             pending: None,
             transcript: VecDeque::new(),
             stdout: vec![],
@@ -1581,6 +1922,7 @@ mod tests {
             stderr_truncated: false,
             finished_at_epoch_ms: Some(99),
             exit_code: Some(7),
+            stopping: false,
         };
         let history = state_to_history(&state);
         assert_eq!(history.finished_at_epoch_ms, 99);

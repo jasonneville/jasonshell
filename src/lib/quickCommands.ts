@@ -263,6 +263,12 @@ export function mergeQuickCommandRunHistoryEntry(
   if (!existing) {
     return normalizedIncoming;
   }
+  if (!existing.running && normalizedIncoming.running) {
+    return {
+      ...existing,
+      transcript: mergeQuickCommandTranscripts(existing.transcript, normalizedIncoming.transcript)
+    };
+  }
   return {
     ...existing,
     ...normalizedIncoming,

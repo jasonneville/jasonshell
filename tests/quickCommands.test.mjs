@@ -206,6 +206,17 @@ test('quick command history merge flips running false on exit snapshots', () => 
   assert.equal(merged[0].transcript.at(-1)?.kind, 'exit');
 });
 
+test('quick command history merge cannot resurrect ended run from stale running response', () => {
+  const ended = { runId: 'run-ended', commandId: 'a', startedAtEpochMs: 1, finishedAtEpochMs: 3, processId: 3, exitCode: null, stdout: 'done', stderr: '', stdoutTruncated: false, stderrTruncated: false, running: false, transcript: [{ kind: 'stopped', body: '', requestId: null, prompt: null, secret: false, redacted: false, sequence: 9, atEpochMs: 3, pending: false }] };
+  const staleRunning = { ...ended, finishedAtEpochMs: 2, running: true, transcript: [{ kind: 'stopping', body: '', requestId: null, prompt: null, secret: false, redacted: false, sequence: 8, atEpochMs: 2, pending: false }] };
+
+  const [merged] = mergeQuickCommandRunHistoryEntries([ended], [staleRunning]);
+
+  assert.equal(merged.running, false);
+  assert.equal(merged.finishedAtEpochMs, 3);
+  assert.equal(merged.transcript.at(-1)?.kind, 'stopped');
+});
+
 test('quick command pending input maps prompt kinds and confirm can be empty', () => {
   const pending = deriveQuickCommandPendingInputRequest({
     runId: 'run-2',
@@ -253,24 +264,24 @@ test('quick command backend emits merged transcript snapshots with ordered strea
 });
 
 test('quick command backend assigns one sequence per terminal semantic entry and reuses it in payload plus persisted transcript', () => {
-  assert.match(quickCommandsSource, /let sequence = next_sequence\(\);[\s\S]*?push_transcript\([\s\S]*?kind: "exit"\.into\(\),[\s\S]*?sequence,[\s\S]*?\}\);/);
-  assert.match(quickCommandsSource, /let sequence = next_sequence\(\);[\s\S]*?push_transcript\([\s\S]*?kind: "stopped"\.into\(\),[\s\S]*?sequence,[\s\S]*?\}\);/);
-  assert.match(quickCommandsSource, /kind: "exit"\.into\(\),[\s\S]*?sequence,/);
-  assert.match(quickCommandsSource, /kind: "stopped"\.into\(\),[\s\S]*?sequence,/);
-  assert.match(quickCommandsSource, /push_transcript\([\s\S]*?kind: "stopped"\.into\(\),[\s\S]*?\);/);
+  assert.match(quickCommandsSource, /let terminal_kind = if stopped \{ "stopped" \} else \{ "exit" \}/);
+  assert.match(quickCommandsSource, /let sequence = next_sequence\(\);[\s\S]*?push_transcript\([\s\S]*?kind: terminal_kind\.into\(\),[\s\S]*?sequence,[\s\S]*?\}\);/);
+  assert.match(quickCommandsSource, /kind: terminal_kind\.into\(\),[\s\S]*?sequence,/);
   assert.doesNotMatch(quickCommandsSource, /state\.transcript\.push_back\(QuickCommandTranscriptEntry \{[\s\S]*?kind: "stopped"\.into\(\)/);
 });
 
 test('quick command backend exit snapshot preserves redaction contract', () => {
-  assert.match(quickCommandsSource, /body: exit_code\.map\(\|c\| c\.to_string\(\)\)\.unwrap_or_default\(\)/);
+  assert.match(quickCommandsSource, /if stopped \{\s*String::new\(\)\s*\} else \{\s*exit_code\.map\(\|c\| c\.to_string\(\)\)\.unwrap_or_default\(\)\s*\}/);
   assert.match(quickCommandsSource, /redacted: false/);
   assert.match(quickCommandsSource, /"\[redacted\]"\.to_string\(\)/);
 });
 
 test('quick command backend history and transcript payload order stay stable under bounded retention', () => {
   assert.match(quickCommandsSource, /state\.transcript\.iter\(\)\.cloned\(\)\.collect\(\)/);
-  assert.match(quickCommandsSource, /transcript: transcript\.into_iter\(\)\.collect\(\)/);
+  assert.match(quickCommandsSource, /push_transcript\(\s*&mut state\.transcript/);
   assert.match(quickCommandsSource, /push_back\(/);
+  assert.match(quickCommandsSource, /fn append_running_output[\s\S]*?if !run\.running \{\s*return None;/);
+  assert.match(quickCommandsSource, /fn handle_marker[\s\S]*?if !run\.running \|\| run\.stopping \|\| run\.pending\.is_some\(\)/);
 });
 
 test('quick command backend decodes terminal bytes and strips ansi controls before transcript storage', () => {
@@ -278,6 +289,28 @@ test('quick command backend decodes terminal bytes and strips ansi controls befo
   assert.match(quickCommandsSource, /sanitize_terminal_text\(/);
   assert.match(quickCommandsSource, /GetOEMCP/);
   assert.match(quickCommandsSource, /MultiByteToWideChar/);
+});
+
+test('Quick Command stop does not shell out to taskkill tree kill by default', () => {
+  const stopBody = quickCommandsSource.match(/fn stop_running_quick_command\([\s\S]*?\n}\nfn decode_terminal_bytes/)?.[0] ?? '';
+  assert.ok(stopBody, 'stop_running_quick_command body must be present');
+  assert.doesNotMatch(stopBody, /taskkill\.exe/i);
+  assert.doesNotMatch(stopBody, /"\/T"/);
+  assert.doesNotMatch(stopBody, /"\/F"/);
+});
+
+test('Quick Command stop uses async blocking boundary', () => {
+  assert.match(quickCommandsSource, /pub\s+async\s+fn\s+stop_quick_command/);
+  assert.match(quickCommandsSource, /spawn_blocking\s*\(/);
+  assert.match(quickCommandsSource, /\.await\s*\.map_err/);
+});
+
+test('Quick Command live update exposes stopping state or pending stopped transition', () => {
+  const stopBody = quickCommandsSource.match(/fn stop_running_quick_command\([\s\S]*?\n}\nfn process_creation_time_for_handle/)?.[0] ?? '';
+  assert.match(quickCommandsSource, /kind:\s*"stopping"\.into\(\)/);
+  assert.match(quickCommandsSource, /run\.stopping\s*=\s*true|QuickCommandRunPhase::Stopping/);
+  assert.doesNotMatch(stopBody, /runs_guard\.remove\(run_id\)/);
+  assert.match(quickCommandsSource, /!run\.running\s*\|\|\s*run\.stopping/);
 });
 
 test('quick command duplicate labels stay unique case-insensitively', () => {

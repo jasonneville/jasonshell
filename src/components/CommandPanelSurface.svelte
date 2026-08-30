@@ -57,6 +57,7 @@
   let contextMenuPosition = { x: 16, y: 112 };
   let activeRunIds = new Set<string>();
   let activeCommandIds = new Set<string>();
+  let stoppingRunIds = new Set<string>();
   let expandedRunIds = new Set<string>();
   let activeTab: CommandPanelTab = 'configuration';
   let listWidth = 180;
@@ -251,6 +252,9 @@
     } catch (error) { if (disposed) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed) stoppingId = null; }
   }
 
+  function latestRunControlKind(run: QuickCommandRunHistoryEntry): string | null { return [...run.transcript].reverse().find((line) => line.kind === 'stopping' || line.kind === 'stop-failed' || line.kind === 'stopped' || line.kind === 'exit')?.kind ?? null; }
+  function isRunStopping(run: QuickCommandRunHistoryEntry): boolean { return run.running && (latestRunControlKind(run) === 'stopping' || stoppingRunIds.has(run.runId)); }
+  function isCommandStopping(commandId: string): boolean { return allHistory.some((run) => run.commandId === commandId && isRunStopping(run)); }
   function isRunExpanded(run: QuickCommandRunHistoryEntry): boolean { return expandedRunIds.has(historyRunKey(run)); }
   function handleHistoryRunToggle(event: Event, run: QuickCommandRunHistoryEntry) { const details = event.currentTarget as HTMLDetailsElement | null; if (!details) return; if (run.running) { details.open = true; return; } const id = historyRunKey(run); const next = new Set(expandedRunIds); if (details.open) next.add(id); else next.delete(id); expandedRunIds = next; }
   function startListResize(event: PointerEvent) { event.preventDefault(); resizePointerId = event.pointerId; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); }
@@ -379,6 +383,13 @@
       transcript: [payload]
     }]);
     allHistory = nextHistory;
+    if (payload.kind === 'stopping') stoppingRunIds = new Set([...stoppingRunIds, payload.runId]);
+    else if (payload.kind === 'stop-failed' || payload.kind === 'stopped' || payload.kind === 'exit') stoppingRunIds = new Set([...stoppingRunIds].filter((runId) => runId !== payload.runId));
+    if ((payload.kind === 'stop-failed' || payload.kind === 'stopped' || payload.kind === 'exit') && stoppingId === payload.commandId) stoppingId = null;
+    if (payload.kind === 'stopped' || payload.kind === 'exit') {
+      activeRunIds = new Set([...activeRunIds].filter((runId) => runId !== payload.runId));
+      activeCommandIds = new Set([...activeCommandIds].filter((commandId) => commandId !== payload.commandId));
+    }
     lastLiveHistoryUpdateAtByRun.set(payload.runId, Date.now());
     pruneLiveHistoryUpdateTimes();
     if (historyUpdateFrame !== null) return;
@@ -465,7 +476,7 @@
                 <button class="command-context-trigger" type="button" aria-label={`More options for ${entry.label}`} aria-haspopup="menu" on:click|stopPropagation={() => selectCommand(entry)} on:keydown={(event) => openKeyboardContextMenu(event, entry)}></button>
                 <div class="command-row-actions">
                   {#if runningId === entry.id || activeCommandIds.has(entry.id)}<span class="command-spinner" aria-label={`${entry.label} is running`}></span>{/if}
-                  <MeltActionButton class={`command-icon-button ${activeCommandIds.has(entry.id) ? 'command-stop-button' : 'command-run-button'}`} ariaLabel={activeCommandIds.has(entry.id) ? `Stop ${entry.label}` : `Run ${entry.label}`} disabled={Boolean(runningId || saving || stoppingId === entry.id)} onClick={() => void (activeCommandIds.has(entry.id) ? stopEntry(entry.id) : runEntry(entry))}>{#if activeCommandIds.has(entry.id)}<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg>{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>{/if}</MeltActionButton>
+                  <MeltActionButton class={`command-icon-button ${activeCommandIds.has(entry.id) || isCommandStopping(entry.id) ? 'command-stop-button' : 'command-run-button'}`} ariaLabel={isCommandStopping(entry.id) ? `${entry.label} is stopping` : activeCommandIds.has(entry.id) ? `Stop ${entry.label}` : `Run ${entry.label}`} disabled={Boolean(runningId || saving || stoppingId === entry.id || isCommandStopping(entry.id))} onClick={() => void (activeCommandIds.has(entry.id) ? stopEntry(entry.id) : runEntry(entry))}>{#if activeCommandIds.has(entry.id) || isCommandStopping(entry.id)}{#if isCommandStopping(entry.id)}Stopping...{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg>{/if}{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>{/if}</MeltActionButton>
                   <MeltActionButton class="command-icon-button command-delete-button" ariaLabel={`Delete ${entry.label}`} disabled={Boolean(runningId || saving || activeCommandIds.has(entry.id))} onClick={(event) => void deleteEntry(entry.id, event)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5h6v8H5V5Zm1-2h4l1 1h3v1H2V4h3l1-1Z" /></svg></MeltActionButton>
                 </div>
               </div>

@@ -239,3 +239,18 @@ test('command panel transcript host remains a labelled read-only focusable textb
   );
 });
 
+test('command panel keeps stopping run visible with disabled stop affordance', () => {
+  assert.match(commandPanelSource, /latestRunControlKind\(|isRunStopping\(|isCommandStopping\(/);
+  assert.match(commandPanelSource, /return run\.running && \(latestRunControlKind\(run\) === 'stopping' \|\| stoppingRunIds\.has\(run\.runId\)\)/);
+  assert.match(commandPanelSource, /Stopping…|Stopping\.\.\./);
+  assert.match(commandPanelSource, /disabled=\{[^}]*stoppingRunIds\.has|disabled=\{[^}]*isCommandStopping\(/);
+  assert.match(commandPanelSource, /<details class="command-history-run" open=\{run\.running \|\| isRunExpanded\(run\)\}/);
+});
+
+test('command panel terminal events clear active quick command state immediately', () => {
+  assert.match(commandPanelSource, /payload\.kind === 'stopped' \|\| payload\.kind === 'exit'/);
+  assert.match(commandPanelSource, /activeRunIds = new Set\(\[\.\.\.activeRunIds\]\.filter\(\(runId\) => runId !== payload\.runId\)\)/);
+  assert.match(commandPanelSource, /activeCommandIds = new Set\(\[\.\.\.activeCommandIds\]\.filter\(\(commandId\) => commandId !== payload\.commandId\)\)/);
+  assert.match(commandPanelSource, /payload\.kind === 'stop-failed' \|\| payload\.kind === 'stopped' \|\| payload\.kind === 'exit'\) && stoppingId === payload\.commandId\) stoppingId = null/);
+});
+
