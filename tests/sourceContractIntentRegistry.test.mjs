@@ -19,6 +19,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'overlayDismissalWiring.test.mjs',
     'persistentSurfaceLifecycle.test.mjs',
     'bootstrapWindowsContract.test.mjs',
+    'runtimeSmokeHarnessContract.test.mjs',
     'processManagerAccessibility.test.mjs',
     'processManagerCloseButton.test.mjs',
     'processManagerWiring.test.mjs',
@@ -87,7 +88,8 @@ const SOURCE_CONTRACT_INTENTS = {
     'changelogPolicyHygiene.test.mjs',
     'contractsSettings.test.mjs',
     'distTestsHygiene.test.mjs',
-    'multiFixPhase6SpecValidation.test.mjs'
+    'multiFixPhase6SpecValidation.test.mjs',
+    'testModernizationPolicy.test.mjs'
   ],
   securityBoundary: [
     'automationProviders.test.mjs',

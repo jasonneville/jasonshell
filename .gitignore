@@ -41,4 +41,4 @@ Thumbs.db
 .idea/
 target-pi-check/*
 NUL
-.harness
+.harness/**

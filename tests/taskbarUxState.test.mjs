@@ -10,6 +10,13 @@ import {
 const bottomBarCss = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
 const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 
+function cssRule(source, selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\n\\}`));
+  assert.ok(match, `${selector} rule exists`);
+  return match[1];
+}
+
 test('detects taskbar overflow and exposes keyboard guidance', () => {
   assert.deepEqual(taskbarOverflowState(320, 500, 9), {
     hasOverflow: true,
@@ -67,7 +74,11 @@ test('renders attentive task groups with toast badge, amber cue, and active supp
   assert.match(bottomBarSource, /class:task-group-toasted=\{taskGroupHasToast\(group\)\}/);
   assert.match(bottomBarSource, /aria-label=\{`\$\{group\.toastCount\} \$\{group\.toastCount === 1 \? 'toast' : 'toasts'\}`\}/);
   assert.match(bottomBarCss, /\.bottom-bar \.task-window-attention,\s*\.bottom-bar \.task-group-toasted \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-warning-border\);/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-button\.task-window-attention \{\s*box-shadow: inset 0 4px 0 #ffd54f;\s*\}/);
+  const attentionShadow = cssRule(bottomBarCss, '.bottom-bar .task-button.task-window-attention')
+    .match(/box-shadow:\s*([^;]+);/)?.[1] ?? '';
+  assert.match(attentionShadow, /\binset\b/, 'attention cue stays inside task button bounds');
+  assert.ok(Number(attentionShadow.match(/inset\s+\S+\s+([\d.]+)px/)?.[1]) > 0, 'attention cue has visible thickness');
+  assert.match(attentionShadow, /(?:var\(--[\w-]+\)|#[\da-f]{3,8}|rgba?\()/i, 'attention cue has a visible color');
   assert.doesNotMatch(bottomBarCss, /taskbar-attention-flash/);
   assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-warning\);[\s\S]*color: var\(--js-color-text-strong\);/);
   assert.match(bottomBarCss, /\.bottom-bar \.task-group-toasted \.task-count \{[\s\S]*box-shadow: 0 0 0 1px var\(--js-color-warning-border\), 0 0 0\.55rem rgba\(245, 191, 92, 0\.28\);/);

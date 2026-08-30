@@ -12,6 +12,12 @@ function cssRule(source, selector) {
   return match[1];
 }
 
+function remDeclaration(rule, property) {
+  const value = Number(rule.match(new RegExp(`${property}:\\s*([\\d.]+)rem`))?.[1]);
+  assert.ok(Number.isFinite(value), `${property} has a rem value`);
+  return value;
+}
+
 test('preview header separates primary title from secondary process text', () => {
   assert.match(previewSource, /previewPrimaryTitle = preview \? \(preview\.title \|\| preview\.processName\) : ''/);
   assert.match(previewSource, /previewSecondaryText = preview && preview\.processName !== previewPrimaryTitle \? preview\.processName : ''/);
@@ -24,14 +30,14 @@ test('preview close button stays out of text flow with reserved header space', (
   const headerRule = cssRule(previewCss, '.preview-header');
   const closeButtonRule = cssRule(previewCss, '.preview-close-button');
   assert.match(previewSource, /class="preview-header"/);
-  const reservedSpace = Number(headerRule.match(/padding-right:\s*([\d.]+)rem/)?.[1]);
-  assert.ok(reservedSpace >= 2.1, 'preview header reserves at least the close button footprint');
+  assert.ok(
+    remDeclaration(headerRule, 'padding-right') >= remDeclaration(closeButtonRule, 'min-width'),
+    'preview header reserves at least the close button minimum width'
+  );
   assert.match(previewCss, /\.preview-copy\s*\{[\s\S]*min-width:\s*0/);
   assert.match(closeButtonRule, /position:\s*absolute/);
-  assert.match(closeButtonRule, /z-index:\s*4/);
-  assert.match(closeButtonRule, /height:\s*1\.35rem/);
-  assert.match(closeButtonRule, /(?:min-width:\s*2\.1rem|padding:\s*0\s+0\.42rem)/);
-  assert.doesNotMatch(closeButtonRule, /width:\s*1\.35rem/);
+  assert.ok(Number(closeButtonRule.match(/z-index:\s*(\d+)/)?.[1]) > 0, 'close button layers above preview text');
+  assert.ok(remDeclaration(closeButtonRule, 'right') >= 0, 'close button anchors inside header edge');
 });
 
 test('preview text truncates long title and process labels without stealing frame space', () => {

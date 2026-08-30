@@ -1,13 +1,27 @@
 # Windows Live Smoke Test Checklist
 
-Status: current live-smoke checklist for JasonShell tray/command plus Stack Browser Phase 1 safety validation. Stack Browser Phase 1 smoke is pending unless a maintainer records live Windows evidence; static tests do not replace these checks.
+Status: current live-smoke checklist for JasonShell tray/command plus Stack Browser Phase 1 safety validation. Stack Browser Phase 1 smoke is pending unless a maintainer records live Windows evidence; static tests do not replace these checks. Plan 13 dry-run harness and contract gates pass; consent-gated live checks remain blocked/unimplemented.
 
-Use this after the static validation gates pass. These checks require a Windows desktop session, WebView2, and `npm run tauri dev`; they are not replaced by Node or Rust unit tests.
+Use this after the static validation gates pass. These checks require a Windows desktop session, WebView2, and `npm run tauri dev`; they are not replaced by Node or Rust unit tests. The safe default runtime-smoke contract is `npm run smoke:runtime` as a dry run: it must not launch JasonShell or mutate desktop/process state without explicit consent, and it writes timestamped artifacts under `test-results/runtime-smoke/<timestamp>/`.
+
+## Runtime Smoke Contract
+
+- `npm run smoke:runtime` is the intended non-destructive entry point. Default mode is dry run and may record planned checks/artifacts only.
+- Runtime smoke artifacts live under ignored `test-results/runtime-smoke/<timestamp>/` and should include command, environment summary without secrets, consent flags, skipped checks, notes, and per-check status.
+- Status vocabulary: `automated` means the harness directly observed the check; `manual` means a human recorded evidence; `blocked` means not run or skipped because prerequisites/consent/environment were missing.
+- Before any live action that can reserve AppBars, hide/restore the Explorer taskbar, alter the Windows work area, install global hooks, or terminate processes, obtain explicit human consent for that action class. Consent for one class does not imply consent for UAC/admin or process termination.
+- Do not claim automated assistive-technology support. NVDA, JAWS, DPI/scaling, and multi-monitor evidence is manual-only and must identify tester/tool, display setup, and observed result.
+- Official Node test entry is `npm run test:node`; it cleans repo-local `dist-tests`, rebuilds `tsconfig.test.json`, then runs `node --test tests/*.test.mjs`. Direct `node --test ...` is unsafe unless `dist-tests` is known fresh because stale compiled helpers can mask source changes.
 
 ## Preflight
 
 - Confirm `npm run check`, `npm run build`, `npm run test:node`, `npm run cargo:test`, and `npm run cargo:check` pass or record the exact failure.
-- Start JasonShell with `npm run tauri dev`.
+- Run default `npm run smoke:runtime` only as dry run unless the implemented script contract and consent gates are present; record artifact path and status as automated/manual/blocked, not as live pass evidence.
+### Manual Live Session
+
+Continue only after explicit maintainer consent for each applicable action class. Dry-run evidence is not live evidence.
+
+- Start JasonShell with `npm run tauri dev` only after that consent.
 - Watch the terminal for top-bar and bottom-bar runtime metrics; both bars should report nonzero native and WebView heights.
 - Keep a way to terminate the app if AppBar reservation or Explorer taskbar restoration misbehaves.
 
