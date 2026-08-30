@@ -68,12 +68,18 @@
     return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
   }
 
-  async function openQuickLaunchNativeMenu(launcher: PinnedTaskbarLauncher, event: MouseEvent) {
+  async function openQuickLaunchNativeMenu(launcher: PinnedTaskbarLauncher, x: number, y: number) {
     if (!quickLaunchNonce) return;
     try {
-      await showQuickLaunchPanelContextMenu({ nonce: quickLaunchNonce, shortcutPath: launcher.shortcutPath, x: event.clientX, y: event.clientY });
+      await showQuickLaunchPanelContextMenu({ nonce: quickLaunchNonce, shortcutPath: launcher.shortcutPath, x, y });
     } catch (error) {
       console.error('Failed to show quick launch native menu', error);
+    }
+  }
+
+  function launchFocusedLauncher() {
+    if (focusedIndex >= 0) {
+      void chooseLauncher(sortedLaunchers[focusedIndex]);
     }
   }
 
@@ -93,6 +99,22 @@
       void hideQuickLaunchPanel();
       return;
     }
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!quickLaunchNonce || focusedIndex < 0 || focusedIndex >= sortedLaunchers.length) {
+        return;
+      }
+      const button = launcherButtons[focusedIndex];
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      void openQuickLaunchNativeMenu(
+        sortedLaunchers[focusedIndex],
+        Math.round(rect.left + rect.width / 2),
+        Math.round(rect.top + rect.height / 2)
+      );
+      return;
+    }
     if (!sortedLaunchers.length) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -108,9 +130,7 @@
       void focusLauncher(sortedLaunchers.length - 1);
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      if (focusedIndex >= 0) {
-        void chooseLauncher(sortedLaunchers[focusedIndex]);
-      }
+      launchFocusedLauncher();
     }
   }
 
@@ -189,7 +209,7 @@
             }}
             on:contextmenu|preventDefault={(event) => {
               event.stopPropagation();
-              void openQuickLaunchNativeMenu(launcher, event);
+              void openQuickLaunchNativeMenu(launcher, event.clientX, event.clientY);
             }}
             on:focus={() => (focusedIndex = index)}
           >
@@ -305,10 +325,8 @@
 
   .rows button:focus-visible {
     background: var(--js-color-selected);
-    border-color: transparent;
-    box-shadow: none;
-    outline: none;
-    outline-offset: 0;
+    box-shadow: var(--js-focus-ring);
+    outline: 0;
   }
 
   .launcher-icon {

@@ -263,6 +263,18 @@ test('quick command backend emits merged transcript snapshots with ordered strea
   assert.doesNotMatch(quickCommandsSource, /remove\(0\)/);
 });
 
+test('quick command backend uses suspended spawn plus per-run job object stop authority', () => {
+  assert.match(quickCommandsSource, /System::JobObjects/);
+  assert.match(quickCommandsSource, /CREATE_SUSPENDED/);
+  assert.match(quickCommandsSource, /CreateJobObjectW/);
+  assert.match(quickCommandsSource, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
+  assert.match(quickCommandsSource, /AssignProcessToJobObject/);
+  assert.match(quickCommandsSource, /PROCESS_SET_QUOTA/);
+  assert.match(quickCommandsSource, /ResumeThread/);
+  assert.match(quickCommandsSource, /TerminateJobObject/);
+  assert.doesNotMatch(quickCommandsSource, /taskkill\.exe/i);
+});
+
 test('quick command backend assigns one sequence per terminal semantic entry and reuses it in payload plus persisted transcript', () => {
   assert.match(quickCommandsSource, /let terminal_kind = if stopped \{ "stopped" \} else \{ "exit" \}/);
   assert.match(quickCommandsSource, /let sequence = next_sequence\(\);[\s\S]*?push_transcript\([\s\S]*?kind: terminal_kind\.into\(\),[\s\S]*?sequence,[\s\S]*?\}\);/);
@@ -292,11 +304,10 @@ test('quick command backend decodes terminal bytes and strips ansi controls befo
 });
 
 test('Quick Command stop does not shell out to taskkill tree kill by default', () => {
-  const stopBody = quickCommandsSource.match(/fn stop_running_quick_command\([\s\S]*?\n}\nfn decode_terminal_bytes/)?.[0] ?? '';
-  assert.ok(stopBody, 'stop_running_quick_command body must be present');
-  assert.doesNotMatch(stopBody, /taskkill\.exe/i);
-  assert.doesNotMatch(stopBody, /"\/T"/);
-  assert.doesNotMatch(stopBody, /"\/F"/);
+  assert.match(quickCommandsSource, /fn stop_running_quick_command\(/);
+  assert.doesNotMatch(quickCommandsSource, /taskkill\.exe/i);
+  assert.doesNotMatch(quickCommandsSource, /"\/T"/);
+  assert.doesNotMatch(quickCommandsSource, /"\/F"/);
 });
 
 test('Quick Command stop uses async blocking boundary', () => {

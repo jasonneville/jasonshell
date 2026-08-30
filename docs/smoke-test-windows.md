@@ -34,12 +34,15 @@ Use this after the static validation gates pass. These checks require a Windows 
 - Tray list shows visible + overflow Explorer notification-area entries with stable source-qualified ids.
 - Left click relays native Explorer tray behavior (for example volume/network flyouts).
 - Right click opens native Explorer tray context menus (not a JasonShell custom menu).
+- Keyboard-only: Tab reaches tray icon buttons, Enter/Space relays native left action, and Context Menu key or Shift+F10 on a focused icon relays the native right action through the same guard. These relay checks require explicit consent and safe approved tray targets.
+- Keyboard-only: Escape closes `tray-panel` through `hide_tray_panel`, and the visible labelled close button is reachable and closes through the same hide path.
 - Left/right tray icon activation keeps `tray-panel` open; stale icon failures show inline error text instead of collapsing the panel.
 - `tray-panel` closes on focus loss and top-bar `aria-expanded` state clears.
 
 ## Command Panel
 
 - Clicking the command button (`>_`) opens `command-panel` anchored under the top bar.
+- Live run checks require explicit consent before starting any process.
 - Saved-command list supports Run/Edit/Delete and remains responsive while other top-bar popups are closed.
 - Editor supports Label, Mode, target program/command block, Working directory, and Arguments (one arg per line for direct mode).
 - Save persists entries through `load_shell_settings`/`save_shell_settings`; restart confirms persistence.
@@ -69,8 +72,9 @@ Use this after the static validation gates pass. These checks require a Windows 
 ## Bottom Bar
 
 - Explorer taskbar `.lnk` launchers enumerate and launch.
-- App-managed quick icons render before Explorer pins; Terminal/Spotify/app-alias launch failures keep icons visible and show non-crashing error feedback.
-- Right-click app-managed quick icons shows `Unpin from quick icons`; unpin removes only that app-managed entry and preserves Explorer taskbar pins.
+- Quick Launch keyboard-only: open Quick Launch, Tab/Arrow through launcher rows, verify selected row remains background-only while keyboard `:focus-visible` shows the shared visible focus ring, then press Enter on a safe approved target to launch only with explicit consent.
+- Quick Launch keyboard-only admin menu: with a row focused, press Context Menu key and Shift+F10 separately and verify the native menu opens with `Run as administrator` at the focused row. Do not activate admin/UAC unless the maintainer gives explicit consent and the target is safe and approved.
+- Quick Launch visual focus: manually verify the selected/background-only state and distinct focus ring at 100% and 200% display scaling or browser zoom; record theme/scaling used. Do not claim assistive-technology evidence from this visual check.
 - Open windows group by application identity and activate/minimize with taskbar-like behavior.
 - Reordering task groups with pointer drag does not trigger accidental activation.
 - Hover previews show for task groups, stay open while pointer moves into/within the preview, and hide after leaving both tile and preview.

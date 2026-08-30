@@ -62,7 +62,7 @@ test('quick launch panel exposes only admin right-click action', () => {
   assert.match(quickLaunchLibSource, /showQuickLaunchPanelContextMenu/);
 });
 
-test('quick launch selected row and focus-visible stay background-only', () => {
+test('quick launch selected row keeps visible focus indicator distinct from hover selection', () => {
   const focusedRule = quickLaunchPanelSource.match(/\.rows button:focus-visible \{[\s\S]*?^  \}/m)?.[0] ?? '';
   const selectedRule = quickLaunchPanelSource.match(/\.rows button\.focused \{[\s\S]*?^  \}/m)?.[0] ?? '';
   const baseRule = quickLaunchPanelSource.match(/\.rows button \{[\s\S]*?^  \}/m)?.[0] ?? '';
@@ -70,10 +70,30 @@ test('quick launch selected row and focus-visible stay background-only', () => {
   assert.match(selectedRule, /background: var\(--js-color-selected\);/);
   assert.doesNotMatch(selectedRule, /outline|box-shadow|border-color/);
   assert.match(focusedRule, /background: var\(--js-color-selected\);/);
-  assert.match(focusedRule, /outline:\s*none;/);
-  assert.match(focusedRule, /outline-offset:\s*0;/);
-  assert.match(focusedRule, /box-shadow:\s*none;/);
-  assert.match(focusedRule, /border-color:\s*transparent;/);
+  assert.ok(
+    !(/outline:\s*none;/.test(focusedRule)
+      && /box-shadow:\s*none;/.test(focusedRule)
+      && /border-color:\s*transparent;/.test(focusedRule)),
+    'focus-visible must not suppress outline, box-shadow, and border-color together'
+  );
+  assert.match(
+    focusedRule,
+    /outline:\s*(?!none\b)[^;]+;|box-shadow:\s*(?!none\b)[^;]+;|border-color:\s*(?!transparent\b)[^;]+;/,
+    'focus-visible must expose outline, box-shadow, or non-transparent border-color'
+  );
+});
+
+test('quick launch opens admin context menu from keyboard menu keys', () => {
+  const keydownFn = quickLaunchPanelSource.match(/function handleKeydown\(event: KeyboardEvent\) \{[\s\S]*?^  \}/m)?.[0] ?? '';
+  const menuOpenFn = quickLaunchPanelSource.match(/async function openQuickLaunchNativeMenu\([\s\S]*?^  \}/m)?.[0] ?? '';
+  assert.match(keydownFn, /event\.key === 'ContextMenu'/);
+  assert.match(keydownFn, /event\.shiftKey\s*&&\s*event\.key === 'F10'/);
+  assert.match(keydownFn, /event\.preventDefault\(\)/);
+  assert.match(keydownFn, /showQuickLaunchPanelContextMenu|openQuickLaunchNativeMenu|openQuickLaunchKeyboardMenu/);
+  assert.match(keydownFn, /quickLaunchNonce/);
+  assert.match(keydownFn, /sortedLaunchers\[focusedIndex\]\.shortcutPath|sortedLaunchers\[focusedIndex\]|launcher\.shortcutPath/);
+  assert.match(menuOpenFn + keydownFn, /showQuickLaunchPanelContextMenu\(\{\s*nonce:\s*quickLaunchNonce,\s*shortcutPath:/);
+  assert.doesNotMatch(keydownFn, /ContextMenu[\s\S]*chooseLauncher|F10[\s\S]*chooseLauncher/);
 });
 
 test('quick launch panel ignores stale closed nonce and clears state on valid close', () => {

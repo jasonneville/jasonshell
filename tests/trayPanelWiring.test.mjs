@@ -86,6 +86,25 @@ test('tray panel surface renders icon-only grid with loading, error, and empty s
   assert.match(trayPanelCss, /\.tray-grid \{/);
 });
 
+test('tray panel supports keyboard secondary action and Escape close', () => {
+  const keydownFns = trayPanelSource.match(/function \w*Keydown\([^)]*KeyboardEvent[\s\S]*?^  \}/gm)?.join('\n') ?? '';
+  assert.match(trayPanelSource, /hideTrayPanel/);
+  assert.match(trayPanelSource, /event\.key === 'ContextMenu'/);
+  assert.match(trayPanelSource, /event\.shiftKey\s*&&\s*event\.key === 'F10'/);
+  assert.match(keydownFns + trayPanelSource, /triggerTrayIcon\(icon, 'right'\)/);
+  assert.match(keydownFns + trayPanelSource, /event\.preventDefault\(\)/);
+  assert.match(keydownFns + trayPanelSource, /event\.key === 'Escape'[\s\S]*hideTrayPanel\(\)/);
+  assert.match(trayPanelSource, /<svelte:window\s+on:keydown=\{handleTrayPanelKeydown\}\s*\/>/);
+  assert.match(trayPanelSource, /on:click=\{\(\) => void triggerTrayIcon\(icon, 'left'\)\}/);
+  assert.match(trayPanelSource, /on:contextmenu=\{\(event\) => handleTrayContextMenu\(event, icon\)\}/);
+});
+
+test('tray panel exposes visible close control', () => {
+  assert.match(trayPanelSource, /aria-label="Close notification area icons"|aria-label=\{['"]Close notification area icons['"]\}/);
+  assert.match(trayPanelSource, /<button[\s\S]*type="button"[\s\S]*aria-label="Close notification area icons"|<button[\s\S]*aria-label="Close notification area icons"[\s\S]*type="button"/);
+  assert.match(trayPanelSource, /on:click=\{\(\) => void hideTrayPanel\(\)\}|on:click=\{(?:\(\) => )?\w*hide\w*\}/);
+});
+
 test('tray panel Rust placement anchors to right edge and clamps within top bar bounds', () => {
   assert.match(trayPanelRs, /anchors_tray_panel_to_button_right_edge/);
   assert.match(trayPanelRs, /clamps_tray_panel_inside_top_bar_edges/);

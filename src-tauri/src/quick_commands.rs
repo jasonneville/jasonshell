@@ -7,14 +7,37 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Mutex, OnceLock,
+    Arc, Mutex, OnceLock,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
+
+#[cfg(windows)]
+use windows::core::PCWSTR;
+#[cfg(windows)]
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+};
+#[cfg(windows)]
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{
+    OpenProcess, OpenThread, ResumeThread, TerminateProcess, CREATE_SUSPENDED,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
+};
 
 const HISTORY_LIMIT: usize = 20;
 const OUTPUT_LIMIT: usize = 16 * 1024;
@@ -90,6 +113,24 @@ struct QuickCommandRunState {
     stderr_truncated: bool,
     finished_at_epoch_ms: Option<u64>,
     exit_code: Option<i32>,
+    #[cfg(windows)]
+    job: Arc<QuickCommandJobHandle>,
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct QuickCommandJobHandle(HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for QuickCommandJobHandle {}
+#[cfg(windows)]
+unsafe impl Sync for QuickCommandJobHandle {}
+
+#[cfg(windows)]
+impl Drop for QuickCommandJobHandle {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(self.0) };
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -108,12 +149,6 @@ struct MarkerCarry {
 #[derive(Clone, Debug, Default)]
 struct AnsiCarry {
     bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug)]
-struct QuickCommandStopState {
-    process_id: u32,
-    started_at_filetime_100ns: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -438,12 +473,27 @@ fn spawn_quick_command(
     if let Some(cwd) = &plan.cwd {
         command.current_dir(cwd);
     }
+    #[cfg(windows)]
+    command.creation_flags(CREATE_SUSPENDED.0);
+    #[cfg(windows)]
+    let job = create_quick_command_job()?;
+    #[cfg(windows)]
+    let job_handle = Arc::new(job);
     let mut child = command
         .spawn()
         .map_err(|e| format!("failed to run quick command '{}': {e}", plan.executable))?;
     let process_id = child.id();
+    #[cfg(windows)]
+    let started_at_filetime_100ns =
+        match assign_and_resume_quick_command_process(job_handle.0, process_id) {
+            Ok(started_at_filetime_100ns) => started_at_filetime_100ns,
+            Err(error) => {
+                cleanup_suspended_quick_command_process(process_id);
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
     let started_at_epoch_ms = current_epoch_ms();
-    let started_at_filetime_100ns = process_creation_time_for_pid(process_id)?;
     let stdin = child.stdin.take();
     runs()
         .lock()
@@ -469,6 +519,8 @@ fn spawn_quick_command(
                 stderr_truncated: false,
                 finished_at_epoch_ms: None,
                 exit_code: None,
+                #[cfg(windows)]
+                job: Arc::clone(&job_handle),
             },
         );
     std::thread::spawn(move || {
@@ -489,6 +541,10 @@ fn spawn_quick_command(
             .ok()
             .and_then(|mut runs| runs.get_mut(&run_id).map(claim_root_exit))
             .unwrap_or(false);
+        #[cfg(windows)]
+        if !stopping {
+            let _ = unsafe { TerminateJobObject(job_handle.0, 1) };
+        }
         let (stdout, stdout_truncated, stderr, stderr_truncated) = if stopping {
             (vec![], false, vec![], false)
         } else {
@@ -965,7 +1021,20 @@ fn state_to_history(state: &QuickCommandRunState) -> settings::QuickCommandRunHi
     }
 }
 trait QuickCommandTerminator {
-    fn terminate(&self, process_id: u32, started_at_filetime_100ns: u64) -> Result<(), String>;
+    #[cfg(windows)]
+    fn terminate(
+        &self,
+        process_id: u32,
+        started_at_filetime_100ns: u64,
+        job: Arc<QuickCommandJobHandle>,
+    ) -> Result<(), String>;
+    #[cfg(not(windows))]
+    fn terminate(
+        &self,
+        process_id: u32,
+        started_at_filetime_100ns: u64,
+        job: (),
+    ) -> Result<(), String>;
 }
 
 struct DefaultQuickCommandTerminator;
@@ -978,12 +1047,19 @@ impl DefaultQuickCommandTerminator {
 
 #[cfg(windows)]
 impl QuickCommandTerminator for DefaultQuickCommandTerminator {
-    fn terminate(&self, process_id: u32, started_at_filetime_100ns: u64) -> Result<(), String> {
-        use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::System::Threading::{
-            OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-        };
-        let handle = unsafe {
+    fn terminate(
+        &self,
+        process_id: u32,
+        started_at_filetime_100ns: u64,
+        job: Arc<QuickCommandJobHandle>,
+    ) -> Result<(), String> {
+        struct HandleGuard(HANDLE);
+        impl Drop for HandleGuard {
+            fn drop(&mut self) {
+                let _ = unsafe { CloseHandle(self.0) };
+            }
+        }
+        let process_handle = unsafe {
             OpenProcess(
                 PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
                 false,
@@ -991,18 +1067,12 @@ impl QuickCommandTerminator for DefaultQuickCommandTerminator {
             )
         }
         .map_err(|e| format!("failed to stop quick command: {e}"))?;
-        struct HandleGuard(windows::Win32::Foundation::HANDLE);
-        impl Drop for HandleGuard {
-            fn drop(&mut self) {
-                let _ = unsafe { CloseHandle(self.0) };
-            }
-        }
-        let handle_guard = HandleGuard(handle);
-        let verified = process_creation_time_for_handle(handle_guard.0)?;
+        let process_guard = HandleGuard(process_handle);
+        let verified = process_creation_time_for_handle(process_guard.0)?;
         if verified != started_at_filetime_100ns {
             return Err("quick command is no longer running".into());
         }
-        unsafe { TerminateProcess(handle_guard.0, 1) }
+        unsafe { TerminateJobObject(job.0, 1) }
             .map_err(|e| format!("failed to stop quick command: {e}"))?;
         Ok(())
     }
@@ -1010,7 +1080,12 @@ impl QuickCommandTerminator for DefaultQuickCommandTerminator {
 
 #[cfg(not(windows))]
 impl QuickCommandTerminator for DefaultQuickCommandTerminator {
-    fn terminate(&self, _process_id: u32, _started_at_filetime_100ns: u64) -> Result<(), String> {
+    fn terminate(
+        &self,
+        _process_id: u32,
+        _started_at_filetime_100ns: u64,
+        _job: (),
+    ) -> Result<(), String> {
         Ok(())
     }
 }
@@ -1052,13 +1127,6 @@ fn mark_stopping(run: &mut QuickCommandRunState, sequence: u64) -> QuickCommandR
 
 fn rollback_stopping(run: &mut QuickCommandRunState) {
     run.stopping = false;
-}
-
-fn snapshot_stop_state(state: &QuickCommandRunState) -> QuickCommandStopState {
-    QuickCommandStopState {
-        process_id: state.process_id,
-        started_at_filetime_100ns: state.started_at_filetime_100ns,
-    }
 }
 
 fn claim_root_exit(state: &mut QuickCommandRunState) -> bool {
@@ -1104,29 +1172,6 @@ fn validate_marker_bounds(marker: &QuickCommandInputMarker) -> bool {
             .map(|v| v > 0 && v <= MAX_INPUT_LENGTH)
             .unwrap_or(true)
 }
-fn process_creation_time_for_pid(process_id: u32) -> Result<u64, String> {
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::System::Threading::{
-            GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
-            .map_err(|e| format!("failed to inspect quick command process: {e}"))?;
-        let mut creation = windows::Win32::Foundation::FILETIME::default();
-        let mut exit = windows::Win32::Foundation::FILETIME::default();
-        let mut kernel = windows::Win32::Foundation::FILETIME::default();
-        let mut user = windows::Win32::Foundation::FILETIME::default();
-        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) }
-            .map_err(|_| "quick command is no longer running".to_string())?;
-        let _ = unsafe { CloseHandle(handle) };
-        Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(0)
-    }
-}
 fn stop_running_quick_command(
     app_handle: &AppHandle,
     process_id: u32,
@@ -1150,7 +1195,7 @@ fn stop_running_quick_command(
         run.started_at_filetime_100ns
     };
     let sequence = next_sequence();
-    let (state, stopping_snapshot) = {
+    let (job, stopping_snapshot) = {
         let mut runs_guard = runs()
             .lock()
             .map_err(|_| "quick command runtime state is poisoned".to_string())?;
@@ -1167,9 +1212,15 @@ fn stop_running_quick_command(
         if run.started_at_filetime_100ns != started_at_filetime_100ns {
             return Err("quick command is no longer running".into());
         }
-        let run = runs_guard.get_mut(run_id).unwrap();
+        let run = runs_guard
+            .get_mut(run_id)
+            .ok_or_else(|| "quick command is no longer running".to_string())?;
         let snapshot = mark_stopping(run, sequence);
-        (snapshot_stop_state(run), snapshot)
+        #[cfg(windows)]
+        let job = Arc::clone(&run.job);
+        #[cfg(not(windows))]
+        let job = ();
+        (job, snapshot)
     };
     let _ = app_handle.emit_to(
         surfaces::COMMAND_PANEL,
@@ -1177,7 +1228,7 @@ fn stop_running_quick_command(
         &stopping_snapshot,
     );
     let terminator = DefaultQuickCommandTerminator::new();
-    if let Err(error) = terminator.terminate(state.process_id, state.started_at_filetime_100ns) {
+    if let Err(error) = terminator.terminate(process_id, started_at_filetime_100ns, job) {
         let output_snapshot = {
             let mut runs_guard = runs()
                 .lock()
@@ -1246,6 +1297,101 @@ fn process_creation_time_for_handle(
     {
         Ok(0)
     }
+}
+
+#[cfg(windows)]
+fn create_quick_command_job() -> Result<QuickCommandJobHandle, String> {
+    let job = QuickCommandJobHandle(
+        unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+            .map_err(|e| format!("failed to create quick command job: {e}"))?,
+    );
+    let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    unsafe {
+        SetInformationJobObject(
+            job.0,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    }
+    .map_err(|e| format!("failed to configure quick command job: {e}"))?;
+    Ok(job)
+}
+
+#[cfg(windows)]
+fn assign_and_resume_quick_command_process(job: HANDLE, process_id: u32) -> Result<u64, String> {
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_TERMINATE | PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            process_id,
+        )
+    }
+    .map_err(|e| format!("failed to attach quick command to job: {e}"))?;
+    struct Guard(HANDLE);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+    let process_guard = Guard(process);
+    unsafe { AssignProcessToJobObject(job, process_guard.0) }
+        .map_err(|e| format!("failed to attach quick command to job: {e}"))?;
+    let started_at_filetime_100ns = process_creation_time_for_handle(process_guard.0)?;
+    let thread = open_root_suspended_thread(process_id)?;
+    let thread_guard = Guard(thread);
+    let resume_result = unsafe { ResumeThread(thread_guard.0) };
+    if resume_result == u32::MAX {
+        return Err("failed to resume quick command thread".into());
+    }
+    Ok(started_at_filetime_100ns)
+}
+
+#[cfg(windows)]
+fn open_root_suspended_thread(process_id: u32) -> Result<HANDLE, String> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
+        .map_err(|e| format!("failed to inspect quick command thread: {e}"))?;
+    struct Snapshot(HANDLE);
+    impl Drop for Snapshot {
+        fn drop(&mut self) {
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+    let _snapshot_guard = Snapshot(snapshot);
+    let mut entry = THREADENTRY32 {
+        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let mut found = unsafe { Thread32First(snapshot, &mut entry) }.is_ok();
+    while found {
+        if entry.th32OwnerProcessID == process_id {
+            let thread = unsafe {
+                OpenThread(
+                    THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
+                    false,
+                    entry.th32ThreadID,
+                )
+            }
+            .map_err(|e| format!("failed to open quick command thread: {e}"))?;
+            return Ok(thread);
+        }
+        found = unsafe { Thread32Next(snapshot, &mut entry) }.is_ok();
+    }
+    Err("failed to locate suspended quick command thread".into())
+}
+
+#[cfg(windows)]
+fn cleanup_suspended_quick_command_process(process_id: u32) {
+    if let Ok(handle) = unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) } {
+        let _ = unsafe { TerminateProcess(handle, 1) };
+        let _ = unsafe { CloseHandle(handle) };
+    }
+}
+
+#[cfg(not(windows))]
+fn create_quick_command_job() -> Result<(), String> {
+    Ok(())
 }
 fn decode_terminal_bytes(bytes: &[u8]) -> String {
     if bytes.is_empty() {
@@ -1472,7 +1618,14 @@ mod tests {
             stderr_truncated: false,
             finished_at_epoch_ms: None,
             exit_code: None,
+            #[cfg(windows)]
+            job: quick_command_test_job_handle(),
         }
+    }
+
+    #[cfg(windows)]
+    fn quick_command_test_job_handle() -> Arc<QuickCommandJobHandle> {
+        Arc::new(QuickCommandJobHandle(HANDLE(std::ptr::null_mut())))
     }
 
     #[test]
@@ -1521,11 +1674,11 @@ mod tests {
             "termination must expose injectable seam for final same-handle identity test"
         );
         assert!(
-            quick_commands_production_source()
-                .contains("process_creation_time_for_handle(handle_guard.0)?")
+            quick_commands_production_source().contains("Arc<QuickCommandJobHandle>")
                 && quick_commands_production_source()
-                    .contains("TerminateProcess(handle_guard.0, 1)"),
-            "root PID reuse must be rejected immediately before terminate on same handle"
+                    .contains("process_creation_time_for_handle(process_guard.0)")
+                && quick_commands_production_source().contains("TerminateJobObject"),
+            "root PID reuse must be rejected before job termination"
         );
     }
 
@@ -1536,6 +1689,28 @@ mod tests {
                 && quick_commands_production_source()
                     .contains("if stopped { \"stopped\" } else { \"exit\" }"),
             "exit waiter must own exactly-once stopped history finalization"
+        );
+    }
+
+    #[test]
+    fn stop_state_uses_arc_job_handle_and_checked_resume_thread() {
+        let source = quick_commands_production_source();
+        assert!(source.contains("job: Arc<QuickCommandJobHandle>"));
+        assert!(!source.contains("job: Option<usize>"));
+        assert!(source.contains("ResumeThread(thread_guard.0)") && source.contains("u32::MAX"));
+        let assign = source
+            .split("fn assign_and_resume_quick_command_process")
+            .nth(1)
+            .expect("assign/resume helper must exist");
+        let capture = assign
+            .find("process_creation_time_for_handle(process_guard.0)")
+            .expect("root identity must be captured from opened process handle");
+        let resume = assign
+            .find("ResumeThread(thread_guard.0)")
+            .expect("suspended root must be resumed");
+        assert!(
+            capture < resume,
+            "root identity must be captured before resume"
         );
     }
 
@@ -1580,6 +1755,113 @@ mod tests {
             ) && quick_commands_production_source().contains("(vec![], false, vec![], false)"),
             "stopped root must finalize without joining pipe readers that descendants may keep open"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_job_termination_kills_nested_listener_descendant() {
+        use std::fs;
+        use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        struct JobProcessCleanup {
+            job: Option<QuickCommandJobHandle>,
+            process_id: u32,
+        }
+
+        impl Drop for JobProcessCleanup {
+            fn drop(&mut self) {
+                if let Some(job) = &self.job {
+                    let _ = unsafe { TerminateJobObject(job.0, 1) };
+                }
+                cleanup_suspended_quick_command_process(self.process_id);
+            }
+        }
+
+        fn wait_until(
+            timeout: Duration,
+            mut predicate: impl FnMut() -> Result<bool, String>,
+        ) -> Result<(), String> {
+            let deadline = Instant::now() + timeout;
+            let mut last_error = None;
+            while Instant::now() < deadline {
+                match predicate() {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => last_error = None,
+                    Err(error) => last_error = Some(error),
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(last_error.unwrap_or_else(|| "condition was not met before timeout".into()))
+        }
+
+        let port = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("reserve ephemeral loopback port")
+            .local_addr()
+            .expect("read reserved listener addr")
+            .port();
+        let marker = std::env::temp_dir().join(format!(
+            "jasonshell-job-descendant-{}-{}.ready",
+            std::process::id(),
+            port
+        ));
+        let _ = fs::remove_file(&marker);
+        let marker_for_child = marker.display().to_string().replace("'", "''");
+        let child_script = format!(
+            "$listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse('127.0.0.1'),{port}); \
+             $listener.Start(); \
+             Set-Content -LiteralPath '{marker_for_child}' -Value ready -NoNewline; \
+             try {{ while ($true) {{ $client=$listener.AcceptTcpClient(); $client.Dispose() }} }} finally {{ $listener.Stop() }}"
+        );
+        let mut child_script_utf16 = Vec::with_capacity(child_script.len() * 2);
+        for code_unit in child_script.encode_utf16() {
+            child_script_utf16.extend_from_slice(&code_unit.to_le_bytes());
+        }
+        let encoded_child_script =
+            base64::engine::general_purpose::STANDARD.encode(child_script_utf16);
+        let root_script = format!(
+            "Start-Process -FilePath pwsh.exe -ArgumentList @('-NoLogo','-NoProfile','-EncodedCommand','{encoded_child_script}') -WindowStyle Hidden; \
+             while ($true) {{ Start-Sleep -Seconds 60 }}"
+        );
+
+        let job = create_quick_command_job().expect("create production quick command job");
+        let mut root = Command::new("pwsh.exe")
+            .args(["-NoLogo", "-NoProfile", "-Command", &root_script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_SUSPENDED.0)
+            .spawn()
+            .expect("spawn suspended root quick command process");
+        let root_pid = root.id();
+        let mut cleanup = JobProcessCleanup {
+            job: Some(job),
+            process_id: root_pid,
+        };
+        assign_and_resume_quick_command_process(cleanup.job.as_ref().unwrap().0, root_pid)
+            .expect("assign suspended root to job and resume it");
+
+        wait_until(Duration::from_secs(10), || Ok(marker.exists()))
+            .expect("nested child listener signaled readiness");
+        TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+            .expect_err("child-owned listener must hold reserved port before job termination");
+
+        let job = cleanup.job.take().expect("job still owned by cleanup");
+        unsafe { TerminateJobObject(job.0, 1) }.expect("terminate quick command job");
+        drop(job);
+        let _ = root.wait();
+
+        wait_until(Duration::from_secs(10), || {
+            TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+                .map(|listener| {
+                    drop(listener);
+                    true
+                })
+                .map_err(|error| format!("port {port} still held after job termination: {error}"))
+        })
+        .expect("nested child-owned listener port released after job termination");
+        let _ = fs::remove_file(marker);
     }
 
     #[test]
@@ -1755,6 +2037,8 @@ mod tests {
             stderr_truncated: false,
             finished_at_epoch_ms: None,
             exit_code: None,
+            #[cfg(windows)]
+            job: quick_command_test_job_handle(),
         };
         let payload = emit_run_updated_from_transcript(
             &mut run,
@@ -1796,6 +2080,8 @@ mod tests {
             stderr_truncated: false,
             finished_at_epoch_ms: None,
             exit_code: None,
+            #[cfg(windows)]
+            job: quick_command_test_job_handle(),
         };
         let payload = emit_run_updated_from_transcript(
             &mut run,
@@ -1922,6 +2208,8 @@ mod tests {
             stderr_truncated: false,
             finished_at_epoch_ms: Some(99),
             exit_code: Some(7),
+            #[cfg(windows)]
+            job: quick_command_test_job_handle(),
             stopping: false,
         };
         let history = state_to_history(&state);

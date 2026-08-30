@@ -2,6 +2,7 @@
   import './TrayPanelSurface.css';
   import { onMount } from 'svelte';
   import {
+    hideTrayPanel,
     invokeTrayPanelIcon,
     listTrayPanelIcons,
     TRAY_PANEL_OPEN_EVENT,
@@ -63,6 +64,22 @@
     void triggerTrayIcon(icon, 'right');
   }
 
+  function handleTrayPanelKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      void hideTrayPanel();
+    }
+  }
+
+  function handleTrayIconKeydown(event: KeyboardEvent, icon: SystemTrayIconSnapshot) {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      void triggerTrayIcon(icon, 'right');
+    }
+  }
+
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     disposed = false;
@@ -96,35 +113,49 @@
   });
 </script>
 
-<div class="tray-panel" id="tray-panel" role="dialog" aria-label="Notification area icons">
-  {#if invokeError}
-    <div class="tray-state tray-state-error" role="alert">{invokeError}</div>
-  {/if}
-  {#if loading}
-    <div class="tray-state" role="status">Loading notification icons…</div>
-  {:else if loadError}
-    <div class="tray-state tray-state-error" role="alert">{loadError}</div>
-  {:else if !icons.length}
-    <div class="tray-state" role="status">No notification icons are currently available.</div>
-  {:else}
-    <div class="tray-content">
-      <ul class="tray-grid" role="list">
-        {#each icons as icon (icon.id)}
-          <li>
-            <button
-              type="button"
-              class="tray-icon-button"
-              aria-label={icon.label}
-              title={icon.label}
-              disabled={Boolean(activeIconId)}
-              on:click={() => void triggerTrayIcon(icon, 'left')}
-              on:contextmenu={(event) => handleTrayContextMenu(event, icon)}
-            >
-              <img src={icon.iconDataUrl} alt="" />
-            </button>
-          </li>
-        {/each}
-      </ul>
+<svelte:window on:keydown={handleTrayPanelKeydown} />
+
+<div class="tray-panel" id="tray-panel" role="dialog" tabindex="-1" aria-label="Notification area icons">
+  <header class="tray-header">
+    <div class="tray-header-copy">
+      <span class="tray-kicker">Notification area</span>
+      <strong>Icons</strong>
     </div>
-  {/if}
+    <button type="button" class="tray-close-button" aria-label="Close notification area icons" on:click={() => void hideTrayPanel()}>
+      ×
+    </button>
+  </header>
+  <div class="tray-main">
+    {#if invokeError}
+      <div class="tray-state tray-state-error" role="alert">{invokeError}</div>
+    {/if}
+    {#if loading}
+      <div class="tray-state" role="status">Loading notification icons…</div>
+    {:else if loadError}
+      <div class="tray-state tray-state-error" role="alert">{loadError}</div>
+    {:else if !icons.length}
+      <div class="tray-state" role="status">No notification icons are currently available.</div>
+    {:else}
+      <div class="tray-content">
+        <ul class="tray-grid" role="list">
+          {#each icons as icon (icon.id)}
+            <li>
+              <button
+                type="button"
+                class="tray-icon-button"
+                aria-label={icon.label}
+                title={icon.label}
+                disabled={Boolean(activeIconId)}
+                on:click={() => void triggerTrayIcon(icon, 'left')}
+                on:contextmenu={(event) => handleTrayContextMenu(event, icon)}
+                on:keydown={(event) => handleTrayIconKeydown(event, icon)}
+              >
+                <img src={icon.iconDataUrl} alt="" />
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  </div>
 </div>
