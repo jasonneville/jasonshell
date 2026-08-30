@@ -83,6 +83,8 @@ Use this after the static validation gates pass. These checks require a Windows 
 - Process rows refresh while open and stop polling after focus-loss close.
 - Sorting works for visible columns, including Start Time when values are available.
 - Kill action refuses protected/current-shell targets and refreshes after attempts.
+- Pending/manual evidence: keyboard-check Process Manager at 100% and 200% zoom in light and dark themes. Tab/Shift+Tab should reach Filter, Refresh, sortable headers, group toggles, Kill buttons, the focusable grid, and Close with visible focus throughout.
+- Pending/manual evidence: with NVDA or JAWS for 30 seconds while the process list auto-refreshes, verify timer ticks do not announce every successful refresh. Trigger one manual Refresh and record one bounded status announcement. Record any auto-refresh error announcement separately as intentional error status.
 
 ## Notes
 

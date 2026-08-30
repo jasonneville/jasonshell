@@ -19,6 +19,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'overlayDismissalWiring.test.mjs',
     'persistentSurfaceLifecycle.test.mjs',
     'bootstrapWindowsContract.test.mjs',
+    'processManagerAccessibility.test.mjs',
     'processManagerCloseButton.test.mjs',
     'processManagerWiring.test.mjs',
     'quickCommands.test.mjs',

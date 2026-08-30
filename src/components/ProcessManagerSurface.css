@@ -74,7 +74,11 @@
   font: inherit;
   font-size: 0.62rem;
   min-width: 8rem;
-  outline: 0;
+}
+
+.process-filter:focus-within {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
 }
 
 .process-manager-actions button,
@@ -99,6 +103,15 @@
 .kill-button:hover:not(:disabled) {
   background: var(--js-color-control-hover);
   border-color: var(--js-color-accent-border);
+}
+
+.process-manager-actions button:focus-visible,
+.process-row-head button:focus-visible,
+.process-group-toggle:focus-visible,
+.kill-button:focus-visible,
+.process-manager-close-button:focus-visible {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
 }
 
 .process-manager-actions button:disabled,
@@ -142,10 +155,16 @@
 }
 
 .process-table-scroll {
+  border: 1px solid transparent;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+}
+
+.process-table-scroll:focus-visible {
+  border-color: var(--js-color-accent-border);
+  box-shadow: var(--js-focus-ring);
 }
 
 .process-table-content {

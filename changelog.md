@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-08-30 `[CODE]` FIXED: Process Manager grid auto-refresh is no longer a live region; the dedicated status region owns bounded announcements, timer refreshes stay silent on success, manual/kill/error statuses remain announced, and filter/grid/action focus styles are visible via design tokens.
+- 2026-08-30 `[TOOL]` VALIDATED: RED-first Process Manager accessibility contracts pass 3/3; full Node passes 810 with 3 todo, Rust passes 627 with 3 ignored, check/build/Cargo check and `npm run validate` pass with existing warnings only; adversarial review found no required fixes. NVDA/JAWS and keyboard/zoom smoke checks remain manual.
 - 2026-08-29 `[CODE]` FIXED: Quick Command output readers and input-marker parsing now reject terminalized runs, preventing late pipe activity from publishing stale events after `stopped`/`exit` and restoring disabled Stop UI.
 - 2026-08-29 `[TOOL]` TESTED: Adversarial race review found late-reader terminal-ordering risk; focused contracts now require terminal output and prompt guards.
 - 2026-08-29 `[TOOL]` VALIDATED: Focused Quick Command Rust tests pass 27/27, focused Node contracts pass, and full `npm run validate` passes with 627 Rust tests passed, 3 ignored, and existing warnings only.

@@ -86,7 +86,7 @@
     return sortState.direction === 'asc' ? 'ascending' : 'descending';
   }
 
-  async function refreshProcesses(options: { preserveVolatileOrder?: boolean } = {}) {
+  async function refreshProcesses(options: { preserveVolatileOrder?: boolean; announce?: boolean } = {}) {
     if (isLoading) {
       return;
     }
@@ -122,7 +122,9 @@
         (total, process) => total + (process.memoryBytes ?? 0),
         0
       );
-      statusMessage = `${nextProcesses.length} processes • ${formatProcessMemory(nextTotalMemoryBytes)} working set`;
+      if (options.announce !== false) {
+        statusMessage = `${nextProcesses.length} processes • ${formatProcessMemory(nextTotalMemoryBytes)} working set`;
+      }
     } catch (error) {
       console.error('Failed to refresh processes', error);
       if (requestId === inFlightRequest) {
@@ -145,7 +147,7 @@
   function startRefreshTimer() {
     stopRefreshTimer();
     refreshTimer = window.setInterval(() => {
-      void refreshProcesses();
+      void refreshProcesses({ announce: false });
     }, REFRESH_INTERVAL_MS);
   }
 
@@ -158,7 +160,7 @@
       statusMessage = `Focused PID ${focusPid}`;
     }
     startRefreshTimer();
-    void refreshProcesses({ preserveVolatileOrder: false });
+    void refreshProcesses({ preserveVolatileOrder: false, announce: focusPid === null });
   }
 
   function closeSurface() {
@@ -199,11 +201,11 @@
     try {
       await killProcess(process.pid, killConfirmationFromPlan(killPlan));
       statusMessage = `Killed ${process.name} (${process.pid})`;
-      await refreshProcesses({ preserveVolatileOrder: false });
+      await refreshProcesses({ preserveVolatileOrder: false, announce: false });
     } catch (error) {
       console.error(`Failed to kill process ${process.pid}`, error);
       statusMessage = `Could not kill ${process.name} (${process.pid}): ${processKillErrorMessage(error)}`;
-      await refreshProcesses({ preserveVolatileOrder: false });
+      await refreshProcesses({ preserveVolatileOrder: false, announce: false });
     } finally {
       killingPid = null;
     }
@@ -286,7 +288,7 @@
           on:input={() => { armedKillPid = null; }}
         />
       </label>
-      <MeltActionButton onClick={() => void refreshProcesses({ preserveVolatileOrder: false })}>
+      <MeltActionButton onClick={() => void refreshProcesses({ preserveVolatileOrder: false, announce: true })}>
         Refresh
       </MeltActionButton>
     </div>
@@ -298,7 +300,7 @@
   </header>
 
   <div class="process-table">
-    <div class="process-table-scroll" role="grid" tabindex="0" aria-label="Running processes" aria-live={isOpen ? 'polite' : 'off'}>
+    <div class="process-table-scroll" role="grid" tabindex="0" aria-label="Running processes">
       <div class="process-table-content" role="presentation">
         <div class="process-row process-row-head" role="row">
           <MeltActionButton role="columnheader" ariaSort={ariaSort('name')} onClick={() => sortBy('name')}>Name{sortIndicator('name')}</MeltActionButton>
@@ -440,7 +442,7 @@
               </section>
             {/each}
           {:else}
-            <div class="process-empty surface-state" class:loading={isLoading} class:info={!isLoading} role="status">
+            <div class="process-empty surface-state" class:loading={isLoading} class:info={!isLoading}>
               {isLoading ? 'Loading processes…' : (processFilter ? 'No processes match this filter' : statusMessage)}
             </div>
           {/if}
