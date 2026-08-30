@@ -2356,8 +2356,8 @@
     height: 100%;
     justify-content: center;
     line-height: 1;
-    min-width: 28px;
-    width: 28px;
+    min-width: calc(var(--stack-git-change-guide-offset) * 2);
+    width: calc(var(--stack-git-change-guide-offset) * 2);
   }
 
   .stack-git-panel button.stack-git-change-group__bulk:hover:not(:disabled),
@@ -2401,6 +2401,7 @@
   }
 
   .stack-git-change-groups {
+    --stack-git-change-guide-offset: 18px;
     margin-inline: -12px;
   }
 
@@ -2559,7 +2560,7 @@
     border-left: 1px solid color-mix(in srgb, var(--js-color-accent-border) 58%, transparent);
     display: grid;
     gap: 4px;
-    margin: -8px 0 2px 18px;
+    margin: -8px 0 2px var(--stack-git-change-guide-offset, 18px);
     min-width: 0;
     padding: 2px 0 2px 10px;
   }

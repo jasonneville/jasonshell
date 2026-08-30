@@ -81,7 +81,8 @@
       <h1 id="control-plane-title">Settings & Developer Dashboard</h1>
       <p>
         Frontend summary over existing settings, workspace, git, task, process, and provider
-        contracts. Secrets and unbounded source lists stay out of this surface.
+        contracts. Workspace startup and restoration are planning-only; automation forwarding is
+        planned but not wired. Secrets and unbounded source lists stay out of this surface.
       </p>
     </div>
     <dl aria-label="Control-plane totals">

@@ -633,10 +633,11 @@ test('StackGitPanel changes view collapses staged and unstaged groups with histo
   assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-change-row__action \{[\s\S]*grid-column:\s*1;/);
   assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk,[\s\S]*\.stack-git-panel button\.stack-git-change-row__action/);
   assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk \{[\s\S]*align-items:\s*center;[\s\S]*height:\s*100%;[\s\S]*line-height:\s*1;[\s\S]*justify-content:\s*center;/);
+  assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk \{[\s\S]*min-width:\s*calc\(var\(--stack-git-change-guide-offset\) \* 2\);[\s\S]*width:\s*calc\(var\(--stack-git-change-guide-offset\) \* 2\);/);
   assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-history-file \{[\s\S]*grid-column:\s*2;[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
-  assert.match(panel, /\.stack-git-change-groups \{[\s\S]*margin-inline:\s*-12px;/);
+  assert.match(panel, /\.stack-git-change-groups \{[\s\S]*--stack-git-change-guide-offset:\s*18px;[\s\S]*margin-inline:\s*-12px;/);
   assert.doesNotMatch(panel, /\.stack-git-change-group-files \{[\s\S]*border-left:\s*0;[\s\S]*margin:\s*-8px 0 2px;/);
-  assert.match(panel, /\.stack-git-history-files \{[\s\S]*border-left:\s*1px solid[\s\S]*margin:\s*-8px 0 2px 18px;[\s\S]*padding:\s*2px 0 2px 10px;/);
+  assert.match(panel, /\.stack-git-history-files \{[\s\S]*border-left:\s*1px solid[\s\S]*margin:\s*-8px 0 2px var\(--stack-git-change-guide-offset, 18px\);[\s\S]*padding:\s*2px 0 2px 10px;/);  
   assert.match(panel, /\.stack-git-change-group-shell > button:focus-visible,[\s\S]*\.stack-git-change-group-file-shell > button:focus-visible \{[\s\S]*box-shadow:\s*none;/);
   assert.match(panel, /\.stack-git-panel \.stack-git-change-group-file-shell > button\.stack-git-change-row__action:[\s\S]*\.stack-git-change-row__discard:active:not\(:disabled\) \{[\s\S]*background:\s*transparent;[\s\S]*border:\s*0;[\s\S]*box-shadow:\s*none;/);
   assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-change-row__discard \{[\s\S]*align-self:\s*center;[\s\S]*display:\s*inline-flex;[\s\S]*grid-column:\s*3;[\s\S]*justify-content:\s*center;[\s\S]*height:\s*20px;[\s\S]*min-height:\s*0;/);

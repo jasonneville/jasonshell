@@ -20,6 +20,8 @@ Current shell surfaces:
 
 Core shell rule: the top and bottom bars reserve primary-monitor AppBar work area.
 
+Current truth boundary: workspace restoration is reserved and not implemented; startup commands are not executed automatically; automation forwarding is planned and not wired; multi-monitor support is planning-only, with live shell ownership remaining a single-monitor runtime.
+
 ## What this repo is for
 
 This repo is a prototype of a Windows-native shell foundation.
@@ -102,7 +104,7 @@ npm run tauri dev
 
 1. Open Stack Browser from a pinned folder.
 2. Enter a repo folder.
-3. Use Git Changes, Log, Tree, or Branches.
+3. Use Changes, History, Stashes, or Branches.
 4. Fetch, pull, push, checkout, or create branches from the Git workbench.
 
 ### Run a saved command
@@ -142,7 +144,7 @@ npm run tauri dev
 
 - browse folders
 - file operations
-- Git Changes, Log, Tree, and Branches views
+- Changes, History, Stashes, and Branches views
 - fetch / pull / push / checkout / create branch actions
 
 ### Persistent terminal panel
@@ -171,6 +173,14 @@ npm run tauri dev
 - sortable process metrics
 - guarded end-process action
 - live process inspection
+
+### Workspaces and automation
+
+- workspace profiles persist metadata, pins, aliases, declared tasks, startup plans, and reserved restoration status
+- workspace activation returns a plan; it does not restore windows or run startup commands
+- startup commands are not executed automatically
+- automation parsing and validation exist for safe first-party intents
+- automation forwarding is planned but not wired; forwarded payloads are not executed
 
 ### Other surfaces
 
@@ -221,8 +231,11 @@ Validation note:
 ## Caveats
 
 - prototype, not final shell product
-- primary-monitor target is the current focus
-- multi-monitor support is incomplete
+- primary-monitor AppBar reservation is the current runtime target
+- multi-monitor support is planning-only; live shell ownership remains a single-monitor runtime until implemented and live-tested
+- workspace restoration is reserved and not implemented
+- workspace startup commands are not executed automatically
+- automation forwarding is planned and not wired
 - tray behavior needs caution
 - native Windows behaviors require manual smoke
 

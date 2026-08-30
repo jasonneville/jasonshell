@@ -288,10 +288,10 @@ function workspacesSection(
   return section(
     'workspaces',
     'Workspaces',
-    'Workspace profiles, pins, and declared task counts',
+    'Workspace profiles, pins, declared task counts, and planning-only workspace startup and restoration',
     workspaces.length ? `${workspaces.length} workspace ${pluralize('profile', workspaces.length)}` : 'No workspaces configured',
     addOverflowItem(items, workspaces.length, itemLimit, 'workspace'),
-    [action('activate-workspace', 'Activate', 'Activate the selected workspace profile', workspaces.length === 0)]
+    [action('activate-workspace', 'Activate', 'Return the selected workspace activation plan; startup commands and restoration are not executed', workspaces.length === 0)]
   );
 }
 
