@@ -1193,7 +1193,6 @@
                 <MeltActionButton
                   class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}`}
                   type="button"
-                  ariaLabel={taskWindowActionLabel(taskWindow)}
                   disabled={activatingHwnd === taskWindow.hwnd}
                   onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
                   onClick={(event) => handleTaskWindowClick(taskWindow, event)}
@@ -1209,7 +1208,6 @@
               <MeltActionButton
                 class={`task-button task-capsule${group.isActive ? ' task-button-active' : ''}${group.isMinimized ? ' task-button-minimized' : ''}`}
                 type="button"
-                ariaLabel={taskGroupLabel(group)}
                 ariaExpanded={taskGalleryOpenGroupKey === group.key}
                 ariaHaspopup="dialog"
                 onClick={(event) => handleTaskGalleryClick(group, event)}

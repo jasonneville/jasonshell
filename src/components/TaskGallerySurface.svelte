@@ -227,12 +227,10 @@
         bind:this={rowButtons[index]}
         role="option"
         aria-selected={index === focusedIndex}
-        aria-label={taskGalleryTabLabel(item)}
         class:focused={index === focusedIndex}
         class:active={item.isActive}
         class:minimized={item.isMinimized}
         tabindex={index === focusedIndex ? 0 : -1}
-        title={item.title}
         on:focus={(event) => { focusedHwnd = item.hwnd; void queuePreview(item, event.currentTarget); }}
         on:mouseenter={(event) => void queuePreview(item, event.currentTarget)}
         on:click={() => void handleTaskGalleryItemClick(item)}
@@ -291,9 +289,7 @@
   .task-gallery-strip > button:focus-visible,
   .task-gallery-strip > button.focused {
     background: var(--js-color-control-hover);
-    border-color: var(--js-color-accent-border);
-    outline: 2px solid var(--js-color-accent);
-    outline-offset: -2px;
+  
   }
   .task-gallery-strip > button.active {
     background: var(--js-bg-active);
