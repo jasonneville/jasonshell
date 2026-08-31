@@ -150,7 +150,8 @@
 .command-transcript-token { white-space: inherit; }
 .command-transcript-token--prompt { color: var(--js-color-warning-border); }
 .command-transcript-token--path { color: color-mix(in srgb, var(--js-color-text) 78%, var(--js-color-accent-border)); }
-.command-transcript-token--url { color: color-mix(in srgb, var(--js-color-text) 40%, var(--js-color-accent-border)); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 50%, transparent); text-underline-offset: 0.12em; }
+.command-transcript-token--url { color: color-mix(in srgb, var(--js-color-text) 40%, var(--js-color-accent-border)); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 50%, transparent); text-underline-offset: 0.12em; }
+.command-transcript-token--url:focus-visible { box-shadow: var(--js-focus-ring); outline: 0; }
 .command-transcript-token--level-error { color: var(--js-color-error-text); font-weight: 700; }
 .command-transcript-token--level-warning { color: var(--js-color-warning-border); font-weight: 700; }
 .command-transcript-token--level-success { color: var(--js-color-success-border); font-weight: 700; }

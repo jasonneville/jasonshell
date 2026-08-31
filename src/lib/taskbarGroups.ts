@@ -182,7 +182,7 @@ export function taskGroupDisplayMode(
   if (args.policy === 'always') {
     return 'capsule';
   }
-  return args.pressure || group.windows.length >= 3 ? 'capsule' : 'direct';
+  return args.pressure || group.windows.length >= 2 ? 'capsule' : 'direct';
 }
 
 export function taskGroupRepresentativeWindow(group: TaskWindowGroup): TaskbarWindow {

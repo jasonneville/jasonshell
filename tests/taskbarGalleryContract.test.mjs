@@ -85,7 +85,7 @@ test('closing a gallery preview retains the gallery until snapshot count leaves 
   assert.ok(closeCommand);
   assert.match(closeCommand, /windows_by_hwnd\.remove\(&args\.hwnd\)/);
   assert.doesNotMatch(closeCommand, /hide_gallery_and_reset/);
-  assert.match(bottomBarSource, /!galleryGroup \|\| galleryGroup\.windows\.length < 3 \|\| taskGroupDisplay\(galleryGroup\) !== 'capsule'/);
+  assert.match(bottomBarSource, /!galleryGroup \|\| galleryGroup\.windows\.length < 2 \|\| taskGroupDisplay\(galleryGroup\) !== 'capsule'/);
   assert.match(bottomBarSource, /windows: taskGroupGalleryItems\(galleryGroup\)/);
 });
 
@@ -155,5 +155,5 @@ test('same-session refresh preserves focus and updates native geometry from tab 
 });
 
 test('snapshot closes gallery when its group leaves capsule mode', () => {
-  assert.match(bottomBarSource, /!galleryGroup \|\| galleryGroup\.windows\.length < 3 \|\| taskGroupDisplay\(galleryGroup\) !== 'capsule'/);
+  assert.match(bottomBarSource, /!galleryGroup \|\| galleryGroup\.windows\.length < 2 \|\| taskGroupDisplay\(galleryGroup\) !== 'capsule'/);
 });

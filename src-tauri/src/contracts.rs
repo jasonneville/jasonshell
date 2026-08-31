@@ -112,6 +112,7 @@ pub mod commands {
     pub const STOP_QUICK_COMMAND: &str = "stop_quick_command";
     pub const LIST_QUICK_COMMAND_HISTORY: &str = "list_quick_command_history";
     pub const SEND_QUICK_COMMAND_INPUT: &str = "send_quick_command_input";
+    pub const OPEN_QUICK_COMMAND_URL: &str = "open_quick_command_url";
     pub const SAVE_COMMAND_PANEL_SIZE: &str = "save_command_panel_size";
     pub const SAVE_QUICK_COMMANDS_SETTINGS: &str = "save_quick_commands_settings";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
@@ -281,6 +282,7 @@ pub mod commands {
         STOP_QUICK_COMMAND,
         LIST_QUICK_COMMAND_HISTORY,
         SEND_QUICK_COMMAND_INPUT,
+        OPEN_QUICK_COMMAND_URL,
         SAVE_COMMAND_PANEL_SIZE,
         SAVE_QUICK_COMMANDS_SETTINGS,
         LIST_PINNED_STACK_FOLDERS,

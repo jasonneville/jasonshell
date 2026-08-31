@@ -39,11 +39,8 @@ test('supported policies keep one-window groups direct', () => {
   }
 });
 
-test('auto policy keeps two windows direct without pressure', () => {
-  assert.equal(taskGroupDisplayMode(group(2), { policy: 'auto', pressure: false }), 'direct');
-});
-
-test('auto policy capsules groups with three or more windows', () => {
+test('auto policy capsules groups with two or more windows', () => {
+  assert.equal(taskGroupDisplayMode(group(2), { policy: 'auto', pressure: false }), 'capsule');
   assert.equal(taskGroupDisplayMode(group(3), { policy: 'auto', pressure: false }), 'capsule');
   assert.equal(taskGroupDisplayMode(group(4), { policy: 'auto', pressure: false }), 'capsule');
   assert.equal(taskGroupDisplayMode(group(7), { policy: 'auto', pressure: false }), 'capsule');

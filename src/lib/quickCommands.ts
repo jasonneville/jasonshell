@@ -220,6 +220,10 @@ export function sendQuickCommandInput(request: SendQuickCommandInputRequest): Pr
   return invoke<void>(IPC_COMMANDS.sendQuickCommandInput, { request: normalized });
 }
 
+export function openQuickCommandUrl(url: string): Promise<void> {
+  return invoke<void>(IPC_COMMANDS.openQuickCommandUrl, { url });
+}
+
 export function stopQuickCommand(request: StopQuickCommandRequest): Promise<void> {
   const normalized = normalizeQuickCommandStopRequest(request);
   return invoke<void>(IPC_COMMANDS.stopQuickCommand, { request: normalized });

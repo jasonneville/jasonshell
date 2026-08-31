@@ -148,6 +148,28 @@ test('quick command run request validates id and wrapper uses IPC constants', ()
   assert.equal(typeof stopQuickCommand, 'function');
   assert.doesNotMatch(source, /invoke\('run_quick_command'/);
   assert.match(source, /IPC_COMMANDS\.stopQuickCommand/);
+  assert.match(source, /IPC_COMMANDS\.openQuickCommandUrl/);
+});
+
+test('quick command URL opener is command-panel only and rejects unsafe URLs', () => {
+  assert.match(quickCommandsSource, /OPEN_QUICK_COMMAND_URL/);
+  assert.match(quickCommandsSource, /COMMAND_PANEL_LABEL/);
+  assert.match(quickCommandsSource, /validate_quick_command_url/);
+  assert.match(quickCommandsSource, /ShellExecuteW failed to open quick command URL/);
+  assert.match(quickCommandsSource, /Opening quick command URLs is only supported on Windows/);
+  assert.match(quickCommandsSource, /authority\.contains\('@'\)/);
+  assert.match(quickCommandsSource, /chars\(\)\.any\(char::is_whitespace\)/);
+  assert.match(quickCommandsSource, /strip_prefix\("https:\/\/"\)/);
+  assert.match(quickCommandsSource, /strip_prefix\("http:\/\/"\)/);
+});
+
+test('quick command URL validator accepts http and https and rejects unsafe forms', () => {
+  assert.match(quickCommandsSource, /validate_quick_command_url\("http:\/\/example\.com"\)/);
+  assert.match(quickCommandsSource, /validate_quick_command_url\("https:\/\/example\.com\/path\?q=1#frag"\)/);
+  assert.match(quickCommandsSource, /validate_quick_command_url\("javascript:alert\(1\)"\)/);
+  assert.match(quickCommandsSource, /validate_quick_command_url\("https:\/\/example\.com\/with space"\)/);
+  assert.match(quickCommandsSource, /validate_quick_command_url\("https:\/\/user:pass@example\.com"\)/);
+  assert.match(quickCommandsSource, /validate_quick_command_url\("https:\/\/"\)/);
 });
 
 test('quick command settings discard legacy history without a run id', () => {

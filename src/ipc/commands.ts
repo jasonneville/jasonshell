@@ -69,6 +69,7 @@ export const IPC_COMMANDS = {
   runQuickCommand: 'run_quick_command',
   stopQuickCommand: 'stop_quick_command',
   sendQuickCommandInput: 'send_quick_command_input',
+  openQuickCommandUrl: 'open_quick_command_url',
   listQuickCommandHistory: 'list_quick_command_history',
   saveQuickCommandsSettings: 'save_quick_commands_settings',
   listPinnedStackFolders: 'list_pinned_stack_folders',

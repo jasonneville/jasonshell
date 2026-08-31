@@ -132,6 +132,9 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /command-transcript-line/);
   assert.doesNotMatch(commandPanelSource, /aria-label=\{`Transcript \$\{line\.kind\}`\}/);
   assert.match(commandPanelSource, /transcriptBodySegments/);
+  assert.match(commandPanelSource, /segment\.kind === 'url'/);
+  assert.match(commandPanelSource, /openQuickCommandUrl/);
+  assert.match(commandPanelSource, /href=\{segment\.text\}/);
   assert.match(commandPanelSource, /TRANSCRIPT_PROMPT_PATTERN/);
   assert.match(commandPanelSource, /TRANSCRIPT_SEGMENT_CACHE_LIMIT/);
   assert.match(commandPanelSource, /transcriptBodySegments\(run\.runId, line\.sequence, `\$\{line\.kind\}:\$\{line\.requestId \?\? line\.body\}:\$\{line\.atEpochMs \?\? ''\}`, line\.body\)/);
@@ -144,6 +147,8 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelCss, /\[data-kind='system'\]/);
   assert.match(commandPanelCss, /\[data-kind='input-request'\]/);
   assert.match(commandPanelCss, /command-transcript-token--url/);
+  assert.match(commandPanelCss, /cursor: pointer/);
+  assert.match(commandPanelCss, /:focus-visible/);
   assert.match(commandPanelCss, /command-transcript-token--level-error/);
   assert.match(commandPanelCss, /display: block;/);
   assert.match(commandPanelSource, /command-list-resize-grip/);
@@ -157,6 +162,12 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelCss, /user-select:\s*text/);
   assert.match(commandPanelSource, /document\.execCommand\('copy'\)/);
   assert.match(commandPanelSource, /handleTranscriptContextMenu/);
+  assert.match(commandPanelSource, /role="region"/);
+  assert.match(commandPanelSource, /on:keydown=\{handleTranscriptKeydown\}/);
+  assert.match(commandPanelSource, /on:click=\{\(event\) => handleTranscriptUrlClick\(event, segment\.text\)\}/);
+  assert.match(commandPanelSource, /on:auxclick=\{\(event\) => handleTranscriptUrlAuxClick\(event, segment\.text\)\}/);
+  assert.match(commandPanelSource, /on:contextmenu=\{\(event\) => handleTranscriptUrlContextMenu\(event\)\}/);
+  assert.doesNotMatch(commandPanelSource, /handleTranscriptUrlActivate/);
   assert.match(commandPanelSource, /Duplicate command/);
   assert.match(commandPanelSource, /nextDuplicateQuickCommandLabel/);
   assert.match(commandPanelSource, /nextUniqueQuickCommandId/);
@@ -231,12 +242,14 @@ test('command panel close lifecycle avoids resize and minimize/maximize disappea
   assert.doesNotMatch(mainSource, /COMMAND_PANEL_LABEL[\s\S]*WindowEvent::Minimized/);
 });
 
-test('command panel transcript host remains a labelled read-only focusable textbox with copy and context handlers', () => {
+test('command panel transcript host remains a labelled read-only focusable log with copy and context handlers', () => {
+  assert.match(commandPanelSource, /<!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-static-element-interactions(?: a11y-no-noninteractive-element-interactions)? -->/);
   assert.match(
     commandPanelSource,
-    /<div class="command-transcript-shell"[^>]*role="textbox"[^>]*aria-readonly="true"[^>]*aria-multiline="true"[^>]*tabindex="0"[^>]*aria-label="Merged transcript"[^>]*on:keydown=\{handleTranscriptKeydown\}[^>]*on:contextmenu=\{handleTranscriptContextMenu\}/,
-    'transcript shell should be a focusable labelled read-only textbox and keep copy/context handlers'
+    /<div class="command-transcript-shell"[^>]*role="region"[^>]*tabindex="0"[^>]*aria-label="Merged transcript"[^>]*on:keydown=\{handleTranscriptKeydown\}[^>]*on:contextmenu=\{handleTranscriptContextMenu\}/,
+    'transcript shell should be a focusable labelled region and keep copy/context handlers'
   );
+  assert.doesNotMatch(commandPanelSource, /on:contextmenu\|preventDefault\|stopPropagation/);
 });
 
 test('command panel keeps stopping run visible with disabled stop affordance', () => {

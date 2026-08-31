@@ -278,7 +278,7 @@
     availableWidth: taskStripWidth,
     requiredDirectWidth: taskWindowGroups.reduce((total, group) => {
       const base = group.windows.length === 1 ? 160 : 160 * group.windows.length;
-      return total + (group.windows.length >= 3 ? 96 : base);
+      return total + (group.windows.length >= 2 ? 96 : base);
     }, 0),
     enterThreshold: 24,
     exitThreshold: 48
@@ -1020,7 +1020,7 @@
       const galleryGroup = taskGalleryOpenGroupKey
         ? nextGroups.find((group) => group.key === taskGalleryOpenGroupKey)
         : null;
-      if (taskGalleryOpenGroupKey && (!galleryGroup || galleryGroup.windows.length < 3 || taskGroupDisplay(galleryGroup) !== 'capsule')) {
+      if (taskGalleryOpenGroupKey && (!galleryGroup || galleryGroup.windows.length < 2 || taskGroupDisplay(galleryGroup) !== 'capsule')) {
         void closeTaskGallery();
       } else if (galleryGroup && taskGalleryOpenNonce) {
         const galleryElement = document.querySelector<HTMLElement>(`[data-task-group-key="${CSS.escape(galleryGroup.key)}"] .task-capsule`);

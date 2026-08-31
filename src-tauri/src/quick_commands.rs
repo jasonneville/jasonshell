@@ -3,6 +3,7 @@ use crate::settings::{
     self, validate_quick_command_args, validate_quick_command_commands,
     validate_quick_command_entry, QuickCommandEntry, QuickCommandMode, QuickCommandTranscriptEntry,
 };
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -16,7 +17,7 @@ use std::sync::{
     Arc, Mutex, OnceLock,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, WebviewWindow};
 
 #[cfg(windows)]
 use windows::core::PCWSTR;
@@ -326,6 +327,73 @@ pub fn send_quick_command_input(
     }
     emit_run_snapshot(&app_handle, &payload);
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_quick_command_url(window: WebviewWindow, url: String) -> Result<(), String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_QUICK_COMMAND_URL,
+            callers: &[crate::shell_windows::COMMAND_PANEL_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    open_quick_command_url_native(&validate_quick_command_url(&url)?)
+}
+
+fn validate_quick_command_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.contains('\0') || trimmed.chars().any(char::is_whitespace) {
+        return Err("Quick command URL is invalid".to_string());
+    }
+    let rest = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .ok_or_else(|| "Quick command URL must use http or https".to_string())?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return Err("Quick command URL must not include credentials".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn open_quick_command_url_native(url: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn to_wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let url_wide = to_wide(OsStr::new(url));
+    let result = unsafe {
+        ShellExecuteW(
+            Some(HWND::default()),
+            None,
+            PCWSTR(url_wide.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code <= 32 {
+        return Err(format!(
+            "ShellExecuteW failed to open quick command URL with code {code}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_quick_command_url_native(_url: &str) -> Result<(), String> {
+    Err("Opening quick command URLs is only supported on Windows".to_string())
 }
 
 #[tauri::command]
@@ -1626,6 +1694,27 @@ mod tests {
     #[cfg(windows)]
     fn quick_command_test_job_handle() -> Arc<QuickCommandJobHandle> {
         Arc::new(QuickCommandJobHandle(HANDLE(std::ptr::null_mut())))
+    }
+
+    #[test]
+    fn validate_quick_command_url_accepts_http_and_https() {
+        assert_eq!(
+            validate_quick_command_url("http://example.com"),
+            Ok("http://example.com".into())
+        );
+        assert_eq!(
+            validate_quick_command_url("https://example.com/path?q=1#frag"),
+            Ok("https://example.com/path?q=1#frag".into())
+        );
+    }
+
+    #[test]
+    fn validate_quick_command_url_rejects_unsafe_schemes_whitespace_credentials_and_empty_authority(
+    ) {
+        assert!(validate_quick_command_url("javascript:alert(1)").is_err());
+        assert!(validate_quick_command_url("https://example.com/with space").is_err());
+        assert!(validate_quick_command_url("https://user:pass@example.com").is_err());
+        assert!(validate_quick_command_url("https://").is_err());
     }
 
     #[test]

@@ -176,6 +176,7 @@ fn main() {
             quick_commands::stop_quick_command,
             quick_commands::list_quick_command_history,
             quick_commands::send_quick_command_input,
+            quick_commands::open_quick_command_url,
             quick_commands::save_quick_commands_settings,
             stack_popup::list_pinned_stack_folders,
             stack_popup::pin_stack_folder,
