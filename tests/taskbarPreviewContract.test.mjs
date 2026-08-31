@@ -18,6 +18,7 @@ const taskPreviewCssSource = readFileSync(
 const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
 const taskPreviewRustSource = readFileSync(new URL('../src-tauri/src/task_preview.rs', import.meta.url), 'utf8');
 const taskWindowsRustSource = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', import.meta.url), 'utf8');
+const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 
 const basePayload = {
   hwnd: '1234',
@@ -26,6 +27,13 @@ const basePayload = {
   iconDataUrl: 'data:image/png;base64,icon',
   isMinimized: false
 };
+
+test('regular task previews allocate freshness ids from shared native state', () => {
+  assert.match(taskbarPreviewSource, /allocateTaskPreviewRequestId/);
+  assert.match(bottomBarSource, /allocateTaskPreviewRequestId/);
+  assert.match(taskPreviewRustSource, /pub fn allocate_task_preview_request_id/);
+  assert.match(taskPreviewRustSource, /allocated_request_id/);
+});
 
 function extractRustFunction(source, functionName) {
   const signatureStart = source.indexOf(`fn ${functionName}(`);
@@ -105,10 +113,14 @@ test('task preview surface gives native DWM thumbnails an unobstructed frame', (
   assert.match(taskPreviewCssSource, /\.preview-surface-native \.preview-header\s*\{[\s\S]*background:\s*var\(--js-bg-surface\)/);
   assert.match(shellWindowsSource, /TASK_PREVIEW_LABEL[\s\S]*\.transparent\(true\)[\s\S]*\.visible\(false\)/);
   assert.match(taskPreviewSurfaceSource, /await maximizeTaskWindow\(preview\.hwnd\)/);
+  assert.match(taskbarPreviewSource, /galleryNonce\?: string \| null/);
+  assert.match(taskPreviewSurfaceSource, /closePreviewedTaskWindow\(preview\.hwnd, preview\.galleryNonce\)/);
   assert.match(taskPreviewSurfaceSource, /event\.key !== 'Enter' && event\.key !== ' '/);
 });
 
 test('task preview publish path rechecks request freshness before emitting native state', () => {
+  assert.match(taskPreviewRustSource, /show_task_window_preview_with_host/);
+  assert.match(taskPreviewRustSource, /preview_position_from_host/);
   assert.match(
     taskPreviewRustSource,
     /publish_and_show_preview\([\s\S]*&preview_window,[\s\S]*payload,[\s\S]*preview_x,[\s\S]*preview_y,[\s\S]*&state,[\s\S]*request_id,[\s\S]*\)/

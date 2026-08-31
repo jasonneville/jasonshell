@@ -6,7 +6,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use base64::Engine;
 use serde::Deserialize;
 use tauri::menu::{Menu, MenuEvent, MenuItem};
-use tauri::{AppHandle, Emitter, LogicalPosition, Manager};
+use tauri::{AppHandle, Emitter, LogicalPosition, Manager, WebviewWindow};
 
 const TASKBAR_REFRESH_WINDOWS_EVENT: &str = "taskbar:refresh-windows";
 const TASKBAR_REFRESH_LAUNCHERS_EVENT: &str = "taskbar:refresh-launchers";
@@ -20,7 +20,7 @@ const TOP_BAR_PIN_MENU_PREFIX: &str = "top-bar-pin";
 #[serde(rename_all = "camelCase")]
 pub struct ShowTaskWindowContextMenuRequest {
     pub hwnd: String,
-    pub process_id: u32,
+    pub process_id: Option<u32>,
     pub is_minimized: bool,
     pub x: f64,
     pub y: f64,
@@ -58,21 +58,41 @@ struct TopBarPinMenuActionPayload {
     path: String,
 }
 
+pub fn popup_menu_at_owner<R: tauri::Runtime>(
+    owner: &WebviewWindow<R>,
+    menu: &Menu<R>,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    owner
+        .popup_menu_at(menu, LogicalPosition::new(x, y))
+        .map_err(|error| format!("Failed to show context menu: {error}"))
+}
+
 #[tauri::command]
 pub fn show_task_window_context_menu(
     app_handle: AppHandle,
     request: ShowTaskWindowContextMenuRequest,
 ) -> Result<(), String> {
-    let bottom_bar = app_handle
-        .get_webview_window(BOTTOM_BAR_LABEL)
-        .ok_or_else(|| "Bottom bar window is unavailable".to_string())?;
+    show_task_window_context_menu_for_owner(&app_handle, BOTTOM_BAR_LABEL, request)
+}
+
+pub fn show_task_window_context_menu_for_owner(
+    app_handle: &AppHandle,
+    owner_label: &str,
+    mut request: ShowTaskWindowContextMenuRequest,
+) -> Result<(), String> {
+    request.process_id = request.process_id.filter(|pid| *pid != 0);
+    let owner = app_handle
+        .get_webview_window(owner_label)
+        .ok_or_else(|| format!("Context-menu owner window {owner_label} is unavailable"))?;
     let focus_label = if request.is_minimized {
         "Restore window"
     } else {
         "Switch to window"
     };
     let focus_item = MenuItem::with_id(
-        &app_handle,
+        app_handle,
         format!("{TASK_WINDOW_MENU_PREFIX}:focus:{}", request.hwnd),
         focus_label,
         true,
@@ -80,7 +100,7 @@ pub fn show_task_window_context_menu(
     )
     .map_err(|error| format!("Failed to build task window focus item: {error}"))?;
     let minimize_item = MenuItem::with_id(
-        &app_handle,
+        app_handle,
         format!("{TASK_WINDOW_MENU_PREFIX}:minimize:{}", request.hwnd),
         "Minimize",
         !request.is_minimized,
@@ -88,27 +108,35 @@ pub fn show_task_window_context_menu(
     )
     .map_err(|error| format!("Failed to build task window close item: {error}"))?;
     let close_item = MenuItem::with_id(
-        &app_handle,
+        app_handle,
         format!("{TASK_WINDOW_MENU_PREFIX}:close:{}", request.hwnd),
         "Close window",
         true,
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
+    let process_label = request
+        .process_id
+        .map(|pid| format!("PID {pid} - open in Process Manager"))
+        .unwrap_or_else(|| "Open in Process Manager".to_string());
+    let process_menu_id = request
+        .process_id
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "none".to_string());
     let process_item = MenuItem::with_id(
-        &app_handle,
+        app_handle,
         format!(
-            "{TASK_WINDOW_MENU_PREFIX}:process:{}:{}",
-            request.process_id, request.hwnd
+            "{TASK_WINDOW_MENU_PREFIX}:process:{process_menu_id}:{}",
+            request.hwnd
         ),
-        format!("PID {} - open in Process Manager", request.process_id),
-        request.process_id != 0,
+        process_label,
+        request.process_id.is_some(),
         None::<&str>,
     )
     .map_err(|error| format!("Failed to build task window process item: {error}"))?;
     let pin_enabled = launchers::can_pin_task_window_to_taskbar(&request.hwnd).unwrap_or(false);
     let pin_item = MenuItem::with_id(
-        &app_handle,
+        app_handle,
         format!("{TASK_WINDOW_MENU_PREFIX}:pin:{}", request.hwnd),
         "Pin to taskbar",
         pin_enabled,
@@ -116,7 +144,7 @@ pub fn show_task_window_context_menu(
     )
     .map_err(|error| format!("Failed to build task window pin item: {error}"))?;
     let menu = Menu::with_items(
-        &app_handle,
+        app_handle,
         &[
             &focus_item,
             &minimize_item,
@@ -127,9 +155,7 @@ pub fn show_task_window_context_menu(
     )
     .map_err(|error| format!("Failed to build task window context menu: {error}"))?;
 
-    bottom_bar
-        .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
-        .map_err(|error| format!("Failed to show task window context menu: {error}"))
+    popup_menu_at_owner(&owner, &menu, request.x, request.y)
 }
 
 #[tauri::command]
@@ -211,9 +237,7 @@ pub fn show_launcher_context_menu(
     )
     .map_err(|error| format!("Failed to build launcher context menu: {error}"))?;
 
-    bottom_bar
-        .popup_menu_at(&menu, LogicalPosition::new(request.x, request.y))
-        .map_err(|error| format!("Failed to show launcher context menu: {error}"))
+    popup_menu_at_owner(&bottom_bar, &menu, request.x, request.y)
 }
 
 pub fn show_quick_launch_panel_context_menu(

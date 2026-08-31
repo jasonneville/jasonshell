@@ -8,6 +8,7 @@ pub mod surfaces {
     pub const STACK_POPUP: &str = "stack-popup";
     pub const PROCESS_MANAGER: &str = "process-manager";
     pub const QUICK_LAUNCH_PANEL: &str = "quick-launch-panel";
+    pub const TASK_GALLERY: &str = "task-gallery";
     pub const CONTROL_PLANE: &str = "control-plane";
     pub const SETTINGS_PANEL: &str = "settings-panel";
     pub const TRAY_PANEL: &str = "tray-panel";
@@ -24,6 +25,7 @@ pub mod surfaces {
         STACK_POPUP,
         PROCESS_MANAGER,
         QUICK_LAUNCH_PANEL,
+        TASK_GALLERY,
         CONTROL_PLANE,
         SETTINGS_PANEL,
         TRAY_PANEL,
@@ -46,9 +48,18 @@ pub mod commands {
     pub const CLOSE_TASK_WINDOW: &str = "close_task_window";
     pub const SHOW_TASK_WINDOW_PREVIEW: &str = "show_task_window_preview";
     pub const HIDE_TASK_WINDOW_PREVIEW: &str = "hide_task_window_preview";
+    pub const ALLOCATE_TASK_PREVIEW_REQUEST_ID: &str = "allocate_task_preview_request_id";
     pub const SHOW_TASK_WINDOW_CONTEXT_MENU: &str = "show_task_window_context_menu";
     pub const SHOW_LAUNCHER_CONTEXT_MENU: &str = "show_launcher_context_menu";
     pub const SHOW_QUICK_LAUNCH_PANEL_CONTEXT_MENU: &str = "show_quick_launch_panel_context_menu";
+    pub const SHOW_TASK_GALLERY: &str = "show_task_gallery";
+    pub const HIDE_TASK_GALLERY: &str = "hide_task_gallery";
+    pub const HIDE_TASK_GALLERY_ON_FOCUS_LOSS: &str = "hide_task_gallery_on_focus_loss";
+    pub const ACTIVATE_TASK_GALLERY_WINDOW: &str = "activate_task_gallery_window";
+    pub const SHOW_TASK_GALLERY_WINDOW_CONTEXT_MENU: &str = "show_task_gallery_window_context_menu";
+    pub const SHOW_TASK_GALLERY_WINDOW_PREVIEW: &str = "show_task_gallery_window_preview";
+    pub const HIDE_TASK_GALLERY_WINDOW_PREVIEW: &str = "hide_task_gallery_window_preview";
+    pub const CLOSE_TASK_GALLERY_PREVIEWED_WINDOW: &str = "close_task_gallery_previewed_window";
     pub const SHOW_TOP_BAR_PIN_CONTEXT_MENU: &str = "show_top_bar_pin_context_menu";
     pub const SHOW_SEARCH_PANEL: &str = "show_search_panel";
     pub const SEARCH_ENGINE: &str = "search_engine";
@@ -206,9 +217,18 @@ pub mod commands {
         CLOSE_TASK_WINDOW,
         SHOW_TASK_WINDOW_PREVIEW,
         HIDE_TASK_WINDOW_PREVIEW,
+        ALLOCATE_TASK_PREVIEW_REQUEST_ID,
         SHOW_TASK_WINDOW_CONTEXT_MENU,
         SHOW_LAUNCHER_CONTEXT_MENU,
         SHOW_QUICK_LAUNCH_PANEL_CONTEXT_MENU,
+        SHOW_TASK_GALLERY,
+        HIDE_TASK_GALLERY,
+        HIDE_TASK_GALLERY_ON_FOCUS_LOSS,
+        ACTIVATE_TASK_GALLERY_WINDOW,
+        SHOW_TASK_GALLERY_WINDOW_CONTEXT_MENU,
+        SHOW_TASK_GALLERY_WINDOW_PREVIEW,
+        HIDE_TASK_GALLERY_WINDOW_PREVIEW,
+        CLOSE_TASK_GALLERY_PREVIEWED_WINDOW,
         SHOW_TOP_BAR_PIN_CONTEXT_MENU,
         SHOW_SEARCH_PANEL,
         SEARCH_ENGINE,
@@ -397,6 +417,8 @@ pub mod events {
     pub const QUICK_COMMAND_RUN_UPDATED: &str = "quick-command:run-updated";
     pub const QUICK_LAUNCH_PANEL_OPEN: &str = "quick-launch-panel:open";
     pub const QUICK_LAUNCH_PANEL_CLOSED: &str = "quick-launch-panel:closed";
+    pub const TASK_GALLERY_OPEN: &str = "task-gallery:open";
+    pub const TASK_GALLERY_CLOSED: &str = "task-gallery:closed";
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
@@ -438,6 +460,8 @@ pub mod events {
         QUICK_COMMAND_RUN_UPDATED,
         QUICK_LAUNCH_PANEL_OPEN,
         QUICK_LAUNCH_PANEL_CLOSED,
+        TASK_GALLERY_OPEN,
+        TASK_GALLERY_CLOSED,
         TRAY_PANEL_CLOSED,
         TRAY_PANEL_OPEN,
     ];
@@ -461,6 +485,7 @@ mod tests {
                 "stack-popup",
                 "process-manager",
                 "quick-launch-panel",
+                "task-gallery",
                 "control-plane",
                 "settings-panel",
                 "tray-panel",
@@ -543,6 +568,13 @@ mod tests {
         assert!(unique.contains("show_control_plane"));
         assert!(unique.contains("hide_control_plane"));
         assert!(unique.contains("show_quick_launch_panel_context_menu"));
+        assert!(unique.contains("show_task_gallery"));
+        assert!(unique.contains("hide_task_gallery"));
+        assert!(unique.contains("hide_task_gallery_on_focus_loss"));
+        assert!(unique.contains("activate_task_gallery_window"));
+        assert!(unique.contains("show_task_gallery_window_context_menu"));
+        assert!(unique.contains("show_task_gallery_window_preview"));
+        assert!(unique.contains("hide_task_gallery_window_preview"));
         assert!(unique.contains("show_quick_launch_panel"));
         assert!(unique.contains("hide_quick_launch_panel_on_focus_loss"));
         assert!(unique.contains("hide_quick_launch_panel"));
@@ -622,6 +654,8 @@ mod tests {
                 "quick-command:run-updated",
                 "quick-launch-panel:open",
                 "quick-launch-panel:closed",
+                "task-gallery:open",
+                "task-gallery:closed",
                 "tray-panel:closed",
                 "tray-panel:open",
             ]

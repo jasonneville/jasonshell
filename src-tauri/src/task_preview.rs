@@ -1,5 +1,6 @@
 use crate::shell_windows::{
-    BOTTOM_BAR_LABEL, TASK_PREVIEW_HEIGHT_LOGICAL, TASK_PREVIEW_LABEL, TASK_PREVIEW_WIDTH_LOGICAL,
+    BOTTOM_BAR_LABEL, TASK_GALLERY_LABEL, TASK_PREVIEW_HEIGHT_LOGICAL, TASK_PREVIEW_LABEL,
+    TASK_PREVIEW_WIDTH_LOGICAL,
 };
 use crate::task_windows;
 #[cfg(target_os = "windows")]
@@ -30,6 +31,7 @@ const LIVE_THUMBNAIL_PLACEHOLDER_DATA_URL: &str = "data:image/png;base64,iVBORw0
 #[derive(Default)]
 pub struct TaskPreviewRuntimeState {
     pub latest_request_id: u64,
+    allocated_request_id: u64,
     live_thumbnail: Option<LiveTaskThumbnail>,
 }
 
@@ -44,6 +46,8 @@ pub struct ShowTaskPreviewRequest {
     pub is_minimized: bool,
     pub anchor_left: f64,
     pub anchor_width: f64,
+    #[serde(default)]
+    pub gallery_nonce: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -54,6 +58,7 @@ struct TaskPreviewPayload {
     process_name: String,
     icon_data_url: String,
     is_minimized: bool,
+    gallery_nonce: Option<String>,
     preview_source: TaskPreviewSource,
     native_live_thumbnail_active: bool,
     image_data_url: Option<String>,
@@ -92,6 +97,18 @@ pub fn show_task_window_preview(
     state: tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
     request: ShowTaskPreviewRequest,
 ) -> Result<(), String> {
+    let bottom_bar = app_handle
+        .get_webview_window(BOTTOM_BAR_LABEL)
+        .ok_or_else(|| "Bottom bar window is unavailable".to_string())?;
+    show_task_window_preview_with_host(&app_handle, &bottom_bar, state, request)
+}
+
+pub(crate) fn show_task_window_preview_with_host(
+    app_handle: &AppHandle,
+    host_window: &tauri::WebviewWindow,
+    state: tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
+    request: ShowTaskPreviewRequest,
+) -> Result<(), String> {
     let preview_window = app_handle
         .get_webview_window(TASK_PREVIEW_LABEL)
         .ok_or_else(|| "Task preview window is unavailable".to_string())?;
@@ -109,29 +126,32 @@ pub fn show_task_window_preview(
         return Ok(());
     }
     let _ = preview_window.hide();
-    let bottom_bar = app_handle
-        .get_webview_window(BOTTOM_BAR_LABEL)
-        .ok_or_else(|| "Bottom bar window is unavailable".to_string())?;
-    let scale_factor = bottom_bar
+    let scale_factor = host_window
         .scale_factor()
-        .map_err(|error| format!("Failed to read the taskbar scale factor: {error}"))?;
-    let bottom_position = bottom_bar
+        .map_err(|error| format!("Failed to read the host scale factor: {error}"))?;
+    let host_position = host_window
         .outer_position()
-        .map_err(|error| format!("Failed to read the taskbar position: {error}"))?;
-    let bottom_size = bottom_bar
+        .map_err(|error| format!("Failed to read the host position: {error}"))?;
+    let host_size = host_window
         .outer_size()
-        .map_err(|error| format!("Failed to read the taskbar size: {error}"))?;
-    let preview_width = (TASK_PREVIEW_WIDTH_LOGICAL * scale_factor).round() as i32;
-    let preview_height = (TASK_PREVIEW_HEIGHT_LOGICAL * scale_factor).round() as i32;
-    let anchor_midpoint = request.anchor_left + (request.anchor_width / 2.0);
-    let anchor_midpoint_physical =
-        bottom_position.x + (anchor_midpoint * scale_factor).round() as i32;
-    let min_x = bottom_position.x + TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
-    let max_x = bottom_position.x + bottom_size.width as i32
-        - preview_width
-        - TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
-    let preview_x = (anchor_midpoint_physical - (preview_width / 2)).clamp(min_x, max_x.max(min_x));
-    let preview_y = bottom_position.y - preview_height - TASK_PREVIEW_MARGIN_PHYSICAL;
+        .map_err(|error| format!("Failed to read the host size: {error}"))?;
+    let monitor = host_window
+        .current_monitor()
+        .map_err(|error| format!("Failed to inspect the host monitor: {error}"))?
+        .or_else(|| app_handle.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Host monitor is unavailable".to_string())?;
+    let monitor_position = *monitor.position();
+    let monitor_size = *monitor.size();
+    let (preview_x, preview_y, preview_width, preview_height) = preview_position_from_host(
+        host_position,
+        host_size,
+        monitor_position,
+        monitor_size,
+        scale_factor,
+        request.anchor_left,
+        request.anchor_width,
+    );
+    let gallery_nonce = request.gallery_nonce.clone();
     let live_thumbnail = register_live_task_thumbnail(&preview_window, &request.hwnd, scale_factor);
     let payload = match live_thumbnail {
         Ok(live_thumbnail) => {
@@ -148,6 +168,7 @@ pub fn show_task_window_preview(
                 process_name: request.process_name,
                 icon_data_url: request.icon_data_url,
                 is_minimized: request.is_minimized,
+                gallery_nonce,
                 preview_source: TaskPreviewSource::NativeDwmThumbnail,
                 native_live_thumbnail_active: true,
                 image_data_url: Some(LIVE_THUMBNAIL_PLACEHOLDER_DATA_URL.to_string()),
@@ -168,6 +189,46 @@ pub fn show_task_window_preview(
         preview_y,
         &state,
         request_id,
+    )
+}
+
+fn preview_position_from_host(
+    host_position: tauri::PhysicalPosition<i32>,
+    host_size: tauri::PhysicalSize<u32>,
+    monitor_position: tauri::PhysicalPosition<i32>,
+    monitor_size: tauri::PhysicalSize<u32>,
+    scale_factor: f64,
+    anchor_left: f64,
+    anchor_width: f64,
+) -> (i32, i32, u32, u32) {
+    let preview_width = (TASK_PREVIEW_WIDTH_LOGICAL * scale_factor).round() as i32;
+    let preview_height = (TASK_PREVIEW_HEIGHT_LOGICAL * scale_factor).round() as i32;
+    let anchor_midpoint = anchor_left + (anchor_width / 2.0);
+    let anchor_midpoint_physical =
+        host_position.x + (anchor_midpoint * scale_factor).round() as i32;
+    let min_x = monitor_position.x + TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
+    let max_x = monitor_position.x + monitor_size.width as i32
+        - preview_width
+        - TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
+    let preview_x = (anchor_midpoint_physical - (preview_width / 2)).clamp(min_x, max_x.max(min_x));
+    let above_y = host_position.y - preview_height - TASK_PREVIEW_MARGIN_PHYSICAL;
+    let below_y = host_position.y + host_size.height as i32 + TASK_PREVIEW_MARGIN_PHYSICAL;
+    let min_y = monitor_position.y + TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
+    let max_y = monitor_position.y + monitor_size.height as i32
+        - preview_height
+        - TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
+    let preview_y = if above_y >= min_y {
+        above_y.clamp(min_y, max_y.max(min_y))
+    } else if below_y <= max_y {
+        below_y.clamp(min_y, max_y.max(min_y))
+    } else {
+        above_y.clamp(min_y, max_y.max(min_y))
+    };
+    (
+        preview_x,
+        preview_y,
+        preview_width.max(0) as u32,
+        preview_height.max(0) as u32,
     )
 }
 
@@ -192,6 +253,7 @@ fn fallback_preview_payload(
             process_name: request.process_name,
             icon_data_url: request.icon_data_url,
             is_minimized: request.is_minimized,
+            gallery_nonce: request.gallery_nonce.clone(),
             preview_source: TaskPreviewSource::CapturedImage,
             native_live_thumbnail_active: false,
             image_data_url: Some(preview_image.image_data_url),
@@ -205,6 +267,7 @@ fn fallback_preview_payload(
             process_name: request.process_name,
             icon_data_url: request.icon_data_url,
             is_minimized: request.is_minimized,
+            gallery_nonce: request.gallery_nonce,
             preview_source: TaskPreviewSource::Unavailable,
             native_live_thumbnail_active: false,
             image_data_url: None,
@@ -296,6 +359,34 @@ fn ensure_preview_request_is_current(
         .lock()
         .map_err(|_| "task preview runtime state is poisoned".to_string())?;
     Ok(preview_request_is_current(&state, request_id))
+}
+
+pub(crate) fn next_task_preview_request_id(
+    state: &tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
+) -> Result<u64, String> {
+    let mut state = state
+        .lock()
+        .map_err(|_| "task preview runtime state is poisoned".to_string())?;
+    Ok(allocate_next_task_preview_request_id(&mut state))
+}
+
+fn allocate_next_task_preview_request_id(state: &mut TaskPreviewRuntimeState) -> u64 {
+    state.allocated_request_id = state
+        .allocated_request_id
+        .max(state.latest_request_id)
+        .saturating_add(1);
+    state.allocated_request_id
+}
+
+#[tauri::command]
+pub fn allocate_task_preview_request_id(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Mutex<TaskPreviewRuntimeState>>,
+) -> Result<u64, String> {
+    if window.label() != BOTTOM_BAR_LABEL && window.label() != TASK_GALLERY_LABEL {
+        return Err("Unauthorized caller for command allocate_task_preview_request_id".to_string());
+    }
+    next_task_preview_request_id(&state)
 }
 
 fn begin_task_preview_request(state: &mut TaskPreviewRuntimeState, request_id: u64) -> bool {
@@ -441,11 +532,12 @@ fn fit_source_in_destination_frame(frame: RECT, source_size: SIZE) -> RECT {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::{
-        begin_task_preview_hide, begin_task_preview_request, clear_active_live_thumbnail,
-        fit_source_in_destination_frame, live_thumbnail_frame_rect, live_thumbnail_properties,
-        preview_request_is_current, DWM_TNP_OPACITY, DWM_TNP_RECTDESTINATION,
-        DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
+        allocate_next_task_preview_request_id, begin_task_preview_hide, begin_task_preview_request,
+        clear_active_live_thumbnail, fit_source_in_destination_frame, live_thumbnail_frame_rect,
+        live_thumbnail_properties, preview_position_from_host, preview_request_is_current,
+        DWM_TNP_OPACITY, DWM_TNP_RECTDESTINATION, DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
     };
+    use tauri::{PhysicalPosition, PhysicalSize};
     use windows::Win32::Foundation::{RECT, SIZE};
 
     #[test]
@@ -453,6 +545,7 @@ mod tests {
         let state = super::TaskPreviewRuntimeState {
             latest_request_id: 42,
             live_thumbnail: None,
+            ..Default::default()
         };
         assert!(preview_request_is_current(&state, 42));
         assert!(!preview_request_is_current(&state, 41));
@@ -477,9 +570,21 @@ mod tests {
         let mut state = super::TaskPreviewRuntimeState {
             latest_request_id: 42,
             live_thumbnail: Some(super::LiveTaskThumbnail { handle: 0 }),
+            ..Default::default()
         };
         clear_active_live_thumbnail(&mut state);
         assert!(state.live_thumbnail.is_none());
+    }
+    #[test]
+    fn shared_allocator_advances_past_latest_and_prior_allocations() {
+        let mut state = super::TaskPreviewRuntimeState {
+            latest_request_id: 42,
+            ..Default::default()
+        };
+        assert_eq!(allocate_next_task_preview_request_id(&mut state), 43);
+        assert_eq!(allocate_next_task_preview_request_id(&mut state), 44);
+        state.latest_request_id = 80;
+        assert_eq!(allocate_next_task_preview_request_id(&mut state), 81);
     }
     #[test]
     fn live_thumbnail_frame_scales_with_preview_window() {
@@ -512,6 +617,21 @@ mod tests {
                 bottom: 224
             }
         );
+    }
+    #[test]
+    fn preview_position_anchors_to_host_and_clamps_to_screen() {
+        let (x, y, width, height) = preview_position_from_host(
+            PhysicalPosition::new(0, 50),
+            PhysicalSize::new(420, 32),
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1920, 1080),
+            1.0,
+            0.0,
+            0.0,
+        );
+
+        assert_eq!((x, y), (8, 92));
+        assert_eq!((width, height), (332, 228));
     }
     #[test]
     fn live_thumbnail_properties_make_destination_visible() {

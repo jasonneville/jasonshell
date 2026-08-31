@@ -68,6 +68,7 @@ pub struct TaskbarWindowsSnapshot {
 
 #[cfg(target_os = "windows")]
 mod actions;
+pub(crate) use actions::TaskWindowIdentity;
 #[cfg(target_os = "windows")]
 mod attention;
 pub(crate) mod bounded_string_cache;
@@ -246,6 +247,25 @@ pub fn close_task_window(hwnd: String) -> Result<(), String> {
         let _ = hwnd;
         Err("Taskbar window integration is only supported on Windows".to_string())
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn task_window_identity(hwnd: &str) -> Result<actions::TaskWindowIdentity, String> {
+    actions::current_task_window_identity(parse_hwnd(hwnd)?)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn close_task_window_with_identity(
+    hwnd: String,
+    identity: TaskWindowIdentity,
+) -> Result<(), String> {
+    reject_internal_shell_hwnd(&hwnd)?;
+    actions::close_task_window_with_identity(hwnd, identity)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn task_window_identity(_hwnd: &str) -> Result<(), String> {
+    Err("Taskbar window integration is only supported on Windows".to_string())
 }
 
 #[cfg(target_os = "windows")]

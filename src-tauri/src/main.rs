@@ -24,6 +24,7 @@ mod shell_paths;
 mod shell_windows;
 mod stack_popup;
 mod system_power;
+mod task_gallery;
 mod task_preview;
 mod task_windows;
 mod taskbar_menu;
@@ -104,6 +105,7 @@ fn main() {
             task_windows::close_task_window,
             task_preview::show_task_window_preview,
             task_preview::hide_task_window_preview,
+            task_preview::allocate_task_preview_request_id,
             taskbar_menu::show_task_window_context_menu,
             taskbar_menu::show_launcher_context_menu,
             taskbar_menu::show_top_bar_pin_context_menu,
@@ -124,6 +126,14 @@ fn main() {
             quick_launch_panel::select_quick_launch_panel,
             quick_launch_panel::run_quick_launch_panel_as_admin,
             quick_launch_panel::show_quick_launch_panel_context_menu,
+            task_gallery::show_task_gallery,
+            task_gallery::hide_task_gallery,
+            task_gallery::hide_task_gallery_on_focus_loss,
+            task_gallery::activate_task_gallery_window,
+            task_gallery::show_task_gallery_window_context_menu,
+            task_gallery::show_task_gallery_window_preview,
+            task_gallery::hide_task_gallery_window_preview,
+            task_gallery::close_task_gallery_previewed_window,
             control_plane::show_control_plane,
             control_plane::hide_control_plane,
             settings_panel::show_settings_panel,
@@ -315,6 +325,16 @@ fn main() {
                 && matches!(event, WindowEvent::Focused(false))
             {
                 let _ = quick_launch_panel::hide_quick_launch_panel_on_focus_loss(
+                    window.clone(),
+                    window.app_handle().clone(),
+                );
+                return;
+            }
+
+            if window.label() == shell_windows::TASK_GALLERY_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = task_gallery::hide_task_gallery_on_focus_loss(
                     window.clone(),
                     window.app_handle().clone(),
                 );

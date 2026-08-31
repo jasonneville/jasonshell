@@ -100,5 +100,5 @@ test('bottom bar binds attention only on the requesting tile, not the whole grou
   assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''/);
   assert.match(bottomBarSource, /return taskWindow\.attentionState === 'requested' && !taskWindow\.isActive;/);
   assert.doesNotMatch(bottomBarSource, /class:task-group-attention=\{taskGroupHasVisibleAttention\(group\)\}/);
-  assert.match(taskbarGroupsSource, /group\.hasAttention \|\|= taskWindow\.attentionState === 'requested'/);
+  assert.match(taskbarGroupsSource, /hasAttention \|\|= taskWindow\.attentionState === 'requested'/);
 });

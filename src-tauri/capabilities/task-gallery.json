@@ -1,0 +1,11 @@
+{
+  "identifier": "task-gallery",
+  "description": "Task gallery auxiliary surface capability: task gallery lifecycle, task preview/menu routing, and window-label access.",
+  "windows": [
+    "task-gallery"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

@@ -25,6 +25,6 @@ test('task window activation updates active highlight before cached snapshot ref
 test('taskbar window frontend payload normalizes attention and toast counts', () => {
   assert.match(taskbarWindowsSource, /export type TaskbarWindowAttentionState = 'idle' \| 'requested';/);
   assert.match(taskbarWindowsSource, /attentionState: window\.attentionState === 'requested' \? 'requested' : 'idle'/);
-  assert.match(taskbarWindowsSource, /toastCount\n\s*};/);
+  assert.match(taskbarWindowsSource, /toastCount\r?\n\s*};/);
   assert.doesNotMatch(taskbarWindowsSource, /notificationCount/);
 });

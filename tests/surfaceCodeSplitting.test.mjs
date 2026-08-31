@@ -9,6 +9,7 @@ const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', im
 const expectedSurfaceImports = {
   'top-bar': '../components/TopBar.svelte',
   'bottom-bar': '../components/BottomBar.svelte',
+  'task-gallery': '../components/TaskGallerySurface.svelte',
   'task-preview': '../components/TaskPreviewSurface.svelte',
   'search-panel': '../components/SearchPanelSurface.svelte',
   'stack-popup': '../components/StackPopupSurface.svelte',

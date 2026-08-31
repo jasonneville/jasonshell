@@ -12,6 +12,7 @@ export type TaskPreviewHideRequestMode = 'schedule' | 'immediate';
 
 export type TaskPreviewHideRequest = {
   mode: TaskPreviewHideRequestMode;
+  preserveGallery?: boolean;
 };
 
 export type TaskbarWindowsSnapshotPayload = {

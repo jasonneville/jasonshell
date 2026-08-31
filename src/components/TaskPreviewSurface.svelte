@@ -21,12 +21,12 @@
   $: previewPrimaryTitle = preview ? (preview.title || preview.processName) : '';
   $: previewSecondaryText = preview && preview.processName !== previewPrimaryTitle ? preview.processName : '';
 
-  async function requestPreviewHide(mode: 'schedule' | 'immediate') {
+  async function requestPreviewHide(mode: 'schedule' | 'immediate', preserveGallery = false) {
     if (mode === 'immediate') {
       preview = null;
     }
 
-    await emit(TASK_PREVIEW_HIDE_REQUEST_EVENT, { mode });
+    await emit(TASK_PREVIEW_HIDE_REQUEST_EVENT, { mode, preserveGallery });
   }
 
   async function handlePreviewActivate() {
@@ -73,9 +73,10 @@
     }
 
     try {
-      await closePreviewedTaskWindow(preview.hwnd);
+      const preserveGallery = Boolean(preview.galleryNonce);
+      await closePreviewedTaskWindow(preview.hwnd, preview.galleryNonce);
       await emit(TASKBAR_REFRESH_WINDOWS_EVENT);
-      await requestPreviewHide('immediate');
+      await requestPreviewHide('immediate', preserveGallery);
     } catch (error) {
       console.error(`Failed to close task window ${preview.hwnd}`, error);
     }

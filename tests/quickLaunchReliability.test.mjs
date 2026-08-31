@@ -34,7 +34,7 @@ test('quick launch button closes on pointerdown and suppresses the racing reopen
   assert.match(bottomBarSource, /void hideQuickLaunchPanel\(\);/);
   assert.match(bottomBarSource, /function handleQuickLaunchClick\(\)/);
   const closeFn = bottomBarSource.match(
-    /listen<QuickLaunchClosedPayload>\(QUICK_LAUNCH_CLOSED_EVENT, \(event\) => \{[\s\S]*?^    \}\)\);/m
+    /listen<QuickLaunchClosedPayload>\(QUICK_LAUNCH_CLOSED_EVENT, \(event(?:: [^)]+)?\) => \{[\s\S]*?^    \}\)\);/m
   )?.[0] ?? '';
   assert.doesNotMatch(closeFn, /suppressQuickLaunchClick = false;/);
   assert.match(bottomBarSource, /if \(suppressQuickLaunchClick\) \{\s+suppressQuickLaunchClick = false;\s+return;/);
@@ -44,7 +44,7 @@ test('quick launch button closes on pointerdown and suppresses the racing reopen
 
 test('quick launch close handler leaves suppression for trailing click consumption only', () => {
   const closeFn = bottomBarSource.match(
-    /listen<QuickLaunchClosedPayload>\(QUICK_LAUNCH_CLOSED_EVENT, \(event\) => \{[\s\S]*?^    \}\)\);/m
+    /listen<QuickLaunchClosedPayload>\(QUICK_LAUNCH_CLOSED_EVENT, \(event(?:: [^)]+)?\) => \{[\s\S]*?^    \}\)\);/m
   )?.[0] ?? '';
   assert.match(closeFn, /quickLaunchSessionNonce = null;/);
   assert.match(closeFn, /quickLaunchPanelOpen = false;/);

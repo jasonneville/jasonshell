@@ -247,7 +247,22 @@ fn close_window(hwnd: windows::Win32::Foundation::HWND) -> Result<(), String> {
     }
 
     let initial_identity = capture_task_window_identity_at_start(hwnd)?;
+    close_window_with_identity(hwnd, initial_identity)
+}
 
+pub(crate) fn close_task_window_with_identity(
+    hwnd: String,
+    expected_identity: TaskWindowIdentity,
+) -> Result<(), String> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    revalidate_close_target(hwnd, &expected_identity)?;
+    close_window_with_identity(hwnd, expected_identity)
+}
+
+fn close_window_with_identity(
+    hwnd: windows::Win32::Foundation::HWND,
+    initial_identity: TaskWindowIdentity,
+) -> Result<(), String> {
     let mut result = 0usize;
     let close_status = unsafe {
         SendMessageTimeoutW(
@@ -394,10 +409,10 @@ fn elevate_close_target(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TaskWindowIdentity {
-    pub process_id: u32,
-    pub creation_time: u64,
-    pub canonical_image_path: PathBuf,
+pub(crate) struct TaskWindowIdentity {
+    pub(crate) process_id: u32,
+    pub(crate) creation_time: u64,
+    pub(crate) canonical_image_path: PathBuf,
 }
 
 pub(super) fn capture_task_window_identity(
@@ -414,7 +429,7 @@ pub(super) fn capture_task_window_identity(
     Ok(current)
 }
 
-pub(super) fn current_task_window_identity(
+pub(crate) fn current_task_window_identity(
     hwnd: windows::Win32::Foundation::HWND,
 ) -> Result<TaskWindowIdentity, String> {
     let mut process_id = 0_u32;

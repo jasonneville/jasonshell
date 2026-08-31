@@ -1,6 +1,7 @@
 export type ShellSurface =
   | 'top-bar'
   | 'bottom-bar'
+  | 'task-gallery'
   | 'task-preview'
   | 'search-panel'
   | 'stack-popup'
@@ -24,6 +25,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
   'bottom-bar': {
     subtitle: 'Primary workspace command rail',
     title: 'JasonShell Taskbar'
+  },
+  'task-gallery': {
+    subtitle: 'Grouped task window gallery',
+    title: 'JasonShell Task Gallery'
   },
   'top-bar': {
     subtitle: 'Primary workspace status rail',
@@ -87,6 +92,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
   if (
     label === 'top-bar'
     || label === 'bottom-bar'
+    || label === 'task-gallery'
     || label === 'task-preview'
     || label === 'search-panel'
     || label === 'stack-popup'

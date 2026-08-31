@@ -13,6 +13,7 @@ export type SurfaceComponentLoader = () => Promise<SurfaceComponentModule>;
 export const surfaceComponentLoaders: Record<LoadableShellSurface, SurfaceComponentLoader> = {
   'top-bar': () => import('../components/TopBar.svelte'),
   'bottom-bar': () => import('../components/BottomBar.svelte'),
+  'task-gallery': () => import('../components/TaskGallerySurface.svelte'),
   'task-preview': () => import('../components/TaskPreviewSurface.svelte'),
   'search-panel': () => import('../components/SearchPanelSurface.svelte'),
   'stack-popup': () => import('../components/StackPopupSurface.svelte'),

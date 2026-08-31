@@ -40,16 +40,25 @@
     showTaskWindowContextMenu
   } from '../lib/taskbarMenus';
   import {
+    allocateTaskPreviewRequestId,
     hideTaskWindowPreview,
     showTaskWindowPreview
   } from '../lib/taskbarPreview';
   import {
+    hideTaskGallery as hideTaskGalleryNative,
+    showTaskGallery as showTaskGalleryNative
+  } from '../lib/taskGallery';
+  import { normalizeTaskGalleryProcessId } from '../lib/taskGallery';
+  import {
     hasTaskbarGroupDragStarted,
     buildTaskWindowGroups,
+    taskGroupDisplayMode,
+    taskGroupGalleryItems,
     taskbarGroupDragDelta,
     taskbarGroupDropTargetFromDisplacement,
     taskbarGroupOrderFromDisplacement,
     taskbarGroupReorderOffset,
+    taskbarStripPressureState,
     type TaskWindowGroup
   } from '../lib/taskbarGroups';
   import {
@@ -109,7 +118,6 @@
   let lastTaskbarSnapshotSequence = 0;
   let launchingShortcutPath: string | null = null;
   let activatingHwnd: string | null = null;
-  let previewRequestId = Date.now();
   let previewShowTimer: number | null = null;
   let previewHideTimer: number | null = null;
   let taskGroupOrder: string[] = [];
@@ -125,6 +133,14 @@
   let taskGroupDragRects: ReturnType<typeof taskGroupRects> = [];
   let pendingTaskWindowHwnd: string | null = null;
   let suppressClickTaskWindowHwnd: string | null = null;
+  let suppressClickTaskGalleryGroupKey: string | null = null;
+  let taskGalleryOpenTimer: number | null = null;
+  let taskGalleryCloseTimer: number | null = null;
+  let taskbarStripPressure = false;
+  let taskStripWidth = 0;
+  let taskGalleryOpenGroupKey: string | null = null;
+  let taskGalleryOpenNonce: string | null = null;
+  let taskGalleryOpenAnchor: { left: number; width: number } | null = null;
   let taskStripEl: HTMLDivElement | null = null;
   let quickLaunchPanelOpen = false;
   let quickLaunchSessionNonce: string | null = null;
@@ -257,6 +273,16 @@
       )
     : launcherOrder;
   $: taskWindowGroups = buildTaskWindowGroups(openWindows, taskGroupOrder);
+  $: taskbarStripPressure = taskbarStripPressureState({
+    previousPressure: taskbarStripPressure,
+    availableWidth: taskStripWidth,
+    requiredDirectWidth: taskWindowGroups.reduce((total, group) => {
+      const base = group.windows.length === 1 ? 160 : 160 * group.windows.length;
+      return total + (group.windows.length >= 3 ? 96 : base);
+    }, 0),
+    enterThreshold: 24,
+    exitThreshold: 48
+  });
   $: taskGroupPreviewOrder = taskGroupDragStarted && draggingGroupKey
     ? taskbarGroupOrderFromDisplacement(
         draggingGroupKey,
@@ -266,10 +292,6 @@
       )
     : taskGroupOrder;
 
-  function nextPreviewRequestId() {
-    previewRequestId += 1;
-    return previewRequestId;
-  }
   function clearPreviewShowTimer() {
     if (previewShowTimer !== null) {
       window.clearTimeout(previewShowTimer);
@@ -282,19 +304,21 @@
       previewHideTimer = null;
     }
   }
-  async function hidePreview(requestId = nextPreviewRequestId()) {
+  async function hidePreview() {
     clearPreviewShowTimer();
     clearPreviewHideTimer();
-    await hideTaskWindowPreview(requestId).catch((error) => {
+    try {
+      const requestId = await allocateTaskPreviewRequestId();
+      await hideTaskWindowPreview(requestId);
+    } catch (error) {
       console.error('Failed to hide task preview', error);
-    });
+    }
   }
   function schedulePreviewHide() {
     clearPreviewShowTimer();
     clearPreviewHideTimer();
-    const requestId = nextPreviewRequestId();
     previewHideTimer = window.setTimeout(() => {
-      void hidePreview(requestId);
+      void hidePreview();
       previewHideTimer = null;
     }, TASK_PREVIEW_HIDE_DELAY_MS);
   }
@@ -312,21 +336,23 @@
     }
     clearPreviewShowTimer();
     clearPreviewHideTimer();
-    const requestId = nextPreviewRequestId();
     const rect = button.getBoundingClientRect();
-    previewShowTimer = window.setTimeout(() => {
-      void showTaskWindowPreview({
-        requestId,
-        hwnd: taskWindow.hwnd,
-        title: taskWindow.title,
-        processName: taskWindow.processName,
-        iconDataUrl: taskWindow.iconDataUrl,
-        isMinimized: taskWindow.isMinimized,
-        anchorLeft: rect.left,
-        anchorWidth: rect.width
-      }).catch((error) => {
+    previewShowTimer = window.setTimeout(async () => {
+      try {
+        const requestId = await allocateTaskPreviewRequestId();
+        await showTaskWindowPreview({
+          requestId,
+          hwnd: taskWindow.hwnd,
+          title: taskWindow.title,
+          processName: taskWindow.processName,
+          iconDataUrl: taskWindow.iconDataUrl,
+          isMinimized: taskWindow.isMinimized,
+          anchorLeft: rect.left,
+          anchorWidth: rect.width
+        });
+      } catch (error) {
         console.error(`Failed to show preview for ${taskWindow.hwnd}`, error);
-      });
+      }
       previewShowTimer = null;
     }, TASK_PREVIEW_DELAY_MS);
   }
@@ -537,7 +563,7 @@
     try {
       await showTaskWindowContextMenu({
         hwnd: taskWindow.hwnd,
-        processId: taskWindow.processId ?? 0,
+        processId: normalizeTaskGalleryProcessId(taskWindow.processId),
         isMinimized: taskWindow.isMinimized,
         x: event.clientX,
         y: event.clientY
@@ -569,9 +595,23 @@
   function taskGroupHasToast(group: TaskWindowGroup) {
     return !group.isActive && group.toastCount > 0;
   }
+  function taskGroupDisplay(group: TaskWindowGroup) {
+    return taskGroupDisplayMode(group, { policy: 'auto', pressure: taskbarStripPressure });
+  }
+  function taskGroupDisplayClass(group: TaskWindowGroup) {
+    return taskGroupDisplay(group) === 'capsule' ? 'task-group-capsule' : 'task-group-direct';
+  }
+  function resolveTaskGalleryOpenGroup(groupKey: string) {
+    const nextGroup = taskWindowGroups.find((group) => group.key === groupKey);
+    return nextGroup && taskGroupDisplay(nextGroup) === 'capsule' ? nextGroup : null;
+  }
+  $: if (taskGalleryOpenGroupKey) {
+    const openGalleryGroup = taskWindowGroups.find((group) => group.key === taskGalleryOpenGroupKey);
+    if (!openGalleryGroup || taskGroupDisplay(openGalleryGroup) !== 'capsule') void closeTaskGallery();
+  }
   function taskGroupStyle(group: TaskWindowGroup) {
     const previewOrderIndex = taskGroupPreviewOrder.indexOf(group.key);
-    const windowCountStyle = `--task-window-count: ${Math.max(group.windows.length, 1)};`;
+    const windowCountStyle = `--task-window-count: ${Math.max(group.windows.length, 1)}; --task-direct-count: ${Math.max(group.windows.length, 1)};`;
     if (draggingGroupKey !== group.key || !taskGroupDragStarted) {
       return `${windowCountStyle}${previewOrderIndex >= 0 ? ` order: ${previewOrderIndex};` : ''}`;
     }
@@ -585,6 +625,85 @@
     return draggingGroupKey === group.key && taskGroupDragStarted
       ? `${windowCountStyle} order: ${previewOrderIndex}; transform: translate3d(${visualDelta}px, -1px, 0); z-index: 2;`
       : `${windowCountStyle}${previewOrderIndex >= 0 ? ` order: ${previewOrderIndex};` : ''}`;
+  }
+  async function closeTaskGallery() {
+    cancelTaskGalleryOpen();
+    cancelTaskGalleryClose();
+    const nonce = taskGalleryOpenNonce;
+    taskGalleryOpenGroupKey = null;
+    taskGalleryOpenNonce = null;
+    taskGalleryOpenAnchor = null;
+    if (!nonce) return;
+    await hideTaskGalleryNative(nonce).catch((error) => {
+      console.error('Failed to hide task gallery', error);
+    });
+  }
+  async function openTaskGallery(group: TaskWindowGroup, anchor: HTMLElement | null, focusGallery: boolean) {
+    cancelTaskGalleryOpen();
+    if (draggingGroupKey === group.key && taskGroupDragStarted) {
+      return;
+    }
+    const rect = anchor?.getBoundingClientRect();
+    const nonce = crypto.randomUUID();
+    const windows = taskGroupGalleryItems(group);
+    if (taskGalleryOpenNonce) {
+      await closeTaskGallery();
+    }
+    taskGalleryOpenGroupKey = group.key;
+    taskGalleryOpenNonce = nonce;
+    taskGalleryOpenAnchor = rect ? { left: rect.left, width: rect.width } : null;
+    try {
+      await showTaskGalleryNative({
+        nonce,
+        groupKey: group.key,
+        label: group.label,
+        anchorLeft: rect?.left ?? 0,
+        anchorWidth: rect?.width ?? 0,
+        focusGallery,
+        refreshExisting: false,
+        windows
+      });
+    } catch (error) {
+      if (taskGalleryOpenNonce === nonce) {
+        taskGalleryOpenGroupKey = null;
+        taskGalleryOpenNonce = null;
+        taskGalleryOpenAnchor = null;
+      }
+      console.error(`Failed to show task gallery for ${group.key}`, error);
+    }
+  }
+  function cancelTaskGalleryOpen() {
+    if (taskGalleryOpenTimer === null) return;
+    window.clearTimeout(taskGalleryOpenTimer);
+    taskGalleryOpenTimer = null;
+  }
+  function cancelTaskGalleryClose() {
+    if (taskGalleryCloseTimer === null) return;
+    window.clearTimeout(taskGalleryCloseTimer);
+    taskGalleryCloseTimer = null;
+  }
+  function scheduleTaskGalleryClose(groupKey: string) {
+    cancelTaskGalleryOpen();
+    cancelTaskGalleryClose();
+    if (taskGalleryOpenGroupKey !== groupKey) return;
+    taskGalleryCloseTimer = window.setTimeout(() => {
+      taskGalleryCloseTimer = null;
+      if (taskGalleryOpenGroupKey === groupKey) void closeTaskGallery();
+    }, TASK_PREVIEW_HIDE_DELAY_MS);
+  }
+  function scheduleTaskGalleryOpen(group: TaskWindowGroup, event: MouseEvent) {
+    cancelTaskGalleryClose();
+    if (taskGalleryOpenGroupKey === group.key || taskGroupDragPointerId !== null) return;
+    cancelTaskGalleryOpen();
+    const anchor = event.currentTarget as HTMLElement | null;
+    taskGalleryOpenTimer = window.setTimeout(() => {
+      taskGalleryOpenTimer = null;
+      const nextGroup = resolveTaskGalleryOpenGroup(group.key);
+      if (!nextGroup) {
+        return;
+      }
+      void openTaskGallery(nextGroup, anchor, false);
+    }, 300);
   }
   function taskGroupRects() {
     return Array.from(document.querySelectorAll<HTMLElement>('[data-task-group-key]'))
@@ -659,6 +778,7 @@
     if (event.button !== 0 || activatingHwnd) {
       return;
     }
+    cancelTaskGalleryOpen();
     const target = event.currentTarget as HTMLElement;
     draggingGroupKey = group.key;
     dropTargetGroupKey = group.key;
@@ -698,6 +818,8 @@
     if (taskGroupDragPointerId !== event.pointerId) {
       return;
     }
+    const releasedGroupKey = draggingGroupKey;
+    const didDrag = taskGroupDragStarted;
     const releaseResult = resolveTaskbarTilePointerRelease(
       pendingTaskWindowHwnd,
       taskGroupDragStarted
@@ -714,6 +836,7 @@
     releaseTaskGroupPointerCapture();
     resetTaskGroupPointerDrag();
     suppressClickTaskWindowHwnd = releaseResult.suppressClickHwnd;
+    suppressClickTaskGalleryGroupKey = didDrag ? releasedGroupKey : null;
     if (releaseResult.activateHwnd) {
       const taskWindow = openWindows.find((item) => item.hwnd === releaseResult.activateHwnd);
       if (taskWindow) {
@@ -735,6 +858,20 @@
     }
     void toggleWindow(taskWindow);
   }
+  function handleTaskGalleryClick(group: TaskWindowGroup, event: MouseEvent) {
+    event.stopPropagation();
+    cancelTaskGalleryOpen();
+    if (suppressClickTaskGalleryGroupKey === group.key) {
+      event.preventDefault();
+      suppressClickTaskGalleryGroupKey = null;
+      return;
+    }
+    if (taskGalleryOpenGroupKey === group.key) {
+      void closeTaskGallery();
+      return;
+    }
+    void openTaskGallery(group, event.currentTarget as HTMLElement | null, true);
+  }
   function handleGlobalKeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape') {
       return;
@@ -742,6 +879,11 @@
     if (quickLaunchPanelOpen) {
       event.preventDefault();
       void hideQuickLaunchPanel();
+      return;
+    }
+    if (taskGalleryOpenNonce) {
+      event.preventDefault();
+      void closeTaskGallery();
       return;
     }
     if (launcherDragPointerId !== null) {
@@ -759,6 +901,7 @@
       taskbarOverflow = taskbarOverflowState(0, 0, taskWindowGroups.length);
       return;
     }
+    taskStripWidth = taskStripEl.clientWidth;
     taskbarOverflow = taskbarOverflowState(
       taskStripEl.clientWidth,
       taskStripEl.scrollWidth,
@@ -867,18 +1010,47 @@
     void loadBottomBarResizeSettings();
     void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
-    registerAsyncUnlistener(listen<{ sequence: number; windows: TaskbarWindow[] }>('taskbar:windows-snapshot', (event) => {
+    registerAsyncUnlistener(listen<{ sequence: number; windows: TaskbarWindow[] }>('taskbar:windows-snapshot', (event: { payload: { sequence: number; windows: TaskbarWindow[] } }) => {
       if (event.payload.sequence <= lastTaskbarSnapshotSequence) return;
       lastTaskbarSnapshotSequence = event.payload.sequence;
-      openWindows = event.payload.windows.map(normalizeTaskbarWindow);
+      const nextWindows = event.payload.windows.map(normalizeTaskbarWindow);
+      const nextGroups = buildTaskWindowGroups(nextWindows, taskGroupOrder);
+      openWindows = nextWindows;
+      taskGroupOrder = nextGroups.map((group) => group.key);
+      const galleryGroup = taskGalleryOpenGroupKey
+        ? nextGroups.find((group) => group.key === taskGalleryOpenGroupKey)
+        : null;
+      if (taskGalleryOpenGroupKey && (!galleryGroup || galleryGroup.windows.length < 3 || taskGroupDisplay(galleryGroup) !== 'capsule')) {
+        void closeTaskGallery();
+      } else if (galleryGroup && taskGalleryOpenNonce) {
+        const galleryElement = document.querySelector<HTMLElement>(`[data-task-group-key="${CSS.escape(galleryGroup.key)}"] .task-capsule`);
+        const galleryRect = galleryElement?.getBoundingClientRect();
+        taskGalleryOpenAnchor = galleryRect ? { left: galleryRect.left, width: galleryRect.width } : taskGalleryOpenAnchor;
+        void showTaskGalleryNative({
+          nonce: taskGalleryOpenNonce,
+          groupKey: galleryGroup.key,
+          label: galleryGroup.label,
+          anchorLeft: galleryRect?.left ?? taskGalleryOpenAnchor?.left ?? 0,
+          anchorWidth: galleryRect?.width ?? taskGalleryOpenAnchor?.width ?? 0,
+          focusGallery: false,
+          refreshExisting: true,
+          windows: taskGroupGalleryItems(galleryGroup)
+        }).catch((error) => console.error(`Failed to refresh task gallery for ${galleryGroup.key}`, error));
+      }
     }));
     registerAsyncUnlistener(listen('taskbar:refresh-windows', () => {
       void requestTaskbarWindowsRefresh();
     }));
-    registerAsyncUnlistener(listen<QuickLaunchClosedPayload>(QUICK_LAUNCH_CLOSED_EVENT, (event) => {
+    registerAsyncUnlistener(listen<QuickLaunchClosedPayload>(QUICK_LAUNCH_CLOSED_EVENT, (event: { payload: QuickLaunchClosedPayload }) => {
       if (!isValidQuickLaunchPayload(event.payload) || event.payload.nonce !== quickLaunchSessionNonce) return;
       quickLaunchSessionNonce = null;
       quickLaunchPanelOpen = false;
+    }));
+    registerAsyncUnlistener(listen<{ nonce: string | null }>('task-gallery:closed', (event: { payload: { nonce: string | null } }) => {
+      if (event.payload.nonce && event.payload.nonce !== taskGalleryOpenNonce) return;
+      taskGalleryOpenGroupKey = null;
+      taskGalleryOpenNonce = null;
+      taskGalleryOpenAnchor = null;
     }));
 
     registerAsyncUnlistener(listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
@@ -887,6 +1059,7 @@
 
     registerAsyncUnlistener(listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
       clearPreviewHideTimer();
+      cancelTaskGalleryClose();
     }));
 
     registerAsyncUnlistener(listen<TaskPreviewHideRequest>(TASK_PREVIEW_HIDE_REQUEST_EVENT, (event: { payload: TaskPreviewHideRequest }) => {
@@ -949,8 +1122,10 @@
       disposed = true;
       clearPreviewShowTimer();
       clearPreviewHideTimer();
-      const requestId = nextPreviewRequestId();
-      void hideTaskWindowPreview(requestId).catch(() => undefined);
+      cancelTaskGalleryOpen();
+      cancelTaskGalleryClose();
+      void hideTaskGalleryNative().catch(() => undefined);
+      void hidePreview();
       window.clearTimeout(runtimeMetricsTimer);
       window.removeEventListener('resize', resizeHandler);
       window.removeEventListener('keydown', keydownHandler, true);
@@ -1001,7 +1176,7 @@
             class:task-group-minimized={group.isMinimized}
             class:task-group-dragging={draggingGroupKey === group.key}
             class:task-group-drop-target={dropTargetGroupKey === group.key && draggingGroupKey !== group.key}
-            class="task-group"
+            class={`task-group ${taskGroupDisplayClass(group)}`}
             data-task-group-key={group.key}
             data-window-count={group.windows.length}
             role="group"
@@ -1013,29 +1188,39 @@
             on:pointercancel={cancelTaskGroupPointerDrag}
             on:lostpointercapture={handleTaskGroupLostPointerCapture}
           >
-            {#if taskGroupHasToast(group)}
-              <span class="task-count" aria-label={`${group.toastCount} ${group.toastCount === 1 ? 'toast' : 'toasts'}`}>
-                {group.toastCount}
-              </span>
-            {:else if group.windows.length > 1}
-              <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
-            {/if}
-            {#each group.windows as taskWindow (taskWindow.hwnd)}
+            {#if taskGroupDisplay(group) === 'direct'}
+              {#each group.windows as taskWindow (taskWindow.hwnd)}
+                <MeltActionButton
+                  class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}`}
+                  type="button"
+                  ariaLabel={taskWindowActionLabel(taskWindow)}
+                  disabled={activatingHwnd === taskWindow.hwnd}
+                  onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
+                  onClick={(event) => handleTaskWindowClick(taskWindow, event)}
+                  onMouseEnter={(event) => queuePreview(taskWindow, event)}
+                  onMouseLeave={schedulePreviewHide}
+                  onContextMenu={(event) => void openTaskMenu(taskWindow, event)}
+                >
+                  <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
+                  <span class="task-label">{taskWindowLabel(taskWindow)}</span>
+                </MeltActionButton>
+              {/each}
+            {:else}
               <MeltActionButton
-                class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}`}
+                class={`task-button task-capsule${group.isActive ? ' task-button-active' : ''}${group.isMinimized ? ' task-button-minimized' : ''}`}
                 type="button"
-                ariaLabel={taskWindowActionLabel(taskWindow)}
-                disabled={activatingHwnd === taskWindow.hwnd}
-                onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}
-                onClick={(event) => handleTaskWindowClick(taskWindow, event)}
-                onMouseEnter={(event) => queuePreview(taskWindow, event)}
-                onMouseLeave={schedulePreviewHide}
-                onContextMenu={(event) => void openTaskMenu(taskWindow, event)}
+                ariaLabel={taskGroupLabel(group)}
+                ariaExpanded={taskGalleryOpenGroupKey === group.key}
+                ariaHaspopup="dialog"
+                onClick={(event) => handleTaskGalleryClick(group, event)}
+                onMouseEnter={(event) => scheduleTaskGalleryOpen(group, event)}
+                onMouseLeave={() => scheduleTaskGalleryClose(group.key)}
               >
-                <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
-                <span class="task-label">{taskWindowLabel(taskWindow)}</span>
+                <img class="task-icon" src={taskGroupGalleryItems(group)[0]?.iconDataUrl ?? ''} alt="" draggable="false" />
+                <span class="task-label">{group.label}</span>
+                <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
               </MeltActionButton>
-            {/each}
+            {/if}
           </div>
         {/each}
       {:else}

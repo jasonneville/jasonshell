@@ -56,7 +56,7 @@ test('scheduled hide keeps preview alive until backend hide event arrives', () =
   const hideBody = functionBody(previewSource, 'requestPreviewHide');
   assert.match(hideBody, /if \(mode === 'immediate'\)/);
   assert.match(hideBody, /preview = null;/);
-  assert.match(hideBody, /await emit\(TASK_PREVIEW_HIDE_REQUEST_EVENT, \{ mode \}\);/);
+  assert.match(hideBody, /await emit\(TASK_PREVIEW_HIDE_REQUEST_EVENT, \{ mode, preserveGallery \}\);/);
   assert.doesNotMatch(hideBody, /if \(mode === 'schedule'\)[\s\S]*preview = null;/);
 });
 
@@ -68,8 +68,9 @@ test('preview close button is accessible red X and does not activate preview', (
   assert.match(previewSource, />×<|>✕</);
   assert.match(closeBody, /event\.preventDefault\(\)/);
   assert.match(closeBody, /event\.stopPropagation\(\)/);
-  assert.match(closeBody, /await closePreviewedTaskWindow\(preview\.hwnd\)/);
-  assert.match(closeBody, /await requestPreviewHide\('immediate'\)/);
+  assert.match(closeBody, /await closePreviewedTaskWindow\(preview\.hwnd, preview\.galleryNonce\)/);
+  assert.match(closeBody, /const preserveGallery = Boolean\(preview\.galleryNonce\)/);
+  assert.match(closeBody, /await requestPreviewHide\('immediate', preserveGallery\)/);
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /top:/);
   assert.match(closeButtonRule, /right:/);
@@ -80,9 +81,10 @@ test('preview close button is accessible red X and does not activate preview', (
 });
 
 test('close previewed task window wrapper validates external hwnd and command wiring', () => {
-  assert.match(previewWrapper, /export function closePreviewedTaskWindow\(hwnd: string\): Promise<void>/);
+  assert.match(previewWrapper, /export function closePreviewedTaskWindow\(hwnd: string, galleryNonce\?: string \| null\): Promise<void>/);
   assert.match(previewWrapper, /if \(!hwnd\.trim\(\)\)/);
   assert.match(previewWrapper, /invoke\(IPC_COMMANDS\.closeTaskWindow, \{ hwnd \}\)/);
+  assert.match(previewWrapper, /invoke\(IPC_COMMANDS\.closeTaskGalleryPreviewedWindow, \{ args: \{ nonce: galleryNonce, hwnd \} \}\)/);
   assert.match(ipcCommands, /closeTaskWindow: 'close_task_window'/);
   assert.match(taskbarWindowsWrapper, /closeTaskWindow\(hwnd: string\): Promise<void>/);
   assert.match(taskWindowsRs, /pub fn close_task_window\(hwnd: String\) -> Result<\(\), String>/);

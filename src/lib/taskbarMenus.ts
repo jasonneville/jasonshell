@@ -3,7 +3,7 @@ import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export type ShowTaskWindowContextMenuRequest = {
   hwnd: string;
-  processId: number;
+  processId: number | null;
   isMinimized: boolean;
   x: number;
   y: number;

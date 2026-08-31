@@ -19,6 +19,7 @@ pub const SEARCH_PANEL_LABEL: &str = "search-panel";
 pub const STACK_POPUP_LABEL: &str = "stack-popup";
 pub const PROCESS_MANAGER_LABEL: &str = "process-manager";
 pub const QUICK_LAUNCH_PANEL_LABEL: &str = "quick-launch-panel";
+pub const TASK_GALLERY_LABEL: &str = "task-gallery";
 pub const CONTROL_PLANE_LABEL: &str = "control-plane";
 pub const SETTINGS_PANEL_LABEL: &str = "settings-panel";
 pub const TRAY_PANEL_LABEL: &str = "tray-panel";
@@ -35,6 +36,7 @@ pub const ALL_LABELS: &[&str] = &[
     STACK_POPUP_LABEL,
     PROCESS_MANAGER_LABEL,
     QUICK_LAUNCH_PANEL_LABEL,
+    TASK_GALLERY_LABEL,
     CONTROL_PLANE_LABEL,
     SETTINGS_PANEL_LABEL,
     TRAY_PANEL_LABEL,
@@ -57,6 +59,8 @@ pub const PROCESS_MANAGER_WIDTH_LOGICAL: f64 = 720.0;
 pub const PROCESS_MANAGER_HEIGHT_LOGICAL: f64 = 520.0;
 pub const QUICK_LAUNCH_PANEL_WIDTH_LOGICAL: f64 = 360.0;
 pub const QUICK_LAUNCH_PANEL_HEIGHT_LOGICAL: f64 = 360.0;
+pub const TASK_GALLERY_WIDTH_LOGICAL: f64 = 160.0;
+pub const TASK_GALLERY_HEIGHT_LOGICAL: f64 = BOTTOM_BAR_HEIGHT_LOGICAL;
 pub const CONTROL_PLANE_WIDTH_LOGICAL: f64 = 860.0;
 pub const CONTROL_PLANE_HEIGHT_LOGICAL: f64 = 620.0;
 pub const SETTINGS_PANEL_WIDTH_LOGICAL: f64 = 440.0;
@@ -118,6 +122,7 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _stack = build_stack_popup_window(app)?;
     let _process_manager = build_process_manager_window(app)?;
     let _quick_launch_panel = build_quick_launch_panel_window(app)?;
+    let _task_gallery = build_task_gallery_window(app)?;
     let _control_plane = build_control_plane_window(app)?;
     let _settings_panel = build_settings_panel_window(app)?;
     let _tray_panel = build_tray_panel_window(app)?;
@@ -151,6 +156,29 @@ fn build_quick_launch_panel_window(app: &mut App) -> AppResult<WebviewWindow> {
     .skip_taskbar(true)
     .theme(Some(Theme::Dark))
     .title("JasonShell Quick Launch")
+    .visible(false)
+    .build()?)
+}
+
+fn build_task_gallery_window(app: &mut App) -> AppResult<WebviewWindow> {
+    Ok(WebviewWindowBuilder::new(
+        app,
+        TASK_GALLERY_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .always_on_top(true)
+    .devtools(false)
+    .decorations(false)
+    .focused(false)
+    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+    .inner_size(TASK_GALLERY_WIDTH_LOGICAL, TASK_GALLERY_HEIGHT_LOGICAL)
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(false)
+    .shadow(true)
+    .skip_taskbar(true)
+    .theme(Some(Theme::Dark))
+    .title("JasonShell Task Gallery")
     .visible(false)
     .build()?)
 }

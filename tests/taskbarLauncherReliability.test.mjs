@@ -135,12 +135,12 @@ test('active task window context menu exposes PID lookup and taskbar pin actions
   const processManagerRust = readFileSync(new URL('../src-tauri/src/process_manager.rs', import.meta.url), 'utf8');
   const processManagerSurface = readFileSync(new URL('../src/components/ProcessManagerSurface.svelte', import.meta.url), 'utf8');
 
-  assert.match(taskbarMenuTs, /processId: number/);
-  assert.match(bottomBarSource, /processId: taskWindow\.processId/);
+  assert.match(taskbarMenuTs, /processId: number \| null/);
+  assert.match(bottomBarSource, /processId: normalizeTaskGalleryProcessId\(taskWindow\.processId\)/);
   assert.match(taskbarMenuRs, /"Pin to taskbar"/);
   assert.match(taskbarMenuRs, /launchers::can_pin_task_window_to_taskbar\(&request\.hwnd\)/);
   assert.match(taskbarMenuRs, /"pin"\s*=>\s*launchers::pin_task_window_to_taskbar/);
-  assert.match(taskbarMenuRs, /PID \{\} - open in Process Manager/);
+  assert.match(taskbarMenuRs, /PID \{pid\} - open in Process Manager/);
   assert.match(taskbarMenuRs, /process_manager::show_process_manager/);
   assert.match(processManagerRust, /pub focus_pid: Option<u32>/);
   assert.match(processManagerRust, /emit\(PROCESS_MANAGER_OPEN_EVENT, request\.focus_pid\)/);

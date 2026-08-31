@@ -1,6 +1,7 @@
 export const SHELL_SURFACES = {
   topBar: 'top-bar',
   bottomBar: 'bottom-bar',
+  taskGallery: 'task-gallery',
   taskPreview: 'task-preview',
   searchPanel: 'search-panel',
   stackPopup: 'stack-popup',
@@ -21,6 +22,7 @@ export type ShellSurface = KnownShellSurface | 'unknown';
 export const SHELL_SURFACE_TITLES: Record<KnownShellSurface, string> = {
   [SHELL_SURFACES.topBar]: 'JasonShell Top Bar',
   [SHELL_SURFACES.bottomBar]: 'JasonShell Taskbar',
+  [SHELL_SURFACES.taskGallery]: 'Task Gallery',
   [SHELL_SURFACES.taskPreview]: 'Task Preview',
   [SHELL_SURFACES.searchPanel]: 'Search Panel',
   [SHELL_SURFACES.stackPopup]: 'Stack Browser',

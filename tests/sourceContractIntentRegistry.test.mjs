@@ -63,6 +63,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'stackPopupPagingPhase5Wiring.test.mjs',
     'stackPopupPagingPhase6Responsiveness.test.mjs',
     'taskbarPreviewContract.test.mjs',
+    'taskbarGalleryContract.test.mjs',
     'taskbarAttentionModel.test.mjs',
     'taskbarSmokeScript.test.mjs',
     'taskbarRuntimeDiagnostics.test.mjs',

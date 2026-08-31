@@ -10,6 +10,7 @@ export type ShowTaskPreviewRequest = {
   isMinimized: boolean;
   anchorLeft: number;
   anchorWidth: number;
+  galleryNonce?: string | null;
 };
 
 export const TASK_PREVIEW_SOURCES = {
@@ -26,6 +27,7 @@ export type TaskPreviewPayload = {
   processName: string;
   iconDataUrl: string;
   isMinimized: boolean;
+  galleryNonce?: string | null;
   previewSource?: TaskPreviewSource | null;
   nativeLiveThumbnailActive?: boolean | null;
   imageDataUrl?: string | null;
@@ -45,13 +47,19 @@ export function showTaskWindowPreview(request: ShowTaskPreviewRequest): Promise<
   return invoke(IPC_COMMANDS.showTaskWindowPreview, { request });
 }
 
+export function allocateTaskPreviewRequestId(): Promise<number> {
+  return invoke(IPC_COMMANDS.allocateTaskPreviewRequestId);
+}
+
 export function hideTaskWindowPreview(requestId: number): Promise<void> {
   return invoke(IPC_COMMANDS.hideTaskWindowPreview, { requestId });
 }
 
-export function closePreviewedTaskWindow(hwnd: string): Promise<void> {
+export function closePreviewedTaskWindow(hwnd: string, galleryNonce?: string | null): Promise<void> {
   if (!hwnd.trim()) {
     return Promise.reject(new Error('Missing preview task window handle'));
   }
-  return invoke(IPC_COMMANDS.closeTaskWindow, { hwnd });
+  return galleryNonce
+    ? invoke(IPC_COMMANDS.closeTaskGalleryPreviewedWindow, { args: { nonce: galleryNonce, hwnd } })
+    : invoke(IPC_COMMANDS.closeTaskWindow, { hwnd });
 }

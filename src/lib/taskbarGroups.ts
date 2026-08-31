@@ -12,6 +12,27 @@ export type TaskWindowGroup = {
   toastCount: number;
 };
 
+export type TaskGroupDisplayPolicy = 'auto' | 'always' | 'never';
+export type TaskGroupDisplayMode = 'direct' | 'capsule';
+
+export type TaskGroupDisplayModeArgs = {
+  policy: TaskGroupDisplayPolicy;
+  pressure: boolean;
+};
+
+export type TaskGroupAggregateState = Pick<
+  TaskWindowGroup,
+  'isActive' | 'isMinimized' | 'isBusy' | 'hasAttention' | 'toastCount'
+>;
+
+export type TaskbarStripPressureStateArgs = {
+  previousPressure: boolean;
+  availableWidth?: number;
+  requiredDirectWidth: number;
+  enterThreshold: number;
+  exitThreshold: number;
+};
+
 export type TaskbarGroupRect = {
   key: string;
   left: number;
@@ -107,12 +128,12 @@ export function buildTaskWindowGroups(
 
     if (group) {
       group.windows.push(taskWindow);
-      group.isActive ||= taskWindow.isActive;
-      group.isMinimized &&= taskWindow.isMinimized;
-      group.isBusy ||= taskWindow.activityState === 'busy'
-        && isTaskWindowActivityIndicatorEligible(taskWindow);
-      group.hasAttention ||= taskWindow.attentionState === 'requested';
-      group.toastCount = Math.max(group.toastCount, taskWindow.toastCount);
+      const aggregate = deriveTaskGroupAggregateState(group.windows);
+      group.isActive = aggregate.isActive;
+      group.isMinimized = aggregate.isMinimized;
+      group.isBusy = aggregate.isBusy;
+      group.hasAttention = aggregate.hasAttention;
+      group.toastCount = aggregate.toastCount;
       continue;
     }
 
@@ -121,18 +142,71 @@ export function buildTaskWindowGroups(
       label: taskWindow.processName || taskWindow.title || 'Application',
       iconDataUrl: taskWindow.iconDataUrl,
       windows: [taskWindow],
-      isActive: taskWindow.isActive,
-      isMinimized: taskWindow.isMinimized,
-      isBusy: taskWindow.activityState === 'busy'
-        && isTaskWindowActivityIndicatorEligible(taskWindow),
-      hasAttention: taskWindow.attentionState === 'requested',
-      toastCount: taskWindow.toastCount
+      ...deriveTaskGroupAggregateState([taskWindow])
     });
   }
 
   const firstSeenOrder = Array.from(groups.keys());
   const orderedKeys = reconcileTaskWindowGroupOrder(preferredOrder, firstSeenOrder);
   return orderedKeys.map((key) => groups.get(key)).filter((group): group is TaskWindowGroup => Boolean(group));
+}
+
+export function deriveTaskGroupAggregateState(windows: TaskbarWindow[]): TaskGroupAggregateState {
+  let isActive = false;
+  let isMinimized = windows.length > 0;
+  let isBusy = false;
+  let hasAttention = false;
+  let toastCount = 0;
+
+  for (const taskWindow of windows) {
+    isActive ||= taskWindow.isActive;
+    isMinimized &&= taskWindow.isMinimized;
+    isBusy ||= taskWindow.activityState === 'busy' && isTaskWindowActivityIndicatorEligible(taskWindow);
+    hasAttention ||= taskWindow.attentionState === 'requested';
+    toastCount = Math.max(toastCount, taskWindow.toastCount);
+  }
+
+  return { isActive, isMinimized, isBusy, hasAttention, toastCount };
+}
+
+export function taskGroupDisplayMode(
+  group: TaskWindowGroup,
+  args: TaskGroupDisplayModeArgs
+): TaskGroupDisplayMode {
+  if (group.windows.length <= 1) {
+    return 'direct';
+  }
+  if (args.policy === 'never') {
+    return 'direct';
+  }
+  if (args.policy === 'always') {
+    return 'capsule';
+  }
+  return args.pressure || group.windows.length >= 3 ? 'capsule' : 'direct';
+}
+
+export function taskGroupRepresentativeWindow(group: TaskWindowGroup): TaskbarWindow {
+  return group.windows.find((taskWindow) => taskWindow.isActive) ?? group.windows[0];
+}
+
+export function taskGroupGalleryItems(group: TaskWindowGroup): TaskbarWindow[] {
+  return group.windows.slice();
+}
+
+export function taskbarStripPressureState(args: TaskbarStripPressureStateArgs): boolean {
+  const { previousPressure, availableWidth, requiredDirectWidth, enterThreshold, exitThreshold } = args;
+  if (availableWidth === undefined || availableWidth === 0) {
+    return previousPressure;
+  }
+
+  const deficit = requiredDirectWidth - availableWidth;
+  const spare = availableWidth - requiredDirectWidth;
+
+  if (!previousPressure) {
+    return deficit > enterThreshold;
+  }
+
+  return spare < exitThreshold;
 }
 
 export function reconcileTaskWindowGroupOrder(previousOrder: string[], visibleKeys: string[]) {
