@@ -89,6 +89,7 @@
     taskbarOverflowState,
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
   const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
   let launcherMessage = 'Loading Explorer taskbar pins…';
@@ -1255,6 +1256,6 @@
     ariaLabel="Open process manager"
     onClick={(event) => void openProcessManager(event)}
   >
-    ▦
+    <MaterialSymbolIcon name="monitor_heart" />
   </MeltActionButton>
 </div>

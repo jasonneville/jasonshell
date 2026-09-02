@@ -33,25 +33,33 @@
   outline: none;
 }
 
+.top-bar .stack-browser-button {
+  width: 1.95rem;
+}
+
+.top-bar .stack-browser-button:hover {
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
+}
+
 .top-bar .shell-home-button {
   align-items: center;
-  background: var(--js-bg-active);
-  border: 1px solid var(--js-color-accent-border);
+  background: none;
+  border: none;
   border-radius: var(--js-radius-sm);
   color: var(--js-color-text-strong);
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 0.64rem;
-  font-weight: 850;
   height: 1.4rem;
-  letter-spacing: 0;
-  padding: 0 0.5rem;
+  justify-content: center;
+  padding: 0;
+  width: 1.95rem;
 }
 
 .top-bar .shell-home-button:hover {
-  background: var(--js-color-control-hover);
-  box-shadow: var(--js-inset-highlight);
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .top-bar .top-bar-identity {
@@ -271,7 +279,6 @@
   flex: 0 0 auto;
 }
 
-.top-bar .terminal-button,
 .top-bar .command-button {
   align-items: center;
   background: transparent;
@@ -280,32 +287,34 @@
   cursor: pointer;
   display: inline-flex;
   font-size: 0.72rem;
-  height: 1.4rem;
+  height: 1.7rem;
+  justify-content: center;
+  width: 1.9rem;
+}
+
+.top-bar .terminal-button {
+  align-items: center;
+  background: transparent;
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.72rem;
+  height: 1.7rem;
   justify-content: center;
   width: 1.9rem;
 }
 
 .top-bar .terminal-button:hover,
 .top-bar .command-button:hover {
-  background: var(--js-color-surface-sunken);
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .top-bar .terminal-button.terminal-complete {
   background: var(--js-color-accent-soft);
   box-shadow: 0 0 0 1px var(--js-color-accent-border), 0 0 0.7rem var(--js-color-accent-soft);
-  color: var(--js-color-text-strong);
-}
-
-.top-bar .terminal-button.terminal-complete .terminal-glyph {
   color: var(--js-color-accent);
-  font-weight: 900;
-}
-
-.top-bar .terminal-glyph,
-.top-bar .command-glyph {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  letter-spacing: -0.01em;
-  line-height: 1;
 }
 
 .top-bar .tray-button {
@@ -316,13 +325,14 @@
   cursor: pointer;
   display: inline-flex;
   font-size: 0.8rem;
-  height: 1.4rem;
+  height: 1.7rem;
   justify-content: center;
   width: 1.45rem;
 }
 
 .top-bar .tray-button:hover {
-  background: var(--js-color-surface-sunken);
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .top-bar .tray-arrow {
@@ -336,55 +346,14 @@
   color: var(--js-color-text);
   cursor: pointer;
   display: inline-flex;
-  height: 1.4rem;
+  height: 1.7rem;
   justify-content: center;
   width: 1.8rem;
-  transition: all 0.2s ease;
 }
 
 .top-bar .sound-button:hover {
-  background: var(--js-color-surface-sunken);
-  color: var(--js-color-accent);
-}
-
-/* Speaker Base */
-.top-bar .sound-icon {
-  width: 0.2rem;
-  height: 0.3rem;
-  background: currentColor;
-  border-radius: 1px;
-  position: relative;
-  display: inline-block;
-  margin-right: 0.4rem; 
-}
-
-/* Sleek Cone */
-.top-bar .sound-icon::before {
-  content: '';
-  position: absolute;
-  left: 0.1rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 0.35rem;
-  height: 0.65rem;
-  background: currentColor;
-  clip-path: polygon(0% 35%, 100% 0%, 100% 100%, 0% 65%);
-}
-
-/* Single Tight Wave */
-.top-bar .sound-icon::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  
-  /* Kept exactly in the same tight position */
-  left: 0.52rem; 
-  width: 0.22rem;
-  height: 0.45rem;
-  border-right: 1.2px solid currentColor;
-  border-radius: 0 100% 100% 0;
-  opacity: 0.85;
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .top-bar .search-clear-button {

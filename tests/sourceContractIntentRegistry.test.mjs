@@ -27,6 +27,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'commandPanelCloseButton.test.mjs',
     'quickIcons.test.mjs',
     'quickIconsPhase3.test.mjs',
+    'persistentTerminalPanel.test.mjs',
     'quickLaunchReliability.test.mjs',
     'searchAppCacheRefresh.test.mjs',
     'searchClearButtons.test.mjs',

@@ -117,10 +117,6 @@
 
 <div class="tray-panel" id="tray-panel" role="dialog" tabindex="-1" aria-label="Notification area icons">
   <header class="tray-header">
-    <div class="tray-header-copy">
-      <span class="tray-kicker">Notification area</span>
-      <strong>Icons</strong>
-    </div>
     <button type="button" class="tray-close-button" aria-label="Close notification area icons" on:click={() => void hideTrayPanel()}>
       ×
     </button>

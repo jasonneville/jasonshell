@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldAnimateTerminalCommand, terminalActivityGlyph, terminalCompletionGlyph } from '../dist-tests/features/top-bar/topBarUxState.js';
+import { shouldAnimateTerminalCommand } from '../dist-tests/features/top-bar/topBarUxState.js';
+import { MATERIAL_SYMBOL_ICON_NAMES } from '../dist-tests/components/icons/materialSymbolIcons.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -9,9 +10,12 @@ const app = read('src/App.svelte');
 const surfaceLoader = read('src/lib/surfaceLoader.ts');
 const topBar = read('src/components/TopBar.svelte');
 const topBarCss = read('src/components/TopBar.css');
+const materialSymbolIcon = read('src/components/icons/MaterialSymbolIcon.svelte');
+const materialSymbolIcons = read('src/components/icons/materialSymbolIcons.ts');
 const stackPopup = read('src/components/StackPopupSurface.svelte');
 const terminalPanel = read('src/components/TerminalPanelSurface.svelte');
 const terminalPanelCss = read('src/components/TerminalPanelSurface.css');
+const bottomBar = read('src/components/BottomBar.svelte');
 const shellSurface = read('src/lib/shellSurface.ts');
 const ipcSurfaces = read('src/ipc/surfaces.ts');
 const ipcCommands = read('src/ipc/commands.ts');
@@ -49,13 +53,11 @@ test('top bar terminal button sits before quick commands and toggles terminal pa
   assert.match(topBar, /class=\{`terminal-button\$\{terminalCompletionPending \? ' terminal-complete' : ''\}`/);
   assert.match(topBar, /toggleTerminalPanel\(event\.currentTarget\)/);
   assert.match(topBar, /class="terminal-control"[\s\S]*class="command-control"/);
-  assert.match(topBar, /terminalActivityGlyph\(terminalActivityNowMs, lastTerminalActivityMs\)/);
   assert.match(topBar, /TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity'/);
-  assert.match(topBar, /listen<TopBarTerminalActivityPayload>\(TOP_BAR_TERMINAL_ACTIVITY_EVENT[\s\S]*activeTerminalActivitySessions\.delete\(sessionId\)[\s\S]*lastTerminalActivityMs = null/);
-  assert.match(topBar, /listen<TopBarTerminalActivityPayload>\(TOP_BAR_TERMINAL_ACTIVITY_EVENT[\s\S]*event\.payload\?\.completed[\s\S]*terminalCompletionPending = true[\s\S]*playTerminalCompletionSound\(\)/);
-  assert.match(topBar, /listen<TopBarTerminalActivityPayload>\(TOP_BAR_TERMINAL_ACTIVITY_EVENT[\s\S]*activeTerminalActivitySessions\.add\(sessionId\)[\s\S]*terminalCompletionPending = false[\s\S]*lastTerminalActivityMs = Date\.now\(\)/);
-  assert.match(topBar, /<span class="terminal-glyph" aria-hidden="true">\{terminalGlyph\}<\/span>/);
-  assert.match(topBar, /<span class="command-glyph" aria-hidden="true">⌘<\/span>/);
+  assert.match(topBar, /if \(event\.payload\?\.active === false\) \{[\s\S]*terminalCompletionPending = true;[\s\S]*playTerminalCompletionSound\(\)/);
+  assert.match(topBar, /terminalCompletionPending = false;/);
+  assert.match(topBar, /<MaterialSymbolIcon name="terminal" \/>/);
+  assert.match(topBar, /<MaterialSymbolIcon name="code" \/>/);
   assert.match(topBarCss, /\.top-bar \.terminal-button/);
   assert.match(topBarCss, /\.top-bar \.terminal-button\.terminal-complete/);
   assert.match(terminalPanel, /notifyTopBarForSubmittedCommand/);
@@ -70,14 +72,11 @@ test('top bar terminal button sits before quick commands and toggles terminal pa
   assert.match(terminalPanelBackend, /emit_to\(TERMINAL_PANEL_LABEL, TERMINAL_PANEL_OPEN_EVENT/);
 });
 
-test('terminal top bar glyph cycles while important command activity is recent', () => {
-  assert.equal(terminalActivityGlyph(10_000, null), '>_');
-  assert.equal(terminalActivityGlyph(10_000, 7_000), '>_');
-  assert.equal(terminalActivityGlyph(0, 0), '>.');
-  assert.equal(terminalActivityGlyph(450, 0), '>..');
-  assert.equal(terminalActivityGlyph(900, 0), '>...');
-  assert.equal(terminalActivityGlyph(1_350, 0), '>.');
-  assert.equal(terminalCompletionGlyph(), '>✓');
+test('terminal top bar icon keeps completion state without prompt glyph text', () => {
+  assert.match(topBar, /terminalCompletionPending \? ' terminal-complete' : ''/);
+  assert.match(topBar, /<MaterialSymbolIcon name="terminal" \/>/);
+  assert.doesNotMatch(topBar, /terminalActivityGlyph|terminalCompletionGlyph|terminal-glyph/);
+  assert.match(topBarCss, /\.top-bar \.terminal-button\.terminal-complete \{[\s\S]*color: var\(--js-color-accent\);/);
 });
 
 test('terminal top bar animation is reserved for important submitted commands', () => {
@@ -216,6 +215,29 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanelCss, /caret-color: transparent !important;/);
   assert.match(terminalPanelCss, /height: 1px !important;/);
   assert.match(terminalPanelCss, /\.terminal-panel-output :global\(\.xterm-rows\)/);
+});
+
+test('material symbol icon set keeps official 960-grid paths and equal inline sizing', () => {
+  assert.deepEqual(MATERIAL_SYMBOL_ICON_NAMES, ['settings', 'folder', 'terminal', 'code', 'speaker', 'monitor_heart']);
+  assert.match(materialSymbolIcons, /settings:[\s\S]*'m370-80-16-128q-13-5-24\.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13\.5v-27q0-6\.5 1-13\.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24\.5 12t22\.5 15l119-50 110 190-103 78q1 7 1 13\.5v27q0 6\.5-2 13\.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm70-80h79l14-106q31-8 57\.5-23\.5T639-327l99 41 39-68-86-65q5-14 7-29\.5t2-31\.5q0-16-2-31\.5t-7-29\.5l86-65-39-68-99 42q-22-23-48\.5-38\.5T533-694l-13-106h-79l-14 106q-31 8-57\.5 23\.5T321-633l-99-41-39 68 86 64q-5 15-7 30t-2 32q0 16 2 31t7 30l-86 65 39 68 99-42q22 23 48\.5 38\.5T427-266l13 106Zm42-180q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99\.5 41T342-480q0 58 40\.5 99t99\.5 41Zm-2-140Z'/);
+  assert.match(materialSymbolIcons, /code: 'M320-240 80-480l240-240 57 57-184 184 183 183-56 56Zm320 0-57-57 184-184-183-183 56-56 240 240-240 240Z'/);
+  assert.match(materialSymbolIcons, /speaker: 'M560-131v-82q90-26 145-100t55-168q0-94-55-168T560-749v-82q124 28 202 125\.5T840-481q0 127-78 224\.5T560-131ZM120-360v-240h160l200-200v640L280-360H120Zm440 40v-322q47 22 73\.5 66t26\.5 96q0 51-26\.5 94\.5T560-320ZM400-606l-86 86H200v80h114l86 86v-252ZM300-480Z'/);
+  assert.match(materialSymbolIcons, /folder: 'M160-160q-33 0-56\.5-23\.5T80-240v-480q0-33 23\.5-56\.5T160-800h240l80 80h320q33 0 56\.5 23\.5T880-640v400q0 33-23\.5 56\.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z'/);
+  assert.match(materialSymbolIcons, /terminal: 'M160-160q-33 0-56\.5-23\.5T80-240v-480q0-33 23\.5-56\.5T160-800h640q33 0 56\.5 23\.5T880-720v480q0 33-23\.5 56\.5T800-160H160Zm0-80h640v-400H160v400Zm140-40-56-56 103-104-104-104 57-56 160 160-160 160Zm180 0v-80h240v80H480Z'/);
+  assert.match(materialSymbolIcons, /monitor_heart: 'M80-600v-120q0-33 23\.5-56\.5T160-800h640q33 0 56\.5 23\.5T880-720v120h-80v-120H160v120H80Zm80 440q-33 0-56\.5-23\.5T80-240v-120h80v120h640v-120h80v120q0 33-23\.5 56\.5T800-160H160Zm261-125\.5q10-5\.5 15-16\.5l124-248 44 88q5 11 15 16\.5t21 5\.5h240v-80H665l-69-138q-5-11-15-15\.5t-21-4\.5q-11 0-21 4\.5T524-658L400-410l-44-88q-5-11-15-16\.5t-21-5\.5H80v80h215l69 138q5 11 15 16\.5t21 5\.5q11 0 21-5\.5ZM480-480Z'/);
+  assert.match(materialSymbolIcon, /viewBox="0 -960 960 960"/);
+  assert.match(materialSymbolIcon, /fill="currentColor"/);
+  assert.match(materialSymbolIcon, /display: inline-block;/);
+  assert.match(materialSymbolIcon, /vertical-align: middle;/);
+  assert.match(materialSymbolIcon, /width: 1rem;/);
+  assert.match(materialSymbolIcon, /height: 1rem;/);
+  assert.match(topBar, /<MaterialSymbolIcon name="settings" \/>/);
+  assert.match(topBar, /<MaterialSymbolIcon name="folder" \/>/);
+  assert.match(topBar, /<MaterialSymbolIcon name="terminal" \/>/);
+  assert.match(topBar, /<MaterialSymbolIcon name="code" \/>/);
+  assert.match(topBar, /<MaterialSymbolIcon name="speaker" \/>/);
+  assert.match(bottomBar, /<MaterialSymbolIcon name="monitor_heart" \/>/);
+  assert.match(topBarCss, /\.top-bar \.terminal-button\.terminal-complete \{[\s\S]*color: var\(--js-color-accent\);/);
 });
 
 test('terminal tabs are backend-session authoritative and are not capped at four', () => {

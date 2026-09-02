@@ -10,6 +10,7 @@
     "src/vite-env.d.ts",
     "src/lib/*.ts",
     "src/features/**/*.ts",
-    "src/ipc/**/*.ts"
+    "src/ipc/**/*.ts",
+    "src/components/icons/**/*.ts"
   ]
 }

@@ -66,7 +66,7 @@ test('top bar command button is left of tray button and enforces popup exclusivi
   assert.match(topBarSource, /if \(commandOpen && \(!target \|\| !commandControl\?\.contains\(target\)\)\) \{[\s\S]*void closeCommandPanel\(\);/);
   assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(COMMAND_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*commandOpen = false;/);
   assert.match(topBarCss, /\.top-bar \.command-button \{/);
-  assert.match(topBarSource, /<span class="command-glyph" aria-hidden="true">⌘<\/span>/);
+  assert.match(topBarSource, /<MaterialSymbolIcon name="code" \/>/);
 });
 
 test('command panel surface includes compact list actions, resize controls, and command-block editor flow', () => {

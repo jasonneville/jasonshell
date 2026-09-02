@@ -131,7 +131,7 @@
     shouldShowSearchPanelForAnchor,
     type SearchPanelAnchorState
   } from '../lib/systemSearchState';
-  import { terminalActivityGlyph, terminalCompletionGlyph, topBarIdentityState } from '../features/top-bar/topBarUxState';
+  import { topBarIdentityState } from '../features/top-bar/topBarUxState';
   import {
     buildVisibleSearchRows,
     createLatestSearchQueryController,
@@ -151,6 +151,7 @@
     type SearchVisibleRowIdentity
   } from '../features/search/searchUxState';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
 
   let now = new Date();
   let shellPreferences: ShellPreferences = getInitialShellPreferences();
@@ -228,11 +229,8 @@
   let terminalOpen = false;
   let commandOpen = false;
   let calendarOpen = false;
-  let terminalActivityNowMs = Date.now();
-  let lastTerminalActivityMs: number | null = null;
   let terminalCompletionPending = false;
   let stackBrowserOpen = false;
-  const activeTerminalActivitySessions = new Set<string>();
 
   const PIN_REORDER_DRAG_THRESHOLD_PX = 4;
   const SEARCH_BLUR_CLOSE_DELAY_MS = 180;
@@ -268,9 +266,6 @@
   $: selectedVisibleIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
   $: selectedVisibleResult = selectedVisibleIndex >= 0 ? visibleRows[selectedVisibleIndex]?.result : undefined;
   $: identityState = topBarIdentityState(stackPins.length, launchers.length, searchStatus);
-  $: terminalGlyph = terminalCompletionPending
-    ? terminalCompletionGlyph()
-    : terminalActivityGlyph(terminalActivityNowMs, lastTerminalActivityMs);
   $: shellTime = formatShellTime(now, shellPreferences);
   $: shellDate = formatShellDate(now, shellPreferences.dateFormat);
   $: pinDragDeltaX = pinDragStarted ? taskbarGroupDragDelta(pinDragStartX, pinDragCurrentX) : 0;
@@ -1697,9 +1692,6 @@
     const timer = window.setInterval(() => {
       now = new Date();
     }, 1_000);
-    const terminalActivityTimer = window.setInterval(() => {
-      terminalActivityNowMs = Date.now();
-    }, 450);
     const runtimeMetricsTimer = window.setTimeout(() => {
       void reportShellSurfaceRuntimeMetrics('top-bar').catch((error) => {
         console.error('Top bar runtime metrics failed', error);
@@ -1740,24 +1732,14 @@
       stackBrowserOpen = false;
     }));
     registerAsyncUnlistener(listen<TopBarTerminalActivityPayload>(TOP_BAR_TERMINAL_ACTIVITY_EVENT, (event) => {
-      const sessionId = event.payload?.sessionId;
-      if (sessionId && event.payload?.active === false) {
-        activeTerminalActivitySessions.delete(sessionId);
-        if (!activeTerminalActivitySessions.size) {
-          lastTerminalActivityMs = null;
-        }
+      if (event.payload?.active === false) {
         if (event.payload?.completed) {
           terminalCompletionPending = true;
           playTerminalCompletionSound();
         }
         return;
       }
-      if (sessionId) {
-        activeTerminalActivitySessions.add(sessionId);
-      }
       terminalCompletionPending = false;
-      lastTerminalActivityMs = Date.now();
-      terminalActivityNowMs = lastTerminalActivityMs;
     }));
     let shellSurfaceHotkeyHandled = false;
     let terminalSurfaceHotkeyHandled = false;
@@ -1908,7 +1890,6 @@
       disposed = true;
       railScrollButtonsDisposed = true;
       window.clearInterval(timer);
-      window.clearInterval(terminalActivityTimer);
       window.clearTimeout(runtimeMetricsTimer);
       cancelSearchEngineTimer();
       cancelSearchFreshnessRetry();
@@ -1943,7 +1924,7 @@
     tooltip="Open JasonShell settings"
     onClick={(event) => void openSettingsPanel(event.currentTarget)}
   >
-    jasonshell
+    <MaterialSymbolIcon name="settings" />
   </MeltActionButton>
   <MeltActionButton
     class="stack-browser-button"
@@ -1954,7 +1935,7 @@
     tooltip="Stack Browser"
     onClick={(event) => void toggleStackBrowserPanel(event.currentTarget)}
   >
-    <span aria-hidden="true">▣</span>
+    <MaterialSymbolIcon name="folder" />
   </MeltActionButton>
   <div class="rail-wrap">
     {#if showRailScrollLeft}
@@ -2020,7 +2001,7 @@
       tooltip="Terminal"
       onClick={(event) => void toggleTerminalPanel(event.currentTarget)}
     >
-      <span class="terminal-glyph" aria-hidden="true">{terminalGlyph}</span>
+      <MaterialSymbolIcon name="terminal" />
     </MeltActionButton>
   </div>
   <div class="command-control" bind:this={commandControl}>
@@ -2033,7 +2014,7 @@
       tooltip="Quick commands"
       onClick={(event) => void toggleCommandPanel(event.currentTarget)}
     >
-      <span class="command-glyph" aria-hidden="true">⌘</span>
+      <MaterialSymbolIcon name="code" />
     </MeltActionButton>
   </div>
   <div class="tray-control" bind:this={trayControl}>
@@ -2059,7 +2040,7 @@
       tooltip="Sound controls"
       onClick={(event) => void toggleSoundPanel(event.currentTarget)}
     >
-      <span class="sound-icon" aria-hidden="true"></span>
+      <MaterialSymbolIcon name="speaker" />
     </MeltActionButton>
   </div>
   <div class="time-control" bind:this={timeControl}>
