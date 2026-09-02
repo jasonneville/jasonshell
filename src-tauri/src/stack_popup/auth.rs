@@ -98,6 +98,10 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
         ],
     },
     StackCommandAuth::AllowedCallers {
+        command: contracts::commands::TOGGLE_STACK_POPUP,
+        callers: &[contracts::surfaces::TOP_BAR],
+    },
+    StackCommandAuth::AllowedCallers {
         command: contracts::commands::BEGIN_STACK_POPUP_FOCUS_LOSS_HOLD,
         callers: &[
             contracts::surfaces::TOP_BAR,

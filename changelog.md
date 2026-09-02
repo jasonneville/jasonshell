@@ -1,4 +1,12 @@
 ## Change Ledger
+- 2026-09-01 `[CODE]` FIXED: Native Alt+1 classification now matches focused shell handlers by rejecting Ctrl+Alt+1/AltGr-like chords instead of swallowing them as Stack Browser toggles.
+- 2026-09-01 `[TOOL]` TESTED: Added a RED-first Rust modifier regression; focused native classifier test and 14/14 shell hotkey contracts pass after the fix.
+- 2026-09-01 `[CODE]` FIXED: TopBar and BottomBar now capture-handle non-repeated Alt+1 while their own webviews have focus, using the same focused-shell fallback pattern as Ctrl+Space and Alt+Backquote so Stack Browser toggling no longer depends only on native event delivery after a bar click.
+- 2026-09-01 `[TOOL]` TESTED: Added RED-first bar-focus Alt+1 routing contracts; focused hotkey test passes after both shell handlers were wired.
+- 2026-09-01 `[CODE]` FIXED: Stack Browser Alt+1 now follows search/terminal popup hotkey routing: TopBar closes from tracked open state, while a focused Stack Browser capture-handles Alt+1 and hides directly without resetting its current folder.
+- 2026-09-01 `[TOOL]` TESTED: RED-first hotkey parity contract passes 14/14; `npm run check` passes with 3 pre-existing StackGitPanel warnings; diff hygiene passes.
+- 2026-09-01 `[CODE]` FIXED: Added a dedicated Stack Browser toggle button after Settings, wired Alt+1 through the native hotkey path, and made hidden reopen prefer the latest persistent Stack popup state instead of forcing the pinned root.
+- 2026-09-01 `[TOOL]` TESTED: 34 focused source-contract/auth/changelog tests and 13 native hotkey tests passed; `npm run check` passed with 3 pre-existing StackGitPanel warnings; Rust check/format passed with pre-existing warnings only; adversarial review blockers fixed.
 - 2026-09-01 `[CODE]` FIXED: Search panel empty results now render the no-match placeholder only when no visible status message exists, so startup/loading status text no longer leaves a blank highlighted result row behind.
 - 2026-09-01 `[TOOL]` TESTED: Added a focused source-contract regression for status-bearing empty search states, saw RED on the pre-fix template, then GREEN after the Svelte gate change; `npm run check` passes with 3 pre-existing StackGitPanel selector warnings.
 - 2026-09-01 `[CODE]` FIXED: Gallery hover-enter events now carry `{ source: 'gallery' | 'preview' }`; BottomBar uses both sources for capsule-close continuity, while TaskGallerySurface ignores delayed gallery-origin self-delivery for its own close timer so the gallery cannot resurrect or stick after leaving capsule/gallery/preview.

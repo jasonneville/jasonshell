@@ -184,6 +184,7 @@ fn main() {
             stack_popup::reorder_pinned_stack_folders,
             stack_popup::show_stack_popup,
             stack_popup::hide_stack_popup,
+            stack_popup::toggle_stack_popup,
             stack_popup::get_stack_popup_request,
             stack_popup::begin_stack_popup_focus_loss_hold,
             stack_popup::end_stack_popup_focus_loss_hold,

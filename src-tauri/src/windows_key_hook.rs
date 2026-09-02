@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_MENU, VK_OEM_3, VK_RCONTROL, VK_RMENU,
-    VK_SPACE,
+    GetAsyncKeyState, VK_1, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_MENU, VK_OEM_3, VK_RCONTROL,
+    VK_RMENU, VK_SPACE,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -19,6 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str = "search:toggle-centered";
 pub const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = "terminal:toggle-panel";
+pub const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT: &str = "stack-browser:toggle";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SearchHotkeyCode {
@@ -48,6 +49,7 @@ pub struct SearchHotkeyEvent {
 pub enum SearchHotkeyDecision {
     ToggleSearch,
     ToggleTerminal,
+    ToggleStackBrowser,
     Suppress,
     PassThrough,
 }
@@ -65,6 +67,7 @@ pub struct SearchHotkeyClassifier {
     left_alt_down: bool,
     right_alt_down: bool,
     backquote_down: bool,
+    one_down: bool,
 }
 
 impl SearchHotkeyClassifier {
@@ -161,6 +164,31 @@ impl SearchHotkeyClassifier {
             (SearchHotkeyCode::Backquote, SearchHotkeyEventKind::KeyUp) => {
                 self.backquote_down = false;
                 if self.any_alt_down() {
+                    SearchHotkeyDecision::Suppress
+                } else {
+                    SearchHotkeyDecision::PassThrough
+                }
+            }
+            (SearchHotkeyCode::Other(code), SearchHotkeyEventKind::KeyDown)
+                if code == VK_1.0 as u32 =>
+            {
+                let repeated = event.repeat || self.one_down;
+                self.one_down = true;
+                if self.any_alt_down() && !self.any_control_down() {
+                    if !repeated {
+                        SearchHotkeyDecision::ToggleStackBrowser
+                    } else {
+                        SearchHotkeyDecision::Suppress
+                    }
+                } else {
+                    SearchHotkeyDecision::PassThrough
+                }
+            }
+            (SearchHotkeyCode::Other(code), SearchHotkeyEventKind::KeyUp)
+                if code == VK_1.0 as u32 =>
+            {
+                self.one_down = false;
+                if self.any_alt_down() && !self.any_control_down() {
                     SearchHotkeyDecision::Suppress
                 } else {
                     SearchHotkeyDecision::PassThrough
@@ -285,6 +313,13 @@ pub fn install_windows_key_hook(app_handle: AppHandle) -> Result<(), String> {
                         (),
                     );
                 }
+                Ok(SearchHotkeyDecision::ToggleStackBrowser) => {
+                    let _ = worker_app_handle.emit_to(
+                        crate::shell_windows::TOP_BAR_LABEL,
+                        STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT,
+                        (),
+                    );
+                }
                 Ok(SearchHotkeyDecision::PassThrough | SearchHotkeyDecision::Suppress) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -303,6 +338,13 @@ pub fn install_windows_key_hook(app_handle: AppHandle) -> Result<(), String> {
                     let _ = worker_app_handle.emit_to(
                         crate::shell_windows::TOP_BAR_LABEL,
                         TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
+                        (),
+                    );
+                }
+                SearchHotkeyDecision::ToggleStackBrowser => {
+                    let _ = worker_app_handle.emit_to(
+                        crate::shell_windows::TOP_BAR_LABEL,
+                        STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT,
                         (),
                     );
                 }
@@ -363,7 +405,9 @@ unsafe extern "system" fn windows_key_hook_proc(
                         .handle_event_with_control_override(event, control_key_is_down());
                     if matches!(
                         decision,
-                        SearchHotkeyDecision::ToggleSearch | SearchHotkeyDecision::ToggleTerminal
+                        SearchHotkeyDecision::ToggleSearch
+                            | SearchHotkeyDecision::ToggleTerminal
+                            | SearchHotkeyDecision::ToggleStackBrowser
                     ) {
                         let _ = state.action_tx.try_send(decision);
                     }
@@ -382,6 +426,7 @@ unsafe extern "system" fn windows_key_hook_proc(
                 SearchHotkeyDecision::ToggleTerminal => {
                     return LRESULT(1);
                 }
+                SearchHotkeyDecision::ToggleStackBrowser => return LRESULT(1),
                 SearchHotkeyDecision::Suppress => return LRESULT(1),
                 SearchHotkeyDecision::PassThrough => {}
             }
@@ -522,6 +567,48 @@ mod tests {
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Backquote)),
             SearchHotkeyDecision::Suppress
+        );
+    }
+
+    #[test]
+    fn alt_1_toggles_stack_browser_and_suppresses_repeat() {
+        let mut classifier = SearchHotkeyClassifier::default();
+
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
+            SearchHotkeyDecision::PassThrough
+        );
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
+            SearchHotkeyDecision::ToggleStackBrowser
+        );
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
+            SearchHotkeyDecision::Suppress
+        );
+
+        let mut classifier = SearchHotkeyClassifier::default();
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
+            SearchHotkeyDecision::PassThrough
+        );
+    }
+
+    #[test]
+    fn ctrl_alt_1_passes_through() {
+        let mut classifier = SearchHotkeyClassifier::default();
+
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
+            SearchHotkeyDecision::PassThrough
+        );
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::RightAlt)),
+            SearchHotkeyDecision::PassThrough
+        );
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
+            SearchHotkeyDecision::PassThrough
         );
     }
 

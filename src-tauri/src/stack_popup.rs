@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,6 +290,34 @@ pub fn show_stack_popup(
 #[tauri::command]
 pub fn hide_stack_popup(app_handle: AppHandle) -> Result<(), String> {
     popup_window::hide_stack_popup_window(app_handle)
+}
+
+#[tauri::command]
+pub fn toggle_stack_popup(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+) -> Result<Option<bool>, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::TOGGLE_STACK_POPUP,
+            callers: &[crate::shell_windows::TOP_BAR_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    let popup = app_handle
+        .get_webview_window(crate::shell_windows::STACK_POPUP_LABEL)
+        .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
+    if popup.is_visible().unwrap_or(false) {
+        popup_window::hide_stack_popup_window(app_handle)?;
+        Ok(Some(false))
+    } else if popup_window::latest_stack_popup_request(state.clone()).is_some() {
+        popup_window::reopen_stack_popup_window(app_handle, state)?;
+        Ok(Some(true))
+    } else {
+        Ok(None)
+    }
 }
 
 pub(crate) fn restore_stack_popup_topmost(app_handle: &AppHandle) {

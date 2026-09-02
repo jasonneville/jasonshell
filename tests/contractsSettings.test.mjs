@@ -285,6 +285,8 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'search-panel:query',
     'search-panel:select',
     'search-panel:update',
+    'stack-browser:toggle',
+    'stack-popup:closed',
     'stack-popup:open',
     'stack-terminal:closed',
     'stack-terminal:cwd',

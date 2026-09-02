@@ -48,6 +48,7 @@
     STACK_PINS_UPDATED_EVENT,
     unpinStackFolder,
     showStackPopup,
+    toggleStackPopup,
     type StackPin
   } from '../lib/stackPopup';
   import { folderPathsFromTransfer, hasFolderDragPayload, normalizeDroppedPath } from '../lib/folderDrag';
@@ -230,6 +231,7 @@
   let terminalActivityNowMs = Date.now();
   let lastTerminalActivityMs: number | null = null;
   let terminalCompletionPending = false;
+  let stackBrowserOpen = false;
   const activeTerminalActivitySessions = new Set<string>();
 
   const PIN_REORDER_DRAG_THRESHOLD_PX = 4;
@@ -239,6 +241,8 @@
   const SEARCH_PROVIDER_CACHE_RETRY_LIMIT = 8;
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
+  const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';
+  const STACK_POPUP_CLOSED_EVENT = 'stack-popup:closed';
   const TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity';
   const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
   const TERMINAL_PANEL_ID = 'terminal-panel';
@@ -246,6 +250,7 @@
   const TRAY_PANEL_ID = 'tray-panel';
   const SOUND_PANEL_ID = 'audio-panel';
   const CALENDAR_PANEL_ID = 'calendar-panel';
+  const STACK_POPUP_ID = 'stack-popup';
   type TopBarTerminalActivityPayload = {
     sessionId?: string;
     active?: boolean;
@@ -616,7 +621,9 @@
 
   function handleTopBarPointerDown(event: MouseEvent) {
     const target = event.target instanceof Node ? event.target : null;
-    if (!isPinnedFolderPointerTarget(target)) {
+    const stackBrowserTarget = target instanceof Element && target.closest('.stack-browser-button');
+    if (!isPinnedFolderPointerTarget(target) && !stackBrowserTarget) {
+      stackBrowserOpen = false;
       void hideStackPopup().catch((error) => {
         console.error('Failed to hide stack popup after top bar pointer press', error);
       });
@@ -650,6 +657,10 @@
 
   function isAltBackquoteHotkey(event: KeyboardEvent) {
     return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
+  }
+
+  function isAltOneHotkey(event: KeyboardEvent) {
+    return event.code === 'Digit1' && event.altKey && !event.ctrlKey && !event.metaKey;
   }
 
   function handleTopBarKeydown(event: KeyboardEvent) {
@@ -815,6 +826,44 @@
     });
   }
 
+  async function toggleStackBrowserPanel(target: EventTarget | null) {
+    if (stackBrowserOpen) {
+      stackBrowserOpen = false;
+      await hideStackPopup().catch((error) => {
+        stackBrowserOpen = true;
+        console.error('Failed to hide stack popup', error);
+      });
+      return;
+    }
+    const button = target instanceof HTMLElement ? target : null;
+    try {
+      const isOpen = await toggleStackPopup();
+      if (isOpen === null) {
+        const firstPin = stackPins[0];
+        if (firstPin && button) {
+          await openStackPath(firstPin.path, button);
+        }
+        return;
+      }
+      stackBrowserOpen = isOpen;
+      if (isOpen) {
+        await closePanel();
+        await closeAudioPanel();
+        await closeTrayPanel();
+        await closeCommandPanel();
+        await closeTerminalPanel();
+        await closeCalendarPanel();
+      }
+    } catch (error) {
+      stackBrowserOpen = false;
+      console.error('Failed to toggle stack popup', error);
+    }
+  }
+
+  async function toggleStackBrowserFromHotkey() {
+    await toggleStackBrowserPanel(document.querySelector('.stack-browser-button'));
+  }
+
   function clearTerminalCompletionNotification() {
     terminalCompletionPending = false;
   }
@@ -894,7 +943,10 @@
       anchorLeft: rect.left,
       anchorWidth: rect.width,
       folderPath: path
+    }).then(() => {
+      stackBrowserOpen = true;
     }).catch((error) => {
+      stackBrowserOpen = false;
       console.error('Failed to show stack popup', error);
     });
   }
@@ -1681,6 +1733,12 @@
     registerAsyncUnlistener(listen(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, () => {
       void toggleTerminalPanel(terminalControl);
     }));
+    registerAsyncUnlistener(listen(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT, () => {
+      void toggleStackBrowserFromHotkey();
+    }));
+    registerAsyncUnlistener(listen(STACK_POPUP_CLOSED_EVENT, () => {
+      stackBrowserOpen = false;
+    }));
     registerAsyncUnlistener(listen<TopBarTerminalActivityPayload>(TOP_BAR_TERMINAL_ACTIVITY_EVENT, (event) => {
       const sessionId = event.payload?.sessionId;
       if (sessionId && event.payload?.active === false) {
@@ -1704,6 +1762,14 @@
     let shellSurfaceHotkeyHandled = false;
     let terminalSurfaceHotkeyHandled = false;
     const keydownHandler = (event: KeyboardEvent) => {
+      if (isAltOneHotkey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          void toggleStackBrowserFromHotkey();
+        }
+        return;
+      }
       if (isAltBackquoteHotkey(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -1878,6 +1944,17 @@
     onClick={(event) => void openSettingsPanel(event.currentTarget)}
   >
     jasonshell
+  </MeltActionButton>
+  <MeltActionButton
+    class="stack-browser-button"
+    ariaLabel="Toggle Stack Browser"
+    ariaHaspopup="dialog"
+    ariaExpanded={stackBrowserOpen}
+    ariaControls={STACK_POPUP_ID}
+    tooltip="Stack Browser"
+    onClick={(event) => void toggleStackBrowserPanel(event.currentTarget)}
+  >
+    <span aria-hidden="true">▣</span>
   </MeltActionButton>
   <div class="rail-wrap">
     {#if showRailScrollLeft}

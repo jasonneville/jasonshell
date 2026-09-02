@@ -256,6 +256,7 @@
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
     void loadStackTerminalProfile();
     window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
+    window.addEventListener('keydown', handleStackBrowserHotkeyKeydown, true);
     window.addEventListener('keyup', keyupHandler, true);
     void getCurrentWindow().onDragDropEvent((event: { payload: DragDropEvent }) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
@@ -279,6 +280,7 @@
         window.cancelAnimationFrame(resizeFrame);
       }
       window.removeEventListener('keydown', handleSearchHotkeyKeydown, true);
+      window.removeEventListener('keydown', handleStackBrowserHotkeyKeydown, true);
       window.removeEventListener('keyup', keyupHandler, true);
       stopMarqueeAutoscroll();
       const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
@@ -1994,6 +1996,20 @@
       shellSurfaceHotkeyHandled = true;
       void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
     }
+  }
+
+  function isAltOneHotkey(event: KeyboardEvent) {
+    return event.code === 'Digit1' && event.altKey && !event.ctrlKey && !event.metaKey;
+  }
+
+  function handleStackBrowserHotkeyKeydown(event: KeyboardEvent) {
+    if (!isAltOneHotkey(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    void hideStackPopup().catch((error) => {
+      console.error('Failed to hide stack popup from hotkey', error);
+    });
   }
 
   function isEditableKeyTarget(target: EventTarget | null) {

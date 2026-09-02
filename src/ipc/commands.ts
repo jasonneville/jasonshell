@@ -79,6 +79,7 @@ export const IPC_COMMANDS = {
   showStackPopup: 'show_stack_popup',
   hideStackPopup: 'hide_stack_popup',
   getStackPopupRequest: 'get_stack_popup_request',
+  toggleStackPopup: 'toggle_stack_popup',
   beginStackPopupFocusLossHold: 'begin_stack_popup_focus_loss_hold',
   endStackPopupFocusLossHold: 'end_stack_popup_focus_loss_hold',
   resizeStackPopup: 'resize_stack_popup',

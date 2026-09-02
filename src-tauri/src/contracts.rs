@@ -121,6 +121,7 @@ pub mod commands {
     pub const REORDER_PINNED_STACK_FOLDERS: &str = "reorder_pinned_stack_folders";
     pub const SHOW_STACK_POPUP: &str = "show_stack_popup";
     pub const HIDE_STACK_POPUP: &str = "hide_stack_popup";
+    pub const TOGGLE_STACK_POPUP: &str = "toggle_stack_popup";
     pub const GET_STACK_POPUP_REQUEST: &str = "get_stack_popup_request";
     pub const BEGIN_STACK_POPUP_FOCUS_LOSS_HOLD: &str = "begin_stack_popup_focus_loss_hold";
     pub const END_STACK_POPUP_FOCUS_LOSS_HOLD: &str = "end_stack_popup_focus_loss_hold";
@@ -291,6 +292,7 @@ pub mod commands {
         REORDER_PINNED_STACK_FOLDERS,
         SHOW_STACK_POPUP,
         HIDE_STACK_POPUP,
+        TOGGLE_STACK_POPUP,
         GET_STACK_POPUP_REQUEST,
         BEGIN_STACK_POPUP_FOCUS_LOSS_HOLD,
         END_STACK_POPUP_FOCUS_LOSS_HOLD,
@@ -388,6 +390,7 @@ pub mod events {
     pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
     pub const SEARCH_TOGGLE_CENTERED: &str = "search:toggle-centered";
+    pub const STACK_BROWSER_TOGGLE: &str = "stack-browser:toggle";
     pub const SEARCH_ENGINE_PROGRESS: &str = "search-engine:progress";
     pub const SEARCH_INDEX_REFRESHED: &str = "search-index:refreshed";
     pub const SEARCH_PANEL_ACTIVATE: &str = "search-panel:activate";
@@ -400,6 +403,7 @@ pub mod events {
     pub const SEARCH_PANEL_SELECT: &str = "search-panel:select";
     pub const SEARCH_PANEL_UPDATE: &str = "search-panel:update";
     pub const STACK_POPUP_OPEN: &str = "stack-popup:open";
+    pub const STACK_POPUP_CLOSED: &str = "stack-popup:closed";
     pub const STACK_TERMINAL_CLOSED: &str = "stack-terminal:closed";
     pub const STACK_TERMINAL_CWD: &str = "stack-terminal:cwd";
     pub const STACK_TERMINAL_OUTPUT: &str = "stack-terminal:output";
@@ -433,6 +437,7 @@ pub mod events {
         PROCESS_MANAGER_OPEN,
         PROCESS_MANAGER_CLOSED,
         SEARCH_TOGGLE_CENTERED,
+        STACK_BROWSER_TOGGLE,
         SEARCH_ENGINE_PROGRESS,
         SEARCH_INDEX_REFRESHED,
         SEARCH_PANEL_ACTIVATE,
@@ -445,6 +450,7 @@ pub mod events {
         SEARCH_PANEL_SELECT,
         SEARCH_PANEL_UPDATE,
         STACK_POPUP_OPEN,
+        STACK_POPUP_CLOSED,
         STACK_TERMINAL_CLOSED,
         STACK_TERMINAL_CWD,
         STACK_TERMINAL_OUTPUT,
@@ -526,6 +532,7 @@ mod tests {
         assert!(unique.contains("request_taskbar_windows_refresh"));
         assert!(unique.contains("activate_workspace"));
         assert!(unique.contains("show_stack_popup"));
+        assert!(unique.contains("toggle_stack_popup"));
         assert!(unique.contains("begin_stack_popup_focus_loss_hold"));
         assert!(unique.contains("end_stack_popup_focus_loss_hold"));
         assert!(unique.contains("resize_stack_popup"));
@@ -627,6 +634,7 @@ mod tests {
                 "process-manager:open",
                 "process-manager:closed",
                 "search:toggle-centered",
+                "stack-browser:toggle",
                 "search-engine:progress",
                 "search-index:refreshed",
                 "search-panel:activate",
@@ -639,6 +647,7 @@ mod tests {
                 "search-panel:select",
                 "search-panel:update",
                 "stack-popup:open",
+                "stack-popup:closed",
                 "stack-terminal:closed",
                 "stack-terminal:cwd",
                 "stack-terminal:output",

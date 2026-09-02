@@ -344,6 +344,10 @@ export async function showStackPopup(request: ShowStackPopupRequest): Promise<vo
   await emitTo(STACK_POPUP_LABEL, STACK_POPUP_OPEN_EVENT, payload).catch(() => undefined);
 }
 
+export function toggleStackPopup(): Promise<boolean | null> {
+  return invoke(IPC_COMMANDS.toggleStackPopup);
+}
+
 function nextStackPopupRequestId() {
   stackPopupRequestSequence += 1;
   return `${Date.now().toString(36)}-${stackPopupRequestSequence.toString(36)}`;

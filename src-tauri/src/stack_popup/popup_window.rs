@@ -35,6 +35,29 @@ pub(crate) fn show_stack_popup_window(
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     request: ShowStackPopupRequest,
 ) -> Result<(), String> {
+    show_stack_popup_window_inner(app_handle, state, request, true)
+}
+
+pub(crate) fn reopen_stack_popup_window(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+) -> Result<(), String> {
+    let request = latest_stack_popup_request(state)
+        .ok_or_else(|| "Stack popup request is unavailable".to_string())?;
+    show_stack_popup_window_inner(
+        app_handle.clone(),
+        app_handle.state::<Mutex<StackPopupRuntimeState>>(),
+        request,
+        false,
+    )
+}
+
+fn show_stack_popup_window_inner(
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    request: ShowStackPopupRequest,
+    emit_open_event: bool,
+) -> Result<(), String> {
     let request = normalize_show_stack_popup_request(request)?;
     store_latest_request(&state, request.clone());
 
@@ -91,9 +114,13 @@ pub(crate) fn show_stack_popup_window(
         .set_focus()
         .map_err(|error| format!("Failed to focus the stack popup: {error}"))?;
     restore_stack_popup_topmost_if_allowed(&app_handle, &state);
-    popup
-        .emit("stack-popup:open", request)
-        .map_err(|error| format!("Failed to publish stack popup path: {error}"))
+    if emit_open_event {
+        popup
+            .emit("stack-popup:open", request)
+            .map_err(|error| format!("Failed to publish stack popup path: {error}"))
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), String> {
@@ -110,7 +137,10 @@ pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), Strin
         .get_webview_window(STACK_POPUP_LABEL)
         .ok_or_else(|| "Stack popup window is unavailable".to_string())?
         .hide()
-        .map_err(|error| format!("Failed to hide the stack popup: {error}"))
+        .map_err(|error| format!("Failed to hide the stack popup: {error}"))?;
+    app_handle
+        .emit_to(TOP_BAR_LABEL, "stack-popup:closed", ())
+        .map_err(|error| format!("Failed to publish stack popup closed state: {error}"))
 }
 
 pub(crate) fn latest_stack_popup_request(

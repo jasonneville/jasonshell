@@ -150,6 +150,7 @@
   let taskbarOverflow = taskbarOverflowState(0, 0, 0);
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
+  const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';
   const QUICK_LAUNCH_CLOSED_EVENT = 'quick-launch-panel:closed';
   const QUICK_LAUNCH_OPEN_EVENT = 'quick-launch-panel:open';
   type QuickLaunchRow = PinnedTaskbarLauncher;
@@ -936,6 +937,9 @@
   function isAltBackquoteHotkey(event: KeyboardEvent) {
     return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
   }
+  function isAltOneHotkey(event: KeyboardEvent) {
+    return event.code === 'Digit1' && event.altKey && !event.ctrlKey && !event.metaKey;
+  }
   function isSpaceKey(event: KeyboardEvent) {
     return event.code === 'Space';
   }
@@ -1076,6 +1080,14 @@
     let shellSurfaceHotkeyHandled = false;
     let terminalSurfaceHotkeyHandled = false;
     const keydownHandler = (event: KeyboardEvent) => {
+      if (isAltOneHotkey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          void emit(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT);
+        }
+        return;
+      }
       if (isAltBackquoteHotkey(event)) {
         event.preventDefault();
         event.stopPropagation();

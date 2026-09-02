@@ -15,6 +15,7 @@ const stackPhase1Commands = [
   ['REORDER_PINNED_STACK_FOLDERS', 'reorder_pinned_stack_folders', ['top-bar']],
   ['SHOW_STACK_POPUP', 'show_stack_popup', ['top-bar']],
   ['HIDE_STACK_POPUP', 'hide_stack_popup', ['top-bar', 'stack-popup']],
+  ['TOGGLE_STACK_POPUP', 'toggle_stack_popup', ['top-bar']],
   ['BEGIN_STACK_POPUP_FOCUS_LOSS_HOLD', 'begin_stack_popup_focus_loss_hold', ['top-bar', 'stack-popup']],
   ['END_STACK_POPUP_FOCUS_LOSS_HOLD', 'end_stack_popup_focus_loss_hold', ['top-bar', 'stack-popup']],
   ['GET_STACK_POPUP_REQUEST', 'get_stack_popup_request', ['stack-popup']],
@@ -106,6 +107,16 @@ test('WP0 scoped Phase 1 handlers authorize before side effects with window inje
     assert.match(body, new RegExp(`authorize_stack_command\\(\\s*\\&window,\\s*StackCommandAuth::[\\s\\S]*${commandConst}`));
     assert.ok(body.indexOf('authorize_stack_command') < body.indexOf('shell_paths::open_shell_path_with_picker') || !body.includes('shell_paths::open_shell_path_with_picker'));
   }
+});
+
+test('Stack Browser toggle authorizes top-bar before changing native visibility', () => {
+  const fnStart = stackPopupSource.indexOf('fn toggle_stack_popup');
+  const nextFn = stackPopupSource.indexOf('\n#[tauri::command]', fnStart + 1);
+  const body = stackPopupSource.slice(fnStart, nextFn > 0 ? nextFn : undefined);
+
+  assert.match(body, /window:\s*WebviewWindow/);
+  assert.match(body, /authorize_stack_command\([\s\S]*TOGGLE_STACK_POPUP/);
+  assert.ok(body.indexOf('authorize_stack_command') < body.indexOf('.is_visible()'));
 });
 
 test('WP0 phase 1 file mutation auth excludes terminal-panel for copy-cut-paste-delete-create', () => {

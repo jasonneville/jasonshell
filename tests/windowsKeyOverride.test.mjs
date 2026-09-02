@@ -107,6 +107,66 @@ test('Alt+Backquote terminal hotkey emits and shell surfaces toggle terminal pan
   assert.match(bottomBar, /void emit\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT\)/);
 });
 
+test('Alt+1 toggles Stack Browser from native hook and top bar wiring', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const main = readSource('../src-tauri/src/main.rs');
+  const contracts = readSource('../src-tauri/src/contracts.rs');
+  const topBar = readSource('../src/components/TopBar.svelte');
+  const bottomBar = readSource('../src/components/BottomBar.svelte');
+  const stackSurface = readSource('../src/components/StackPopupSurface.svelte');
+
+  assert.match(rust, /STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT/);
+  assert.match(rust, /ToggleStackBrowser/);
+  assert.match(rust, /VK_1/);
+  assert.match(rust, /alt_1_toggles_stack_browser_and_suppresses_repeat/);
+  assert.match(rust, /if self\.any_alt_down\(\)/);
+  assert.match(main, /stack_popup::toggle_stack_popup,/);
+  assert.match(contracts, /TOGGLE_STACK_POPUP: &str = "toggle_stack_popup"/);
+  assert.match(contracts, /STACK_BROWSER_TOGGLE: &str = "stack-browser:toggle"/);
+  assert.match(topBar, /const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';/);
+  assert.match(topBar, /listen\(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT, \(\) => \{/);
+  assert.match(topBar, /toggleStackBrowserFromHotkey/);
+  assert.match(topBar, /toggleStackBrowserPanel\(/);
+  assert.match(topBar, /function isAltOneHotkey\(event: KeyboardEvent\)/);
+  assert.match(topBar, /if \(isAltOneHotkey\(event\)\) \{[\s\S]*toggleStackBrowserFromHotkey\(\)/);
+  assert.match(topBar, /closest\('\.stack-browser-button'\)/);
+  assert.match(topBar, /if \(stackBrowserOpen\) \{[\s\S]*await hideStackPopup\(\)/);
+  assert.ok(topBar.indexOf('if (stackBrowserOpen)') < topBar.indexOf('const isOpen = await toggleStackPopup()'));
+  assert.match(stackSurface, /function isAltOneHotkey\(event: KeyboardEvent\)/);
+  assert.match(stackSurface, /handleStackBrowserHotkeyKeydown[\s\S]*hideStackPopup\(\)/);
+  assert.match(stackSurface, /handleStackBrowserHotkeyKeydown[\s\S]*if \(event\.repeat\) return;/);
+  assert.doesNotMatch(stackSurface, /stackBrowserHotkeyHandled/);
+  assert.match(stackSurface, /addEventListener\('keydown', handleStackBrowserHotkeyKeydown, true\)/);
+  assert.match(bottomBar, /const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';/);
+  assert.match(bottomBar, /function isAltOneHotkey\(event: KeyboardEvent\)/);
+  assert.match(bottomBar, /if \(isAltOneHotkey\(event\)\) \{[\s\S]*emit\(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT\)/);
+});
+
+test('top bar places Stack Browser toggle button between settings and pinned folders', () => {
+  const source = readSource('../src/components/TopBar.svelte');
+
+  const settingsIndex = source.indexOf('ariaLabel="Open JasonShell settings"');
+  const stackBrowserIndex = source.indexOf('ariaLabel="Toggle Stack Browser"');
+  const railWrapIndex = source.indexOf('<div class="rail-wrap">');
+
+  assert.ok(settingsIndex !== -1 && stackBrowserIndex !== -1 && railWrapIndex !== -1);
+  assert.ok(settingsIndex < stackBrowserIndex && stackBrowserIndex < railWrapIndex);
+  assert.match(source, /ariaExpanded={stackBrowserOpen}/);
+  assert.match(source, /ariaControls={STACK_POPUP_ID}/);
+});
+
+test('Stack Browser toggle reopens latest request without emitting open event', () => {
+  const stackPopup = readSource('../src/lib/stackPopup.ts');
+  const popupWindow = readSource('../src-tauri/src/stack_popup/popup_window.rs');
+
+  assert.match(stackPopup, /toggleStackPopup/);
+  assert.match(stackPopup, /getStackPopupRequest/);
+  assert.match(stackPopup, /showStackPopup\(/);
+  assert.match(stackPopup, /hideStackPopup\(/);
+  assert.doesNotMatch(stackPopup, /toggleStackPopup[\s\S]*STACK_POPUP_OPEN_EVENT/);
+  assert.match(popupWindow, /reopen_stack_popup_window[\s\S]*show_stack_popup_window_inner\([\s\S]*false/);
+});
+
 test('native hook installs during setup and cleans up on exit', () => {
   const main = readSource('../src-tauri/src/main.rs');
 
