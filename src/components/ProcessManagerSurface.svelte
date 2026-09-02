@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { listen, type Event } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import MeltProgress from './melt/MeltProgress.svelte';
   import {
     hideProcessManager,
@@ -296,7 +297,7 @@
       class="process-manager-close-button"
       ariaLabel="Close process manager"
       onClick={() => void requestClose()}
-    >×</MeltActionButton>
+    ><MaterialSymbolIcon name="close" /></MeltActionButton>
   </header>
 
   <div class="process-table">

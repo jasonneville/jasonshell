@@ -5,6 +5,7 @@
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import StackGitPanel from './StackGitPanel.svelte';
   import StackTerminalPane from './StackTerminalPane.svelte';
   import {
@@ -2212,7 +2213,7 @@
     class="stack-browser-close-button"
     ariaLabel="Close stack browser"
     onClick={() => void closeStackPopupFromSurface()}
-  >×</MeltActionButton>
+  ><MaterialSymbolIcon name="close" /></MeltActionButton>
 
   <header class="stack-toolbar">
     <div class="stack-path" title={currentPath}>

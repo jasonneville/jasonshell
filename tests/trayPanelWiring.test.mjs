@@ -70,6 +70,8 @@ test('top bar exposes tray button left of sound and keeps popup state mutually e
 
 test('tray panel surface renders icon-only grid with loading, error, and empty states', () => {
   assert.match(trayPanelSource, /id="tray-panel" role="dialog"/);
+  assert.match(trayPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
+  assert.match(trayPanelSource, /<MaterialSymbolIcon name="close" \/>/);
   assert.match(trayPanelSource, /class="tray-content"[\s\S]*class="tray-grid"/);
   assert.match(trayPanelSource, /Loading notification icons[\s\S]*No notification icons are currently available[\s\S]*class="tray-content"/);
   assert.match(trayPanelSource, /class="tray-grid"/);

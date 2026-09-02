@@ -105,13 +105,22 @@ impl SearchHotkeyClassifier {
 
     #[cfg(test)]
     pub fn handle_event(&mut self, event: SearchHotkeyEvent) -> SearchHotkeyDecision {
-        self.handle_event_with_control_override(event, None)
+        self.handle_event_with_modifier_overrides(event, None, None)
     }
 
     pub fn handle_event_with_control_override(
         &mut self,
         event: SearchHotkeyEvent,
         control_down_override: Option<bool>,
+    ) -> SearchHotkeyDecision {
+        self.handle_event_with_modifier_overrides(event, control_down_override, None)
+    }
+
+    pub fn handle_event_with_modifier_overrides(
+        &mut self,
+        event: SearchHotkeyEvent,
+        control_down_override: Option<bool>,
+        alt_down_override: Option<bool>,
     ) -> SearchHotkeyDecision {
         match (event.key, event.kind) {
             (
@@ -145,13 +154,14 @@ impl SearchHotkeyClassifier {
                 self.set_alt_down(event.key, false);
                 if !self.any_alt_down() {
                     self.backquote_down = false;
+                    self.one_down = false;
                 }
                 SearchHotkeyDecision::PassThrough
             }
             (SearchHotkeyCode::Backquote, SearchHotkeyEventKind::KeyDown) => {
                 let repeated = event.repeat || self.backquote_down;
                 self.backquote_down = true;
-                if self.any_alt_down() {
+                if alt_down_override.unwrap_or_else(|| self.any_alt_down()) {
                     if !repeated {
                         SearchHotkeyDecision::ToggleTerminal
                     } else {
@@ -163,7 +173,7 @@ impl SearchHotkeyClassifier {
             }
             (SearchHotkeyCode::Backquote, SearchHotkeyEventKind::KeyUp) => {
                 self.backquote_down = false;
-                if self.any_alt_down() {
+                if alt_down_override.unwrap_or_else(|| self.any_alt_down()) {
                     SearchHotkeyDecision::Suppress
                 } else {
                     SearchHotkeyDecision::PassThrough
@@ -174,7 +184,9 @@ impl SearchHotkeyClassifier {
             {
                 let repeated = event.repeat || self.one_down;
                 self.one_down = true;
-                if self.any_alt_down() && !self.any_control_down() {
+                let alt_down = alt_down_override.unwrap_or_else(|| self.any_alt_down());
+                let control_down = control_down_override.unwrap_or_else(|| self.any_control_down());
+                if alt_down && !control_down {
                     if !repeated {
                         SearchHotkeyDecision::ToggleStackBrowser
                     } else {
@@ -188,7 +200,9 @@ impl SearchHotkeyClassifier {
                 if code == VK_1.0 as u32 =>
             {
                 self.one_down = false;
-                if self.any_alt_down() && !self.any_control_down() {
+                let alt_down = alt_down_override.unwrap_or_else(|| self.any_alt_down());
+                let control_down = control_down_override.unwrap_or_else(|| self.any_control_down());
+                if alt_down && !control_down {
                     SearchHotkeyDecision::Suppress
                 } else {
                     SearchHotkeyDecision::PassThrough
@@ -400,9 +414,11 @@ unsafe extern "system" fn windows_key_hook_proc(
         if let Some(event) = event {
             let decision = if let Ok(mut guard) = native_hook_state().lock() {
                 if let Some(state) = guard.as_mut() {
-                    let decision = state
-                        .classifier
-                        .handle_event_with_control_override(event, control_key_is_down());
+                    let decision = state.classifier.handle_event_with_modifier_overrides(
+                        event,
+                        control_key_is_down(),
+                        alt_key_is_down(),
+                    );
                     if matches!(
                         decision,
                         SearchHotkeyDecision::ToggleSearch
@@ -441,6 +457,15 @@ fn control_key_is_down() -> Option<bool> {
         unsafe { GetAsyncKeyState(VK_CONTROL.0.into()) } < 0
             || unsafe { GetAsyncKeyState(VK_LCONTROL.0.into()) } < 0
             || unsafe { GetAsyncKeyState(VK_RCONTROL.0.into()) } < 0,
+    )
+}
+
+#[cfg(windows)]
+fn alt_key_is_down() -> Option<bool> {
+    Some(
+        unsafe { GetAsyncKeyState(VK_MENU.0.into()) } < 0
+            || unsafe { GetAsyncKeyState(VK_LMENU.0.into()) } < 0
+            || unsafe { GetAsyncKeyState(VK_RMENU.0.into()) } < 0,
     )
 }
 
@@ -608,6 +633,38 @@ mod tests {
         );
         assert_eq!(
             classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
+            SearchHotkeyDecision::PassThrough
+        );
+    }
+
+    #[test]
+    fn async_alt_state_toggles_when_alt_down_was_not_observed() {
+        let mut classifier = SearchHotkeyClassifier::default();
+
+        assert_eq!(
+            classifier.handle_event_with_modifier_overrides(
+                down(SearchHotkeyCode::Other(VK_1.0 as u32)),
+                Some(false),
+                Some(true),
+            ),
+            SearchHotkeyDecision::ToggleStackBrowser
+        );
+    }
+
+    #[test]
+    fn released_alt_state_passes_through_stale_classifier_alt() {
+        let mut classifier = SearchHotkeyClassifier::default();
+        assert_eq!(
+            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
+            SearchHotkeyDecision::PassThrough
+        );
+
+        assert_eq!(
+            classifier.handle_event_with_modifier_overrides(
+                down(SearchHotkeyCode::Other(VK_1.0 as u32)),
+                Some(false),
+                Some(false),
+            ),
             SearchHotkeyDecision::PassThrough
         );
     }

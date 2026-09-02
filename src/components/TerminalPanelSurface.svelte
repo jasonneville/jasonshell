@@ -6,6 +6,7 @@
   import { SearchAddon } from '@xterm/addon-search';
   import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import {
     listStackTerminals,
     readStackTerminal,
@@ -2609,7 +2610,7 @@
             aria-label={`Close terminal session ${displayTitle}`}
             title="Close terminal tab"
             on:click|stopPropagation={() => void closeTerminalSessionTab(terminalSession.sessionId)}
-          >×</button>
+          ><MaterialSymbolIcon name="close" /></button>
         </div>
       {/each}
       <button

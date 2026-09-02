@@ -517,12 +517,20 @@ test('centered search surface keeps local typing immediate without unconditional
   assert.doesNotMatch(source, /if \(event\.payload\.presentation === 'centered'\) \{\s*void focusQueryInput\(\);/);
 });
 
-test('top-bar search closes with blur and can reopen immediately from pointer interaction', () => {
+test('top-bar search uses icon button and centered open flow', () => {
+  const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  const template = source.match(/<div class="search-control"[\s\S]*?<\/div>/)?.[0] ?? '';
+
+  assert.match(source, /function toggleCenteredSearchFromHotkey\(\) \{[\s\S]*openCenteredPanel\(\{ publishCurrentPayload: true \}\);/);
+  assert.match(template, /class="search-button"/);
+  assert.match(template, /onClick=\{\(\) => void \(searchOpen \? closePanel\(\) : openCenteredPanel\(\{ publishCurrentPayload: true \}\)\)\}/);
+  assert.doesNotMatch(template, /search-clear-button|placeholder="Search"|aria-label="Search apps, windows, files, folders, and commands"|searchInput|handleSearchPointerDown|handleSearchFocus/);
+});
+
+test('centered search query events cannot fall back to legacy anchored mode', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /async function closePanel\(\) \{[\s\S]*searchInput\?\.blur\(\);/);
-  assert.match(source, /function handleSearchPointerDown\(\) \{[\s\S]*if \(!searchOpen\) \{[\s\S]*openConfiguredPanel\(\);/);
-  assert.match(source, /on:pointerdown=\{handleSearchPointerDown\}/);
+  assert.match(source, /if \(searchOpen && searchPresentation === 'centered'\) \{[\s\S]*?void openCenteredPanel\(options\);[\s\S]*?return;/);
 });
 
 test('search panel renders a flat visibleRows model instead of grouped buckets', () => {

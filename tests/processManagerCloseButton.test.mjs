@@ -32,9 +32,10 @@ test('process manager has an accessible task-preview-style red X close button', 
   const closeButtonRule = cssRule(processManagerCss, '.process-manager-close-button');
   const headerRule = cssRule(processManagerCss, '.process-manager-header');
 
+  assert.match(processManagerSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(processManagerSource, /class="process-manager-close-button"/);
   assert.match(processManagerSource, /ariaLabel="Close process manager"/);
-  assert.match(processManagerSource, />×<|>✕</);
+  assert.match(processManagerSource, /<MaterialSymbolIcon name="close" \/>/);
   assert.match(processManagerSource, /onClick=\{\(\) => void requestClose\(\)\}/);
   assert.match(closeBody, /closeSurface\(\)/);
   assert.match(closeBody, /await hideProcessManager\(\)/);

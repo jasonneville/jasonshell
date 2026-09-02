@@ -16,6 +16,8 @@ const meltRadioGroupSource = uncommentedSource('../src/components/melt/MeltRadio
 const meltProgressSource = uncommentedSource('../src/components/melt/MeltProgress.svelte');
 const meltActionButtonSource = uncommentedSource('../src/components/melt/MeltActionButton.svelte');
 const settingsPanelSource = uncommentedSource('../src/components/SettingsPanelSurface.svelte');
+const calendarPanelSource = uncommentedSource('../src/components/CalendarPanelSurface.svelte');
+const stackGitPanelSource = uncommentedSource('../src/components/StackGitPanel.svelte');
 const controlPlaneSource = uncommentedSource('../src/components/ControlPlaneSurface.svelte');
 const processManagerSource = uncommentedSource('../src/components/ProcessManagerSurface.svelte');
 const searchPanelSource = uncommentedSource('../src/components/SearchPanelSurface.svelte');
@@ -98,11 +100,16 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.match(settingsPanelSource, /MeltToggle/);
   assert.match(settingsPanelSource, /MeltRadioGroup/);
   assert.match(settingsPanelSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
-  assert.match(settingsPanelSource, /<MeltActionButton ariaLabel="Close settings" onClick=\{closePanel\}>x<\/MeltActionButton>/);
+  assert.match(settingsPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
+  assert.match(settingsPanelSource, /<MeltActionButton ariaLabel="Close settings" onClick=\{closePanel\}><MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
   assert.match(settingsPanelSource, /<MeltActionButton onClick=\{resetPresentation\}>Reset<\/MeltActionButton>/);
   assert.match(settingsPanelSource, /<MeltActionButton onClick=\{closePanel\}>Done<\/MeltActionButton>/);
   assert.match(settingsPanelSource, /dateFormatOptions/);
   assert.match(settingsPanelSource, /showSettingsPanel|hideSettingsPanel/);
+  assert.match(calendarPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
+  assert.match(calendarPanelSource, /<MeltActionButton class="calendar-close" ariaLabel="Close calendar" tooltip="Close calendar" onClick=\{\(\) => void hideCalendarPanel\(\)\}><MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
+  assert.match(stackGitPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
+  assert.match(stackGitPanelSource, /<button type="button" class="stack-git-icon-button" aria-label="Close git panel" title="Close" on:click=\{closePanel\}><MaterialSymbolIcon name="close" \/><\/button>/);
   assert.match(controlPlaneSource, /import \{ Tabs \} from 'melt\/builders'/);
   assert.match(controlPlaneSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
   assert.match(controlPlaneSource, /new Tabs<ControlPlaneSectionId>/);
@@ -113,13 +120,14 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.doesNotMatch(controlPlaneSource, /invoke\(/);
   assert.match(processManagerSource, /MeltProgress/);
   assert.match(processManagerSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
+  assert.match(processManagerSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(processManagerSource, /processMetricPercent\(process\.cpuPercent, 100\)/);
   assert.match(processManagerSource, /processMetricPercent\(process\.memoryPercent, 100\)/);
   assert.match(processManagerSource, /processMetricPercent\(process\.gpuPercent, 100\)/);
   assert.match(processManagerSource, /formatProcessMemoryPercent\(process\.memoryPercent\)/);
   assert.match(processManagerSource, /formatProcessGpu\(process\.gpuPercent\)/);
   assert.match(processManagerSource, /<MeltActionButton onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false, announce: true \}\)\}>/);
-  assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="process-manager-close-button"[\s\S]*ariaLabel="Close process manager"[\s\S]*onClick=\{\(\) => void requestClose\(\)\}[\s\S]*>×<\/MeltActionButton>/);
+  assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="process-manager-close-button"[\s\S]*ariaLabel="Close process manager"[\s\S]*onClick=\{\(\) => void requestClose\(\)\}[\s\S]*<MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('name'\)\} onClick=\{\(\) => sortBy\('name'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('startTimeMs'\)\} onClick=\{\(\) => sortBy\('startTimeMs'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="kill-button"[\s\S]*ariaLabel=\{killState\.ariaLabel\}[\s\S]*disabled=\{killState\.disabled\}[\s\S]*onClick=\{\(\) => void killRow\(process\)\}/);
@@ -212,8 +220,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /on:pointerup=\{finishTaskGroupPointerDrag\}/);
   assert.match(bottomBarSource, /on:lostpointercapture=\{handleTaskGroupLostPointerCapture\}/);
 
-  assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`task-button\$\{taskWindow\.isActive \? ' task-button-active' : ''\}\$\{taskWindow\.isMinimized \? ' task-button-minimized' : ''\}\$\{taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''\}`\}[\s\S]*type="button"[\s\S]*ariaLabel=\{taskWindowActionLabel\(taskWindow\)\}[\s\S]*disabled=\{activatingHwnd === taskWindow\.hwnd\}/);
-  assert.match(bottomBarSource, /taskWindowActionLabel\(taskWindow\)/);
+  assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`task-button\$\{taskWindow\.isActive \? ' task-button-active' : ''\}\$\{taskWindow\.isMinimized \? ' task-button-minimized' : ''\}\$\{taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''\}`\}[\s\S]*type="button"[\s\S]*disabled=\{activatingHwnd === taskWindow\.hwnd\}/);
   assert.match(bottomBarSource, /onPointerDown=\{\(event\) => handleTaskWindowPointerDown\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onClick=\{\(event\) => handleTaskWindowClick\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onMouseEnter=\{\(event\) => queuePreview\(taskWindow, event\)\}/);

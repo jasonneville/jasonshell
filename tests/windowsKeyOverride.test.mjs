@@ -37,7 +37,7 @@ test('TopBar listens for native Ctrl+Space search toggle through existing center
   assert.match(source, /function toggleCenteredSearchFromHotkey\(\)/);
   assert.match(source, /if \(searchOpen\) \{\s*void closePanel\(\);/);
   assert.match(source, /void openCenteredPanel\(\{ publishCurrentPayload: true \}\)/);
-  assert.match(source, /void tick\(\)\.then\(\(\) => searchInput\?\.focus\(\{ preventScroll: true \}\)\)/);
+  assert.doesNotMatch(source, /let searchInput:|bind:this=\{searchInput\}/);
 });
 
 test('top and bottom shell surfaces catch Ctrl+Space when their webviews have focus', () => {
@@ -119,7 +119,9 @@ test('Alt+1 toggles Stack Browser from native hook and top bar wiring', () => {
   assert.match(rust, /ToggleStackBrowser/);
   assert.match(rust, /VK_1/);
   assert.match(rust, /alt_1_toggles_stack_browser_and_suppresses_repeat/);
-  assert.match(rust, /if self\.any_alt_down\(\)/);
+  assert.match(rust, /alt_down_override\.unwrap_or_else\(\|\| self\.any_alt_down\(\)\)/);
+  assert.match(rust, /fn alt_key_is_down\(\) -> Option<bool>/);
+  assert.match(rust, /handle_event_with_modifier_overrides\([\s\S]*?event,[\s\S]*?control_key_is_down\(\),[\s\S]*?alt_key_is_down\(\),[\s\S]*?\)/);
   assert.match(main, /stack_popup::toggle_stack_popup,/);
   assert.match(contracts, /TOGGLE_STACK_POPUP: &str = "toggle_stack_popup"/);
   assert.match(contracts, /STACK_BROWSER_TOGGLE: &str = "stack-browser:toggle"/);

@@ -24,14 +24,21 @@ function extractFunction(source, name) {
   throw new Error(`could not extract ${name}`);
 }
 
-test('top-bar search renders clear button only for non-empty draft or query', () => {
+test('top-bar search renders icon-only button that opens centered search', () => {
   const source = readSource('../src/components/TopBar.svelte');
+  const styles = readSource('../src/components/TopBar.css');
 
-  assert.match(source, /function hasSearchClearValue\(\)/);
-  assert.match(source, /\{#if hasSearchClearValue\(\)\}/);
-  assert.match(source, /ariaLabel="Clear search"/);
-  assert.match(source, /class="search-clear-button"/);
-  assert.match(source, /onClick=\{\(\) => void clearSearch\(\)\}/);
+  assert.match(source, /<div class="search-control" bind:this=\{searchControl\}>/);
+  assert.match(source, /class="search-button"/);
+  assert.match(source, /ariaLabel="Open search"/);
+  assert.match(source, /ariaHaspopup="dialog"/);
+  assert.match(source, /tooltip="Search"/);
+  assert.match(source, /<MaterialSymbolIcon name="search" \/>/);
+  assert.match(source, /onClick=\{\(\) => void \(searchOpen \? closePanel\(\) : openCenteredPanel\(\{ publishCurrentPayload: true \}\)\)\}/);
+  assert.match(source, /let searchInputDraft = '';/);
+  assert.doesNotMatch(source, /search-clear-button/);
+  assert.doesNotMatch(source, /handleSearchPointerDown|handleSearchFocus|handleSearchKeydown|clearSearch|hasSearchClearValue/);
+  assert.match(styles, /\.top-bar \.search-control \{[\s\S]*?flex:\s*0 0 auto;/);
 });
 
 test('centered search panel renders independent clear button for non-empty displayed query', () => {
@@ -55,15 +62,12 @@ test('clearing advances latest search sequence so stale provider response is rej
   assert.equal(controller.shouldApply(clearRequest, ''), true);
 });
 
-test('top-bar clear routes through query reset path and does not call provider directly', () => {
+test('centered panel clear routes through query reset path and does not call provider directly', () => {
   const source = readSource('../src/components/TopBar.svelte');
-  const clearSearch = extractFunction(source, 'clearSearch');
-
-  assert.match(clearSearch, /const request = publishImmediateSearchInputState\(''\)/);
-  assert.match(clearSearch, /startImmediateSearchQueryExecution\(request\)/);
-  assert.match(clearSearch, /await tick\(\)/);
-  assert.match(clearSearch, /searchInput\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.doesNotMatch(clearSearch, /searchEngine\(|loadSearchEngineResults\(|publishSearchPanel\(|showSearchPanel\(/);
+  assert.match(source, /function handleSearchInput\(event: Event\)/);
+  assert.match(source, /const request = publishImmediateSearchInputState\(nextQuery\)/);
+  assert.match(source, /startImmediateSearchQueryExecution\(request\)/);
+  assert.doesNotMatch(source, /searchInput\?\.focus|searchInput\?\.blur|handleSearchPointerDown|clearSearch/);
 });
 
 test('centered clear emits empty query with newer input sequence and keeps focus', () => {

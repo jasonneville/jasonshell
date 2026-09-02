@@ -1,6 +1,7 @@
 <script lang="ts">
   import './TrayPanelSurface.css';
   import { onMount } from 'svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import {
     hideTrayPanel,
     invokeTrayPanelIcon,
@@ -118,7 +119,7 @@
 <div class="tray-panel" id="tray-panel" role="dialog" tabindex="-1" aria-label="Notification area icons">
   <header class="tray-header">
     <button type="button" class="tray-close-button" aria-label="Close notification area icons" on:click={() => void hideTrayPanel()}>
-      ×
+      <MaterialSymbolIcon name="close" />
     </button>
   </header>
   <div class="tray-main">

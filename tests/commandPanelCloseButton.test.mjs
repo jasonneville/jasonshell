@@ -7,10 +7,11 @@ const commandPanelCss = readFileSync(new URL('../src/components/CommandPanelSurf
 
 test('command panel close button is accessible and styled like destructive shell close controls', () => {
   assert.match(commandPanelSource, /function closePanel\(\) \{[\s\S]*hideCommandPanel\(\)/);
+  assert.match(commandPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(commandPanelSource, /class="command-panel-close-button"/);
   assert.match(commandPanelSource, /ariaLabel="Close quick commands"/);
   assert.match(commandPanelSource, /onClick=\{closePanel\}/);
-  assert.match(commandPanelSource, />×<\/MeltActionButton>/);
+  assert.match(commandPanelSource, /<MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
 
   assert.match(commandPanelCss, /\.command-panel-header \{/);
   assert.match(commandPanelCss, /position: relative;/);

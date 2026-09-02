@@ -3,6 +3,7 @@
   import { emitTo, listen } from '@tauri-apps/api/event';
   import './CommandPanelSurface.css';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import {
     QUICK_COMMAND_MODES,
     deriveQuickCommandPendingInputRequest,
@@ -481,7 +482,7 @@
 <svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
 
 <div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={stopListResize}>
-  <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}>×</MeltActionButton></header>
+  <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}><MaterialSymbolIcon name="close" /></MeltActionButton></header>
   {#if panelError}<p class="command-panel-error" role="alert">{panelError}</p>{/if}
   {#if pendingInputError}<p class="command-panel-error" role="alert">{pendingInputError}</p>{/if}
   <section class="command-panel-layout">

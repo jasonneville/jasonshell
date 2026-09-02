@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import {
     closePreviewedTaskWindow,
     isNativeLiveTaskPreviewPayload,
@@ -161,6 +162,6 @@
       class="preview-close-button"
       ariaLabel="Close previewed window"
       onClick={(event) => void handlePreviewClose(event)}
-    >×</MeltActionButton>
+    ><MaterialSymbolIcon name="close" /></MeltActionButton>
   {/if}
 </div>

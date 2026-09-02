@@ -177,7 +177,6 @@
   let selectedIndex = 0;
   let searchStatus = 'Loading search catalog...';
   let searchControl: HTMLDivElement;
-  let searchInput: HTMLInputElement;
   // Pin rail UI
   let pinRailHover = false;
   let pinRailEl: HTMLDivElement | null = null;
@@ -499,6 +498,10 @@
   }
 
   function openConfiguredPanel(options: OpenSearchPanelOptions = {}) {
+    if (searchOpen && searchPresentation === 'centered') {
+      void openCenteredPanel(options);
+      return;
+    }
     void (searchMode === 'topRight' ? openPanel(options) : openCenteredPanel(options));
   }
 
@@ -508,7 +511,6 @@
       return;
     }
     void openCenteredPanel({ publishCurrentPayload: true });
-    void tick().then(() => searchInput?.focus({ preventScroll: true }));
   }
 
   function isCtrlSpaceHotkey(event: KeyboardEvent) {
@@ -519,16 +521,11 @@
     return event.code === 'Space';
   }
 
-  function handleSearchFocus() {
-    openConfiguredPanel();
-  }
-
   async function closePanel() {
     resetActiveSearchState();
     searchOpen = false;
     searchPanelAnchor = null;
     lastSearchPanelPayloadSignature = null;
-    searchInput?.blur();
     await publishSearchPanel({
       query: '',
       results: [],
@@ -1603,17 +1600,6 @@
     startImmediateSearchQueryExecution(request);
   }
 
-  function hasSearchClearValue() {
-    return Boolean(searchInputDraft || searchQuery);
-  }
-
-  async function clearSearch() {
-    const request = publishImmediateSearchInputState('');
-    startImmediateSearchQueryExecution(request);
-    await tick();
-    searchInput?.focus({ preventScroll: true });
-  }
-
   function handleSearchInput(event: Event) {
     const nextQuery = (event.currentTarget as HTMLInputElement).value;
     const request = publishImmediateSearchInputState(nextQuery);
@@ -1642,18 +1628,6 @@
       return false;
     }
     return true;
-  }
-
-  function handleSearchKeydown(event: KeyboardEvent) {
-    if (applySearchKeyboardAction(event.key)) {
-      event.preventDefault();
-    }
-  }
-
-  function handleSearchPointerDown() {
-    if (!searchOpen) {
-      openConfiguredPanel();
-    }
   }
 
   function selectSearchResult(resultId: string) {
@@ -2057,30 +2031,16 @@
     </MeltActionButton>
   </div>
   <div class="search-control" bind:this={searchControl}>
-    <input
-      bind:this={searchInput}
-      aria-label="Search apps, windows, files, folders, and commands"
-      aria-expanded={searchOpen}
-      aria-haspopup="listbox"
-      autocomplete="off"
-      placeholder="Search"
-      value={searchInputDraft}
-      on:focus={handleSearchFocus}
-      on:pointerdown={handleSearchPointerDown}
-      on:blur={scheduleSearchBlurClose}
-      on:input={handleSearchInput}
-      on:keydown={handleSearchKeydown}
-    />
-    {#if hasSearchClearValue()}
-      <MeltActionButton
-        class="search-clear-button"
-        ariaLabel="Clear search"
-        tooltip="Clear search"
-        onClick={() => void clearSearch()}
-      >
-        ×
-      </MeltActionButton>
-    {/if}
+    <MeltActionButton
+      class="search-button"
+      ariaLabel="Open search"
+      ariaHaspopup="dialog"
+      ariaExpanded={searchOpen}
+      tooltip="Search"
+      onClick={() => void (searchOpen ? closePanel() : openCenteredPanel({ publishCurrentPayload: true }))}
+    >
+      <MaterialSymbolIcon name="search" />
+    </MeltActionButton>
   </div>
   {#if !topBarHeightLocked}
     <MeltActionButton

@@ -63,9 +63,10 @@ test('scheduled hide keeps preview alive until backend hide event arrives', () =
 test('preview close button is accessible red X and does not activate preview', () => {
   const closeBody = functionBody(previewSource, 'handlePreviewClose');
   const closeButtonRule = cssRule(previewCss, '.preview-close-button');
+  assert.match(previewSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(previewSource, /ariaLabel="Close previewed window"/);
   assert.match(previewSource, /class="preview-close-button"/);
-  assert.match(previewSource, />×<|>✕</);
+  assert.match(previewSource, /<MaterialSymbolIcon name="close" \/>/);
   assert.match(closeBody, /event\.preventDefault\(\)/);
   assert.match(closeBody, /event\.stopPropagation\(\)/);
   assert.match(closeBody, /await closePreviewedTaskWindow\(preview\.hwnd, preview\.galleryNonce\)/);

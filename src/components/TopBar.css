@@ -246,21 +246,7 @@
 }
 
 .top-bar .search-control {
-  align-items: center;
-  background: var(--js-color-surface-sunken);
-  border: 1px solid var(--js-color-border);
-  border-radius: var(--js-radius-sm);
-  display: grid;
-  grid-template-columns: minmax(5rem, 1fr) auto;
-  height: 1.4rem;
-  max-width: 18rem;
-  min-width: 12rem;
-  padding: 0 0.34rem 0 0.48rem;
-}
-
-.top-bar .search-control:focus-within {
-  border-color: var(--js-color-accent-border);
-  box-shadow: var(--js-focus-ring);
+  flex: 0 0 auto;
 }
 
 .top-bar .sound-control {
@@ -356,51 +342,21 @@
   border-color: var(--js-color-accent-border);
 }
 
-.top-bar .search-clear-button {
+.top-bar .search-button {
   align-items: center;
   background: transparent;
-  border: 0;
-  border-radius: var(--js-radius-xs);
-  color: var(--js-color-text-muted);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
   cursor: pointer;
   display: inline-flex;
-  font-size: 0.9rem;
-  font-weight: 800;
-  height: 1.1rem;
+  height: 1.7rem;
   justify-content: center;
-  line-height: 1;
-  padding: 0;
-  width: 1.1rem;
+  width: 1.9rem;
 }
 
-.top-bar .search-clear-button:hover,
-.top-bar .search-clear-button:focus-visible {
-  background: var(--js-color-surface-overlay);
-  color: var(--js-color-text);
-}
-
-.top-bar .search-control input {
-  background: transparent;
-  border: 0;
-  color: var(--js-color-text);
-  font: inherit;
-  font-size: 0.68rem;
-  font-weight: 650;
-  min-width: 0;
-  outline: 0;
-}
-
-.top-bar .search-control input::placeholder,
-.top-bar .search-control span {
-  color: var(--js-color-text-subtle);
-}
-
-.top-bar .search-control span {
-  border: 1px solid var(--js-color-border-soft);
-  border-radius: var(--js-radius-xs);
-  font-size: 0.55rem;
-  font-weight: 800;
-  padding: 0.02rem 0.2rem;
+.top-bar .search-button:hover {
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 @media (max-width: 520px) {
@@ -417,10 +373,6 @@
   .top-bar .time-pill {
     min-width: 4.8rem;
     padding-inline: var(--js-space-2);
-  }
-
-  .top-bar .search-control {
-    min-width: 7.5rem;
   }
 
   .top-bar .top-bar-identity {

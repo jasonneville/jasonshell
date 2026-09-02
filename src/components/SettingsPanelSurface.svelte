@@ -3,6 +3,7 @@
   import './SettingsPanelSurface.css';
   import { onMount } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import MeltRadioGroup from './melt/MeltRadioGroup.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
   import MeltToggle from './melt/MeltToggle.svelte';
@@ -244,7 +245,7 @@
       <p>JasonShell</p>
       <h1 id="settings-panel-title">Settings</h1>
     </div>
-    <MeltActionButton ariaLabel="Close settings" onClick={closePanel}>x</MeltActionButton>
+    <MeltActionButton ariaLabel="Close settings" onClick={closePanel}><MaterialSymbolIcon name="close" /></MeltActionButton>
   </header>
 
   <section class="settings-section" aria-labelledby="appearance-heading">

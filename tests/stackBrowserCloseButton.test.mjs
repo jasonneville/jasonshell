@@ -31,9 +31,10 @@ test('stack browser has an accessible rectangular red X close button wired to th
   const closeButtonRule = cssRule(stackPopupCss, '.stack-browser-close-button');
   const toolbarRule = cssRule(stackPopupCss, '.stack-toolbar');
 
+  assert.match(stackPopupSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(stackPopupSource, /class="stack-browser-close-button"/);
   assert.match(stackPopupSource, /ariaLabel="Close stack browser"/);
-  assert.match(stackPopupSource, />×<|>✕</);
+  assert.match(stackPopupSource, /<MaterialSymbolIcon name="close" \/>/);
   assert.match(stackPopupSource, /onClick=\{\(\) => void closeStackPopupFromSurface\(\)\}/);
   assert.match(closeBody, /await stopCurrentStackTerminal\(\)/);
   assert.match(closeBody, /stackBrowserViewMode\s*=\s*'files'/);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { afterUpdate, onMount, tick } from 'svelte';
   import * as stackPopup from '../lib/stackPopup';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import {
     canCommitGitStatus,
     canStageGitSelection,
@@ -1436,7 +1437,7 @@
 
       <div class="stack-git-panel-header-actions">
         <button type="button" class="stack-git-icon-button" aria-label="Refresh git panel" title="Refresh" on:click={() => void refreshAll()}>↻</button>
-        <button type="button" class="stack-git-icon-button" aria-label="Close git panel" title="Close" on:click={closePanel}>✕</button>
+        <button type="button" class="stack-git-icon-button" aria-label="Close git panel" title="Close" on:click={closePanel}><MaterialSymbolIcon name="close" /></button>
       </div>
     </div>
 
