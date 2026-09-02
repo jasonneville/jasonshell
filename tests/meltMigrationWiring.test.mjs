@@ -143,7 +143,7 @@ test('search panel keeps pinning input-owned while safe buttons use Melt-backed 
   assert.match(taskPreviewSource, /<MeltActionButton[\s\S]*class=\{previewSurfaceClass\}[\s\S]*ariaDisabled=\{!preview\}[\s\S]*ariaLabel=\{preview \? `Activate \$\{preview\.title \|\| preview\.processName\}` : 'Task preview unavailable'\}/);
   assert.match(taskPreviewSource, /onClick=\{\(\) => void handlePreviewActivate\(\)\}/);
   assert.match(taskPreviewSource, /onKeyDown=\{\(event\) => void handlePreviewKeydown\(event\)\}/);
-  assert.match(taskPreviewSource, /function handlePreviewPointerEnter\(\)[\s\S]*emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)/);
+  assert.match(taskPreviewSource, /function handlePreviewPointerEnter\(\)[\s\S]*emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT/);
   assert.match(taskPreviewSource, /async function handlePreviewPointerLeave\(event: PointerEvent\)[\s\S]*event\.currentTarget[\s\S]*event\.relatedTarget[\s\S]*root\.contains\(relatedTarget\)[\s\S]*requestPreviewHide\('schedule'\)/);
   assert.match(taskPreviewSource, /on:pointerenter=\{handlePreviewPointerEnter\}/);
   assert.match(taskPreviewSource, /on:pointerleave=\{\(event\) => void handlePreviewPointerLeave\(event\)\}/);

@@ -10,6 +10,10 @@ export const TASK_PREVIEW_HIDE_DELAY_MS = 140;
 
 export type TaskPreviewHideRequestMode = 'schedule' | 'immediate';
 
+export type TaskPreviewHoverEnter = {
+  source: 'gallery' | 'preview';
+};
+
 export type TaskPreviewHideRequest = {
   mode: TaskPreviewHideRequestMode;
   preserveGallery?: boolean;

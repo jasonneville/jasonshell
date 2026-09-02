@@ -17,6 +17,15 @@ import {
   shouldShowSearchPanelForAnchor
 } from '../dist-tests/lib/systemSearchState.js';
 
+test('search panel empty state stays hidden when status text already explains startup or loading', () => {
+  const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
+  const emptyStateBlock = source.match(/\{:else if visibleStatusMessage === ''\}[\s\S]*?<div class="empty-state surface-state info">No search results matched<\/div>/)?.[0] ?? '';
+
+  assert.match(emptyStateBlock, /\{:else if visibleStatusMessage === ''\}/);
+  assert.match(emptyStateBlock, /No search results matched/);
+  assert.doesNotMatch(source, /<div class="empty-state surface-state info">\{visibleStatusMessage \? '' : 'No search results matched'\}<\/div>/);
+});
+
 test('applies a typed search payload with visible results and selection', () => {
   const next = applySearchPanelPayload(defaultSearchPanelViewState, {
     query: 'firefox',

@@ -16,6 +16,7 @@
     TASK_PREVIEW_HIDE_DELAY_MS,
     TASK_PREVIEW_HIDE_REQUEST_EVENT,
     TASK_PREVIEW_HOVER_ENTER_EVENT,
+    type TaskPreviewHoverEnter,
     type TaskPreviewHideRequest
   } from '../lib/taskbarUi';
 
@@ -126,7 +127,7 @@
 
   function handleGalleryPointerEnter() {
     cancelGalleryHoverClose();
-    void emit(TASK_PREVIEW_HOVER_ENTER_EVENT);
+    void emit<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, { source: 'gallery' });
   }
 
   async function activateFocused(minimizeIfActive = false) {
@@ -205,7 +206,11 @@
       if (activeNonce && event.payload.nonce && event.payload.nonce !== activeNonce) return;
       payload = null; activeNonce = null; focusedHwnd = null; focusedIndex = -1; rowButtons = []; currentPreviewHwnd = null; currentPreviewRequestId = 0;
     });
-    const unlistenPreviewEnter = listen(TASK_PREVIEW_HOVER_ENTER_EVENT, cancelGalleryHoverClose);
+    const unlistenPreviewEnter = listen<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, (event) => {
+      if (event.payload.source === 'preview') {
+        cancelGalleryHoverClose();
+      }
+    });
     const unlistenPreviewHide = listen<TaskPreviewHideRequest>(TASK_PREVIEW_HIDE_REQUEST_EVENT, (event) => {
       if (event.payload.mode === 'immediate') {
         if (!event.payload.preserveGallery) void closeTaskGallery();

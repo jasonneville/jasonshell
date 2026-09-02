@@ -66,6 +66,7 @@
     TASK_PREVIEW_DELAY_MS,
     TASK_PREVIEW_HIDE_DELAY_MS,
     TASK_PREVIEW_HOVER_ENTER_EVENT,
+    type TaskPreviewHoverEnter,
     TASK_PREVIEW_HIDE_REQUEST_EVENT,
     type TaskPreviewHideRequest,
     taskWindowActionLabel,
@@ -1057,7 +1058,7 @@
       void refreshLauncherSections();
     }));
 
-    registerAsyncUnlistener(listen(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
+    registerAsyncUnlistener(listen<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
       clearPreviewHideTimer();
       cancelTaskGalleryClose();
     }));

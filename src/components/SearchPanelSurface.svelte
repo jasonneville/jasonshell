@@ -517,8 +517,8 @@
           </span>
         </div>
       {/each}
-    {:else}
-      <div class="empty-state surface-state info">{visibleStatusMessage ? '' : 'No search results matched'}</div>
+    {:else if visibleStatusMessage === ''}
+      <div class="empty-state surface-state info">No search results matched</div>
     {/if}
   </div>
   {#if presentation === 'centered'}

@@ -110,8 +110,13 @@ test('gallery closes after pointer leaves both tabs and task preview', () => {
   assert.match(gallerySource, /TASK_PREVIEW_HOVER_ENTER_EVENT/);
   assert.match(gallerySource, /TASK_PREVIEW_HIDE_REQUEST_EVENT/);
   assert.match(bottomBarSource, /onMouseLeave=\{\(\) => scheduleTaskGalleryClose\(group\.key\)\}/);
-  assert.match(gallerySource, /emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)/);
-  assert.match(gallerySource, /function\s+handleGalleryPointerEnter\s*\([\s\S]*?cancelGalleryHoverClose\(\);[\s\S]*?emit\(TASK_PREVIEW_HOVER_ENTER_EVENT\)/);
+  assert.match(gallerySource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery' \}\)/);
+  assert.match(gallerySource, /function\s+handleGalleryPointerEnter\s*\([\s\S]*?cancelGalleryHoverClose\(\);[\s\S]*?emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery' \}\)/);
+  assert.match(taskPreviewSurfaceSource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'preview' \}\)/);
+  assert.match(bottomBarSource, /type TaskPreviewHoverEnter/);
+  assert.match(bottomBarSource, /listen<\s*TaskPreviewHoverEnter\s*>\(TASK_PREVIEW_HOVER_ENTER_EVENT, \(\) => \{/s);
+  assert.match(gallerySource, /if \(event\.payload\.source === 'preview'\) \{/);
+  assert.doesNotMatch(gallerySource, /listen\(TASK_PREVIEW_HOVER_ENTER_EVENT, cancelGalleryHoverClose\)/);
   assert.match(gallerySource, /on:pointerenter=\{handleGalleryPointerEnter\}/);
   assert.match(gallerySource, /on:pointerleave=\{scheduleGalleryHoverClose\}/);
 });

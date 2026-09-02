@@ -11,7 +11,8 @@
   import {
     TASK_PREVIEW_HIDE_REQUEST_EVENT,
     TASKBAR_REFRESH_WINDOWS_EVENT,
-    TASK_PREVIEW_HOVER_ENTER_EVENT
+    TASK_PREVIEW_HOVER_ENTER_EVENT,
+    type TaskPreviewHoverEnter
   } from '../lib/taskbarUi';
   import { maximizeTaskWindow } from '../lib/taskbarWindows';
 
@@ -53,7 +54,7 @@
   }
 
   function handlePreviewPointerEnter() {
-    void emit(TASK_PREVIEW_HOVER_ENTER_EVENT);
+    void emit<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, { source: 'preview' });
   }
 
   async function handlePreviewPointerLeave(event: PointerEvent) {
