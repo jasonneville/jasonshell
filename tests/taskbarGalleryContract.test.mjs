@@ -3,9 +3,15 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
+const bottomBarCssSource = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
 const gallerySource = readFileSync(new URL('../src/components/TaskGallerySurface.svelte', import.meta.url), 'utf8');
 const taskPreviewSurfaceSource = readFileSync(new URL('../src/components/TaskPreviewSurface.svelte', import.meta.url), 'utf8');
 const nativeGallerySource = readFileSync(new URL('../src-tauri/src/task_gallery.rs', import.meta.url), 'utf8');
+
+function extractCssRuleBody(source, selector) {
+  const rule = source.match(new RegExp(`${selector} \\{([\\s\\S]*?)\\n\\}`, 'm'));
+  return rule?.[1] ?? '';
+}
 
 test('native capsule wiring imports and uses gallery helpers', () => {
   assert.match(bottomBarSource, /taskGroupDisplayMode/);
@@ -23,6 +29,15 @@ test('capsule renders native gallery affordance only', () => {
   const capsuleButton = bottomBarSource.match(/class={`task-button task-capsule[\s\S]*?<\/MeltActionButton>/)?.[0] ?? '';
   assert.ok(capsuleButton);
   assert.doesNotMatch(capsuleButton, /onContextMenu/);
+});
+
+test('capsule outer width follows the shared equal flex contract', () => {
+  const capsuleRule = extractCssRuleBody(bottomBarCssSource, '\\.bottom-bar \\.task-group-capsule');
+  assert.ok(capsuleRule);
+  assert.match(capsuleRule, /flex:\s*1 1 0;/);
+  assert.match(capsuleRule, /max-width:\s*160px;/);
+  assert.doesNotMatch(capsuleRule, /max-width:\s*calc\(160px \* var\(--task-window-count, 1\)\);/);
+  assert.doesNotMatch(capsuleRule, /min-width:\s*96px;|max-width:\s*96px;/);
 });
 
 test('capsule hover opens gallery after a cancellable dwell', () => {

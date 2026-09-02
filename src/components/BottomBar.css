@@ -229,9 +229,8 @@
 }
 
 .bottom-bar .task-group-capsule {
-  flex: 0 0 auto;
-  max-width: 96px;
-  min-width: 96px;
+  flex: 1 1 0;
+  max-width: 160px;
 }
 
 .bottom-bar .task-group-active {
