@@ -3,6 +3,8 @@
 
   export let name: MaterialSymbolIconName;
   export let decorative = true;
+
+  $: iconPath = String(MATERIAL_SYMBOL_ICON_PATHS[name]);
 </script>
 
 <svg
@@ -15,7 +17,7 @@
   aria-label={decorative ? undefined : name}
   xmlns="http://www.w3.org/2000/svg"
 >
-  <path d={MATERIAL_SYMBOL_ICON_PATHS[name] as unknown as string} />
+  <path d={iconPath} />
 </svg>
 
 <style>

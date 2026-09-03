@@ -85,8 +85,8 @@
 .process-row-head button,
 .process-group-toggle,
 .kill-button {
-  background: var(--js-bg-control);
-  border: 1px solid var(--js-color-border);
+  background: none;
+  border: none;
   border-radius: var(--js-radius-md);
   color: var(--js-color-text);
   cursor: pointer;
@@ -94,7 +94,7 @@
   font-size: 0.62rem;
   font-weight: 700;
   min-height: 1.5rem;
-  padding: 0.18rem 0.5rem;
+  padding: 0.01rem 0.5rem;
 }
 
 .process-manager-actions button:hover:not(:disabled),
@@ -120,12 +120,25 @@
   opacity: 0.48;
 }
 
+.process-manager-refresh-button {
+  align-items: center;
+  background: none;
+  border: none;
+  border-color: none;
+}
+
+.process-manager-refresh-button:hover {
+  background: var(--js-color-accent-soft);
+  border: none;
+  border-color: none;
+}
+
 .process-manager-close-button {
   align-items: center;
-  background: #dc2626;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: none;
+  border: none;
   border-radius: var(--js-radius-xs);
-  color: #fff;
+  color: var(--js-color-text);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
@@ -143,7 +156,8 @@
 }
 
 .process-manager-close-button:hover {
-  background: #ef4444;
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .process-table {

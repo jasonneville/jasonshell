@@ -1,4 +1,8 @@
 ## Change Ledger
+- 2026-09-02 `[CODE]` FIXED: `MeltActionButton` tooltip content now resets native popover inset and margin so Melt/Floating UI `left`/`top` placement stays adjacent to the trigger instead of drifting toward the viewport center.
+- 2026-09-02 `[TOOL]` TESTED: RED-first source assertion covered the shared tooltip reset root cause; `npm run build` passed with 3 existing StackGitPanel warnings, and the focused test file still has unrelated pre-existing failures while the tooltip reset assertion passes.
+- 2026-09-02 `[CODE]` FIXED: Stack Browser file toolbar and folder search now use accessible icon-only official Material Symbols Outlined SVGs; corrected malformed/wrong glyph paths including the linked Google `refresh`, made Copy switch between file/folder glyphs, and removed toolbar button backgrounds and borders.
+- 2026-09-02 `[TOOL]` VALIDATED: All 11 new toolbar paths byte-match Google's official 24px outlined SVG sources; focused icon/Melt tests pass 12/12, and Svelte check plus production build pass with 3 existing StackGitPanel selector warnings.
 - 2026-09-02 `[CODE]` FIXED: Restored reliable global `Alt+1` Stack Browser toggling by checking live Windows Alt state when classifying `1`, matching the existing resilient Ctrl+Space modifier handling and clearing stale held-key state when Alt releases.
 - 2026-09-02 `[CODE]` FIXED: Kept centered Search authoritative after query events so persisted legacy `topRight` mode cannot move an icon-opened panel back to obsolete anchored presentation.
 - 2026-09-02 `[CODE]` FIXED: Made the icon-only top-bar search control fixed-width so the pinned-folder rail consumes remaining space and the terminal-through-search controls stay aligned at the right edge.

@@ -63,6 +63,7 @@ test('shared JasonShell primitives wrap Melt builders', () => {
   assert.match(meltActionButtonSource, /\{\.\.\.tooltipTrigger\}/);
   assert.doesNotMatch(meltActionButtonSource, /\{\.\.\.actionTooltip\.trigger\}/);
   assert.match(meltActionButtonSource, /\{\.\.\.actionTooltip\.content\}/);
+  assert.match(meltActionButtonSource, /\.melt-action-button-tooltip \{[\s\S]*inset:\s*auto;[\s\S]*margin:\s*0;[\s\S]*\}/);
   assert.match(meltActionButtonSource, /export let ariaLabel: string \| undefined = undefined/);
   assert.doesNotMatch(meltActionButtonSource, /export let ariaLabel\s*=\s*''/);
   assert.match(meltActionButtonSource, /data-path=\{dataPath\}/);
@@ -161,8 +162,8 @@ test('search panel keeps pinning input-owned while safe buttons use Melt-backed 
 test('stack-popup safe controls use MeltActionButton while risky grid/ref controls stay raw by design', () => {
   assert.match(stackPopupSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
   assert.match(stackPopupSource, /<MeltActionButton class="path-segment" ariaCurrent=\{crumb\.path === currentPath \? 'page' : undefined\} title=\{crumb\.path\} onClick=\{\(\) => void openFolder\(crumb\.path\)\}/);
-  assert.match(stackPopupSource, /<MeltActionButton disabled=\{!canGoBack\} onClick=\{\(\) => void navigateHistory\(-1\)\}>Back<\/MeltActionButton>/);
-  assert.match(stackPopupSource, /<MeltActionButton disabled=\{!hasSelection\} onClick=\{\(\) => void deleteSelected\(\)\}>Delete<\/MeltActionButton>/);
+  assert.match(stackPopupSource, /<MeltActionButton class="stack-action-icon-button" ariaLabel="Back" tooltip="Back" disabled=\{!canGoBack\} onClick=\{\(\) => void navigateHistory\(-1\)\}><MaterialSymbolIcon name="arrow_back"\s*\/><\/MeltActionButton>/);
+  assert.match(stackPopupSource, /<MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled=\{!hasSelection\} onClick=\{\(\) => void deleteSelected\(\)\}><MaterialSymbolIcon name="delete"\s*\/><\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton type="submit">OK<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton onClick=\{cancelInlineEditor\}>Cancel<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton class=\{sortHeader\('name'\)\.className\} role="columnheader" ariaColindex=\{1\} ariaSort=\{sortHeader\('name'\)\.ariaSort\} onClick=\{\(\) => sortBy\('name'\)\}/);

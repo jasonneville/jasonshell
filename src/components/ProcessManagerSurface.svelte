@@ -289,9 +289,11 @@
           on:input={() => { armedKillPid = null; }}
         />
       </label>
-      <MeltActionButton onClick={() => void refreshProcesses({ preserveVolatileOrder: false, announce: true })}>
-        Refresh
-      </MeltActionButton>
+      <MeltActionButton
+        class="process-manager-refresh-button"
+        ariaLabel="Refresh process manager"
+        onClick={() => void refreshProcesses({ preserveVolatileOrder: false, announce: true })}
+      ><MaterialSymbolIcon name="refresh" /></MeltActionButton>
     </div>
     <MeltActionButton
       class="process-manager-close-button"

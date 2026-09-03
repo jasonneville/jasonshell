@@ -119,10 +119,10 @@
 
 .preview-close-button {
   align-items: center;
-  background: #dc2626;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: none;
+  border: none;
   border-radius: var(--js-radius-xs);
-  color: #fff;
+  color: var(--js-color-text);
   display: inline-flex;
   font-size: 0.75rem;
   font-weight: 800;
@@ -138,5 +138,6 @@
 }
 
 .preview-close-button:hover {
-  background: #ef4444;
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }

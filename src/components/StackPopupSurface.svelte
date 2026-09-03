@@ -217,7 +217,6 @@
   let shellSurfaceHotkeyHandled = false;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
-
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
   $: visibleEntries = stackBrowserSearchEntries(entries, searchQuery);
@@ -2212,6 +2211,7 @@
   <MeltActionButton
     class="stack-browser-close-button"
     ariaLabel="Close stack browser"
+    tooltip="Close stack browser"
     onClick={() => void closeStackPopupFromSurface()}
   ><MaterialSymbolIcon name="close" /></MeltActionButton>
 
@@ -2292,18 +2292,18 @@
       </form>
     </div>
     <div class="stack-actions">
-      <MeltActionButton disabled={!canGoBack} onClick={() => void navigateHistory(-1)}>Back</MeltActionButton>
-      <MeltActionButton disabled={!canGoForward} onClick={() => void navigateHistory(1)}>Forward</MeltActionButton>
-      <MeltActionButton onClick={() => void loadFolder(currentPath)}>Refresh</MeltActionButton>
-      <MeltActionButton disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
-      <MeltActionButton disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
-      <MeltActionButton disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</MeltActionButton>
-      <MeltActionButton disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
-      <MeltActionButton disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
-      <MeltActionButton disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
-      <MeltActionButton disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Back" tooltip="Back" disabled={!canGoBack} onClick={() => void navigateHistory(-1)}><MaterialSymbolIcon name="arrow_back" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Forward" tooltip="Forward" disabled={!canGoForward} onClick={() => void navigateHistory(1)}><MaterialSymbolIcon name="arrow_forward" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Refresh" tooltip="Refresh" onClick={() => void loadFolder(currentPath)}><MaterialSymbolIcon name="refresh" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel={selectedEntry?.entryType === 'Folder' ? 'Copy folder' : 'Copy selected item'} tooltip={selectedEntry?.entryType === 'Folder' ? 'Copy folder' : 'Copy selected item'} disabled={!hasSelection} onClick={() => void copySelected(false)}><MaterialSymbolIcon name={selectedEntry?.entryType === 'Folder' ? 'folder_copy' : 'file_copy'} /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Cut selected item" tooltip="Cut selected item" disabled={!hasSelection} onClick={() => void copySelected(true)}><MaterialSymbolIcon name="content_cut" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Paste into current folder" tooltip="Paste into current folder" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}><MaterialSymbolIcon name="content_paste" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Rename selected item" tooltip="Rename selected item" disabled={!selectedEntry} onClick={beginRenameSelected}><MaterialSymbolIcon name="drive_file_rename" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled={!hasSelection} onClick={() => void deleteSelected()}><MaterialSymbolIcon name="delete" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="New folder" tooltip="New folder" disabled={!currentPath} onClick={beginCreateFolder}><MaterialSymbolIcon name="create_new_folder" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Reveal selected item" tooltip="Reveal selected item" disabled={!selectedEntry} onClick={() => void revealSelected()}><MaterialSymbolIcon name="preview" /></MeltActionButton>
       <label class="stack-search" aria-label="Search current folder">
-        <span>Search</span>
+        <MaterialSymbolIcon name="search" />
         <input
           aria-label="Search current folder"
           value={searchQuery}
@@ -2525,7 +2525,6 @@
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void beginCreateTextFile()}>New Text File</MeltActionButton>
       <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</MeltActionButton>

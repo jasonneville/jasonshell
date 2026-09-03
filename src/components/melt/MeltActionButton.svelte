@@ -112,6 +112,7 @@
 
 <style>
   .melt-action-button-tooltip {
+    inset: auto;
     background: var(--js-color-surface-raised);
     border: 1px solid var(--js-color-border);
     border-radius: var(--js-radius-xs);
@@ -120,6 +121,7 @@
     font-size: 0.62rem;
     font-weight: 650;
     max-width: min(18rem, calc(100vw - 0.5rem));
+    margin: 0;
     overflow: hidden;
     padding: 0.18rem 0.36rem;
     text-overflow: ellipsis;
