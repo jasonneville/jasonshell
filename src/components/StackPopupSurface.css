@@ -719,7 +719,6 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--js-space-2);
   justify-content: flex-end;
 }
 
