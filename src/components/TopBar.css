@@ -214,7 +214,7 @@
 .top-bar .time-pill {
   align-items: flex-end;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--js-radius-sm);
   box-shadow: var(--js-inset-highlight);
   color: var(--js-color-text);
@@ -230,8 +230,8 @@
 
 .top-bar .time-pill:hover,
 .top-bar .time-pill[aria-expanded="true"] {
-  background: var(--js-color-surface-sunken);
-  border-color: var(--js-color-border-soft);
+  background: var(--js-color-accent-soft);
+  border-color: var(--js-color-accent-border);
 }
 
 .top-bar .time-pill strong {
