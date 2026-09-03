@@ -228,6 +228,9 @@ export function applyStackEntries(
   }
 
   const sortedEntries = sortStackEntries(entries, current.sortColumn, current.sortDirection);
+  const previousEntriesByPath = current.entriesPath === folderPath
+    ? new Map(current.entries.map((entry) => [entry.path, entry]))
+    : null;
   const visiblePaths = new Set(sortedEntries.map((entry) => entry.path));
   const selectedPaths = (current.selectedPaths.length ? current.selectedPaths : [current.selectedPath])
     .filter((path): path is string => Boolean(path && visiblePaths.has(path)));
@@ -237,10 +240,26 @@ export function applyStackEntries(
       ? current.selectedPath
       : (selectedPaths[0] ?? null);
 
+  const mergedEntries = previousEntriesByPath
+    ? sortedEntries.map((entry) => {
+        const previousEntry = previousEntriesByPath.get(entry.path);
+        if (entry.iconDataUrl != null) {
+          return entry;
+        }
+        if (previousEntry?.iconDataUrl == null) {
+          return entry;
+        }
+        return {
+          ...entry,
+          iconDataUrl: previousEntry.iconDataUrl
+        };
+      })
+    : sortedEntries;
+
   return {
     ...current,
     entriesPath: folderPath,
-    entries: sortedEntries,
+    entries: mergedEntries,
     selectedPath,
     selectedPaths,
     selectionAnchorPath: current.selectionAnchorPath && visiblePaths.has(current.selectionAnchorPath)

@@ -34,6 +34,7 @@
 }
 
 .top-bar .stack-browser-button {
+  color: var(--js-color-text);
   width: 1.95rem;
 }
 
@@ -47,7 +48,7 @@
   background: none;
   border: none;
   border-radius: var(--js-radius-sm);
-  color: var(--js-color-text-strong);
+  color: var(--js-color-text);
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;

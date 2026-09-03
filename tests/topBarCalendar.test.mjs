@@ -4,8 +4,10 @@ import test from 'node:test';
 import {
   addCalendarMonths,
   calendarMonthModel,
+  createCalendarWheelNavigationState,
   formatCalendarLongDate,
-  formatCalendarTimezone
+  formatCalendarTimezone,
+  reduceCalendarWheelNavigation
 } from '../dist-tests/features/top-bar/topBarUxState.js';
 
 const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
@@ -57,6 +59,117 @@ test('calendar labels expose long date and local timezone information', () => {
   assert.match(formatCalendarTimezone(new Date(2026, 4, 7), 'en-US'), /UTC[+-]\d{2}:\d{2}/);
 });
 
+function wheelNavigation(state, event) {
+  return reduceCalendarWheelNavigation(state, {
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: 0,
+    timeStamp: 0,
+    ...event
+  });
+}
+
+test('calendar wheel navigation accumulates pixel deltas to a 100px threshold', () => {
+  let state = createCalendarWheelNavigationState();
+
+  let result = wheelNavigation(state, { deltaY: 40, timeStamp: 0 });
+  assert.equal(result.monthDelta, 0);
+  assert.equal(result.consumed, true);
+  assert.equal(result.preventDefault, true);
+
+  result = wheelNavigation(result.state, { deltaY: 59, timeStamp: 100 });
+  assert.equal(result.monthDelta, 0);
+  assert.equal(result.consumed, true);
+  assert.equal(result.preventDefault, true);
+
+  result = wheelNavigation(result.state, { deltaY: 1, timeStamp: 200 });
+  assert.equal(result.monthDelta, 1);
+  assert.equal(result.consumed, true);
+  assert.equal(result.preventDefault, true);
+});
+
+test('calendar wheel direction maps down to next month and up to previous month', () => {
+  let state = createCalendarWheelNavigationState();
+
+  let result = wheelNavigation(state, { deltaY: 100, timeStamp: 0 });
+  assert.equal(result.monthDelta, 1);
+
+  state = createCalendarWheelNavigationState();
+  result = wheelNavigation(state, { deltaY: -100, timeStamp: 0 });
+  assert.equal(result.monthDelta, -1);
+});
+
+test('calendar wheel direction reversal clears stale accumulation', () => {
+  let result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: 80, timeStamp: 0 });
+  result = wheelNavigation(result.state, { deltaY: -30, timeStamp: 100 });
+  assert.equal(result.monthDelta, 0);
+
+  result = wheelNavigation(result.state, { deltaY: -70, timeStamp: 200 });
+  assert.equal(result.monthDelta, -1);
+});
+
+test('calendar wheel navigation throttles to one month per 500ms including exact boundary', () => {
+  let result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: 100, timeStamp: 0 });
+  assert.equal(result.monthDelta, 1);
+
+  result = wheelNavigation(result.state, { deltaY: 1000, timeStamp: 499 });
+  assert.equal(result.monthDelta, 0);
+  assert.equal(result.consumed, true);
+  assert.equal(result.preventDefault, true);
+
+  result = wheelNavigation(result.state, { deltaY: 100, timeStamp: 500 });
+  assert.equal(result.monthDelta, 1);
+});
+
+test('calendar wheel idle gap over 700ms clears partial accumulation', () => {
+  let result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: 80, timeStamp: 0 });
+  result = wheelNavigation(result.state, { deltaY: 20, timeStamp: 701 });
+  assert.equal(result.monthDelta, 0);
+
+  result = wheelNavigation(result.state, { deltaY: 80, timeStamp: 702 });
+  assert.equal(result.monthDelta, 1);
+});
+
+test('calendar wheel navigation normalizes line and page delta modes', () => {
+  let result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: 3, deltaMode: 1, timeStamp: 0 });
+  assert.equal(result.monthDelta, 1);
+
+  result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: -1, deltaMode: 2, timeStamp: 0 });
+  assert.equal(result.monthDelta, -1);
+});
+
+test('calendar wheel huge delta navigates at most one month without backlog', () => {
+  let result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: 10_000, timeStamp: 0 });
+  assert.equal(result.monthDelta, 1);
+
+  result = wheelNavigation(result.state, { deltaY: 0, timeStamp: 500 });
+  assert.equal(result.monthDelta, 0);
+
+  result = wheelNavigation(result.state, { deltaY: 100, timeStamp: 500 });
+  assert.equal(result.monthDelta, 1);
+});
+
+test('calendar wheel horizontal-dominant input is ignored and not consumed', () => {
+  const result = wheelNavigation(createCalendarWheelNavigationState(), { deltaX: 120, deltaY: 60, timeStamp: 0 });
+  assert.equal(result.monthDelta, 0);
+  assert.equal(result.consumed, false);
+  assert.equal(result.preventDefault, false);
+});
+
+test('calendar wheel consumes vertical input even below threshold or during cooldown', () => {
+  let result = wheelNavigation(createCalendarWheelNavigationState(), { deltaY: 1, timeStamp: 0 });
+  assert.equal(result.monthDelta, 0);
+  assert.equal(result.consumed, true);
+  assert.equal(result.preventDefault, true);
+
+  result = wheelNavigation(result.state, { deltaY: 100, timeStamp: 100 });
+  assert.equal(result.monthDelta, 1);
+  result = wheelNavigation(result.state, { deltaY: 100, timeStamp: 101 });
+  assert.equal(result.monthDelta, 0);
+  assert.equal(result.consumed, true);
+  assert.equal(result.preventDefault, true);
+});
+
 test('top bar time pill owns an Explorer-like scrollable calendar flyout', () => {
   assert.match(topBarSource, /toggleCalendarPanel/);
   assert.match(topBarSource, /class="time-pill"[\s\S]*ariaHaspopup="dialog"[\s\S]*ariaExpanded=\{calendarOpen\}/);
@@ -66,7 +179,10 @@ test('top bar time pill owns an Explorer-like scrollable calendar flyout', () =>
   assert.match(topBarCss, /\.top-bar \.time-control \{[\s\S]*flex: 0 0 10\.5rem;/);
   assert.match(topBarCss, /\.top-bar \.time-pill \{[\s\S]*width: 100%;/);
   assert.match(calendarPanelSource, /id="calendar-panel"[\s\S]*role="dialog"/);
-  assert.match(calendarPanelSource, /on:wheel=\{handleCalendarWheel\}/);
+  assert.match(calendarPanelSource, /on:wheel\|nonpassive=\{handleCalendarWheel\}/);
+  assert.match(calendarPanelSource, /createCalendarWheelNavigationState/);
+  assert.match(calendarPanelSource, /reduceCalendarWheelNavigation/);
+  assert.match(calendarPanelSource, /if \([^)]+\.preventDefault\)[\s\S]*event\.preventDefault\(\)/);
   assert.match(calendarPanelSource, /jumpCalendarMonths\(-12\)/);
   assert.match(calendarPanelSource, /jumpCalendarMonths\(12\)/);
   assert.match(calendarPanelSource, /formatCalendarTimezone/);

@@ -20,7 +20,6 @@
 
 .stack-toolbar {
   display: grid;
-  gap: var(--js-space-3);
   padding-right: 3rem;
 }
 
@@ -839,10 +838,12 @@
 
 .stack-action-icon-button .material-symbol-icon {
   color: currentColor;
+  background: none;
 }
 
 .stack-actions button:disabled {
   color: var(--js-color-text-subtle);
+  background: none;
 }
 
 .stack-actions button:not(:disabled):hover,

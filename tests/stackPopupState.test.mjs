@@ -670,6 +670,70 @@ test('updates row icons in place without changing progressive row ordering', () 
   assert.equal(updated.entries[1].iconDataUrl, 'data:image/png;base64,icon-bravo');
 });
 
+test('preserves hydrated row icons when same-folder listing refresh omits icon data', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [
+    {
+      ...stackEntry('alpha.txt'),
+      iconDataUrl: 'data:image/png;base64,icon-alpha'
+    },
+    {
+      ...stackEntry('bravo.txt'),
+      iconDataUrl: 'data:image/png;base64,icon-bravo'
+    }
+  ]);
+
+  state = applyStackFolderListing(state, documents, {
+    path: documents,
+    entries: [
+      {
+        ...stackEntry('alpha.txt'),
+        iconDataUrl: null
+      },
+      {
+        ...stackEntry('charlie.txt'),
+        iconDataUrl: null
+      }
+    ],
+    total: 2,
+    warnings: []
+  });
+
+  assert.equal(state.entries[0].iconDataUrl, 'data:image/png;base64,icon-alpha');
+  assert.equal(state.entries[0].path, 'C:\\Users\\me\\Documents\\alpha.txt');
+  assert.equal(state.entries[1].name, 'charlie.txt');
+  assert.equal(state.entries[1].iconDataUrl, null);
+});
+
+test('same-folder refresh keeps previous icon only when incoming icon is nullish and explicit icon wins', () => {
+  let state = openStackFolder(defaultStackPopupViewState, documents);
+  state = applyStackEntries(state, documents, [
+    {
+      ...stackEntry('alpha.txt'),
+      iconDataUrl: 'data:image/png;base64,icon-alpha'
+    }
+  ]);
+
+  state = applyStackFolderListing(state, documents, {
+    path: documents,
+    entries: [
+      {
+        ...stackEntry('alpha.txt'),
+        iconDataUrl: undefined
+      },
+      {
+        ...stackEntry('bravo.txt'),
+        iconDataUrl: 'data:image/png;base64,icon-bravo'
+      }
+    ],
+    total: 2,
+    warnings: []
+  });
+
+  assert.equal(state.entries[0].iconDataUrl, 'data:image/png;base64,icon-alpha');
+  assert.equal(state.entries[1].iconDataUrl, 'data:image/png;base64,icon-bravo');
+});
+
 test('reports icon hydration progress distinctly from metadata listing completion', () => {
   assert.equal(stackIconHydrationStatus(0, 0), '');
   assert.equal(stackIconHydrationStatus(0, 5), 'Loading icons 0 of 5');

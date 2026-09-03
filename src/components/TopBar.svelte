@@ -1988,7 +1988,7 @@
       tooltip="Quick commands"
       onClick={(event) => void toggleCommandPanel(event.currentTarget)}
     >
-      <MaterialSymbolIcon name="code" />
+      <MaterialSymbolIcon name="workspaces" />
     </MeltActionButton>
   </div>
   <div class="tray-control" bind:this={trayControl}>
