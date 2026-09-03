@@ -1475,9 +1475,6 @@
         {/if}
         <strong>{operationLabel}</strong>
       </div>
-      {#if operationState === 'success' && statusMessage}
-        <div class="stack-git-operation-status__message">{statusMessage}</div>
-      {/if}
       {#if operationState === 'error'}
         <div class="stack-git-operation-status__message">{operationErrorDetail}</div>
       {/if}
