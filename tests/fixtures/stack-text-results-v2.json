@@ -1,0 +1,30 @@
+{
+  "valid": [
+    {"kind":"session","data":{"sessionId":"s1","sourceGeneration":"g1","documentRevision":"2","inputSequence":"2","sourceBytes":"9007199254740993","encoding":"utf8","bomBytes":3,"insertedEol":"crlf","dirty":true,"savedRevision":"0","durableRevision":"1","readOnlyReason":null}},
+    {"kind":"receipt","data":{"state":"pending"}},
+    {"kind":"receipt","data":{"state":"accepted","documentRevision":"18446744073709551615"}},
+    {"kind":"receipt","data":{"state":"rejected","code":"ResourceLimit"}},
+    {"kind":"selection","data":{"sessionId":"s1","sourceGeneration":"g1","documentRevision":"0","inputSequence":"0","selectionId":"r1","anchor":{"byte":"9007199254740993","affinity":"after"},"head":{"byte":"1","affinity":"before"},"direction":"backward","state":"active","expiresAfterRevision":"256"}},
+    {"kind":"job","data":{"jobId":"j1","sessionId":"s1","sourceGeneration":"g1","documentRevision":"1","phase":"reading","completedBytes":"0","totalBytes":null,"cancellation":"requested"}},
+    {"kind":"job","data":{"jobId":"j1","sessionId":"s1","sourceGeneration":"g1","documentRevision":"1","phase":"cancelled","completedBytes":"0","totalBytes":null,"cancellation":"acknowledged"}},
+    {"kind":"error","data":{"code":"PublicationAmbiguous","retry":"never","disposition":"ambiguous","operationId":"o1","jobId":"j1"}},
+    {"kind":"search","data":{"selectionIds":["r1"],"cursor":"c1","complete":false}},
+    {"kind":"search","data":{"selectionIds":[],"cursor":null,"complete":true}},
+    {"kind":"transfer","data":{"spoolId":"p1","bytes":"67108864","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","state":"ready"}},
+    {"kind":"closed","data":null},
+    {"kind":"released","data":null}
+  ],
+  "invalid": [
+    {"kind":"error","data":{"code":"IoFailure","retry":"never","disposition":"ambiguous","operationId":null,"jobId":null}},
+    {"kind":"receipt","data":{"state":"accepted","documentRevision":9007199254740992}},
+    {"kind":"receipt","data":{"state":"pending","text":"secret"}},
+    {"kind":"job","data":{"jobId":"j1","sessionId":"s1","sourceGeneration":"g1","documentRevision":"1","phase":"reading","completedBytes":"0","cancellation":"requested"}},
+    {"kind":"job","data":{"jobId":"j1","sessionId":"s1","sourceGeneration":"g1","documentRevision":"1","phase":"published","completedBytes":"1","totalBytes":"1","cancellation":"acknowledged"}},
+    {"kind":"error","data":{"code":"PublicationAmbiguous","retry":"same-request","disposition":"ambiguous","operationId":null,"jobId":null}},
+    {"kind":"error","data":{"code":"IoFailure","retry":"never","disposition":"retained","jobId":null}},
+    {"kind":"search","data":{"selectionIds":["r1","r1"],"cursor":null,"complete":true}},
+    {"kind":"search","data":{"selectionIds":[],"cursor":"c1","complete":true}},
+    {"kind":"released","data":{}},
+    {"kind":"unknown","data":null}
+  ]
+}

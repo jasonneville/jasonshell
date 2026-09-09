@@ -1,0 +1,12 @@
+{
+  "schema": "stack-text-editor.v2",
+  "integers": {
+    "valid": ["0", "9007199254740991", "9007199254740992", "9007199254740993", "18446744073709551615"],
+    "invalid": ["", "00", "01", "-1", "+1", "1.0", "1e2", "18446744073709551616", 9007199254740992, null]
+  },
+  "segments": [
+    {"encoding":"utf8", "byteStart":"9007199254740993", "text":"A😀\nZ", "newlines":[{"localOffset":3,"kind":"crlf"}], "offsets":[0,1,3,4,5], "bytes":["9007199254740993","9007199254740994","9007199254740998","9007199254741000","9007199254741001"]},
+    {"encoding":"utf16le", "byteStart":"2", "text":"A😀\nZ", "newlines":[{"localOffset":3,"kind":"crlf"}], "offsets":[0,1,3,4,5], "bytes":["2","4","8","12","14"]},
+    {"encoding":"utf16be", "byteStart":"2", "text":"A😀\nZ", "newlines":[{"localOffset":3,"kind":"crlf"}], "offsets":[0,1,3,4,5], "bytes":["2","4","8","12","14"]}
+  ]
+}

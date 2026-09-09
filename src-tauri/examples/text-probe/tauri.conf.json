@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "JasonShell P01 Probe",
+  "version": "0.1.0",
+  "identifier": "com.jnev1.jasonshell.p01-probe",
+  "bundle": { "icon": ["../../icons/icon.png"] },
+  "build": { "frontendDist": "../../../dist-text-probe" },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data: asset:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'",
+      "capabilities": []
+    },
+    "windows": []
+  }
+}

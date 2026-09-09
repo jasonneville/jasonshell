@@ -1,0 +1,4 @@
+{
+  "request": {"schema":"stack-text-editor.v2","sessionId":"s1","sourceGeneration":"g1","requestId":"q1","command":"apply_stack_text_edits","barrier":{"documentRevision":"9007199254740993","inputSequence":"1","operationIds":["o0"]},"operationId":"o1","selectionId":"r1","insertion":{"kind":"inline","text":"A\ud83d\ude00\n\u007f"}},
+  "canonical": "{\"barrier\":{\"documentRevision\":\"9007199254740993\",\"inputSequence\":\"1\",\"operationIds\":[\"o0\"]},\"command\":\"apply_stack_text_edits\",\"insertion\":{\"kind\":\"inline\",\"text\":\"A\\ud83d\\ude00\\n\\u007f\"},\"operationId\":\"o1\",\"requestId\":\"q1\",\"schema\":\"stack-text-editor.v2\",\"selectionId\":\"r1\",\"sessionId\":\"s1\",\"sourceGeneration\":\"g1\"}"
+}

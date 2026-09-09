@@ -14,6 +14,8 @@ mod popup_window;
 mod process_runner;
 mod recovery_journal;
 pub(crate) mod terminal;
+#[cfg(any(test, debug_assertions))]
+pub(crate) mod text_document;
 
 use crate::shell_paths;
 use serde::{Deserialize, Serialize};

@@ -599,6 +599,20 @@ Detailed lifecycle contract from `src-tauri/src/main.rs`:
 
 ## Stack Browser / stack popup spec
 
+### Experimental text contract
+
+`src/features/stack-browser/textEditorProtocol.ts` and the test/debug-only Rust
+`stack_popup/text_document/protocol.rs` define the experimental
+`stack-text-editor.v2` boundary. Shared fixtures exercise lossless decimal u64
+positions, UTF-8/UTF-16/CRLF mapping, cross-lease selection ownership, explicit
+incomplete grapheme context, snapshot barriers and bounded replay receipts.
+No production editor command, document actor, save/recovery engine or UI is
+registered. Test-only corpus, byte oracle and isolated packaged WebView2 probe
+live under `scripts/stack-text-editor/` and `src-tauri/examples/`.
+`docs/stack-text-editor-p01-v2-evidence.md` owns frozen resource/transport policies,
+reproduction and evidence limits. Callback timing must not be represented as
+native presentation latency; production editor feasibility remains unproved.
+
 ### User behavior
 
 - One hidden `stack-popup` webview is created at startup and reused for every top-bar pin.

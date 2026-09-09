@@ -469,6 +469,17 @@ This assigns roles without inventing people, signatures, or runtime acceptance. 
 **Exit gate:** T01-01–T01-04 pass; Integrator and QA approve the schema, fixture manifest, budgets and measurement method. This does not prove the editor itself feasible.  
 **Stop condition:** Worker plans still disagree on coordinate semantics, no bounded queue/memory envelope exists, or the measurement method cannot distinguish first local edit from full-load completion.
 
+### Current P01 v2 implementation — 2026-09-08
+
+The user approved corrected v2 cross-lease selection and explicit incomplete
+grapheme-context contracts. Current code, fresh validation and remaining gates
+are recorded in [P01 v2 evidence](stack-text-editor-p01-v2-evidence.md).
+Historical records below are not evidence for this checkout and do not promote
+P02/P03. Current P01 v2 acceptance passed independent code, artifact and
+documentation review. Packaged local-worker/editor startup passed a child-only
+dead-proxy experiment, not a physically disconnected-machine or OS-firewall test.
+Do not inherit the historical PASS labels.
+
 ### P01 contract implementation record — 2026-09-07
 
 **Status:** **Passed.** The corrected serial P01 repair rerun completed on 2026-09-08 with T01-01–T01-04 execution results PASS. All seven repair contracts are closed, and fresh native/control compatibility evidence is recorded below. `PhaseOneGateReview` independently returned final PASS; Main approved promotion and the mandatory P01 phase commit. Historical failures, raw timing evidence and correction provenance remain preserved.

@@ -2,6 +2,7 @@
 .fusion/
 # Dependencies
 node_modules/
+dist-text-probe/
 
 # Frontend build/test output
 dist/
