@@ -1,4 +1,6 @@
 ## Change Ledger
+- 2026-09-09 `[CODE]` FIXED: Quick Commands saved-command delete, configuration Save, and configuration Clear actions now use copied standalone SVG assets while retaining existing accessible names and handlers.
+- 2026-09-09 `[TOOL]` VALIDATED: Added focused SVG/source-contract coverage for asset contents, decorative image semantics, icon URL wiring, and minimum 24px action targets.
 - 2026-09-09 `[CODE]` DOCS: Added reusable standalone SVG asset guide covering Svelte/Vite URL imports, decorative MeltActionButton rendering, CSS sizing, theme-color limits, source-contract tests, and validation commands.
 - 2026-09-09 `[CODE]` FIXED: Quick Commands Saved header now renders copied add SVG instead of visible `New` text while retaining `Create command` accessibility naming and existing create behavior.
 - 2026-09-09 `[TOOL]` VALIDATED: Added focused source-contract coverage for copied SVG contents, icon rendering, accessible naming, and create-handler wiring.

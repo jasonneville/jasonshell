@@ -61,8 +61,8 @@ test('quick commands keep compact icon controls and context-only history/edit ac
   assert.match(commandPanelSource, /listQuickCommandHistory\(\)/);
   assert.match(commandPanelSource, /const allRuns = await listQuickCommandHistory\(\);/);
   assert.match(commandPanelSource, /ariaLabel=\{isCommandStopping\(entry\.id\) \? `\$\{entry\.label\} is stopping` : activeCommandIds\.has\(entry\.id\) \? `Stop \$\{entry\.label\}` : `Run \$\{entry\.label\}`\}/);
-  assert.match(commandPanelSource, /ariaLabel="Save command"[\s\S]*>\s*\{saving \? 'Saving…' : 'Save'\}/);
-  assert.match(commandPanelSource, /ariaLabel="Cancel command editing"[\s\S]*>\s*Clear\s*</);
+  assert.match(commandPanelSource, /ariaLabel="Save command"[\s\S]*class="command-save-icon"/);
+  assert.match(commandPanelSource, /ariaLabel="Cancel command editing"[\s\S]*class="command-cancel-icon"/);
   assert.match(commandPanelSource, /onClick=\{\(\) => void \(activeCommandIds\.has\(entry\.id\) \? stopEntry\(entry\.id\) : runEntry\(entry\)\)\}/);
   assert.match(commandPanelSource, /onClick=\{\(event\) => void deleteEntry\(entry\.id, event\)\}/);
 });

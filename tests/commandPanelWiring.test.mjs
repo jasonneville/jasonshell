@@ -9,6 +9,9 @@ const topBarCss = readFileSync(new URL('../src/components/TopBar.css', import.me
 const commandPanelSource = readFileSync(new URL('../src/components/CommandPanelSurface.svelte', import.meta.url), 'utf8');
 const commandPanelCss = readFileSync(new URL('../src/components/CommandPanelSurface.css', import.meta.url), 'utf8');
 const commandPanelNewIconPath = new URL('../src/assets/icons/add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url);
+const commandPanelDeleteIconPath = new URL('../src/assets/icons/delete_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url);
+const commandPanelSaveIconPath = new URL('../src/assets/icons/save_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url);
+const commandPanelCancelIconPath = new URL('../src/assets/icons/cancel_presentation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url);
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 const ipcSurfacesSource = readFileSync(new URL('../src/ipc/surfaces.ts', import.meta.url), 'utf8');
 const ipcEventsSource = readFileSync(new URL('../src/ipc/events.ts', import.meta.url), 'utf8');
@@ -88,7 +91,7 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /pendingInputRequest/);
   assert.match(commandPanelSource, /type="password"/);
   assert.match(commandPanelSource, /Escape/);
-  assert.match(commandPanelSource, /One merged transcript/);
+  assert.match(commandPanelSource, /Merged transcript/);
   assert.match(commandPanelSource, /class="command-panel-close-button"/);
   assert.doesNotMatch(commandPanelSource, /<p>JasonShell<\/p>/);
   assert.match(commandPanelSource, /class="command-text-button"/);
@@ -129,7 +132,7 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /View output history/);
   assert.match(commandPanelSource, /function showHistory\(\)/);
   assert.match(commandPanelSource, /activeTab = 'previousRuns'/);
-  assert.match(commandPanelSource, /One merged transcript/);
+  assert.match(commandPanelSource, /Merged transcript/);
   assert.match(commandPanelSource, /command-transcript-line/);
   assert.doesNotMatch(commandPanelSource, /aria-label=\{`Transcript \$\{line\.kind\}`\}/);
   assert.match(commandPanelSource, /transcriptBodySegments/);
@@ -179,7 +182,7 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /pendingInputRequest/);
   assert.match(commandPanelSource, /type="password"/);
   assert.match(commandPanelSource, /Escape/);
-  assert.match(commandPanelSource, /One merged transcript/);
+  assert.match(commandPanelSource, /Merged transcript/);
   assert.match(commandPanelSource, /Select a command to view runs\./);
   assert.match(commandPanelSource, /command-transcript-line/);
   assert.match(commandPanelCss, /command-transcript-token--path/);
@@ -232,6 +235,28 @@ test('quick command create action uses copied add icon while retaining accessibl
   assert.doesNotMatch(commandPanelSource, /ariaLabel="Create command"[^>]*>New<\/MeltActionButton>/);
   assert.match(commandPanelCss, /\.command-create-button \{[^}]*align-items: center;[^}]*display: inline-flex;[^}]*justify-content: center;[^}]*min-height: 24px;[^}]*min-width: 24px;[^}]*padding: 0;/s);
   assert.match(commandPanelCss, /\.command-new-icon \{[^}]*display: block;[^}]*height: 16px;[^}]*width: 16px;/s);
+});
+
+test('quick command saved-command actions use copied icons while retaining names and handlers', () => {
+  const deleteIconSource = readFileSync(commandPanelDeleteIconPath, 'utf8');
+  const saveIconSource = readFileSync(commandPanelSaveIconPath, 'utf8');
+  const cancelIconSource = readFileSync(commandPanelCancelIconPath, 'utf8');
+
+  assert.match(deleteIconSource, /<svg[^>]*viewBox="0 -960 960 960"[^>]*fill="#e3e3e3"/);
+  assert.match(deleteIconSource, /<path d="M280-120q-33 0-56\.5-23\.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23\.5 56\.5T680-120H280Z/);
+  assert.match(saveIconSource, /<svg[^>]*viewBox="0 -960 960 960"[^>]*fill="#e3e3e3"/);
+  assert.match(saveIconSource, /<path d="M840-680v480q0 33-23\.5 56\.5T760-120H200/);
+  assert.match(cancelIconSource, /<svg[^>]*viewBox="0 -960 960 960"[^>]*fill="#e3e3e3"/);
+  assert.match(cancelIconSource, /<path d="m376-320 104-104 104 104/);
+  assert.match(commandPanelSource, /const commandPanelDeleteIconUrl = new URL\('\.\.\/assets\/icons\/delete_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24\.svg', import\.meta\.url\)\.href;/);
+  assert.match(commandPanelSource, /const commandPanelSaveIconUrl = new URL\('\.\.\/assets\/icons\/save_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24\.svg', import\.meta\.url\)\.href;/);
+  assert.match(commandPanelSource, /const commandPanelCancelIconUrl = new URL\('\.\.\/assets\/icons\/cancel_presentation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24\.svg', import\.meta\.url\)\.href;/);
+  assert.match(commandPanelSource, /class="command-icon-button command-delete-button"[\s\S]*ariaLabel=\{`Delete \$\{entry\.label\}`\}[\s\S]*onClick=\{\(event\) => void deleteEntry\(entry\.id, event\)\}[\s\S]*<img class="command-delete-icon" src=\{commandPanelDeleteIconUrl\} alt="" aria-hidden="true" draggable="false" \/>/);
+  assert.match(commandPanelSource, /class="command-text-button command-editor-icon-button" ariaLabel="Save command"[\s\S]*onClick=\{\(\) => void saveEntry\(\)\}[\s\S]*<img class="command-save-icon" src=\{commandPanelSaveIconUrl\} alt="" aria-hidden="true" draggable="false" \/>/);
+  assert.match(commandPanelSource, /class="command-text-button command-editor-icon-button" ariaLabel="Cancel command editing"[\s\S]*onClick=\{startNewEntry\}[\s\S]*<img class="command-cancel-icon" src=\{commandPanelCancelIconUrl\} alt="" aria-hidden="true" draggable="false" \/>/);
+  assert.match(commandPanelCss, /\.command-icon-button \{[^}]*min-height: 24px;[^}]*min-width: 24px;/s);
+  assert.match(commandPanelCss, /\.command-editor-icon-button \{[^}]*min-height: 24px;[^}]*min-width: 24px;/s);
+  assert.match(commandPanelCss, /\.command-(?:delete|save|cancel)-icon \{[^}]*display: block;[^}]*height: 16px;[^}]*width: 16px;/s);
 });
 
 test('command panel Rust placement clamps inside monitor work area and shrinks only when needed', () => {
