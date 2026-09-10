@@ -1,4 +1,7 @@
 ## Change Ledger
+- 2026-09-10 `[CODE]` FIXED: Quick Commands now preserves authoritative saved-command order, migrates legacy order version 0 to one-time stable alphabetical order, supports whole-row pointer reorder outside action buttons using dragged-row-excluded center insertion, and provides immediate Alt+Arrow/Home/End keyboard reorder on command-select with optimistic rollback, focus retention, and live announcements; visible drag handle removed.
+- 2026-09-10 `[CODE]` CHANGED: Edit/delete/reorder/migration/final-width persistence now shares one serialized latest-state mutation pipeline; Run/Stop remains usable while structural writes are pending, with no new IPC or rank field.
+- 2026-09-10 `[TOOL]` TESTED: Added TypeScript helper, command-panel wiring, and Rust settings coverage for stable-ID movement, legacy migration/versioning, order preservation, and history retention.
 - 2026-09-09 `[CODE]` FIXED: Quick Commands saved-command delete, configuration Save, and configuration Clear actions now use copied standalone SVG assets while retaining existing accessible names and handlers.
 - 2026-09-09 `[TOOL]` VALIDATED: Added focused SVG/source-contract coverage for asset contents, decorative image semantics, icon URL wiring, and minimum 24px action targets.
 - 2026-09-09 `[CODE]` DOCS: Added reusable standalone SVG asset guide covering Svelte/Vite URL imports, decorative MeltActionButton rendering, CSS sizing, theme-color limits, source-contract tests, and validation commands.

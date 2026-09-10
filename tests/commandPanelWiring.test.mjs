@@ -225,6 +225,64 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelCss, /\.command-panel \{/);
 });
 
+test('quick command ordering uses versioned migration, authoritative arrays, and one mutation pipeline', () => {
+  assert.match(commandPanelSource, /QUICK_COMMAND_ORDER_LEGACY/);
+  assert.match(commandPanelSource, /QUICK_COMMAND_ORDER_VERSION/);
+  assert.match(commandPanelSource, /sortQuickCommandsForLegacyMigration/);
+  assert.match(commandPanelSource, /orderMigrationAttempted/);
+  assert.match(commandPanelSource, /Quick command order migration could not be saved/);
+  assert.doesNotMatch(commandPanelSource, /function sortedEntries/);
+  assert.match(commandPanelSource, /entries = cloneEntries\(quickCommands\.entries\)/);
+  assert.match(commandPanelSource, /const existingIndex = editor\.id \? entries\.findIndex/);
+  assert.match(commandPanelSource, /existingIndex < 0[\s\S]*\[\.\.\.entries, nextEntry\]/);
+  assert.match(commandPanelSource, /index === existingIndex \? nextEntry : entry/);
+  assert.match(commandPanelSource, /function enqueueSettingsMutation/);
+  assert.match(commandPanelSource, /\$: structuralMutationPending = mutationInFlight \|\| mutationQueue\.length > 0;/);
+  assert.match(commandPanelSource, /mutationInFlight/);
+  assert.match(commandPanelSource, /latestAcceptedSettings/);
+  assert.match(commandPanelSource, /saveQuickCommandsSettings\(mutation\.desired\)/);
+  assert.match(commandPanelSource, /function applyAcceptedSettings\(values: SettingsSnapshot\) \{[\s\S]*entries = cloneEntries\(values\.entries\);[\s\S]*listWidth = values\.listWidth;/);
+  assert.doesNotMatch(commandPanelSource, /allHistory = saved\.history/);
+  assert.match(commandPanelSource, /function restoreReorderEntries/);
+  assert.match(commandPanelSource, /liveEntriesById/);
+  assert.match(commandPanelSource, /disabled=\{Boolean\(runningId \|\| stoppingId === entry\.id/);
+  assert.match(commandPanelSource, /disabled=\{Boolean\(runningId \|\| structuralMutationPending \|\| activeCommandIds\.has\(entry\.id\)\)\}/);
+  assert.match(commandPanelSource, /moveQuickCommandById/);
+  assert.match(commandPanelSource, /setPointerCapture/);
+  assert.match(commandPanelSource, /Math\.hypot\(/);
+  assert.match(commandPanelSource, /getBoundingClientRect\(\)/);
+  assert.match(commandPanelSource, /requestAnimationFrame\(tickAutoScroll\)/);
+  assert.match(commandPanelSource, /cancelCommandPointerDrag/);
+  assert.match(commandPanelSource, /suppressCommandClickId/);
+  assert.doesNotMatch(commandPanelSource, /command-reorder-handle|⠿/);
+  assert.match(commandPanelSource, /pointerTarget\?\.closest\('\.command-row-actions'\)/);
+  assert.match(commandPanelSource, /event\.target instanceof Element && event\.target\.closest\('\.command-row-actions'\)/);
+  assert.match(commandPanelSource, /class="command-row-actions" on:pointerdown\|stopPropagation/);
+  assert.match(commandPanelSource, /\.filter\(\(row\) => row\.dataset\.commandId !== pointerDrag\?\.id\)/);
+  assert.match(commandPanelSource, /filter\(\(row\) => row\.dataset\.commandId !== pointerDrag\?\.id\)[\s\S]*clientY > rect\.top \+ rect\.height \/ 2/);
+  assert.doesNotMatch(commandPanelSource, /sourceIndex|insertionIndex > sourceIndex/);
+  assert.match(commandPanelSource, /pointerDrag\.targetIndex = targetIndex;/);
+  assert.match(commandPanelSource, /const moved = moveQuickCommandById\(drag\.original, drag\.id, drag\.targetIndex\);/);
+  const pointerPreviewSource = commandPanelSource.slice(
+    commandPanelSource.indexOf('function applyPointerDragPosition'),
+    commandPanelSource.indexOf('function startCommandPointerDrag')
+  );
+  assert.doesNotMatch(pointerPreviewSource, /entries = moved;/);
+  assert.match(commandPanelSource, /event\.altKey[\s\S]*event\.key === 'ArrowUp'/);
+  assert.match(commandPanelSource, /aria-keyshortcuts="Alt\+ArrowUp Alt\+ArrowDown Alt\+Home Alt\+End"/);
+  assert.match(commandPanelSource, /ArrowUp/);
+  assert.match(commandPanelSource, /ArrowDown/);
+  assert.match(commandPanelSource, /cancelReorderForAction/);
+  assert.match(commandPanelSource, /if \(!pointerDrag\) return false;/);
+  assert.match(commandPanelSource, /row\?\.hasPointerCapture\(drag\.pointerId\)/);
+  assert.match(commandPanelSource, /target\?\.hasPointerCapture\(event\.pointerId\)/);
+  assert.match(commandPanelSource, /aria-live="polite"/);
+  assert.match(commandPanelCss, /command-list-reordering/);
+  assert.match(commandPanelCss, /data-drop-target='true'/);
+  assert.match(commandPanelCss, /\.command-list li \{[^}]*touch-action: none;/s);
+  assert.match(commandPanelSource, /class="command-icon-button command-delete-button"[\s\S]*disabled=\{Boolean\(runningId \|\| structuralMutationPending \|\| activeCommandIds\.has\(entry\.id\)\)\}[\s\S]*onClick=\{\(event\) => void deleteEntry\(entry\.id, event\)\}/);
+});
+
 test('quick command create action uses copied add icon while retaining accessible name and behavior', () => {
   const addIconSource = readFileSync(commandPanelNewIconPath, 'utf8');
 

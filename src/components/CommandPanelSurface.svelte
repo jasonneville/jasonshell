@@ -6,6 +6,9 @@
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import {
     QUICK_COMMAND_MODES,
+    QUICK_COMMAND_ORDER_LEGACY,
+    QUICK_COMMAND_ORDER_VERSION,
+    captureQuickCommandOrder,
     deriveQuickCommandPendingInputRequest,
     formatQuickCommandArgsTextarea,
     formatQuickCommandCommandsTextarea,
@@ -14,6 +17,7 @@
     mergeQuickCommandRunHistoryEntries,
     nextDuplicateQuickCommandLabel,
     nextUniqueQuickCommandId,
+    moveQuickCommandById,
     parseQuickCommandArgsTextarea,
     parseQuickCommandCommandsTextarea,
     quickCommandRunRequest,
@@ -21,6 +25,8 @@
     openQuickCommandUrl,
     saveQuickCommandsSettings,
     sendQuickCommandInput,
+    sameQuickCommandOrder,
+    sortQuickCommandsForLegacyMigration,
     stopQuickCommand,
     type QuickCommandEntry,
     type QuickCommandMode,
@@ -34,6 +40,15 @@
 
   type CommandEditorModel = { id: string | null; label: string; mode: QuickCommandMode; targetPath: string; cwd: string; argsText: string; commandsText: string };
   type CommandPanelTab = 'configuration' | 'previousRuns';
+  type SettingsSnapshot = { orderVersion: typeof QUICK_COMMAND_ORDER_VERSION; entries: QuickCommandEntry[]; history: QuickCommandRunHistoryEntry[]; listWidth: number };
+  type SettingsMutation = {
+    revision: number;
+    desired: SettingsSnapshot;
+    rollback: SettingsSnapshot;
+    focusId: string | null;
+    resolve: (value: SettingsSnapshot) => void;
+    reject: (error: unknown) => void;
+  };
 
   const modeLabels: Record<QuickCommandMode, string> = { direct: 'Program', commandBlock: 'Command block' };
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
@@ -42,6 +57,8 @@
   const commandPanelDeleteIconUrl = new URL('../assets/icons/delete_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url).href;
   const commandPanelSaveIconUrl = new URL('../assets/icons/save_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url).href;
   const commandPanelCancelIconUrl = new URL('../assets/icons/cancel_presentation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url).href;
+  const COMMAND_REORDER_DRAG_THRESHOLD_PX = 6;
+  const COMMAND_REORDER_AUTOSCROLL_EDGE_PX = 36;
 
   let entries: QuickCommandEntry[] = [];
   let loading = true;
@@ -71,6 +88,20 @@
   let contextMenuElement: HTMLDivElement;
   let contextMenuFirstAction: HTMLButtonElement;
   let resizePointerId: number | null = null;
+  let resizeStartWidth = 180;
+  let commandListElement: HTMLUListElement | null = null;
+  let pointerDrag: { id: string; pointerId: number; startX: number; startY: number; original: QuickCommandEntry[]; focusId: string | null; active: boolean; pointerY: number; targetIndex: number } | null = null;
+  let draggingCommandId: string | null = null;
+  let dropTargetCommandId: string | null = null;
+  let suppressCommandClickId: string | null = null;
+  let dragAutoScrollFrame: number | null = null;
+  let orderLiveMessage = '';
+  let orderMigrationAttempted = false;
+  let mutationRevision = 0;
+  let latestAcceptedRevision = 0;
+  let latestAcceptedSettings: SettingsSnapshot = { orderVersion: QUICK_COMMAND_ORDER_VERSION, entries: [], history: [], listWidth: 180 };
+  let mutationQueue: SettingsMutation[] = [];
+  let mutationInFlight = false;
   let pendingInputRequest: QuickCommandPendingInputRequest | null = null;
   let pendingInputDraft = '';
   let pendingInputBusy = false;
@@ -85,6 +116,9 @@
   let transcriptSegmentCacheOrder: string[] = [];
   let shellSurfaceHotkeyHandled = false;
   let disposed = false;
+  let structuralMutationPending = false;
+
+  $: structuralMutationPending = mutationInFlight || mutationQueue.length > 0;
 
   type TranscriptTokenKind = 'prompt' | 'path' | 'url' | 'level-error' | 'level-warning' | 'level-success' | 'level-info';
   type TranscriptSegment = { text: string; kind: TranscriptTokenKind | null };
@@ -105,10 +139,66 @@
   function selectedMode(event: Event): QuickCommandMode { return selectValue(event) as QuickCommandMode; }
   function textareaValue(event: Event): string { return (event.currentTarget as HTMLTextAreaElement).value; }
 
-  function startNewEntry() { formErrors = []; panelError = ''; activeTab = 'configuration'; editor = blankEditor(); }
-  function startEditEntry(entry: QuickCommandEntry) { formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: entry.id, label: entry.label, mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; }
-  function duplicateEntry(entry: QuickCommandEntry) { formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: null, label: nextDuplicateQuickCommandLabel(entry.label, entries.map((current) => current.label)), mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; contextEntry = null; }
-  function sortedEntries(values: readonly QuickCommandEntry[]): QuickCommandEntry[] { return [...values].sort((left, right) => left.label.localeCompare(right.label)); }
+  function cloneEntries(values: readonly QuickCommandEntry[]): QuickCommandEntry[] { return values.map((entry) => ({ ...entry, args: [...entry.args], commands: [...entry.commands] })); }
+  function cloneSettings(values: { entries: readonly QuickCommandEntry[]; history: readonly QuickCommandRunHistoryEntry[]; listWidth: number }): SettingsSnapshot {
+    return { orderVersion: QUICK_COMMAND_ORDER_VERSION, entries: cloneEntries(values.entries), history: [...values.history], listWidth: values.listWidth };
+  }
+  function currentSettingsSnapshot(): SettingsSnapshot { return { orderVersion: QUICK_COMMAND_ORDER_VERSION, entries: cloneEntries(entries), history: [...allHistory], listWidth }; }
+  function structuralMutationBusy(): boolean { return structuralMutationPending; }
+  function focusCommandEntry(id: string | null) { if (!id) return; void tick().then(() => { if (disposed) return; commandListElement?.querySelector<HTMLButtonElement>(`[data-command-id="${CSS.escape(id)}"] .command-select`)?.focus(); }); }
+
+  function startNewEntry() { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = blankEditor(); }
+  function startEditEntry(entry: QuickCommandEntry) { cancelReorderForAction(); formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: entry.id, label: entry.label, mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; }
+  function duplicateEntry(entry: QuickCommandEntry) { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: null, label: nextDuplicateQuickCommandLabel(entry.label, entries.map((current) => current.label)), mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; contextEntry = null; }
+
+  function applyAcceptedSettings(values: SettingsSnapshot) {
+    entries = cloneEntries(values.entries);
+    listWidth = values.listWidth;
+    history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
+  }
+
+  function restoreMutationFocus(id: string | null) { focusCommandEntry(id); }
+
+  async function drainMutationQueue() {
+    if (mutationInFlight || disposed) return;
+    const mutation = mutationQueue.shift();
+    if (!mutation) { saving = false; return; }
+    mutationInFlight = true;
+    try {
+      const saved = await saveQuickCommandsSettings(mutation.desired);
+      if (disposed) {
+        mutation.resolve(cloneSettings(saved));
+        return;
+      }
+      const accepted = cloneSettings(saved);
+      latestAcceptedSettings = accepted;
+      latestAcceptedRevision = mutation.revision;
+      if (mutation.revision === mutationRevision) applyAcceptedSettings(accepted);
+      mutation.resolve(accepted);
+    } catch (error) {
+      if (mutationQueue.length === 0) {
+        const rollback = latestAcceptedRevision < mutation.revision ? mutation.rollback : latestAcceptedSettings;
+        entries = cloneEntries(rollback.entries);
+        listWidth = rollback.listWidth;
+        history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
+        restoreMutationFocus(mutation.focusId);
+      }
+      mutation.reject(error);
+    } finally {
+      mutationInFlight = false;
+      saving = mutationQueue.length > 0;
+      if (mutationQueue.length > 0) void drainMutationQueue();
+    }
+  }
+
+  function enqueueSettingsMutation(desired: SettingsSnapshot, rollback: SettingsSnapshot, focusId: string | null): Promise<SettingsSnapshot> {
+    const revision = ++mutationRevision;
+    saving = true;
+    return new Promise<SettingsSnapshot>((resolve, reject) => {
+      mutationQueue.push({ revision, desired, rollback, focusId, resolve, reject });
+      void drainMutationQueue();
+    });
+  }
 
   function validateEditor(): string[] {
     const errors: string[] = [];
@@ -126,12 +216,23 @@
     try {
       const quickCommands = await loadQuickCommandsSettings();
       if (disposed) return;
-      entries = sortedEntries(quickCommands.entries);
-      allHistory = quickCommands.history;
+      const loaded = cloneSettings(quickCommands);
+      latestAcceptedSettings = loaded;
+      entries = cloneEntries(quickCommands.entries);
+      allHistory = [...quickCommands.history];
       listWidth = quickCommands.listWidth;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
       updatePendingInputFromHistory();
       if (editor.id && !entries.some((entry) => entry.id === editor.id)) editor = blankEditor();
+      if (quickCommands.orderVersion === QUICK_COMMAND_ORDER_LEGACY && !orderMigrationAttempted) {
+        orderMigrationAttempted = true;
+        const migratedEntries = sortQuickCommandsForLegacyMigration(entries);
+        entries = migratedEntries;
+        const rollback = loaded;
+        void enqueueSettingsMutation(currentSettingsSnapshot(), rollback, editor.id).catch((error) => {
+          if (!disposed) panelError = `Quick command order migration could not be saved: ${error instanceof Error ? error.message : String(error)}`;
+        });
+      }
     } catch (error) {
       if (disposed) return;
       panelError = 'Quick command settings are unavailable.';
@@ -144,29 +245,35 @@
 
   async function saveEntry() {
     if (disposed) return;
+    cancelReorderForAction();
     if (saving) return;
     formErrors = validateEditor();
     if (formErrors.length) return;
     const id = editor.id ?? nextUniqueQuickCommandId(editor.label, entries.map((entry) => entry.id));
     if (!id) { formErrors = ['Command id could not be derived from Label.']; return; }
+    const editorBeforeSave = { ...editor };
     const nextEntry: QuickCommandEntry = { id, label: editor.label.trim(), mode: editor.mode, targetPath: editor.mode === 'direct' ? editor.targetPath.trim() : '', cwd: editor.cwd.trim() ? editor.cwd.trim() : null, args: editor.mode === 'direct' ? parseQuickCommandArgsTextarea(editor.argsText) : [], commands: editor.mode === 'commandBlock' ? parseQuickCommandCommandsTextarea(editor.commandsText) : [] };
-    saving = true;
     panelError = '';
+    const rollback = currentSettingsSnapshot();
+    const existingIndex = editor.id ? entries.findIndex((entry) => entry.id === editor.id) : -1;
     try {
-      const nextEntries = [...entries.filter((entry) => entry.id !== id), nextEntry];
-      const saved = await saveQuickCommandsSettings({ entries: nextEntries, history: allHistory, listWidth });
+      const nextEntries = existingIndex < 0
+        ? [...entries, nextEntry]
+        : entries.map((entry, index) => index === existingIndex ? nextEntry : entry);
+      entries = nextEntries;
+      const saved = await enqueueSettingsMutation(currentSettingsSnapshot(), rollback, editor.id);
       if (disposed) return;
-      entries = sortedEntries(saved.entries);
-      allHistory = saved.history;
-      startEditEntry(nextEntry);
+      if (saved.entries.some((entry) => entry.id === id) && JSON.stringify(editor) === JSON.stringify(editorBeforeSave)) startEditEntry(nextEntry);
     } catch (error) {
       if (disposed) return;
       formErrors = [error instanceof Error ? error.message : String(error)];
-    } finally { if (!disposed) saving = false; }
+    }
   }
 
   async function deleteEntry(id: string, event?: MouseEvent) {
     if (disposed) return;
+    cancelReorderForAction();
+    if (structuralMutationBusy()) return;
     const entry = entries.find((current) => current.id === id);
     if (!entry || deleteConfirmationBusy) return;
     const trigger = event?.currentTarget;
@@ -183,26 +290,201 @@
 
   async function confirmDeleteEntry() {
     if (disposed) return;
-    if (!deleteConfirmation || deleteConfirmationBusy) return;
+    cancelReorderForAction();
+    if (!deleteConfirmation || deleteConfirmationBusy || structuralMutationBusy()) return;
     const id = deleteConfirmation.id;
-    deleteConfirmationBusy = true; saving = true; formErrors = []; panelError = '';
+    deleteConfirmationBusy = true; formErrors = []; panelError = '';
     try {
       const latestRuns = await listQuickCommandHistory({ id });
       if (disposed) return;
       if (latestRuns.some((run) => run.running)) { panelError = 'Cannot delete quick command while it is running.'; return; }
-      const saved = await saveQuickCommandsSettings({ entries: entries.filter((entry) => entry.id !== id), history: allHistory, listWidth });
+      const rollback = currentSettingsSnapshot();
+      entries = entries.filter((entry) => entry.id !== id);
+      await enqueueSettingsMutation(currentSettingsSnapshot(), rollback, id);
       if (disposed) return;
-      entries = sortedEntries(saved.entries);
-      allHistory = saved.history;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
       if (editor.id === id) editor = blankEditor();
       deleteConfirmation = null;
       await restoreDeleteTriggerFocus();
-    } catch (error) { if (disposed) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed) { deleteConfirmationBusy = false; saving = false; } }
+    } catch (error) {
+      if (disposed) return;
+      panelError = error instanceof Error ? error.message : String(error);
+      deleteConfirmation = null;
+      await restoreDeleteTriggerFocus();
+    } finally { if (!disposed) deleteConfirmationBusy = false; }
   }
 
   function cancelDeleteEntry() { if (deleteConfirmationBusy) return; deleteConfirmation = null; void restoreDeleteTriggerFocus(); }
   function handleDeleteConfirmationKeydown(event: KeyboardEvent) { if (event.key === 'Escape') { event.preventDefault(); cancelDeleteEntry(); return; } if (event.key !== 'Tab') return; event.preventDefault(); if (deleteConfirmationBusy) { deleteConfirmationDialog?.focus(); return; } focusDeleteConfirmationButton(event.shiftKey ? -1 : 1); }
+
+  function announceCommandOrder(message: string) { orderLiveMessage = message; }
+
+  function commandPosition(id: string): number {
+    const index = entries.findIndex((entry) => entry.id === id);
+    return index < 0 ? 0 : index + 1;
+  }
+
+  function destinationIndexForPointer(clientY: number): number {
+    const rows = Array.from(commandListElement?.querySelectorAll<HTMLElement>('[data-command-id]') ?? [])
+      .filter((row) => row.dataset.commandId !== pointerDrag?.id);
+    return rows.reduce((index, row) => {
+      const rect = row.getBoundingClientRect();
+      return index + (clientY > rect.top + rect.height / 2 ? 1 : 0);
+    }, 0);
+  }
+
+  function autoScrollCommandList(clientY: number) {
+    const list = commandListElement;
+    if (!list) return;
+    const bounds = list.getBoundingClientRect();
+    const edge = COMMAND_REORDER_AUTOSCROLL_EDGE_PX;
+    const step = clientY < bounds.top + edge ? -Math.max(2, Math.round((bounds.top + edge - clientY) / 5)) : clientY > bounds.bottom - edge ? Math.max(2, Math.round((clientY - (bounds.bottom - edge)) / 5)) : 0;
+    if (step) list.scrollTop += step;
+  }
+
+  function scheduleCommandAutoScroll() {
+    if (dragAutoScrollFrame !== null) return;
+    const tickAutoScroll = () => {
+      dragAutoScrollFrame = null;
+      if (!pointerDrag?.active) return;
+      autoScrollCommandList(pointerDrag.pointerY);
+      applyPointerDragPosition(pointerDrag.pointerY);
+      dragAutoScrollFrame = window.requestAnimationFrame(tickAutoScroll);
+    };
+    dragAutoScrollFrame = window.requestAnimationFrame(tickAutoScroll);
+  }
+
+  function stopCommandAutoScroll() {
+    if (dragAutoScrollFrame !== null) window.cancelAnimationFrame(dragAutoScrollFrame);
+    dragAutoScrollFrame = null;
+  }
+
+  function applyPointerDragPosition(clientY: number) {
+    if (!pointerDrag?.active) return;
+    const targetIndex = destinationIndexForPointer(clientY);
+    pointerDrag.targetIndex = targetIndex;
+    const candidateRows = Array.from(commandListElement?.querySelectorAll<HTMLElement>('[data-command-id]') ?? [])
+      .filter((row) => row.dataset.commandId !== pointerDrag?.id);
+    const targetId = candidateRows[Math.min(targetIndex, Math.max(candidateRows.length - 1, 0))]?.dataset.commandId ?? null;
+    const moved = moveQuickCommandById(pointerDrag.original, pointerDrag.id, targetIndex);
+    const position = moved.findIndex((entry) => entry.id === pointerDrag?.id) + 1;
+    announceCommandOrder(`Moving ${moved.find((entry) => entry.id === pointerDrag?.id)?.label ?? 'command'} to position ${position} of ${moved.length}.`);
+    dropTargetCommandId = targetId === pointerDrag.id ? null : targetId;
+  }
+
+  function startCommandPointerDrag(event: PointerEvent, entry: QuickCommandEntry) {
+    const pointerTarget = event.target instanceof Element ? event.target : null;
+    if (event.button !== 0 || structuralMutationBusy() || pointerTarget?.closest('.command-row-actions')) return;
+    const target = event.currentTarget as HTMLElement;
+    pointerDrag = { id: entry.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, original: cloneEntries(entries), focusId: entry.id, active: false, pointerY: event.clientY, targetIndex: entries.findIndex((current) => current.id === entry.id) };
+    target.setPointerCapture(event.pointerId);
+  }
+
+  function updateCommandPointerDrag(event: PointerEvent, entry: QuickCommandEntry) {
+    if (!pointerDrag || pointerDrag.id !== entry.id || pointerDrag.pointerId !== event.pointerId) return;
+    pointerDrag.pointerY = event.clientY;
+    if (!pointerDrag.active) {
+      const distance = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
+      if (distance < COMMAND_REORDER_DRAG_THRESHOLD_PX) return;
+      pointerDrag.active = true;
+      draggingCommandId = entry.id;
+      event.preventDefault();
+      announceCommandOrder(`Grabbed ${entry.label}. Drag to reorder, then release.`);
+      scheduleCommandAutoScroll();
+    }
+    event.preventDefault();
+    autoScrollCommandList(event.clientY);
+    applyPointerDragPosition(event.clientY);
+  }
+
+  function finishCommandPointerDrag(event: PointerEvent, cancelled = false) {
+    if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+    const drag = pointerDrag;
+    const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    stopCommandAutoScroll();
+    if (drag.active) {
+      event.preventDefault();
+      suppressNextCommandClick(drag.id);
+      if (cancelled) {
+        restoreReorderEntries(drag.original);
+        announceCommandOrder(`Cancelled reorder for ${entries.find((entry) => entry.id === drag.id)?.label ?? 'command'}.`);
+      } else {
+        const moved = moveQuickCommandById(drag.original, drag.id, drag.targetIndex);
+        if (sameQuickCommandOrder(moved, captureQuickCommandOrder(drag.original))) {
+          announceCommandOrder('Command order unchanged.');
+        } else {
+          entries = moved;
+          commitCommandReorder(drag.original, drag.focusId);
+        }
+      }
+      restoreMutationFocus(drag.focusId ?? drag.id);
+    }
+    pointerDrag = null;
+    draggingCommandId = null;
+    dropTargetCommandId = null;
+    if (target?.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
+  }
+
+  function cancelCommandPointerDrag(event: PointerEvent) { finishCommandPointerDrag(event, true); }
+
+  function commitCommandReorder(original: QuickCommandEntry[], focusId: string | null) {
+    const rollback = { ...currentSettingsSnapshot(), entries: cloneEntries(original) };
+    const desired = currentSettingsSnapshot();
+    void enqueueSettingsMutation(desired, rollback, focusId).then(() => {
+      if (!disposed) announceCommandOrder('Command order saved.');
+    }).catch((error) => {
+      if (!disposed) {
+        panelError = `Quick command order could not be saved: ${error instanceof Error ? error.message : String(error)}`;
+        announceCommandOrder('Command order save failed. Previous order restored.');
+      }
+    });
+  }
+
+  function handleCommandReorderKeydown(event: KeyboardEvent, entry: QuickCommandEntry): boolean {
+    if (!event.altKey || structuralMutationBusy() || pointerDrag) return false;
+    const currentIndex = entries.findIndex((current) => current.id === entry.id);
+    const targetIndex = event.key === 'ArrowUp' ? currentIndex - 1
+      : event.key === 'ArrowDown' ? currentIndex + 1
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? entries.length - 1
+      : currentIndex;
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return false;
+    event.preventDefault();
+    const original = cloneEntries(entries);
+    const moved = moveQuickCommandById(entries, entry.id, Math.min(Math.max(targetIndex, 0), entries.length - 1));
+    if (sameQuickCommandOrder(moved, captureQuickCommandOrder(entries))) {
+      announceCommandOrder(`${entry.label} is already at position ${commandPosition(entry.id)} of ${entries.length}.`);
+      restoreMutationFocus(entry.id);
+      return true;
+    }
+    entries = moved;
+    announceCommandOrder(`${entry.label} moved to position ${commandPosition(entry.id)} of ${entries.length}. Saving.`);
+    commitCommandReorder(original, entry.id);
+    restoreMutationFocus(entry.id);
+    return true;
+  }
+
+  function suppressCommandRowClick(event: MouseEvent, entry: QuickCommandEntry) {
+    if (event.target instanceof Element && event.target.closest('.command-row-actions')) return;
+    if (suppressCommandClickId !== entry.id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    suppressCommandClickId = null;
+  }
+
+  function suppressNextCommandClick(id: string) {
+    suppressCommandClickId = id;
+    window.setTimeout(() => { if (suppressCommandClickId === id) suppressCommandClickId = null; }, 500);
+  }
+
+  function restoreReorderEntries(original: readonly QuickCommandEntry[]) {
+    const liveEntriesById = new Map(entries.map((entry) => [entry.id, entry]));
+    const originalIds = new Set(original.map((entry) => entry.id));
+    const restored = original
+      .map((entry) => liveEntriesById.get(entry.id))
+      .filter((entry): entry is QuickCommandEntry => entry !== undefined);
+    entries = [...restored, ...entries.filter((entry) => !originalIds.has(entry.id))];
+  }
 
   async function runEntry(entry: QuickCommandEntry) {
     if (disposed) return;
@@ -263,24 +545,58 @@
   function isCommandStopping(commandId: string): boolean { return allHistory.some((run) => run.commandId === commandId && isRunStopping(run)); }
   function isRunExpanded(run: QuickCommandRunHistoryEntry): boolean { return expandedRunIds.has(historyRunKey(run)); }
   function handleHistoryRunToggle(event: Event, run: QuickCommandRunHistoryEntry) { const details = event.currentTarget as HTMLDetailsElement | null; if (!details) return; if (run.running) { details.open = true; return; } const id = historyRunKey(run); const next = new Set(expandedRunIds); if (details.open) next.add(id); else next.delete(id); expandedRunIds = next; }
-  function startListResize(event: PointerEvent) { event.preventDefault(); resizePointerId = event.pointerId; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); }
+  function startListResize(event: PointerEvent) { if (structuralMutationBusy() || pointerDrag) return; event.preventDefault(); resizeStartWidth = listWidth; resizePointerId = event.pointerId; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); }
   function resizeList(event: PointerEvent) { if (resizePointerId !== event.pointerId || !panelElement) return; const panelLeft = panelElement.getBoundingClientRect().left; listWidth = Math.round(Math.min(Math.max(event.clientX - panelLeft - 16, 128), 420)); }
-  function stopListResize(event: PointerEvent) { if (resizePointerId === event.pointerId) { resizePointerId = null; void saveQuickCommandsSettings({ entries, history: allHistory, listWidth }).catch((error) => console.error('Failed to persist quick command pane width', error)); } }
+  function stopListResize(event: PointerEvent) {
+    if (resizePointerId !== event.pointerId) return;
+    resizePointerId = null;
+    const rollback = { ...currentSettingsSnapshot(), listWidth: resizeStartWidth };
+    if (listWidth === resizeStartWidth) return;
+    void enqueueSettingsMutation(currentSettingsSnapshot(), rollback, editor.id).catch((error) => {
+      if (!disposed) panelError = `Quick command pane width could not be saved: ${error instanceof Error ? error.message : String(error)}`;
+    });
+  }
+  function cancelListResize(event: PointerEvent) { if (resizePointerId === event.pointerId) { listWidth = resizeStartWidth; resizePointerId = null; } }
   function closePanel() { void hideCommandPanel().catch((error) => console.error('Failed to hide command panel', error)); }
   function selectCommand(entry: QuickCommandEntry) { startEditEntry(entry); contextEntry = null; activeTab = 'configuration'; }
-  function showHistory() { if (contextEntry) selectCommand(contextEntry); activeTab = 'previousRuns'; contextEntry = null; void refreshHistory(); }
+  function showHistory() { cancelReorderForAction(); if (contextEntry) selectCommand(contextEntry); activeTab = 'previousRuns'; contextEntry = null; void refreshHistory(); }
   function editContextEntry() { if (contextEntry) selectCommand(contextEntry); }
   function duplicateContextEntry() { if (contextEntry) duplicateEntry(contextEntry); }
-  function openContextMenu(event: MouseEvent, entry: QuickCommandEntry) { event.preventDefault(); const panelBounds = panelElement.getBoundingClientRect(); contextMenuPosition = { x: Math.max(8, Math.min(event.clientX - panelBounds.left, panelBounds.width - 172)), y: Math.max(8, Math.min(event.clientY - panelBounds.top, panelBounds.height - 92)) }; contextEntry = entry; void focusContextMenu(); }
-  function openKeyboardContextMenu(event: KeyboardEvent, entry: QuickCommandEntry) { if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return; event.preventDefault(); const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect(); const panelBounds = panelElement.getBoundingClientRect(); contextMenuPosition = { x: Math.max(8, Math.min(bounds.left - panelBounds.left, panelBounds.width - 172)), y: Math.max(8, Math.min(bounds.bottom - panelBounds.top, panelBounds.height - 92)) }; contextEntry = entry; void focusContextMenu(); }
+  function openContextMenu(event: MouseEvent, entry: QuickCommandEntry) { event.preventDefault(); cancelReorderForAction(); const panelBounds = panelElement.getBoundingClientRect(); contextMenuPosition = { x: Math.max(8, Math.min(event.clientX - panelBounds.left, panelBounds.width - 172)), y: Math.max(8, Math.min(event.clientY - panelBounds.top, panelBounds.height - 92)) }; contextEntry = entry; void focusContextMenu(); }
+  function openKeyboardContextMenu(event: KeyboardEvent, entry: QuickCommandEntry) { if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return; event.preventDefault(); cancelReorderForAction(); const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect(); const panelBounds = panelElement.getBoundingClientRect(); contextMenuPosition = { x: Math.max(8, Math.min(bounds.left - panelBounds.left, panelBounds.width - 172)), y: Math.max(8, Math.min(bounds.bottom - panelBounds.top, panelBounds.height - 92)) }; contextEntry = entry; void focusContextMenu(); }
   async function focusContextMenu() { await tick(); contextMenuFirstAction?.focus(); }
   function dismissContextMenu(event: MouseEvent) { if (contextMenuElement?.contains(event.target as Node)) return; contextEntry = null; }
-  function dismissContextMenuOnEscape(event: KeyboardEvent) { if (event.key === 'Escape' && contextEntry) { event.preventDefault(); contextEntry = null; } }
+  function cancelActivePointerReorder(restoreFocus = true) {
+    if (!pointerDrag) return false;
+    const drag = pointerDrag;
+    stopCommandAutoScroll();
+    const row = commandListElement?.querySelector<HTMLElement>(`[data-command-id="${CSS.escape(drag.id)}"]`);
+    if (drag.active) {
+      restoreReorderEntries(drag.original);
+      suppressNextCommandClick(drag.id);
+      announceCommandOrder('Reorder cancelled. Previous order restored.');
+      if (restoreFocus) restoreMutationFocus(drag.focusId ?? drag.id);
+    }
+    pointerDrag = null;
+    draggingCommandId = null;
+    dropTargetCommandId = null;
+    if (row?.hasPointerCapture(drag.pointerId)) row.releasePointerCapture(drag.pointerId);
+    return true;
+  }
+  function cancelReorderForAction() {
+    const pointerCancelled = cancelActivePointerReorder(false);
+    return pointerCancelled;
+  }
+  function dismissContextMenuOnEscape(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    if (cancelActivePointerReorder()) { event.preventDefault(); return; }
+    if (contextEntry) { event.preventDefault(); contextEntry = null; }
+  }
   function getSelectionWithinShell(shell: HTMLElement): Selection | null { const selection = window.getSelection(); if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null; const range = selection.getRangeAt(0); if (!shell.contains(range.commonAncestorContainer)) return null; const anchor = selection.anchorNode; const focus = selection.focusNode; if (!anchor || !focus) return null; const anchorShell = (anchor instanceof Element ? anchor : anchor.parentElement)?.closest('.command-transcript-shell'); const focusShell = (focus instanceof Element ? focus : focus.parentElement)?.closest('.command-transcript-shell'); return anchorShell === shell && focusShell === shell ? selection : null; }
   function handleTranscriptKeydown(event: KeyboardEvent) { if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return; const shell = event.currentTarget as HTMLElement; if (!getSelectionWithinShell(shell)) return; try { if (document.execCommand('copy')) { event.preventDefault(); event.stopPropagation(); } } catch { /* native default */ } }
   function handleTranscriptContextMenu(event: MouseEvent) { const shell = event.currentTarget as HTMLElement; if (getSelectionWithinShell(shell)) event.stopPropagation(); }
   function handleTranscriptUrlAuxClick(event: MouseEvent, url: string) { event.preventDefault(); event.stopPropagation(); void openTranscriptUrl(url); }
-  function commandRowKeydown(event: KeyboardEvent, entry: QuickCommandEntry) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectCommand(entry); } else { openKeyboardContextMenu(event, entry); } }
+  function commandRowKeydown(event: KeyboardEvent, entry: QuickCommandEntry) { if (handleCommandReorderKeydown(event, entry)) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectCommand(entry); } else { openKeyboardContextMenu(event, entry); } }
   function shouldPollHistory(): boolean {
     if (pendingInputRequest !== null) return true;
     if (activeRunIds.size === 0) return false;
@@ -479,30 +795,33 @@
     window.addEventListener('keydown', keydownHandler, true);
     window.addEventListener('keyup', keyupHandler, true);
     historyPollTimer = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
-    return () => { disposed = true; if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); while (unlisteners.length) { try { unlisteners.pop()?.(); } catch (error) { console.error('Failed to dispose command panel listener', error); } } };
+    return () => { disposed = true; stopCommandAutoScroll(); pointerDrag = null; if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); while (unlisteners.length) { try { unlisteners.pop()?.(); } catch (error) { console.error('Failed to dispose command panel listener', error); } } };
   });
 </script>
 
 <svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
 
-<div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={stopListResize}>
+<div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={cancelListResize}>
   <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}><MaterialSymbolIcon name="close" /></MeltActionButton></header>
   {#if panelError}<p class="command-panel-error" role="alert">{panelError}</p>{/if}
   {#if pendingInputError}<p class="command-panel-error" role="alert">{pendingInputError}</p>{/if}
+  <p class="command-order-live-region" aria-live="polite" aria-atomic="true">{orderLiveMessage}</p>
   <section class="command-panel-layout">
     <aside class="command-list" aria-label="Saved commands">
       <div class="command-list-header"><h2>Saved</h2><MeltActionButton class="command-text-button command-create-button" ariaLabel="Create command" onClick={startNewEntry}><img class="command-new-icon" src={commandPanelNewIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton></div>
       {#if loading}<p class="command-list-state">Loading commands…</p>{:else if !entries.length}<p class="command-list-state">No quick commands saved.</p>{:else}
-        <ul>
+        <ul bind:this={commandListElement} class:command-list-reordering={draggingCommandId !== null} aria-label="Saved quick command order">
           {#each entries as entry (entry.id)}
-            <li data-selected={editor.id === entry.id} on:contextmenu={(event) => openContextMenu(event, entry)}>
+            <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+            <li data-selected={editor.id === entry.id} data-command-id={entry.id} data-dragging={draggingCommandId === entry.id} data-drop-target={dropTargetCommandId === entry.id} on:contextmenu={(event) => openContextMenu(event, entry)} on:pointerdown={(event) => startCommandPointerDrag(event, entry)} on:pointermove={(event) => updateCommandPointerDrag(event, entry)} on:pointerup={(event) => finishCommandPointerDrag(event)} on:pointercancel={cancelCommandPointerDrag} on:lostpointercapture={cancelCommandPointerDrag} on:click|capture={(event) => suppressCommandRowClick(event, entry)}>
               <div class="command-row">
-                <button class="command-select" type="button" aria-label={`Edit ${entry.label}`} on:click={() => selectCommand(entry)} on:keydown={(event) => commandRowKeydown(event, entry)}><strong>{entry.label}</strong></button>
+                <button class="command-select" type="button" aria-label={`Edit ${entry.label}`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+Home Alt+End" on:click={() => selectCommand(entry)} on:keydown={(event) => commandRowKeydown(event, entry)}><strong>{entry.label}</strong></button>
                 <button class="command-context-trigger" type="button" aria-label={`More options for ${entry.label}`} aria-haspopup="menu" on:click|stopPropagation={() => selectCommand(entry)} on:keydown={(event) => openKeyboardContextMenu(event, entry)}></button>
-                <div class="command-row-actions">
+                <!-- svelte-ignore a11y-no-static-element-interactions -->
+                <div class="command-row-actions" on:pointerdown|stopPropagation>
                   {#if runningId === entry.id || activeCommandIds.has(entry.id)}<span class="command-spinner" aria-label={`${entry.label} is running`}></span>{/if}
-                  <MeltActionButton class={`command-icon-button ${activeCommandIds.has(entry.id) || isCommandStopping(entry.id) ? 'command-stop-button' : 'command-run-button'}`} ariaLabel={isCommandStopping(entry.id) ? `${entry.label} is stopping` : activeCommandIds.has(entry.id) ? `Stop ${entry.label}` : `Run ${entry.label}`} disabled={Boolean(runningId || saving || stoppingId === entry.id || isCommandStopping(entry.id))} onClick={() => void (activeCommandIds.has(entry.id) ? stopEntry(entry.id) : runEntry(entry))}>{#if activeCommandIds.has(entry.id) || isCommandStopping(entry.id)}{#if isCommandStopping(entry.id)}Stopping...{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg>{/if}{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>{/if}</MeltActionButton>
-                  <MeltActionButton class="command-icon-button command-delete-button" ariaLabel={`Delete ${entry.label}`} disabled={Boolean(runningId || saving || activeCommandIds.has(entry.id))} onClick={(event) => void deleteEntry(entry.id, event)}><img class="command-delete-icon" src={commandPanelDeleteIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton>
+                  <MeltActionButton class={`command-icon-button ${activeCommandIds.has(entry.id) || isCommandStopping(entry.id) ? 'command-stop-button' : 'command-run-button'}`} ariaLabel={isCommandStopping(entry.id) ? `${entry.label} is stopping` : activeCommandIds.has(entry.id) ? `Stop ${entry.label}` : `Run ${entry.label}`} disabled={Boolean(runningId || stoppingId === entry.id || isCommandStopping(entry.id))} onClick={() => void (activeCommandIds.has(entry.id) ? stopEntry(entry.id) : runEntry(entry))}>{#if activeCommandIds.has(entry.id) || isCommandStopping(entry.id)}{#if isCommandStopping(entry.id)}Stopping...{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg>{/if}{:else}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11L13 8 4 2.5Z" /></svg>{/if}</MeltActionButton>
+                  <MeltActionButton class="command-icon-button command-delete-button" ariaLabel={`Delete ${entry.label}`} disabled={Boolean(runningId || structuralMutationPending || activeCommandIds.has(entry.id))} onClick={(event) => void deleteEntry(entry.id, event)}><img class="command-delete-icon" src={commandPanelDeleteIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton>
                 </div>
               </div>
             </li>
@@ -512,7 +831,7 @@
     </aside>
     <button class="command-list-resize-grip" type="button" aria-label="Resize saved commands pane" on:pointerdown={startListResize}></button>
     <section class="command-editor" aria-label="Command editor">
-      <div class="command-pane-header"><div><p>DETAILS</p><h2>{editor.id ? editor.label : 'New command'}</h2></div><div class="command-pane-tabs" role="tablist" aria-label="Quick command panels"><MeltActionButton class={`command-pane-tab ${activeTab === 'configuration' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'configuration'} ariaControls="command-panel-configuration" onClick={() => (activeTab = 'configuration')}>Configuration</MeltActionButton><MeltActionButton class={`command-pane-tab ${activeTab === 'previousRuns' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'previousRuns'} ariaControls="command-panel-previous-runs" onClick={() => { activeTab = 'previousRuns'; void refreshHistory(); }}>Previous runs</MeltActionButton></div></div>
+      <div class="command-pane-header"><div><p>DETAILS</p><h2>{editor.id ? editor.label : 'New command'}</h2></div><div class="command-pane-tabs" role="tablist" aria-label="Quick command panels"><MeltActionButton class={`command-pane-tab ${activeTab === 'configuration' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'configuration'} ariaControls="command-panel-configuration" onClick={() => { cancelReorderForAction(); activeTab = 'configuration'; }}>Configuration</MeltActionButton><MeltActionButton class={`command-pane-tab ${activeTab === 'previousRuns' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'previousRuns'} ariaControls="command-panel-previous-runs" onClick={() => { cancelReorderForAction(); activeTab = 'previousRuns'; void refreshHistory(); }}>Previous runs</MeltActionButton></div></div>
       {#if pendingInputRequest}
         {@const pending = pendingInputRequest}
         <section class="command-input-panel" aria-label="Backend input required">

@@ -4,6 +4,10 @@ import { IPC_COMMANDS } from '../ipc/commands.js';
 export const QUICK_COMMAND_MODES = ['direct', 'commandBlock'] as const;
 export type QuickCommandMode = (typeof QUICK_COMMAND_MODES)[number];
 
+export const QUICK_COMMAND_ORDER_LEGACY = 0 as const;
+export const QUICK_COMMAND_ORDER_VERSION = 1 as const;
+export type QuickCommandOrderVersion = typeof QUICK_COMMAND_ORDER_LEGACY | typeof QUICK_COMMAND_ORDER_VERSION;
+
 export type QuickCommandRunId = string;
 
 export interface QuickCommandEntry {
@@ -45,6 +49,7 @@ export interface QuickCommandRunHistoryEntry {
 }
 
 export interface QuickCommandsSettings {
+  orderVersion: QuickCommandOrderVersion;
   entries: QuickCommandEntry[];
   history: QuickCommandRunHistoryEntry[];
   listWidth: number;
@@ -103,6 +108,7 @@ type ShellSettingsRecord = Record<string, unknown> & {
 };
 
 const DEFAULT_QUICK_COMMANDS_SETTINGS: QuickCommandsSettings = {
+  orderVersion: QUICK_COMMAND_ORDER_VERSION,
   entries: [],
   history: [],
   listWidth: 180
@@ -139,7 +145,22 @@ export function coerceQuickCommandsSettings(value: unknown): QuickCommandsSettin
     }
     seen.add(entry.id);
   }
-  return { entries, history, listWidth: normalizeQuickCommandsListWidth(record?.listWidth) };
+  return {
+    orderVersion: normalizeQuickCommandOrderVersion(record?.orderVersion),
+    entries,
+    history,
+    listWidth: normalizeQuickCommandsListWidth(record?.listWidth)
+  };
+}
+
+export function normalizeQuickCommandOrderVersion(value: unknown): QuickCommandOrderVersion {
+  if (value === undefined || value === null || value === QUICK_COMMAND_ORDER_LEGACY) {
+    return QUICK_COMMAND_ORDER_LEGACY;
+  }
+  if (value === QUICK_COMMAND_ORDER_VERSION) {
+    return QUICK_COMMAND_ORDER_VERSION;
+  }
+  throw new Error(`unsupported quick command order version: ${String(value)}`);
 }
 
 export function normalizeQuickCommandsListWidth(value: unknown): number {
@@ -188,13 +209,55 @@ export function nextUniqueQuickCommandId(label: string, existingIds: readonly st
   return candidate;
 }
 
+/** Return stable IDs in authoritative display order. */
+export function captureQuickCommandOrder(entries: readonly QuickCommandEntry[]): string[] {
+  return entries.map((entry) => entry.id);
+}
+
+export function sameQuickCommandOrder(entries: readonly QuickCommandEntry[], baseline: readonly string[]): boolean {
+  return entries.length === baseline.length && entries.every((entry, index) => entry.id === baseline[index]);
+}
+
+/** Move one entry by stable ID. Numeric destinations are final indexes; string destinations insert before that ID. */
+export function moveQuickCommandById(
+  entries: readonly QuickCommandEntry[],
+  id: string,
+  destination: number | string | null
+): QuickCommandEntry[] {
+  const sourceIndex = entries.findIndex((entry) => entry.id === id);
+  if (sourceIndex < 0) return [...entries];
+
+  const withoutEntry = entries.filter((entry) => entry.id !== id);
+  if (destination === id) return [...entries];
+  const requestedIndex = typeof destination === 'number'
+    ? destination
+    : destination === null
+      ? withoutEntry.length
+      : withoutEntry.findIndex((entry) => entry.id === destination);
+  if (requestedIndex < 0) return [...entries];
+
+  const targetIndex = Math.min(Math.max(Math.trunc(requestedIndex), 0), withoutEntry.length);
+  withoutEntry.splice(targetIndex, 0, entries[sourceIndex]);
+  return withoutEntry;
+}
+
+/** Stable, one-time migration order. Equal labels retain their prior array order. */
+export function sortQuickCommandsForLegacyMigration(entries: readonly QuickCommandEntry[]): QuickCommandEntry[] {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => left.entry.label.localeCompare(right.entry.label) || left.index - right.index)
+    .map(({ entry }) => entry);
+}
 export async function loadQuickCommandsSettings(): Promise<QuickCommandsSettings> {
   const settings = await invoke<ShellSettingsRecord>(IPC_COMMANDS.loadShellSettings);
   return coerceQuickCommandsSettings(settings.quickCommands ?? DEFAULT_QUICK_COMMANDS_SETTINGS);
 }
 
 export async function saveQuickCommandsSettings(quickCommands: QuickCommandsSettings): Promise<QuickCommandsSettings> {
-  const normalized = coerceQuickCommandsSettings(quickCommands);
+  const normalized = {
+    ...coerceQuickCommandsSettings(quickCommands),
+    orderVersion: QUICK_COMMAND_ORDER_VERSION
+  } satisfies QuickCommandsSettings;
   const saved = await invoke<QuickCommandsSettings>(IPC_COMMANDS.saveQuickCommandsSettings, {
     quickCommands: normalized
   });

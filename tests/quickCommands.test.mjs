@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
   QUICK_COMMAND_MODES,
+  QUICK_COMMAND_ORDER_LEGACY,
+  QUICK_COMMAND_ORDER_VERSION,
+  captureQuickCommandOrder,
   coerceQuickCommandsSettings,
   defaultQuickCommandsSettings,
   formatQuickCommandArgsTextarea,
@@ -17,6 +20,10 @@ import {
   normalizeQuickCommandInputValue,
   normalizeQuickCommandsListWidth,
   mergeQuickCommandRunHistoryEntries,
+  moveQuickCommandById,
+  normalizeQuickCommandOrderVersion,
+  sameQuickCommandOrder,
+  sortQuickCommandsForLegacyMigration,
   listQuickCommandHistory,
   stopQuickCommand,
   saveQuickCommandsSettings
@@ -28,7 +35,9 @@ const source = readFileSync(new URL('../src/lib/quickCommands.ts', import.meta.u
 
 test('quick command wrapper exposes stable mode contract and defaults', () => {
   assert.deepEqual(QUICK_COMMAND_MODES, ['direct', 'commandBlock']);
-  assert.deepEqual(defaultQuickCommandsSettings(), { entries: [], history: [], listWidth: 180 });
+  assert.equal(QUICK_COMMAND_ORDER_LEGACY, 0);
+  assert.equal(QUICK_COMMAND_ORDER_VERSION, 1);
+  assert.deepEqual(defaultQuickCommandsSettings(), { orderVersion: 1, entries: [], history: [], listWidth: 180 });
   assert.equal(normalizeQuickCommandsListWidth(99), 128);
   assert.equal(normalizeQuickCommandsListWidth(999), 420);
 });
@@ -149,6 +158,48 @@ test('quick command run request validates id and wrapper uses IPC constants', ()
   assert.doesNotMatch(source, /invoke\('run_quick_command'/);
   assert.match(source, /IPC_COMMANDS\.stopQuickCommand/);
   assert.match(source, /IPC_COMMANDS\.openQuickCommandUrl/);
+});
+
+test('quick command order helpers move by stable id and retain equal-label order', () => {
+  const entries = [
+    { id: 'b', label: 'Same', mode: 'direct', targetPath: 'b.exe', args: [], commands: [], cwd: null },
+    { id: 'a', label: 'Same', mode: 'direct', targetPath: 'a.exe', args: [], commands: [], cwd: null },
+    { id: 'c', label: 'Other', mode: 'direct', targetPath: 'c.exe', args: [], commands: [], cwd: null }
+  ];
+  const baseline = captureQuickCommandOrder(entries);
+
+  assert.deepEqual(moveQuickCommandById(entries, 'c', 0).map((entry) => entry.id), ['c', 'b', 'a']);
+  assert.deepEqual(moveQuickCommandById(entries, 'b', 'c').map((entry) => entry.id), ['a', 'b', 'c']);
+  assert.deepEqual(moveQuickCommandById(entries, 'missing', 0).map((entry) => entry.id), baseline);
+  assert.equal(sameQuickCommandOrder(entries, baseline), true);
+  assert.deepEqual(sortQuickCommandsForLegacyMigration(entries).map((entry) => entry.id), ['c', 'b', 'a']);
+});
+
+test('quick command coercion preserves authoritative order and detects legacy order version', () => {
+  const settings = coerceQuickCommandsSettings({
+    entries: [
+      { id: 'z', label: 'Zed', mode: 'direct', targetPath: 'z.exe', args: [], commands: [], cwd: null },
+      { id: 'a', label: 'Alpha', mode: 'direct', targetPath: 'a.exe', args: [], commands: [], cwd: null }
+    ],
+    history: []
+  });
+
+  assert.equal(settings.orderVersion, QUICK_COMMAND_ORDER_LEGACY);
+  assert.deepEqual(settings.entries.map((entry) => entry.id), ['z', 'a']);
+});
+
+test('quick command order version normalization matches Rust validation', () => {
+  assert.equal(normalizeQuickCommandOrderVersion(undefined), QUICK_COMMAND_ORDER_LEGACY);
+  assert.equal(normalizeQuickCommandOrderVersion(null), QUICK_COMMAND_ORDER_LEGACY);
+  assert.equal(normalizeQuickCommandOrderVersion(0), QUICK_COMMAND_ORDER_LEGACY);
+  assert.equal(normalizeQuickCommandOrderVersion(1), QUICK_COMMAND_ORDER_VERSION);
+
+  for (const value of [2, -1, 0.5, '1']) {
+    assert.throws(
+      () => normalizeQuickCommandOrderVersion(value),
+      new RegExp(`unsupported quick command order version: ${String(value).replace('.', '\\.')}`)
+    );
+  }
 });
 
 test('quick command URL opener is command-panel only and rejects unsafe URLs', () => {

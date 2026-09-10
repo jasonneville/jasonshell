@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager};
 
 const SETTINGS_SCHEMA: &str = "jasonshell.settings";
 const SETTINGS_VERSION: u32 = 1;
+pub const QUICK_COMMAND_ORDER_VERSION: u32 = 1;
 const SETTINGS_FILE: &str = "jasonshell-settings-v1.json";
 static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -102,6 +103,8 @@ pub struct EverythingSearchSettings {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickCommandsSettings {
+    #[serde(default = "default_quick_commands_order_version")]
+    pub order_version: u32,
     #[serde(default)]
     pub entries: Vec<QuickCommandEntry>,
     #[serde(default)]
@@ -268,6 +271,7 @@ impl Default for EverythingSearchSettings {
 impl Default for QuickCommandsSettings {
     fn default() -> Self {
         Self {
+            order_version: QUICK_COMMAND_ORDER_VERSION,
             entries: Vec::new(),
             history: Vec::new(),
             list_width: default_quick_commands_list_width(),
@@ -285,6 +289,10 @@ fn default_everything_max_results() -> usize {
 
 fn default_quick_commands_list_width() -> u32 {
     180
+}
+
+fn default_quick_commands_order_version() -> u32 {
+    0
 }
 
 fn default_true() -> bool {
@@ -374,8 +382,21 @@ pub(crate) fn update_shell_settings_for_app(
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|_| "settings write lock is poisoned".to_string())?;
-    let mut settings = load_settings_from_path(&path)?;
+    update_settings_to_path(&path, update)
+}
+
+fn update_settings_to_path(
+    path: &Path,
+    update: impl FnOnce(&mut ShellSettings),
+) -> Result<ShellSettings, String> {
+    let mut settings = load_settings_from_path(path)?;
+    let previous_quick_commands = settings.quick_commands.clone();
     update(&mut settings);
+    if settings.quick_commands.entries != previous_quick_commands.entries
+        || settings.quick_commands.list_width != previous_quick_commands.list_width
+    {
+        settings.quick_commands.order_version = QUICK_COMMAND_ORDER_VERSION;
+    }
     save_settings_to_path(&path, settings)
 }
 
@@ -524,6 +545,12 @@ pub(crate) fn clamp_shell_bar_height_logical(value: f64, minimum: f64) -> f64 {
 fn validate_quick_commands_settings(
     mut quick_commands: QuickCommandsSettings,
 ) -> Result<QuickCommandsSettings, String> {
+    if quick_commands.order_version > QUICK_COMMAND_ORDER_VERSION {
+        return Err(format!(
+            "unsupported quick command order version: {}",
+            quick_commands.order_version
+        ));
+    }
     quick_commands.list_width = quick_commands.list_width.clamp(128, 420);
     let mut seen_ids = HashSet::new();
     let mut normalized = Vec::with_capacity(quick_commands.entries.len());
@@ -983,6 +1010,10 @@ mod tests {
         assert_eq!(value["search"]["everything"]["contentSearchEnabled"], false);
         assert_eq!(value["stackBrowser"]["terminalProfile"], "windowsTerminal");
         assert!(value.get("terminal").is_none());
+        assert_eq!(
+            value["quickCommands"]["orderVersion"],
+            QUICK_COMMAND_ORDER_VERSION
+        );
         assert_eq!(value["quickCommands"]["entries"], json!([]));
         assert!(value.get("quickIcons").is_none());
     }
@@ -1224,5 +1255,146 @@ mod tests {
             validated.quick_commands.entries[0].commands,
             vec!["cd C:\\dev\\jasonshell", "python app.py"]
         );
+    }
+
+    #[test]
+    fn generic_settings_save_preserves_legacy_quick_command_order_and_history() {
+        let path = test_dir("quick-command-order").join(SETTINGS_FILE);
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.order_version = 0;
+        settings.quick_commands.entries = vec![
+            QuickCommandEntry {
+                id: "second".to_string(),
+                label: "Second".to_string(),
+                mode: QuickCommandMode::Direct,
+                target_path: "git.exe".to_string(),
+                args: vec!["status".to_string()],
+                commands: Vec::new(),
+                cwd: None,
+            },
+            QuickCommandEntry {
+                id: "first".to_string(),
+                label: "First".to_string(),
+                mode: QuickCommandMode::Direct,
+                target_path: "git.exe".to_string(),
+                args: vec!["log".to_string()],
+                commands: Vec::new(),
+                cwd: None,
+            },
+        ];
+        settings.quick_commands.history = vec![QuickCommandRunHistoryEntry {
+            run_id: "run-1".to_string(),
+            command_id: "second".to_string(),
+            started_at_epoch_ms: 1,
+            started_at_filetime_100ns: 0,
+            finished_at_epoch_ms: 2,
+            process_id: 3,
+            exit_code: Some(0),
+            stdout: "out".to_string(),
+            stderr: String::new(),
+            transcript: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            running: false,
+        }];
+
+        let mut legacy_value = serde_json::to_value(&settings).unwrap();
+        legacy_value["quickCommands"]["orderVersion"] = json!(0);
+        fs::write(&path, serde_json::to_vec(&legacy_value).unwrap()).unwrap();
+
+        let loaded = load_settings_from_path(&path).unwrap();
+        assert_eq!(loaded.quick_commands.order_version, 0);
+        assert_eq!(
+            loaded
+                .quick_commands
+                .entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "first"]
+        );
+        assert_eq!(loaded.quick_commands.history[0].run_id, "run-1");
+
+        let mut loaded = loaded;
+        loaded.ui.enable_diagnostics_export = true;
+        let saved = save_settings_to_path(&path, loaded).unwrap();
+        assert_eq!(saved.quick_commands.order_version, 0);
+        assert!(saved.ui.enable_diagnostics_export);
+        assert_eq!(saved.quick_commands.entries[0].id, "second");
+        assert_eq!(saved.quick_commands.entries[1].id, "first");
+        assert_eq!(saved.quick_commands.history[0].run_id, "run-1");
+
+        let persisted: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted["quickCommands"]["orderVersion"], json!(0));
+        assert_eq!(
+            persisted["quickCommands"]["entries"][0]["id"],
+            json!("second")
+        );
+        assert_eq!(
+            persisted["quickCommands"]["entries"][1]["id"],
+            json!("first")
+        );
+        assert_eq!(
+            persisted["quickCommands"]["history"][0]["runId"],
+            json!("run-1")
+        );
+    }
+
+    #[test]
+    fn quick_command_specific_update_promotes_legacy_order_version() {
+        let path = test_dir("quick-command-specific-save").join(SETTINGS_FILE);
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.order_version = 0;
+        settings.quick_commands.entries = vec![QuickCommandEntry {
+            id: "legacy".to_string(),
+            label: "Legacy".to_string(),
+            mode: QuickCommandMode::Direct,
+            target_path: "git.exe".to_string(),
+            args: vec!["status".to_string()],
+            commands: Vec::new(),
+            cwd: None,
+        }];
+        settings.quick_commands.history = vec![QuickCommandRunHistoryEntry {
+            run_id: "run-legacy".to_string(),
+            command_id: "legacy".to_string(),
+            started_at_epoch_ms: 1,
+            started_at_filetime_100ns: 0,
+            finished_at_epoch_ms: 2,
+            process_id: 3,
+            exit_code: Some(0),
+            stdout: "out".to_string(),
+            stderr: String::new(),
+            transcript: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            running: false,
+        }];
+        save_settings_to_path(&path, settings).unwrap();
+
+        let previous_history = load_settings_from_path(&path)
+            .unwrap()
+            .quick_commands
+            .history;
+        let saved = update_settings_to_path(&path, |settings| {
+            settings.quick_commands.entries[0].label = "Updated".to_string();
+            settings.quick_commands.list_width = 240;
+        })
+        .unwrap();
+
+        assert_eq!(
+            saved.quick_commands.order_version,
+            QUICK_COMMAND_ORDER_VERSION
+        );
+        assert_eq!(saved.quick_commands.history, previous_history);
+    }
+
+    #[test]
+    fn rejects_unknown_quick_command_order_version() {
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.order_version = QUICK_COMMAND_ORDER_VERSION + 1;
+
+        let error = validate_settings(settings).unwrap_err();
+
+        assert!(error.contains("unsupported quick command order version"));
     }
 }
