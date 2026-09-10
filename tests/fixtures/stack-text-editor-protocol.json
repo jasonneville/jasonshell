@@ -1,0 +1,85 @@
+[
+  {
+    "name": "crlf-map",
+    "schemaRevision": "stack-text-editor.v1",
+    "feasibilitySchemaRevision": "stack-text-editor.p02-feasibility.v2",
+    "lease": {
+      "leaseId": "lease-1",
+      "sessionId": "session-1",
+      "sourceGeneration": "1",
+      "documentRevision": "0",
+      "viewGeneration": "1",
+      "sourceByteStart": "0",
+      "sourceByteEnd": "3",
+      "localUtf16Length": 2,
+      "lineCertainty": "exact",
+      "sourceState": "ready",
+      "invalidAt": null,
+      "segments": [
+        {
+          "segmentId": "segment-1",
+          "sourceByteStart": "0",
+          "sourceByteEnd": "3",
+          "localUtf16Start": 0,
+          "localUtf16End": 2,
+          "text": "a\n",
+          "boundaries": [
+            { "localUtf16Offset": 0, "sourceByteOffset": "0" },
+            { "localUtf16Offset": 1, "sourceByteOffset": "1" },
+            { "localUtf16Offset": 2, "sourceByteOffset": "3" }
+          ],
+          "lineBreaks": [
+            { "localUtf16Offset": 1, "sourceByteStart": "1", "sourceByteLength": 2, "kind": "crlf" }
+          ],
+          "lineStart": "1",
+          "lineCount": "2"
+        }
+      ],
+      "expiresAfterRevision": "256"
+    }
+  },
+  {
+    "name": "unknown-apply-field",
+    "kind": "apply",
+    "request": {
+      "schemaRevision": "stack-text-editor.v1",
+      "sessionId": "s",
+      "sourceGeneration": "1",
+      "documentRevision": "0",
+      "viewGeneration": "1",
+      "leaseId": "l",
+      "expectedRevision": "0",
+      "operationId": "o",
+      "requestDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "edits": [
+        {
+          "range": { "kind": "lease", "leaseId": "l", "startUtf16": 0, "endUtf16": 0 },
+          "insert": { "kind": "inline", "text": "x" }
+        }
+      ],
+      "forged": true
+    }
+  },
+  {
+    "name": "unknown-replace-field",
+    "kind": "replace",
+    "request": {
+      "schemaRevision": "stack-text-editor.v1",
+      "sessionId": "s",
+      "sourceGeneration": "1",
+      "documentRevision": "0",
+      "viewGeneration": "1",
+      "leaseId": "l",
+      "expectedRevision": "0",
+      "operationId": "o",
+      "requestDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "precedingInput": { "acceptedRevision": "0", "localInputSequence": "0", "operationIds": [] },
+      "query": "x",
+      "replacement": { "kind": "inline", "text": "y" },
+      "matchCase": false,
+      "scope": "document",
+      "searchRevision": "0",
+      "forged": true
+    }
+  }
+]

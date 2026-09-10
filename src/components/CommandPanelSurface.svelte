@@ -38,6 +38,7 @@
   const modeLabels: Record<QuickCommandMode, string> = { direct: 'Program', commandBlock: 'Command block' };
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
+  const commandPanelNewIconUrl = new URL('../assets/icons/add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url).href;
 
   let entries: QuickCommandEntry[] = [];
   let loading = true;
@@ -487,7 +488,7 @@
   {#if pendingInputError}<p class="command-panel-error" role="alert">{pendingInputError}</p>{/if}
   <section class="command-panel-layout">
     <aside class="command-list" aria-label="Saved commands">
-      <div class="command-list-header"><h2>Saved</h2><MeltActionButton class="command-text-button" ariaLabel="Create command" onClick={startNewEntry}>New</MeltActionButton></div>
+      <div class="command-list-header"><h2>Saved</h2><MeltActionButton class="command-text-button command-create-button" ariaLabel="Create command" onClick={startNewEntry}><img class="command-new-icon" src={commandPanelNewIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton></div>
       {#if loading}<p class="command-list-state">Loading commands…</p>{:else if !entries.length}<p class="command-list-state">No quick commands saved.</p>{:else}
         <ul>
           {#each entries as entry (entry.id)}

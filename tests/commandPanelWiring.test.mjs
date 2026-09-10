@@ -8,6 +8,7 @@ const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', imp
 const topBarCss = readFileSync(new URL('../src/components/TopBar.css', import.meta.url), 'utf8');
 const commandPanelSource = readFileSync(new URL('../src/components/CommandPanelSurface.svelte', import.meta.url), 'utf8');
 const commandPanelCss = readFileSync(new URL('../src/components/CommandPanelSurface.css', import.meta.url), 'utf8');
+const commandPanelNewIconPath = new URL('../src/assets/icons/add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url);
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 const ipcSurfacesSource = readFileSync(new URL('../src/ipc/surfaces.ts', import.meta.url), 'utf8');
 const ipcEventsSource = readFileSync(new URL('../src/ipc/events.ts', import.meta.url), 'utf8');
@@ -66,7 +67,7 @@ test('top bar command button is left of tray button and enforces popup exclusivi
   assert.match(topBarSource, /if \(commandOpen && \(!target \|\| !commandControl\?\.contains\(target\)\)\) \{[\s\S]*void closeCommandPanel\(\);/);
   assert.match(topBarSource, /(?:void listen|registerAsyncUnlistener\(listen)\(COMMAND_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*commandOpen = false;/);
   assert.match(topBarCss, /\.top-bar \.command-button \{/);
-  assert.match(topBarSource, /<MaterialSymbolIcon name="workspaces" \/>/);
+  assert.match(topBarSource, /<MaterialSymbolIcon name="code_blocks" \/>/);
 });
 
 test('command panel surface includes compact list actions, resize controls, and command-block editor flow', () => {
@@ -219,6 +220,18 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelCss, /animation: command-spin 1100ms linear infinite/);
   assert.match(commandPanelSource, /hideCommandPanel/);
   assert.match(commandPanelCss, /\.command-panel \{/);
+});
+
+test('quick command create action uses copied add icon while retaining accessible name and behavior', () => {
+  const addIconSource = readFileSync(commandPanelNewIconPath, 'utf8');
+
+  assert.match(addIconSource, /<svg[^>]*viewBox="0 -960 960 960"[^>]*fill="#e3e3e3"/);
+  assert.match(addIconSource, /<path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"\/>/);
+  assert.match(commandPanelSource, /const commandPanelNewIconUrl = new URL\('\.\.\/assets\/icons\/add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24\.svg', import\.meta\.url\)\.href;/);
+  assert.match(commandPanelSource, /<MeltActionButton class="command-text-button command-create-button" ariaLabel="Create command" onClick=\{startNewEntry\}><img class="command-new-icon" src=\{commandPanelNewIconUrl\} alt="" aria-hidden="true" draggable="false" \/><\/MeltActionButton>/);
+  assert.doesNotMatch(commandPanelSource, /ariaLabel="Create command"[^>]*>New<\/MeltActionButton>/);
+  assert.match(commandPanelCss, /\.command-create-button \{[^}]*align-items: center;[^}]*display: inline-flex;[^}]*justify-content: center;[^}]*min-height: 24px;[^}]*min-width: 24px;[^}]*padding: 0;/s);
+  assert.match(commandPanelCss, /\.command-new-icon \{[^}]*display: block;[^}]*height: 16px;[^}]*width: 16px;/s);
 });
 
 test('command panel Rust placement clamps inside monitor work area and shrinks only when needed', () => {

@@ -1,2 +1,3 @@
-//! P01 protocol oracles, deliberately absent from the production command registry.
+#[cfg(any(test, debug_assertions))]
+pub(crate) mod feasibility;
 pub(crate) mod protocol;

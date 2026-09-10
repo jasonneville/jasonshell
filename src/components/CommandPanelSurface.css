@@ -61,6 +61,8 @@
   font-size: 0.72rem;
   line-height: 1.1;
 }
+.command-create-button { align-items: center; display: inline-flex; justify-content: center; min-height: 24px; min-width: 24px; padding: 0; }
+.command-new-icon { display: block; height: 16px; width: 16px; }
 
 .command-panel-error,
 .command-form-errors {

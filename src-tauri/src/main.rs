@@ -455,6 +455,29 @@ fn main() {
             }
         })
         .setup(|app| {
+            #[cfg(all(target_os = "windows", debug_assertions))]
+            if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
+                use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+                WebviewWindowBuilder::new(
+                    app,
+                    shell_windows::STACK_POPUP_LABEL,
+                    WebviewUrl::App("index.html".into()),
+                )
+                .skip_taskbar(true)
+                .visible(false)
+                .build()?;
+                WebviewWindowBuilder::new(
+                    app,
+                    shell_windows::TOP_BAR_LABEL,
+                    WebviewUrl::App("index.html".into()),
+                )
+                .skip_taskbar(true)
+                .visible(false)
+                .build()?;
+                stack_popup::text_document::feasibility::install_native_probe(app.handle());
+                return Ok(());
+            }
             let windows = shell_windows::create_shell_windows(app)?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
