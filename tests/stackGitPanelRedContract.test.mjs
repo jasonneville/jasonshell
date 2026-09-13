@@ -196,7 +196,7 @@ test('stack git API exposes first-class history and stash command contracts with
   assert.doesNotMatch(panel, /\bAI\b|assistant|chat|prompt|LLM|model/i);
 });
 
-test('stack git history files and diffs use stale-safe loading, friendly status labels, and accessible disclosure', () => {
+test('stack git history files and diffs use stale-safe loading, status symbols, and accessible disclosure', () => {
   assert.match(panel, /historyFilesLoading/);
   assert.match(panel, /historyFilesError/);
   assert.match(panel, /No files changed/);
@@ -205,7 +205,7 @@ test('stack git history files and diffs use stale-safe loading, friendly status 
   assert.match(panel, /aria-controls=\{`stack-git-history-files-\$\{entry\.commitHash\}`\}/);
   assert.match(panel, /aria-controls=\{`stack-git-history-diff-\$\{entry\.commitHash\}-\$\{fileIndex\}`\}/);
   assert.match(panel, /const token = \+\+diffToken;[\s\S]*token !== diffToken/);
-  assert.match(panel, /commitFileStatusLabel\(file\.status\)/);
+  assert.match(panel, />\{commitFileStatusSymbol\(file\.status\)\}<\/span>/);
   assert.match(panel, /commitFileStatusClass\(file\.status\)/);
   assert.match(panel, /stack-git-path__dir/);
   assert.match(panel, /stack-git-path__name/);
@@ -213,6 +213,25 @@ test('stack git history files and diffs use stale-safe loading, friendly status 
   assert.match(panel, /handleEscape\(event: KeyboardEvent\)/);
   assert.doesNotMatch(panel, /ensureHistorySelection\(/);
   assert.doesNotMatch(panel, /diffDrawerHistory/);
+});
+
+test('stack git file symbols match OpenChamber glyphs and status colors', () => {
+  assert.match(panel, /if \(statusKind === 'added'\) return 'A';/);
+  assert.match(panel, /if \(statusKind === 'deleted'\) return 'D';/);
+  assert.match(panel, /if \(statusKind === 'modified'\) return 'M';/);
+  assert.match(panel, /if \(statusKind === 'untracked'\) return '\?';/);
+  assert.match(panel, /if \(statusKind === 'conflict'\) return 'M';/);
+  assert.match(panel, /\.git-status-added[\s\S]*color:\s*#76ad4f;/);
+  assert.match(panel, /\.git-status-deleted[\s\S]*color:\s*#da5b4a;/);
+  assert.match(panel, /\.git-status-modified[\s\S]*color:\s*#c67f13;/);
+  assert.match(panel, /\.git-status-untracked[\s\S]*color:\s*#479fe6;/);
+  assert.match(panel, /\.git-status-renamed[\s\S]*color:\s*#479fe6;/);
+  assert.match(panel, /\.git-status-copied[\s\S]*color:\s*#479fe6;/);
+  assert.match(panel, /\.stack-git-badge\s*\{[\s\S]*background:\s*transparent;[\s\S]*border-radius:\s*0;/);
+  assert.match(panel, /return status\.charAt\(0\) \|\| 'M';/);
+  assert.match(panel, /map\[commitFileStatusSymbol\(status\)\]/);
+  assert.match(panel, /role="img" aria-label=\{commitFileStatusDescription\(file\.status\)\}/);
+  assert.match(panel, />\{commitFileStatusSymbol\(file\.status\)\}<\/span>/);
 });
 
 test('stack git stash backend uses fixed argv, bounded message, explicit untracked flag, and spawn_blocking', () => {

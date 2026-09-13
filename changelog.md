@@ -1,4 +1,5 @@
 ## Change Ledger
+- 2026-09-13 `[CODE]` CHANGED: Stack Browser Git Changes, History, and Stashes now match OpenChamber file-status symbols and colors, using bare `A`, `D`, `M`, `?`, `R`, and `C` glyphs instead of plus/minus/conflict symbols or word badges.
 - 2026-09-12 `[CODE]` CHANGED: Quick Commands per-run transcript viewport maximum height increased from 12rem to 18rem, exposing 50% more output before scrolling while retaining `overflow: auto`; backend retention, native panel geometry, and settings are unchanged.
 - 2026-09-12 `[TOOL]` VALIDATED: `node --test tests/commandPanelWiring.test.mjs tests/commandPanelTheme.test.mjs tests/commandPanelCloseButton.test.mjs && npm run check` exited 0; 17 tests passed, and npm check reported 0 errors with 3 unrelated existing `StackGitPanel.svelte` warnings.
 - 2026-09-12 `[CODE]` FIXED: Startup AppBar activation now loads persisted top and bottom bar heights before first reservation, scales them for monitor DPI, and falls back to defaults with a warning when settings cannot be loaded; failures before native side effects release the busy activation state for retry.

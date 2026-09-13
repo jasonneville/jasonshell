@@ -326,12 +326,12 @@
   }
 
   function gitStatusSymbol(statusKind: StackGitFileStatus['status'] | null | undefined) {
-    if (statusKind === 'added') return '+';
-    if (statusKind === 'deleted') return '-';
+    if (statusKind === 'added') return 'A';
+    if (statusKind === 'deleted') return 'D';
     if (statusKind === 'modified') return 'M';
     if (statusKind === 'untracked') return '?';
-    if (statusKind === 'conflict') return '!';
-    return '·';
+    if (statusKind === 'conflict') return 'M';
+    return 'M';
   }
 
   function gitStatusLabel(statusKind: StackGitFileStatus['status'] | null | undefined) {
@@ -1096,21 +1096,18 @@
     return `stack-git-badge git-status-${kind}`;
   }
 
-  function commitFileStatusLabel(status: string) {
-    if (status === 'A') return 'Added';
-    if (status === 'D') return 'Deleted';
-    if (status === 'M') return 'Modified';
-    if (status === 'R') return 'Renamed';
-    if (status === 'C') return 'Copied';
-    if (status === 'T') return 'Type changed';
-    if (status === 'U') return 'Conflict';
-    if (status === '?') return 'Untracked';
-    return status || 'Changed';
-  }
-
   function commitFileStatusClass(status: string) {
     const map: Record<string, string> = { A: 'added', D: 'deleted', M: 'modified', R: 'renamed', C: 'copied', T: 'type-changed', U: 'conflict', '?': 'untracked' };
-    return `stack-git-badge git-status-${map[status] ?? 'modified'}`;
+    return `stack-git-badge git-status-${map[commitFileStatusSymbol(status)] ?? 'modified'}`;
+  }
+
+  function commitFileStatusSymbol(status: string) {
+    return status.charAt(0) || 'M';
+  }
+
+  function commitFileStatusDescription(status: string) {
+    const map: Record<string, string> = { A: 'New file', D: 'Deleted file', M: 'Modified file', R: 'Renamed file', C: 'Copied file', T: 'Type changed', U: 'Conflict', '?': 'Untracked file' };
+    return map[commitFileStatusSymbol(status)] ?? 'Modified file';
   }
 
   function fileStatLabel(entry: { additions: number; deletions: number }) {
@@ -1623,7 +1620,7 @@
                       {@const pathParts = stackGitPathParts(file.relativePath)}
                       <div class="stack-git-history-file-shell" role="listitem">
                         <button type="button" class="stack-git-history-file" aria-expanded={selectedHistoryFilePath === file.path} aria-controls={`stack-git-history-diff-${entry.commitHash}-${fileIndex}`} on:click={() => selectHistoryFile(file.path)}>
-                          <span class={commitFileStatusClass(file.status)}>{commitFileStatusLabel(file.status)}</span>
+                          <span class={commitFileStatusClass(file.status)} role="img" aria-label={commitFileStatusDescription(file.status)} title={commitFileStatusDescription(file.status)}>{commitFileStatusSymbol(file.status)}</span>
                           <span class="stack-git-path">
                             <span class="stack-git-path__dir">{pathParts.directory}</span>
                             <span class="stack-git-path__sep">{pathParts.separator}</span>
@@ -1700,7 +1697,7 @@
                               selectStashFile(file.path);
                             }
                           }}>
-                            <span class={commitFileStatusClass(file.status)}>{commitFileStatusLabel(file.status)}</span>
+                            <span class={commitFileStatusClass(file.status)} role="img" aria-label={commitFileStatusDescription(file.status)} title={commitFileStatusDescription(file.status)}>{commitFileStatusSymbol(file.status)}</span>
                             <span class="stack-git-path">
                               <span class="stack-git-path__dir">{pathParts.directory}</span>
                               <span class="stack-git-path__sep">{pathParts.separator}</span>
@@ -2678,10 +2675,7 @@
   }
 
   .stack-git-history-file .stack-git-badge {
-    font-size: 0.6rem;
-    height: 18px;
-    padding-inline: 6px;
-    width: auto;
+    width: 0.75rem;
   }
 
   .stack-git-path {
@@ -2739,14 +2733,25 @@
 
   .stack-git-badge {
     align-items: center;
-    border-radius: var(--js-radius-xs);
+    background: transparent;
+    border-radius: 0;
     display: inline-flex;
     font-size: 0.65rem;
-    font-weight: 800;
+    font-weight: 600;
     height: 1rem;
     justify-content: center;
+    text-transform: uppercase;
     width: 1rem;
   }
+
+  .git-status-added { color: #76ad4f; }
+  .git-status-deleted { color: #da5b4a; }
+  .git-status-modified,
+  .git-status-conflict,
+  .git-status-type-changed { color: #c67f13; }
+  .git-status-untracked,
+  .git-status-renamed,
+  .git-status-copied { color: #479fe6; }
 
   .stack-git-empty,
   .stack-git-warning {
