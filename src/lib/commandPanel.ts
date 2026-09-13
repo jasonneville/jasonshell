@@ -19,3 +19,7 @@ export function hideCommandPanel(): Promise<void> {
 export function saveCommandPanelSize(widthPhysical: number, heightPhysical: number): Promise<unknown> {
   return invoke(IPC_COMMANDS.saveCommandPanelSize, { widthPhysical, heightPhysical });
 }
+
+export function pickQuickCommandArtifactLocation(): Promise<string | null> {
+  return invoke<string | null>(IPC_COMMANDS.pickQuickCommandArtifactLocation);
+}

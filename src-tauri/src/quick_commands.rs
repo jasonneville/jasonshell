@@ -17,7 +17,12 @@ use std::sync::{
     Arc, Mutex, OnceLock,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+
+const QUICK_COMMAND_ARTIFACT_OPEN_AUTH: StackCommandAuth = StackCommandAuth::AllowedCallers {
+    command: crate::contracts::commands::OPEN_QUICK_COMMAND_ARTIFACT_LOCATION,
+    callers: &[crate::shell_windows::COMMAND_PANEL_LABEL],
+};
 
 #[cfg(windows)]
 use windows::core::PCWSTR;
@@ -340,6 +345,57 @@ pub fn open_quick_command_url(window: WebviewWindow, url: String) -> Result<(), 
     )
     .map_err(CallerAuthError::into_string)?;
     open_quick_command_url_native(&validate_quick_command_url(&url)?)
+}
+
+#[tauri::command]
+pub async fn open_quick_command_artifact_location(
+    window: WebviewWindow,
+    id: String,
+) -> Result<(), String> {
+    authorize_stack_command(&window, QUICK_COMMAND_ARTIFACT_OPEN_AUTH)
+        .map_err(CallerAuthError::into_string)?;
+    let settings = settings::load_shell_settings_for_app(window.app_handle())?;
+    let artifact_location = resolve_quick_command_artifact_location(&settings, &id)?;
+    tauri::async_runtime::spawn_blocking(move || open_artifact_location_native(&artifact_location))
+        .await
+        .map_err(|error| format!("Failed to open quick command artifact location: {error}"))?
+}
+
+fn resolve_quick_command_artifact_location(
+    settings: &settings::ShellSettings,
+    command_id: &str,
+) -> Result<String, String> {
+    let command_id = command_id.trim();
+    if command_id.is_empty() {
+        return Err("quick command id must not be empty".into());
+    }
+    let entry = settings
+        .quick_commands
+        .entries
+        .iter()
+        .find(|entry| entry.id == command_id)
+        .ok_or_else(|| format!("quick command '{command_id}' is not configured"))?;
+    settings::normalize_optional_absolute_windows_path(
+        entry.artifact_location.as_deref(),
+        command_id,
+    )?
+    .ok_or_else(|| format!("quick command '{command_id}' has no artifact location configured"))
+}
+
+fn artifact_explorer_argv(path: &str) -> (&'static str, [&str; 1]) {
+    ("explorer.exe", [path])
+}
+
+fn open_artifact_location_native(path: &str) -> Result<(), String> {
+    if !Path::new(path).is_dir() {
+        return Err("Quick command artifact location is not an available folder".into());
+    }
+    let (executable, args) = artifact_explorer_argv(path);
+    Command::new(executable)
+        .args(args)
+        .spawn()
+        .map_err(|error| format!("Failed to open quick command artifact location: {error}"))?;
+    Ok(())
 }
 
 fn validate_quick_command_url(url: &str) -> Result<String, String> {
@@ -1705,6 +1761,65 @@ mod tests {
         assert_eq!(
             validate_quick_command_url("https://example.com/path?q=1#frag"),
             Ok("https://example.com/path?q=1#frag".into())
+        );
+    }
+
+    #[test]
+    fn artifact_location_resolves_by_saved_command_id_and_explorer_argv_stays_fixed() {
+        let mut settings = settings::ShellSettings::default();
+        settings.quick_commands.entries.push(QuickCommandEntry {
+            id: "build".into(),
+            label: "Build".into(),
+            mode: QuickCommandMode::Direct,
+            target_path: "git.exe".into(),
+            args: vec![],
+            commands: vec![],
+            cwd: None,
+            artifact_location: Some("C:\\build\\artifacts".into()),
+        });
+        settings.quick_commands.entries.push(QuickCommandEntry {
+            id: "no-artifacts".into(),
+            label: "No artifacts".into(),
+            mode: QuickCommandMode::Direct,
+            target_path: "git.exe".into(),
+            args: vec![],
+            commands: vec![],
+            cwd: None,
+            artifact_location: None,
+        });
+        assert_eq!(
+            resolve_quick_command_artifact_location(&settings, "build").unwrap(),
+            "C:\\build\\artifacts"
+        );
+        assert!(resolve_quick_command_artifact_location(&settings, "missing").is_err());
+        assert!(resolve_quick_command_artifact_location(&settings, "").is_err());
+        assert!(resolve_quick_command_artifact_location(&settings, "no-artifacts").is_err());
+        assert_eq!(
+            artifact_explorer_argv("C:\\build\\artifacts"),
+            ("explorer.exe", ["C:\\build\\artifacts"])
+        );
+        assert!(
+            open_artifact_location_native("C:\\definitely-missing-jasonshell-artifacts").is_err()
+        );
+        let executable = std::env::current_exe().unwrap();
+        assert!(open_artifact_location_native(executable.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn artifact_location_open_authorization_is_command_panel_only() {
+        assert!(crate::stack_popup::authorize_stack_command_caller(
+            crate::shell_windows::COMMAND_PANEL_LABEL,
+            QUICK_COMMAND_ARTIFACT_OPEN_AUTH,
+        )
+        .is_ok());
+        assert_eq!(
+            crate::stack_popup::authorize_stack_command_caller(
+                crate::shell_windows::TOP_BAR_LABEL,
+                QUICK_COMMAND_ARTIFACT_OPEN_AUTH,
+            )
+            .unwrap_err()
+            .into_string(),
+            "Unauthorized caller for command open_quick_command_artifact_location"
         );
     }
 

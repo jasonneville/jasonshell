@@ -103,3 +103,27 @@ test('backend resize command re-reserves appbars and updates work area', () => {
   assert.match(appbarSource, /reserve_appbar\(bottom_hwnd, AppBarEdge::Bottom/);
   assert.match(appbarSource, /reserved shell work area after shell bar resize/);
 });
+
+test('startup appbar reservation uses persisted shell bar heights', () => {
+  const activationSource = appbarSource.slice(
+    appbarSource.indexOf('pub fn activate_shell_surfaces'),
+    appbarSource.indexOf('fn cancel_activation_plan_before_side_effects')
+  );
+  const claimIndex = activationSource.indexOf('begin_activation_plan(&state)?');
+  const settingsLoadIndex = activationSource.indexOf('load_shell_settings_for_app(&app_handle)');
+
+  assert.notEqual(claimIndex, -1);
+  assert.notEqual(settingsLoadIndex, -1);
+  assert.ok(claimIndex < settingsLoadIndex, 'activation must claim busy phase before settings I/O');
+  assert.match(activationSource, /settings\.ui\.top_bar_height_logical/);
+  assert.match(activationSource, /settings\.ui\.bottom_bar_height_logical/);
+  assert.match(
+    activationSource,
+    /warning: failed to load shell settings for AppBar startup: \{error\}; using default shell bar heights/
+  );
+  assert.match(
+    activationSource,
+    /\(TOP_BAR_HEIGHT_LOGICAL, BOTTOM_BAR_HEIGHT_LOGICAL\)/
+  );
+  assert.match(activationSource, /cancel_activation_plan_before_side_effects\(&state\)/);
+});

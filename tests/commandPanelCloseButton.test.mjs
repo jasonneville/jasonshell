@@ -4,6 +4,8 @@ import test from 'node:test';
 
 const commandPanelSource = readFileSync(new URL('../src/components/CommandPanelSurface.svelte', import.meta.url), 'utf8');
 const commandPanelCss = readFileSync(new URL('../src/components/CommandPanelSurface.css', import.meta.url), 'utf8');
+const commandPanelRule = commandPanelCss.match(/\.command-panel \{([^}]*)\}/)?.[1] ?? '';
+const commandPanelHeaderRule = commandPanelCss.match(/\.command-panel-header \{([^}]*)\}/)?.[1] ?? '';
 
 test('command panel close button is accessible and styled like destructive shell close controls', () => {
   assert.match(commandPanelSource, /function closePanel\(\) \{[\s\S]*hideCommandPanel\(\)/);
@@ -13,9 +15,9 @@ test('command panel close button is accessible and styled like destructive shell
   assert.match(commandPanelSource, /onClick=\{closePanel\}/);
   assert.match(commandPanelSource, /<MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
 
-  assert.match(commandPanelCss, /\.command-panel-header \{/);
-  assert.match(commandPanelCss, /position: relative;/);
-  assert.match(commandPanelCss, /padding-right: 3rem;/);
+  assert.match(commandPanelRule, /position: relative;/);
+  assert.doesNotMatch(commandPanelHeaderRule, /position:/);
+  assert.match(commandPanelHeaderRule, /padding-right: 3rem;/);
   assert.match(commandPanelCss, /\.command-panel-close-button \{/);
   assert.match(commandPanelCss, /align-items: center;/);
   assert.match(commandPanelCss, /background: #dc2626;/);

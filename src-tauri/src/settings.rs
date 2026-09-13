@@ -167,6 +167,8 @@ pub struct QuickCommandEntry {
     #[serde(default)]
     pub commands: Vec<String>,
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub artifact_location: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -619,6 +621,8 @@ pub(crate) fn validate_quick_command_entry(
 
     let args = validate_quick_command_args(&entry.args, id)?;
     let cwd = normalize_optional_absolute_dir(entry.cwd.as_deref(), id)?;
+    let artifact_location =
+        normalize_optional_absolute_windows_path(entry.artifact_location.as_deref(), id)?;
     Ok(QuickCommandEntry {
         id: id.to_string(),
         label: label.to_string(),
@@ -635,6 +639,71 @@ pub(crate) fn validate_quick_command_entry(
         },
         commands,
         cwd,
+        artifact_location,
+    })
+}
+
+pub(crate) fn normalize_optional_absolute_windows_path(
+    value: Option<&str>,
+    command_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(value) = value else { return Ok(None) };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.chars().any(char::is_control) || !is_lexical_absolute_windows_path(value) {
+        return Err(format!(
+            "quick command '{}' artifact location must be an absolute Windows path",
+            command_id
+        ));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn is_lexical_absolute_windows_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+    {
+        return valid_windows_path_tail(&value[3..]);
+    }
+    let Some(remainder) = value.strip_prefix("\\\\") else {
+        return false;
+    };
+    let mut parts = remainder.split(['\\', '/']);
+    let valid_segment = |segment: &str| {
+        !segment.is_empty()
+            && !segment
+                .chars()
+                .any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    };
+    let (Some(server), Some(share)) = (parts.next(), parts.next()) else {
+        return false;
+    };
+    valid_segment(server)
+        && valid_segment(share)
+        && valid_windows_path_parts(parts.collect::<Vec<_>>().as_slice())
+}
+
+fn valid_windows_path_tail(value: &str) -> bool {
+    let parts = value.split(['\\', '/']).collect::<Vec<_>>();
+    valid_windows_path_parts(&parts)
+}
+
+fn valid_windows_path_parts(parts: &[&str]) -> bool {
+    parts.iter().enumerate().all(|(index, part)| {
+        if part.is_empty() {
+            return parts.len() == 1 || index == parts.len() - 1;
+        }
+        *part != "."
+            && *part != ".."
+            && !part.ends_with(['.', ' '])
+            && !part
+                .chars()
+                .any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
     })
 }
 
@@ -1191,11 +1260,18 @@ mod tests {
             args: vec!["status".to_string()],
             commands: Vec::new(),
             cwd: Some("C:\\dev\\jasonshell".to_string()),
+            artifact_location: Some("C:\\dev\\jasonshell\\target".to_string()),
         }];
 
         let validated = validate_settings(settings).unwrap();
         assert_eq!(validated.quick_commands.entries.len(), 1);
         assert_eq!(validated.quick_commands.entries[0].id, "git-status");
+        assert_eq!(
+            validated.quick_commands.entries[0]
+                .artifact_location
+                .as_deref(),
+            Some("C:\\dev\\jasonshell\\target")
+        );
 
         let mut invalid = ShellSettings::default();
         invalid.quick_commands.entries = vec![QuickCommandEntry {
@@ -1206,10 +1282,45 @@ mod tests {
             args: vec!["--token".to_string(), "abc".to_string()],
             commands: Vec::new(),
             cwd: None,
+            artifact_location: None,
         }];
         assert!(validate_settings(invalid)
             .unwrap_err()
             .contains("secret-like"));
+    }
+
+    #[test]
+    fn quick_command_artifact_location_defaults_and_lexical_windows_validation_match_contract() {
+        let legacy: QuickCommandEntry = serde_json::from_value(json!({
+            "id": "legacy", "label": "Legacy", "mode": "direct", "targetPath": "git.exe",
+            "args": [], "commands": [], "cwd": null
+        }))
+        .unwrap();
+        assert_eq!(legacy.artifact_location, None);
+
+        for value in ["C:\\artifacts", "C:/artifacts", "\\\\server\\share\\drop"] {
+            assert_eq!(
+                normalize_optional_absolute_windows_path(Some(value), "test")
+                    .unwrap()
+                    .as_deref(),
+                Some(value)
+            );
+        }
+        for value in [
+            "relative\\drop",
+            "C:drop",
+            "\\root-relative",
+            "C:\\bad\npath",
+            "C:\\bad\u{0085}path",
+            "C:\\bad<name",
+            "C:\\bad\\\\path",
+            "\\\\server",
+        ] {
+            assert!(
+                normalize_optional_absolute_windows_path(Some(value), "test").is_err(),
+                "accepted {value:?}"
+            );
+        }
     }
 
     #[test]
@@ -1224,6 +1335,7 @@ mod tests {
                 args: vec!["status".to_string()],
                 commands: Vec::new(),
                 cwd: None,
+                artifact_location: None,
             },
             QuickCommandEntry {
                 id: "dup".to_string(),
@@ -1233,6 +1345,7 @@ mod tests {
                 args: vec!["status".to_string()],
                 commands: Vec::new(),
                 cwd: None,
+                artifact_location: None,
             },
         ];
         assert!(validate_settings(settings).unwrap_err().contains("unique"));
@@ -1249,6 +1362,7 @@ mod tests {
                 "python app.py".to_string(),
             ],
             cwd: None,
+            artifact_location: None,
         }];
         let validated = validate_settings(block).unwrap();
         assert_eq!(
@@ -1271,6 +1385,7 @@ mod tests {
                 args: vec!["status".to_string()],
                 commands: Vec::new(),
                 cwd: None,
+                artifact_location: None,
             },
             QuickCommandEntry {
                 id: "first".to_string(),
@@ -1280,6 +1395,7 @@ mod tests {
                 args: vec!["log".to_string()],
                 commands: Vec::new(),
                 cwd: None,
+                artifact_location: Some("\\\\server\\share\\artifacts".to_string()),
             },
         ];
         settings.quick_commands.history = vec![QuickCommandRunHistoryEntry {
@@ -1322,6 +1438,10 @@ mod tests {
         assert!(saved.ui.enable_diagnostics_export);
         assert_eq!(saved.quick_commands.entries[0].id, "second");
         assert_eq!(saved.quick_commands.entries[1].id, "first");
+        assert_eq!(
+            saved.quick_commands.entries[1].artifact_location.as_deref(),
+            Some("\\\\server\\share\\artifacts")
+        );
         assert_eq!(saved.quick_commands.history[0].run_id, "run-1");
 
         let persisted: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -1333,6 +1453,10 @@ mod tests {
         assert_eq!(
             persisted["quickCommands"]["entries"][1]["id"],
             json!("first")
+        );
+        assert_eq!(
+            persisted["quickCommands"]["entries"][1]["artifactLocation"],
+            json!("\\\\server\\share\\artifacts")
         );
         assert_eq!(
             persisted["quickCommands"]["history"][0]["runId"],
@@ -1353,6 +1477,7 @@ mod tests {
             args: vec!["status".to_string()],
             commands: Vec::new(),
             cwd: None,
+            artifact_location: None,
         }];
         settings.quick_commands.history = vec![QuickCommandRunHistoryEntry {
             run_id: "run-legacy".to_string(),

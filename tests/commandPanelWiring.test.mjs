@@ -56,6 +56,7 @@ test('command panel contracts and wrappers use constant-backed IPC and event nam
   assert.match(commandPanelWrapper, /invoke\(IPC_COMMANDS\.showCommandPanel/);
   assert.match(commandPanelWrapper, /invoke\(IPC_COMMANDS\.hideCommandPanel/);
   assert.match(commandPanelWrapper, /invoke\(IPC_COMMANDS\.saveCommandPanelSize/);
+  assert.match(commandPanelWrapper, /invoke<string \| null>\(IPC_COMMANDS\.pickQuickCommandArtifactLocation/);
   assert.doesNotMatch(commandPanelWrapper, /invoke\('show_command_panel'/);
   assert.doesNotMatch(commandPanelWrapper, /invoke\('hide_command_panel'/);
 });
@@ -164,6 +165,7 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelSource, /command-transcript-shell/);
   assert.match(commandPanelSource, /command-transcript-line/);
   assert.match(commandPanelCss, /user-select:\s*text/);
+  assert.match(commandPanelCss, /\.command-transcript-shell \{[^}]*max-height: 18rem;[^}]*overflow: auto;/s);
   assert.match(commandPanelSource, /document\.execCommand\('copy'\)/);
   assert.match(commandPanelSource, /handleTranscriptContextMenu/);
   assert.match(commandPanelSource, /role="region"/);
@@ -223,6 +225,39 @@ test('command panel surface includes compact list actions, resize controls, and 
   assert.match(commandPanelCss, /animation: command-spin 1100ms linear infinite/);
   assert.match(commandPanelSource, /hideCommandPanel/);
   assert.match(commandPanelCss, /\.command-panel \{/);
+});
+
+test('quick command artifact folder can be typed or picked and is opened by saved command id', () => {
+  assert.match(ipcCommandsSource, /pickQuickCommandArtifactLocation: 'pick_quick_command_artifact_location'/);
+  assert.match(ipcCommandsSource, /openQuickCommandArtifactLocation: 'open_quick_command_artifact_location'/);
+  assert.match(contractsSource, /PICK_QUICK_COMMAND_ARTIFACT_LOCATION/);
+  assert.match(contractsSource, /OPEN_QUICK_COMMAND_ARTIFACT_LOCATION/);
+  assert.match(mainSource, /command_panel::pick_quick_command_artifact_location/);
+  assert.match(mainSource, /quick_commands::open_quick_command_artifact_location/);
+  assert.match(commandPanelRs, /begin_command_panel_focus_loss_hold/);
+  assert.match(commandPanelRs, /FocusHoldGuard/);
+  assert.match(commandPanelRs, /picker_lifecycle_nonce/);
+  assert.match(commandPanelRs, /command_panel_focus_loss_nonce_is_current\(picker_lifecycle_nonce\)/);
+  assert.match(commandPanelRs, /FOS_PICKFOLDERS/);
+  assert.match(commandPanelSource, /Artifact location/);
+  assert.match(commandPanelSource, /class="command-artifact-input-shell"><input value=\{editor\.artifactLocation\}[^>]*on:input=\{\(event\) => \(editor = \{ \.\.\.editor, artifactLocation: inputValue\(event\) \}\)\} \/><MeltActionButton class="command-icon-button command-artifact-picker-button" ariaLabel="Pick artifact folder"/);
+  assert.doesNotMatch(commandPanelSource, /artifactLocation\}[^>]*readonly/);
+  assert.doesNotMatch(commandPanelSource, /ariaLabel="Clear artifact folder"|>Clear<|Picking…|>Pick folder</);
+  assert.match(commandPanelSource, /pickQuickCommandArtifactLocation/);
+  assert.match(commandPanelSource, /openQuickCommandArtifactLocation\(editor\.id\)/);
+  assert.doesNotMatch(commandPanelSource, /openQuickCommandArtifactLocation\([^)]*artifactLocation/);
+  assert.match(commandPanelSource, /class="command-pane-header">\{#if activeTab === 'previousRuns'\}<MeltActionButton class="command-icon-button command-artifact-open-button"/);
+  assert.doesNotMatch(commandPanelSource, /command-history-header-actions/);
+  assert.match(commandPanelCss, /\.command-artifact-input-shell \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\) auto;[^}]*position: relative;/);
+  assert.match(commandPanelCss, /\.command-artifact-input-shell > input \{[^}]*padding-right:/);
+  assert.match(commandPanelCss, /\.command-artifact-picker-button \{[^}]*grid-column: 2;[^}]*justify-self: end;/);
+});
+
+test('artifact actions preserve panel lifecycle and settings mutation authority', () => {
+  assert.match(commandPanelRs, /fn artifact_picker_restore_requires_current_open_lifecycle/);
+  assert.match(commandPanelRs, /artifact_picker_completion_does_not_restore_after_explicit_hide/);
+  assert.match(commandPanelSource, /function openSelectedArtifactLocation\(\)[\s\S]*structuralMutationBusy\(\)/);
+  assert.match(commandPanelSource, /ariaLabel="Open artifact folder" disabled=\{artifactOpenBusy \|\| structuralMutationPending \|\| !selectedSavedCommand\?\.artifactLocation\}/);
 });
 
 test('quick command ordering uses versioned migration, authoritative arrays, and one mutation pipeline', () => {

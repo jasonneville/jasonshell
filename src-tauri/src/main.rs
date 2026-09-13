@@ -146,6 +146,7 @@ fn main() {
             command_panel::show_command_panel,
             command_panel::hide_command_panel,
             command_panel::save_command_panel_size,
+            command_panel::pick_quick_command_artifact_location,
             audio_panel::show_audio_panel,
             audio_panel::hide_audio_panel,
             calendar_panel::show_calendar_panel,
@@ -178,6 +179,7 @@ fn main() {
             quick_commands::send_quick_command_input,
             quick_commands::open_quick_command_url,
             quick_commands::save_quick_commands_settings,
+            quick_commands::open_quick_command_artifact_location,
             stack_popup::list_pinned_stack_folders,
             stack_popup::pin_stack_folder,
             stack_popup::unpin_stack_folder,
@@ -394,6 +396,9 @@ fn main() {
             if window.label() == shell_windows::COMMAND_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
+                if command_panel::command_panel_focus_loss_held() {
+                    return;
+                }
                 let focus_loss_nonce = command_panel::invalidate_command_panel_focus_loss_nonce();
                 let app_handle = window.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -402,6 +407,9 @@ fn main() {
                     })
                     .await;
                     if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
+                        return;
+                    }
+                    if command_panel::command_panel_focus_loss_held() {
                         return;
                     }
                     let Some(panel) =

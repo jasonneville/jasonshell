@@ -63,7 +63,8 @@ test('quick command settings coercion normalizes entries and validates security 
     targetPath: 'git.exe',
     args: ['status', '--short'],
     commands: [],
-    cwd: null
+    cwd: null,
+    artifactLocation: null
   });
 
   assert.throws(
@@ -83,6 +84,28 @@ test('quick command settings coercion normalizes entries and validates security 
       }),
     /secret-like/
   );
+});
+
+test('quick command artifact locations are optional per-entry absolute Windows folders', () => {
+  const settings = coerceQuickCommandsSettings({
+    entries: [
+      { id: 'drive', label: 'Drive', mode: 'direct', targetPath: 'git.exe', args: [], commands: [], cwd: null, artifactLocation: ' C:\\build\\artifacts ' },
+      { id: 'unc', label: 'UNC', mode: 'direct', targetPath: 'git.exe', args: [], commands: [], cwd: null, artifactLocation: '\\\\server\\share\\drop' },
+      { id: 'legacy', label: 'Legacy', mode: 'direct', targetPath: 'git.exe', args: [], commands: [], cwd: null }
+    ]
+  });
+
+  assert.deepEqual(settings.entries.map((entry) => entry.artifactLocation), [
+    'C:\\build\\artifacts',
+    '\\\\server\\share\\drop',
+    null
+  ]);
+  for (const artifactLocation of ['relative\\drop', 'C:drop', '\\root-relative', 'C:\\bad\npath', 'C:\\bad\u0085path', 'C:\\bad<name', 'C:\\bad\\\\path', '\\\\server']) {
+    assert.throws(
+      () => coerceQuickCommandsSettings({ entries: [{ id: 'bad-path', label: 'Bad path', mode: 'direct', targetPath: 'git.exe', args: [], commands: [], cwd: null, artifactLocation }] }),
+      /artifact location must be an absolute Windows path/
+    );
+  }
 });
 
 test('quick command settings support sequential command blocks', () => {
@@ -106,7 +129,8 @@ test('quick command settings support sequential command blocks', () => {
     targetPath: '',
     args: [],
     commands: ['cd C:\\dev\\app', 'python app.py'],
-    cwd: 'C:\\dev'
+    cwd: 'C:\\dev',
+    artifactLocation: null
   });
 
   assert.throws(
@@ -158,6 +182,7 @@ test('quick command run request validates id and wrapper uses IPC constants', ()
   assert.doesNotMatch(source, /invoke\('run_quick_command'/);
   assert.match(source, /IPC_COMMANDS\.stopQuickCommand/);
   assert.match(source, /IPC_COMMANDS\.openQuickCommandUrl/);
+  assert.match(source, /IPC_COMMANDS\.openQuickCommandArtifactLocation/);
 });
 
 test('quick command order helpers move by stable id and retain equal-label order', () => {

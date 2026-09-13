@@ -238,27 +238,51 @@ impl AppBarEdge {
 }
 
 pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> AppResult<()> {
-    let primary_monitor = app
-        .primary_monitor()?
-        .ok_or_else(|| "Primary monitor is unavailable".to_string())?;
-
-    let monitor_rect = RECT {
-        left: primary_monitor.position().x,
-        top: primary_monitor.position().y,
-        right: primary_monitor.position().x + primary_monitor.size().width as i32,
-        bottom: primary_monitor.position().y + primary_monitor.size().height as i32,
-    };
-
-    let scale_factor = primary_monitor.scale_factor();
-    let top_height = super::shell_windows::to_physical_height(TOP_BAR_HEIGHT_LOGICAL, scale_factor);
-    let bottom_height =
-        super::shell_windows::to_physical_height(BOTTOM_BAR_HEIGHT_LOGICAL, scale_factor);
-    let top_rect = desired_rect_for_edge(monitor_rect, AppBarEdge::Top, top_height);
-    let bottom_rect = desired_rect_for_edge(monitor_rect, AppBarEdge::Bottom, bottom_height);
     let app_handle = app.handle().clone();
     let plan = {
         let state = app_handle.state::<Mutex<ShellRuntimeState>>();
         begin_activation_plan(&state)?
+    };
+    let activation_inputs = (|| -> AppResult<_> {
+        let (top_height_logical, bottom_height_logical) =
+            match crate::settings::load_shell_settings_for_app(&app_handle) {
+                Ok(settings) => (
+                    settings.ui.top_bar_height_logical,
+                    settings.ui.bottom_bar_height_logical,
+                ),
+                Err(error) => {
+                    eprintln!(
+                        "warning: failed to load shell settings for AppBar startup: {error}; using default shell bar heights"
+                    );
+                    (TOP_BAR_HEIGHT_LOGICAL, BOTTOM_BAR_HEIGHT_LOGICAL)
+                }
+            };
+        let primary_monitor = app
+            .primary_monitor()?
+            .ok_or_else(|| "Primary monitor is unavailable".to_string())?;
+
+        let monitor_rect = RECT {
+            left: primary_monitor.position().x,
+            top: primary_monitor.position().y,
+            right: primary_monitor.position().x + primary_monitor.size().width as i32,
+            bottom: primary_monitor.position().y + primary_monitor.size().height as i32,
+        };
+
+        let (top_rect, bottom_rect) = startup_shell_rects(
+            monitor_rect,
+            primary_monitor.scale_factor(),
+            top_height_logical,
+            bottom_height_logical,
+        );
+        Ok((monitor_rect, top_rect, bottom_rect))
+    })();
+    let (monitor_rect, top_rect, bottom_rect) = match activation_inputs {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            let state = app_handle.state::<Mutex<ShellRuntimeState>>();
+            cancel_activation_plan_before_side_effects(&state);
+            return Err(error);
+        }
     };
     let activation_result =
         run_activation_side_effects(app, windows, plan, monitor_rect, top_rect, bottom_rect);
@@ -304,6 +328,28 @@ pub fn activate_shell_surfaces(app: &mut App, windows: &CreatedShellWindows) -> 
             }
         }
     })
+}
+
+fn cancel_activation_plan_before_side_effects(state: &Mutex<ShellRuntimeState>) {
+    let mut state = state.lock().expect("shell runtime state is poisoned");
+    debug_assert_eq!(state.activation_phase, ActivationPhase::SideEffects);
+    state.cleaned_up = true;
+    state.activation_phase = ActivationPhase::Idle;
+}
+
+fn startup_shell_rects(
+    monitor_rect: RECT,
+    scale_factor: f64,
+    top_height_logical: f64,
+    bottom_height_logical: f64,
+) -> (RECT, RECT) {
+    let top_height = super::shell_windows::to_physical_height(top_height_logical, scale_factor);
+    let bottom_height =
+        super::shell_windows::to_physical_height(bottom_height_logical, scale_factor);
+    (
+        desired_rect_for_edge(monitor_rect, AppBarEdge::Top, top_height),
+        desired_rect_for_edge(monitor_rect, AppBarEdge::Bottom, bottom_height),
+    )
 }
 
 pub fn cleanup_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
@@ -2079,16 +2125,18 @@ fn stop_taskbar_guard(state: &mut ShellRuntimeState) {
 mod tests {
     use super::{
         apply_requested_thickness, begin_activation_plan, begin_cleanup_plan,
-        cleanup_runtime_state_with, ensure_shell_bar_resize_allowed, finalize_activation_rollback,
-        finalize_cleanup_plan, fullscreen_guard_retry_delay, fullscreen_guard_target_or_restore,
+        cancel_activation_plan_before_side_effects, cleanup_runtime_state_with,
+        ensure_shell_bar_resize_allowed, finalize_activation_rollback, finalize_cleanup_plan,
+        fullscreen_guard_retry_delay, fullscreen_guard_target_or_restore,
         fullscreen_sync_action_for_state, guard_retry_prepare_target, guard_retry_register_failure,
         guard_retry_reset, normalize_rect_thickness, parked_rect_below_virtual_desktop,
         prepare_fullscreen_restore_retry_with, rect_covers_target, register_tracked_appbar,
         reserved_work_area, resolve_baseline_work_area, restored_shell_surface_layout,
         should_hide_shell_for_fullscreen_window, stabilize_runtime_window_rect_with,
-        start_taskbar_guard, stop_taskbar_guard, sync_work_area_best_effort_with,
-        take_runtime_guard_handles, unregister_tracked_appbars_with, ActivationPhase,
-        CleanupSideEffects, FullscreenAppBarState, FullscreenGuardTarget, FullscreenSyncAction,
+        start_taskbar_guard, startup_shell_rects, stop_taskbar_guard,
+        sync_work_area_best_effort_with, take_runtime_guard_handles,
+        unregister_tracked_appbars_with, ActivationPhase, CleanupSideEffects,
+        FullscreenAppBarState, FullscreenGuardTarget, FullscreenSyncAction,
         FullscreenWindowCandidate, GuardRetryState, ShellRuntimeState, ShellSurfaceLayout,
         WindowRectSnapshot, WorkAreaSyncResult,
     };
@@ -2652,6 +2700,50 @@ mod tests {
                 .to_string(),
             "Shell AppBar activation is already in progress"
         );
+    }
+
+    #[test]
+    fn custom_startup_heights_determine_first_reserved_geometry() {
+        let monitor = RECT {
+            left: 10,
+            top: 20,
+            right: 1930,
+            bottom: 1100,
+        };
+
+        let (top, bottom) = startup_shell_rects(monitor, 2.0, 47.5, 61.0);
+
+        assert_eq!(
+            top,
+            RECT {
+                left: 10,
+                top: 20,
+                right: 1930,
+                bottom: 115,
+            }
+        );
+        assert_eq!(
+            bottom,
+            RECT {
+                left: 10,
+                top: 978,
+                right: 1930,
+                bottom: 1100,
+            }
+        );
+    }
+
+    #[test]
+    fn pre_side_effect_activation_failure_releases_busy_claim() {
+        let state = Mutex::new(ShellRuntimeState::default());
+        begin_activation_plan(&state).expect("activation should claim busy phase");
+        assert!(begin_cleanup_plan(&state).is_err());
+
+        cancel_activation_plan_before_side_effects(&state);
+
+        let state = state.lock().unwrap();
+        assert!(state.cleaned_up);
+        assert_eq!(state.activation_phase, ActivationPhase::Idle);
     }
 
     #[test]

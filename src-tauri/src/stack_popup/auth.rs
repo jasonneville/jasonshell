@@ -43,7 +43,13 @@ pub(crate) fn authorize_stack_command(
     window: &WebviewWindow,
     auth: StackCommandAuth,
 ) -> Result<(), CallerAuthError> {
-    let caller = window.label().to_string();
+    authorize_stack_command_caller(window.label(), auth)
+}
+
+pub(crate) fn authorize_stack_command_caller(
+    caller: &str,
+    auth: StackCommandAuth,
+) -> Result<(), CallerAuthError> {
     let command = match auth {
         StackCommandAuth::AllowedCallers { command, callers }
         | StackCommandAuth::TerminalSessionTarget { command, callers } => {
@@ -54,7 +60,10 @@ pub(crate) fn authorize_stack_command(
         }
     };
 
-    Err(CallerAuthError::Unauthorized { command, caller })
+    Err(CallerAuthError::Unauthorized {
+        command,
+        caller: caller.to_string(),
+    })
 }
 
 // terminal session target auth: caller must match stored session target; never trust request target alone.

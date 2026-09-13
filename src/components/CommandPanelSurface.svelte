@@ -18,6 +18,7 @@
     nextDuplicateQuickCommandLabel,
     nextUniqueQuickCommandId,
     moveQuickCommandById,
+    openQuickCommandArtifactLocation,
     parseQuickCommandArgsTextarea,
     parseQuickCommandCommandsTextarea,
     quickCommandRunRequest,
@@ -35,10 +36,10 @@
     type QuickCommandRunUpdatedEvent
   } from '../lib/quickCommands';
   import { IPC_EVENTS } from '../ipc/events.js';
-  import { hideCommandPanel } from '../lib/commandPanel';
+  import { hideCommandPanel, pickQuickCommandArtifactLocation } from '../lib/commandPanel';
   import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
 
-  type CommandEditorModel = { id: string | null; label: string; mode: QuickCommandMode; targetPath: string; cwd: string; argsText: string; commandsText: string };
+  type CommandEditorModel = { id: string | null; label: string; mode: QuickCommandMode; targetPath: string; cwd: string; artifactLocation: string; argsText: string; commandsText: string };
   type CommandPanelTab = 'configuration' | 'previousRuns';
   type SettingsSnapshot = { orderVersion: typeof QUICK_COMMAND_ORDER_VERSION; entries: QuickCommandEntry[]; history: QuickCommandRunHistoryEntry[]; listWidth: number };
   type SettingsMutation = {
@@ -117,8 +118,12 @@
   let shellSurfaceHotkeyHandled = false;
   let disposed = false;
   let structuralMutationPending = false;
+  let artifactPickerBusy = false;
+  let artifactOpenBusy = false;
+  let selectedSavedCommand: QuickCommandEntry | null = null;
 
   $: structuralMutationPending = mutationInFlight || mutationQueue.length > 0;
+  $: selectedSavedCommand = editor.id ? entries.find((entry) => entry.id === editor.id) ?? null : null;
 
   type TranscriptTokenKind = 'prompt' | 'path' | 'url' | 'level-error' | 'level-warning' | 'level-success' | 'level-info';
   type TranscriptSegment = { text: string; kind: TranscriptTokenKind | null };
@@ -133,7 +138,7 @@
     { kind: 'level-info' as const, pattern: /\b(?:info|debug|trace)\b/iu }
   ];
 
-  function blankEditor(): CommandEditorModel { return { id: null, label: '', mode: 'direct', targetPath: '', cwd: '', argsText: '', commandsText: '' }; }
+  function blankEditor(): CommandEditorModel { return { id: null, label: '', mode: 'direct', targetPath: '', cwd: '', artifactLocation: '', argsText: '', commandsText: '' }; }
   function inputValue(event: Event): string { return (event.currentTarget as HTMLInputElement).value; }
   function selectValue(event: Event): string { return (event.currentTarget as HTMLSelectElement).value; }
   function selectedMode(event: Event): QuickCommandMode { return selectValue(event) as QuickCommandMode; }
@@ -148,8 +153,8 @@
   function focusCommandEntry(id: string | null) { if (!id) return; void tick().then(() => { if (disposed) return; commandListElement?.querySelector<HTMLButtonElement>(`[data-command-id="${CSS.escape(id)}"] .command-select`)?.focus(); }); }
 
   function startNewEntry() { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = blankEditor(); }
-  function startEditEntry(entry: QuickCommandEntry) { cancelReorderForAction(); formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: entry.id, label: entry.label, mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; }
-  function duplicateEntry(entry: QuickCommandEntry) { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: null, label: nextDuplicateQuickCommandLabel(entry.label, entries.map((current) => current.label)), mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; contextEntry = null; }
+  function startEditEntry(entry: QuickCommandEntry) { cancelReorderForAction(); formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: entry.id, label: entry.label, mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', artifactLocation: entry.artifactLocation ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; }
+  function duplicateEntry(entry: QuickCommandEntry) { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: null, label: nextDuplicateQuickCommandLabel(entry.label, entries.map((current) => current.label)), mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', artifactLocation: entry.artifactLocation ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; contextEntry = null; }
 
   function applyAcceptedSettings(values: SettingsSnapshot) {
     entries = cloneEntries(values.entries);
@@ -209,6 +214,33 @@
     return errors;
   }
 
+  async function pickArtifactLocation() {
+    if (disposed || artifactPickerBusy) return;
+    artifactPickerBusy = true;
+    formErrors = [];
+    try {
+      const selected = await pickQuickCommandArtifactLocation();
+      if (!disposed && selected !== null) editor = { ...editor, artifactLocation: selected };
+    } catch (error) {
+      if (!disposed) formErrors = [error instanceof Error ? error.message : String(error)];
+    } finally {
+      if (!disposed) artifactPickerBusy = false;
+    }
+  }
+
+  async function openSelectedArtifactLocation() {
+    if (!editor.id || !selectedSavedCommand?.artifactLocation || artifactOpenBusy || structuralMutationBusy()) return;
+    artifactOpenBusy = true;
+    panelError = '';
+    try {
+      await openQuickCommandArtifactLocation(editor.id);
+    } catch (error) {
+      if (!disposed) panelError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (!disposed) artifactOpenBusy = false;
+    }
+  }
+
   async function refreshEntries() {
     if (disposed) return;
     loading = true;
@@ -252,7 +284,7 @@
     const id = editor.id ?? nextUniqueQuickCommandId(editor.label, entries.map((entry) => entry.id));
     if (!id) { formErrors = ['Command id could not be derived from Label.']; return; }
     const editorBeforeSave = { ...editor };
-    const nextEntry: QuickCommandEntry = { id, label: editor.label.trim(), mode: editor.mode, targetPath: editor.mode === 'direct' ? editor.targetPath.trim() : '', cwd: editor.cwd.trim() ? editor.cwd.trim() : null, args: editor.mode === 'direct' ? parseQuickCommandArgsTextarea(editor.argsText) : [], commands: editor.mode === 'commandBlock' ? parseQuickCommandCommandsTextarea(editor.commandsText) : [] };
+    const nextEntry: QuickCommandEntry = { id, label: editor.label.trim(), mode: editor.mode, targetPath: editor.mode === 'direct' ? editor.targetPath.trim() : '', cwd: editor.cwd.trim() ? editor.cwd.trim() : null, artifactLocation: editor.artifactLocation.trim() ? editor.artifactLocation.trim() : null, args: editor.mode === 'direct' ? parseQuickCommandArgsTextarea(editor.argsText) : [], commands: editor.mode === 'commandBlock' ? parseQuickCommandCommandsTextarea(editor.commandsText) : [] };
     panelError = '';
     const rollback = currentSettingsSnapshot();
     const existingIndex = editor.id ? entries.findIndex((entry) => entry.id === editor.id) : -1;
@@ -831,7 +863,7 @@
     </aside>
     <button class="command-list-resize-grip" type="button" aria-label="Resize saved commands pane" on:pointerdown={startListResize}></button>
     <section class="command-editor" aria-label="Command editor">
-      <div class="command-pane-header"><div><p>DETAILS</p><h2>{editor.id ? editor.label : 'New command'}</h2></div><div class="command-pane-tabs" role="tablist" aria-label="Quick command panels"><MeltActionButton class={`command-pane-tab ${activeTab === 'configuration' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'configuration'} ariaControls="command-panel-configuration" onClick={() => { cancelReorderForAction(); activeTab = 'configuration'; }}>Configuration</MeltActionButton><MeltActionButton class={`command-pane-tab ${activeTab === 'previousRuns' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'previousRuns'} ariaControls="command-panel-previous-runs" onClick={() => { cancelReorderForAction(); activeTab = 'previousRuns'; void refreshHistory(); }}>Previous runs</MeltActionButton></div></div>
+      <div class="command-pane-header">{#if activeTab === 'previousRuns'}<MeltActionButton class="command-icon-button command-artifact-open-button" ariaLabel="Open artifact folder" disabled={artifactOpenBusy || structuralMutationPending || !selectedSavedCommand?.artifactLocation} onClick={() => void openSelectedArtifactLocation()}><MaterialSymbolIcon name="folder" /></MeltActionButton>{:else}<div><p>DETAILS</p><h2>{editor.id ? editor.label : 'New command'}</h2></div>{/if}<div class="command-pane-tabs" role="tablist" aria-label="Quick command panels"><MeltActionButton class={`command-pane-tab ${activeTab === 'configuration' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'configuration'} ariaControls="command-panel-configuration" onClick={() => { cancelReorderForAction(); activeTab = 'configuration'; }}>Configuration</MeltActionButton><MeltActionButton class={`command-pane-tab ${activeTab === 'previousRuns' ? 'active' : ''}`} role="tab" ariaSelected={activeTab === 'previousRuns'} ariaControls="command-panel-previous-runs" onClick={() => { cancelReorderForAction(); activeTab = 'previousRuns'; void refreshHistory(); }}>Previous runs</MeltActionButton></div></div>
       {#if pendingInputRequest}
         {@const pending = pendingInputRequest}
         <section class="command-input-panel" aria-label="Backend input required">
@@ -841,7 +873,7 @@
         </section>
       {/if}
       {#if activeTab === 'configuration'}
-        <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton class="command-text-button command-editor-icon-button" ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}><img class="command-save-icon" src={commandPanelSaveIconUrl} alt="" aria-hidden="true" draggable="false" />{saving ? 'Saving…' : ''}</MeltActionButton><MeltActionButton class="command-text-button command-editor-icon-button" ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}><img class="command-cancel-icon" src={commandPanelCancelIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton></div></div>
+        <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label><label><span>Artifact location</span><div class="command-artifact-input-shell"><input value={editor.artifactLocation} spellcheck="false" placeholder="Optional absolute Windows path" on:input={(event) => (editor = { ...editor, artifactLocation: inputValue(event) })} /><MeltActionButton class="command-icon-button command-artifact-picker-button" ariaLabel="Pick artifact folder" disabled={artifactPickerBusy} onClick={() => void pickArtifactLocation()}><MaterialSymbolIcon name="folder" /></MeltActionButton></div></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton class="command-text-button command-editor-icon-button" ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}><img class="command-save-icon" src={commandPanelSaveIconUrl} alt="" aria-hidden="true" draggable="false" />{saving ? 'Saving…' : ''}</MeltActionButton><MeltActionButton class="command-text-button command-editor-icon-button" ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}><img class="command-cancel-icon" src={commandPanelCancelIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton></div></div>
       {:else}
         <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host">{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)} on:toggle={(event) => handleHistoryRunToggle(event, run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} ><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-static-element-interactions a11y-no-noninteractive-element-interactions --><div class="command-transcript-shell" role="region" tabindex="0" aria-label="Merged transcript" on:keydown={handleTranscriptKeydown} on:contextmenu={handleTranscriptContextMenu}>{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(run.runId, line.sequence, `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`, line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind === 'url'}<a class={`command-transcript-token command-transcript-token--${segment.kind}`} href={segment.text} rel="noreferrer noopener" on:click={(event) => handleTranscriptUrlClick(event, segment.text)} on:auxclick={(event) => handleTranscriptUrlAuxClick(event, segment.text)} on:contextmenu={(event) => handleTranscriptUrlContextMenu(event)}>{segment.text}</a>{:else if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</div></div></details>{/each}{/if}</div></div></div>
       {/if}

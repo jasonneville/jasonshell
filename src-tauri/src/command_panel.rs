@@ -1,14 +1,28 @@
 use serde::Deserialize;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 use crate::settings;
 use crate::shell_windows::{COMMAND_PANEL_LABEL, TOP_BAR_LABEL};
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 pub const COMMAND_PANEL_CLOSED_EVENT: &str = "command-panel:closed";
 const COMMAND_PANEL_MARGIN_PHYSICAL: i32 = 6;
 static COMMAND_PANEL_FOCUS_LOSS_NONCE: AtomicU64 = AtomicU64::new(1);
 static COMMAND_PANEL_SUPPRESS_NEXT_RESIZE_SAVE: AtomicBool = AtomicBool::new(false);
+static COMMAND_PANEL_FOCUS_LOSS_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);
+const QUICK_COMMAND_ARTIFACT_PICKER_AUTH: StackCommandAuth = StackCommandAuth::AllowedCallers {
+    command: crate::contracts::commands::PICK_QUICK_COMMAND_ARTIFACT_LOCATION,
+    callers: &[COMMAND_PANEL_LABEL],
+};
+
+struct FocusHoldGuard;
+
+impl Drop for FocusHoldGuard {
+    fn drop(&mut self) {
+        COMMAND_PANEL_FOCUS_LOSS_HOLD_COUNT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +138,126 @@ pub fn hide_command_panel(app_handle: AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Failed to publish command panel closed event: {error}"))
 }
 
+fn begin_command_panel_focus_loss_hold() -> (FocusHoldGuard, u64) {
+    let lifecycle_nonce = invalidate_command_panel_focus_loss_nonce();
+    COMMAND_PANEL_FOCUS_LOSS_HOLD_COUNT.fetch_add(1, Ordering::SeqCst);
+    (FocusHoldGuard, lifecycle_nonce)
+}
+
+pub fn command_panel_focus_loss_held() -> bool {
+    COMMAND_PANEL_FOCUS_LOSS_HOLD_COUNT.load(Ordering::SeqCst) > 0
+}
+
+#[tauri::command]
+pub async fn pick_quick_command_artifact_location(
+    window: WebviewWindow,
+) -> Result<Option<String>, String> {
+    authorize_stack_command(&window, QUICK_COMMAND_ARTIFACT_PICKER_AUTH)
+        .map_err(CallerAuthError::into_string)?;
+    let (hold, picker_lifecycle_nonce) = begin_command_panel_focus_loss_hold();
+    #[cfg(target_os = "windows")]
+    let result: Result<Option<String>, String> = {
+        let window_for_picker = window.clone();
+        async move {
+            let owner = window_for_picker
+                .hwnd()
+                .map_err(|error| format!("Failed to read command panel HWND: {error}"))?
+                .0 as isize;
+            tauri::async_runtime::spawn_blocking(move || pick_artifact_folder_native(owner))
+                .await
+                .map_err(|error| format!("Artifact folder picker failed: {error}"))?
+        }
+        .await
+    };
+    #[cfg(not(target_os = "windows"))]
+    let result = Err("Artifact folder picker is only supported on Windows".to_string());
+    drop(hold);
+    if artifact_picker_restore_requires_current_open_lifecycle(picker_lifecycle_nonce) {
+        let _ = window.show();
+        if command_panel_focus_loss_nonce_is_current(picker_lifecycle_nonce) {
+            let _ = window.set_focus();
+        }
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn pick_artifact_folder_native(owner: isize) -> Result<Option<String>, String> {
+    use windows::core::{HRESULT, PWSTR};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR, FOS_PATHMUSTEXIST,
+        FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+    };
+
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() }
+            }
+        }
+    }
+    unsafe fn take_pwstr(value: PWSTR) -> String {
+        if value.is_null() {
+            return String::new();
+        }
+        let mut len = 0;
+        while unsafe { *value.0.add(len) } != 0 {
+            len += 1
+        }
+        let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(value.0, len) });
+        unsafe { CoTaskMemFree(Some(value.0.cast())) };
+        text
+    }
+
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+        .ok()
+        .map_err(|error| format!("Failed to initialize artifact folder picker: {error}"))?;
+    let _com = ComGuard(true);
+    let dialog: IFileOpenDialog =
+        unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) }
+            .map_err(|error| format!("Failed to create artifact folder picker: {error}"))?;
+    let options = unsafe { dialog.GetOptions() }
+        .map_err(|error| format!("Failed to read artifact folder picker options: {error}"))?;
+    unsafe {
+        dialog.SetOptions(
+            options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR,
+        )
+    }
+    .map_err(|error| format!("Failed to configure artifact folder picker: {error}"))?;
+    if let Err(error) = unsafe { dialog.Show(Some(HWND(owner as *mut _))) } {
+        const CANCELLED: HRESULT = HRESULT(0x800704C7_u32 as i32);
+        return if error.code() == CANCELLED {
+            Ok(None)
+        } else {
+            Err(format!("Artifact folder picker failed: {error}"))
+        };
+    }
+    let item = unsafe { dialog.GetResult() }
+        .map_err(|error| format!("Failed to read artifact folder selection: {error}"))?;
+    let path = unsafe {
+        take_pwstr(
+            item.GetDisplayName(SIGDN_FILESYSPATH)
+                .map_err(|error| format!("Failed to read artifact folder path: {error}"))?,
+        )
+    };
+    validate_artifact_picker_selection(&path)
+}
+
+fn validate_artifact_picker_selection(path: &str) -> Result<Option<String>, String> {
+    let path = crate::settings::normalize_optional_absolute_windows_path(Some(path), "picker")?
+        .ok_or_else(|| "Artifact folder picker returned an empty path".to_string())?;
+    if !std::path::Path::new(&path).is_dir() {
+        return Err("Selected artifact location is not an available folder".into());
+    }
+    Ok(Some(path))
+}
+
 pub fn invalidate_command_panel_focus_loss_nonce() -> u64 {
     COMMAND_PANEL_FOCUS_LOSS_NONCE.fetch_add(1, Ordering::SeqCst) + 1
 }
@@ -142,6 +276,10 @@ fn take_command_panel_resize_save_suppression() -> bool {
 
 pub fn command_panel_focus_loss_nonce_is_current(nonce: u64) -> bool {
     current_command_panel_focus_loss_nonce() == nonce
+}
+
+fn artifact_picker_restore_requires_current_open_lifecycle(picker_lifecycle_nonce: u64) -> bool {
+    command_panel_focus_loss_nonce_is_current(picker_lifecycle_nonce)
 }
 
 pub fn command_panel_work_area(
@@ -181,10 +319,14 @@ pub fn command_panel_work_area(
 #[cfg(test)]
 mod tests {
     use super::{
+        artifact_picker_restore_requires_current_open_lifecycle,
+        begin_command_panel_focus_loss_hold, command_panel_focus_loss_held,
         command_panel_focus_loss_nonce_is_current, command_panel_work_area,
         current_command_panel_focus_loss_nonce, invalidate_command_panel_focus_loss_nonce,
         suppress_next_command_panel_resize_save, take_command_panel_resize_save_suppression,
+        validate_artifact_picker_selection, QUICK_COMMAND_ARTIFACT_PICKER_AUTH,
     };
+    use crate::stack_popup::authorize_stack_command_caller;
     use tauri::{PhysicalPosition, PhysicalSize};
 
     #[test]
@@ -261,9 +403,62 @@ mod tests {
     }
 
     #[test]
+    fn artifact_picker_completion_does_not_restore_after_explicit_hide() {
+        let picker_lifecycle_nonce = invalidate_command_panel_focus_loss_nonce();
+        assert!(artifact_picker_restore_requires_current_open_lifecycle(
+            picker_lifecycle_nonce
+        ));
+
+        invalidate_command_panel_focus_loss_nonce();
+
+        assert!(!artifact_picker_restore_requires_current_open_lifecycle(
+            picker_lifecycle_nonce
+        ));
+    }
+
+    #[test]
     fn suppress_next_resize_save_consumes_single_resize_event() {
         suppress_next_command_panel_resize_save();
         assert!(take_command_panel_resize_save_suppression());
         assert!(!take_command_panel_resize_save_suppression());
+    }
+
+    #[test]
+    fn command_panel_focus_hold_covers_full_guard_lifetime() {
+        assert!(!command_panel_focus_loss_held());
+        let (hold, _) = begin_command_panel_focus_loss_hold();
+        assert!(command_panel_focus_loss_held());
+        drop(hold);
+        assert!(!command_panel_focus_loss_held());
+    }
+
+    #[test]
+    fn artifact_picker_authorization_is_command_panel_only() {
+        assert!(authorize_stack_command_caller(
+            crate::shell_windows::COMMAND_PANEL_LABEL,
+            QUICK_COMMAND_ARTIFACT_PICKER_AUTH,
+        )
+        .is_ok());
+        assert_eq!(
+            authorize_stack_command_caller(
+                crate::shell_windows::TOP_BAR_LABEL,
+                QUICK_COMMAND_ARTIFACT_PICKER_AUTH,
+            )
+            .unwrap_err()
+            .into_string(),
+            "Unauthorized caller for command pick_quick_command_artifact_location"
+        );
+    }
+
+    #[test]
+    fn artifact_picker_rejects_empty_relative_and_unavailable_selections() {
+        assert!(validate_artifact_picker_selection("").is_err());
+        assert!(validate_artifact_picker_selection("relative\\artifacts").is_err());
+        let executable = std::env::current_exe().unwrap();
+        assert!(validate_artifact_picker_selection(executable.to_str().unwrap()).is_err());
+        assert!(
+            validate_artifact_picker_selection("C:\\definitely-missing-jasonshell-artifacts")
+                .is_err()
+        );
     }
 }

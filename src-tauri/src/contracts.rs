@@ -115,6 +115,8 @@ pub mod commands {
     pub const OPEN_QUICK_COMMAND_URL: &str = "open_quick_command_url";
     pub const SAVE_COMMAND_PANEL_SIZE: &str = "save_command_panel_size";
     pub const SAVE_QUICK_COMMANDS_SETTINGS: &str = "save_quick_commands_settings";
+    pub const PICK_QUICK_COMMAND_ARTIFACT_LOCATION: &str = "pick_quick_command_artifact_location";
+    pub const OPEN_QUICK_COMMAND_ARTIFACT_LOCATION: &str = "open_quick_command_artifact_location";
     pub const LIST_PINNED_STACK_FOLDERS: &str = "list_pinned_stack_folders";
     pub const PIN_STACK_FOLDER: &str = "pin_stack_folder";
     pub const UNPIN_STACK_FOLDER: &str = "unpin_stack_folder";
@@ -286,6 +288,8 @@ pub mod commands {
         OPEN_QUICK_COMMAND_URL,
         SAVE_COMMAND_PANEL_SIZE,
         SAVE_QUICK_COMMANDS_SETTINGS,
+        PICK_QUICK_COMMAND_ARTIFACT_LOCATION,
+        OPEN_QUICK_COMMAND_ARTIFACT_LOCATION,
         LIST_PINNED_STACK_FOLDERS,
         PIN_STACK_FOLDER,
         UNPIN_STACK_FOLDER,
@@ -617,6 +621,8 @@ mod tests {
         assert!(unique.contains("stop_quick_command"));
         assert!(unique.contains("list_quick_command_history"));
         assert!(unique.contains("save_quick_commands_settings"));
+        assert!(unique.contains("pick_quick_command_artifact_location"));
+        assert!(unique.contains("open_quick_command_artifact_location"));
     }
 
     #[test]

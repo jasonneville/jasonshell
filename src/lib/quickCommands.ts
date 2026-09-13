@@ -18,6 +18,7 @@ export interface QuickCommandEntry {
   args: string[];
   commands: string[];
   cwd: string | null;
+  artifactLocation: string | null;
 }
 
 export interface QuickCommandTranscriptEntry {
@@ -287,6 +288,12 @@ export function openQuickCommandUrl(url: string): Promise<void> {
   return invoke<void>(IPC_COMMANDS.openQuickCommandUrl, { url });
 }
 
+export function openQuickCommandArtifactLocation(id: string): Promise<void> {
+  return invoke<void>(IPC_COMMANDS.openQuickCommandArtifactLocation, {
+    id: normalizeNonEmpty(id, 'Quick command id')
+  });
+}
+
 export function stopQuickCommand(request: StopQuickCommandRequest): Promise<void> {
   const normalized = normalizeQuickCommandStopRequest(request);
   return invoke<void>(IPC_COMMANDS.stopQuickCommand, { request: normalized });
@@ -398,6 +405,7 @@ function coerceQuickCommandEntry(value: unknown, index: number): QuickCommandEnt
   const args = Array.isArray(record.args) ? record.args.map(asString).filter(Boolean) : [];
   const commands = normalizeCommandLines(record, mode, targetPath, args);
   const cwd = asOptionalString(record.cwd);
+  const artifactLocation = normalizeOptionalAbsoluteWindowsPath(record.artifactLocation, `Quick command '${id}' artifact location`);
   const normalized = {
     id: id.toLowerCase(),
     label,
@@ -405,7 +413,8 @@ function coerceQuickCommandEntry(value: unknown, index: number): QuickCommandEnt
     targetPath: mode === 'direct' ? targetPath : '',
     args: mode === 'direct' ? args : [],
     commands,
-    cwd
+    cwd,
+    artifactLocation
   } satisfies QuickCommandEntry;
   validateQuickCommandEntry(normalized, index);
   return normalized;
@@ -628,6 +637,42 @@ function quoteCommandPart(value: string): string {
 
 function isAbsoluteWindowsPath(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/u.test(value) || /^\\\\[^\\]/u.test(value) || value.startsWith('/');
+}
+
+function normalizeOptionalAbsoluteWindowsPath(value: unknown, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new Error(`${label} must be an absolute Windows path.`);
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (!isLexicalAbsoluteWindowsPath(normalized)) {
+    throw new Error(`${label} must be an absolute Windows path.`);
+  }
+  return normalized;
+}
+
+function isLexicalAbsoluteWindowsPath(value: string): boolean {
+  if (/\p{Cc}/u.test(value)) return false;
+  if (/^[A-Za-z]:[\\/]/u.test(value)) return validWindowsPathTail(value.slice(3));
+  if (!value.startsWith('\\\\')) return false;
+  const remainder = value.slice(2);
+  const separator = remainder.search(/[\\/]/u);
+  if (separator <= 0) return false;
+  const server = remainder.slice(0, separator);
+  const shareAndRest = remainder.slice(separator + 1);
+  const nextSeparator = shareAndRest.search(/[\\/]/u);
+  const share = nextSeparator < 0 ? shareAndRest : shareAndRest.slice(0, nextSeparator);
+  const validSegment = (segment: string) => Boolean(segment) && !/[<>:"|?*]/u.test(segment);
+  const tail = nextSeparator < 0 ? '' : shareAndRest.slice(nextSeparator + 1);
+  return validSegment(server) && validSegment(share) && validWindowsPathTail(tail);
+}
+
+function validWindowsPathTail(value: string): boolean {
+  if (/[<>:"|?*]/u.test(value)) return false;
+  const parts = value.split(/[\\/]/u);
+  return parts.every((part, index) => {
+    if (!part) return value === '' || index === parts.length - 1;
+    return part !== '.' && part !== '..' && !/[. ]$/u.test(part);
+  });
 }
 
 function isSafeCommandToken(value: string): boolean {

@@ -33,7 +33,8 @@ pub struct StackPathSuggestion {
 }
 
 pub(crate) use auth::{
-    allowed_stack_command_callers, authorize_stack_command, CallerAuthError, StackCommandAuth,
+    allowed_stack_command_callers, authorize_stack_command, authorize_stack_command_caller,
+    CallerAuthError, StackCommandAuth,
 };
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
