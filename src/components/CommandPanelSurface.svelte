@@ -521,12 +521,13 @@
   async function runEntry(entry: QuickCommandEntry) {
     if (disposed) return;
     runningId = entry.id; panelError = ''; formErrors = [];
+    const priorRunIds = new Set(allHistory.filter((run) => run.commandId === entry.id).map(historyRunKey));
     try {
       const { runId } = await runQuickCommand(quickCommandRunRequest(entry.id));
       if (disposed) return;
       activeCommandIds = new Set([...activeCommandIds, entry.id]);
       activeRunIds = new Set([...activeRunIds, runId]);
-      expandedRunIds = new Set([...expandedRunIds, runId]);
+      expandedRunIds = new Set([...expandedRunIds].filter((id) => !priorRunIds.has(id)).concat(runId));
       selectCommand(entry);
       activeTab = 'previousRuns';
       await refreshHistory();

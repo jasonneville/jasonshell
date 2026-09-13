@@ -182,6 +182,7 @@
   let pathCompletionCycleIndex = -1;
   let pathSuggestionRequestSeq = 0;
   let searchQuery = '';
+  let stackSearchInput: HTMLInputElement | null = null;
   let openWithCandidates: StackOpenWithCandidate[] = [];
   let openWithCandidatePath: string | null = null;
   let iconCache = new Map<string, string | null>();
@@ -1515,6 +1516,17 @@
     emitVisibleRowsWindowChanged();
   }
 
+  async function clearStackSearch() {
+    searchQuery = '';
+    detailsBodyScrollTop = 0;
+    if (detailsBody) {
+      detailsBody.scrollTop = 0;
+    }
+    await tick();
+    emitVisibleRowsWindowChanged();
+    stackSearchInput?.focus();
+  }
+
   function emitVisibleRowsWindowChanged() {
     const windowSlice = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
     void emit(STACK_BROWSER_FRONTEND_EVENTS.folderRowsWindowChanged, {
@@ -2302,18 +2314,26 @@
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled={!hasSelection} onClick={() => void deleteSelected()}><MaterialSymbolIcon name="delete" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="New folder" tooltip="New folder" disabled={!currentPath} onClick={beginCreateFolder}><MaterialSymbolIcon name="create_new_folder" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Reveal selected item" tooltip="Reveal selected item" disabled={!selectedEntry} onClick={() => void revealSelected()}><MaterialSymbolIcon name="preview" /></MeltActionButton>
-      <label class="stack-search" aria-label="Search current folder">
+      <div class="stack-search">
         <MaterialSymbolIcon name="search" />
-        <input
-          aria-label="Search current folder"
-          value={searchQuery}
-          placeholder="Search folder"
-          spellcheck="false"
-          autocomplete="off"
-          on:input={handleStackSearchInput}
-          on:keydown={(event) => event.stopPropagation()}
-        />
-      </label>
+        <div class="stack-search-input-wrapper">
+          <input
+            bind:this={stackSearchInput}
+            aria-label="Search current folder"
+            value={searchQuery}
+            placeholder="Search folder"
+            spellcheck="false"
+            autocomplete="off"
+            on:input={handleStackSearchInput}
+            on:keydown={(event) => event.stopPropagation()}
+          />
+          {#if searchQuery}
+            <MeltActionButton class="stack-search-clear-button" ariaLabel="Clear search" tooltip="Clear search" onClick={clearStackSearch}>
+              <MaterialSymbolIcon name="close" />
+            </MeltActionButton>
+          {/if}
+        </div>
+      </div>
     </div>
   </header>
 

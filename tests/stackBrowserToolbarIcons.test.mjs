@@ -105,23 +105,44 @@ test('stack browser toolbar text buttons are Material Symbol icon buttons with a
   }
 });
 
-test('stack browser search label uses icon-only chrome while context menus keep text labels', () => {
-  const searchLabelSource = sourceBetween(stackToolbarSource, '<label class="stack-search"', '</label>');
+test('stack browser search wrapper uses icon-only chrome while context menus keep text labels', () => {
+  const searchWrapperSource = sourceBetween(stackPopupSource, '<div class="stack-search">', '{#if createFolderDraft');
 
   assert.match(
-    searchLabelSource,
+    searchWrapperSource,
     /<MaterialSymbolIcon\s+name="search"\s*\/>/,
-    'Search label uses accessible search icon'
+    'Search wrapper uses search icon'
   );
-  assert.doesNotMatch(searchLabelSource, /<span>\s*Search\s*<\/span>/, 'Search text span is removed next to input');
+  assert.match(searchWrapperSource, /aria-label="Search current folder"/, 'Search input keeps accessible name');
+  assert.doesNotMatch(searchWrapperSource, /<label\b/, 'Search wrapper does not contain interactive controls inside a label');
+  assert.doesNotMatch(searchWrapperSource, /<span>\s*Search\s*<\/span>/, 'Search text span is removed next to input');
 
   for (const menuText of ['Copy', 'Cut', 'Paste', 'Rename', 'Delete']) {
     const pattern = new RegExp(`>${menuText}<`);
     if (menuText === 'Paste') {
       assert.doesNotMatch(rowContextMenuSource, pattern, 'Paste removed from row context menu');
+      assert.doesNotMatch(backgroundContextMenuSource, pattern, 'Paste removed from background context menu');
     } else {
       assert.match(rowContextMenuSource, pattern, `${menuText} row context menu text remains`);
+      assert.match(backgroundContextMenuSource, pattern, `${menuText} background context menu text remains`);
     }
-    assert.match(backgroundContextMenuSource, pattern, `${menuText} background context menu text remains`);
   }
+});
+
+test('stack browser search exposes a clear button only for a non-empty query', () => {
+  const searchWrapperSource = sourceBetween(stackPopupSource, '<div class="stack-search">', '{#if createFolderDraft');
+  const searchInputWrapperStyles = sourceBetween(stackPopupStyles, '.stack-search-input-wrapper {', '.stack-search .material-symbol-icon');
+  const clearButtonStyles = sourceBetween(stackPopupStyles, '.stack-search-clear-button {', '.stack-search-clear-button .material-symbol-icon');
+
+  assert.match(searchWrapperSource, /<div class="stack-search-input-wrapper">/, 'input and clear button share stable wrapper');
+  assert.match(searchWrapperSource, /bind:this=\{stackSearchInput\}/, 'search input can regain focus after clear');
+  assert.match(searchWrapperSource, /\{#if searchQuery\}[\s\S]*ariaLabel="Clear search"/);
+  assert.match(searchWrapperSource, /tooltip="Clear search"/);
+  assert.match(searchWrapperSource, /onClick=\{clearStackSearch\}/);
+  assert.match(searchWrapperSource, /<MaterialSymbolIcon\s+name="close"\s*\/>/);
+  assert.match(searchInputWrapperStyles, /position:\s*relative/, 'search input wrapper anchors clear button');
+  assert.match(clearButtonStyles, /position:\s*absolute/, 'clear button uses stable absolute positioning');
+  assert.match(clearButtonStyles, /right:\s*0\.18rem/, 'clear button stays inset from input edge');
+  assert.doesNotMatch(clearButtonStyles, /margin-left:\s*-/, 'clear button avoids brittle negative margin');
+  assert.match(stackPopupSource, /function clearStackSearch\(\)[\s\S]*searchQuery = '';/);
 });

@@ -1,4 +1,9 @@
 ## Change Ledger
+
+- 2026-09-13 `[CODE]` FIXED: Starting a Quick Command now collapses previously expanded output-history runs for that saved command, opens the new run, and preserves other commands' expansion state.
+- 2026-09-13 `[TOOL]` VALIDATED: Focused command-panel contracts passed 15/15, `npm run check` reported 0 errors with 3 unrelated existing Stack Git warnings, diff hygiene passed, and independent review found no issues.
+- 2026-09-13 `[CODE]` Added conditional accessible clear control to Stack Browser folder search; clearing resets filtered rows and viewport while preserving search-input focus.
+- 2026-09-13 `[TOOL]` Validated Stack Browser search-clear contracts (2/2 pass), `npm run check` (0 errors; 3 pre-existing warnings), and `git diff --check`; full toolbar contract remains blocked by 2 pre-existing stale assertions unrelated to search clearing.
 - 2026-09-13 `[CODE]` CHANGED: Stack Browser Git Changes, History, and Stashes now match OpenChamber file-status symbols and colors, using bare `A`, `D`, `M`, `?`, `R`, and `C` glyphs instead of plus/minus/conflict symbols or word badges.
 - 2026-09-12 `[CODE]` CHANGED: Quick Commands per-run transcript viewport maximum height increased from 12rem to 18rem, exposing 50% more output before scrolling while retaining `overflow: auto`; backend retention, native panel geometry, and settings are unchanged.
 - 2026-09-12 `[TOOL]` VALIDATED: `node --test tests/commandPanelWiring.test.mjs tests/commandPanelTheme.test.mjs tests/commandPanelCloseButton.test.mjs && npm run check` exited 0; 17 tests passed, and npm check reported 0 errors with 3 unrelated existing `StackGitPanel.svelte` warnings.

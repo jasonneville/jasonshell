@@ -860,6 +860,11 @@
   margin-left: auto;
 }
 
+.stack-search-input-wrapper {
+  display: inline-flex;
+  position: relative;
+}
+
 .stack-search .material-symbol-icon {
   color: var(--js-color-text-muted);
   flex: 0 0 auto;
@@ -873,7 +878,27 @@
   font-size: 0.68rem;
   min-height: 1.45rem;
   min-width: 10rem;
-  padding: 0 0.42rem;
+  padding: 0 1.8rem 0 0.42rem;
+}
+
+.stack-search-clear-button {
+  height: 1.2rem;
+  min-width: 1.35rem;
+  position: absolute;
+  right: 0.18rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.stack-search-clear-button .material-symbol-icon {
+  color: var(--js-color-text-muted);
+  height: 0.85rem;
+  width: 0.85rem;
+}
+
+.stack-search-clear-button:hover .material-symbol-icon,
+.stack-search-clear-button:focus-visible .material-symbol-icon {
+  color: var(--js-color-text);
 }
 
 .stack-search input:focus {

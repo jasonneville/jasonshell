@@ -391,6 +391,11 @@ test('command panel keeps stopping run visible with disabled stop affordance', (
   assert.match(commandPanelSource, /<details class="command-history-run" open=\{run\.running \|\| isRunExpanded\(run\)\}/);
 });
 
+test('starting a quick command closes prior expanded runs for only that command', () => {
+  assert.match(commandPanelSource, /const priorRunIds = new Set\(allHistory\.filter\(\(run\) => run\.commandId === entry\.id\)\.map\(historyRunKey\)\)/);
+  assert.match(commandPanelSource, /expandedRunIds = new Set\(\[\.\.\.expandedRunIds\]\.filter\(\(id\) => !priorRunIds\.has\(id\)\)\.concat\(runId\)\)/);
+});
+
 test('command panel terminal events clear active quick command state immediately', () => {
   assert.match(commandPanelSource, /payload\.kind === 'stopped' \|\| payload\.kind === 'exit'/);
   assert.match(commandPanelSource, /activeRunIds = new Set\(\[\.\.\.activeRunIds\]\.filter\(\(runId\) => runId !== payload\.runId\)\)/);
