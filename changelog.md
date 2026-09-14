@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-09-14 `[CODE]` FIXED: Left-clicking saved Quick Command row space now selects that command while preserving Run/Stop, Delete, pointer-reorder post-drag suppression, keyboard activation, and context-menu behavior.
+- 2026-09-14 `[TOOL]` TESTED: Added RED-first source-contract coverage proving row-click selection routing and action/post-drag exclusions.
+- 2026-09-14 `[CODE]` FIXED: Selecting a saved Quick Command still opens Configuration normally, but preserves Previous runs when already viewing output and refreshes history for the newly selected command.
+- 2026-09-14 `[TOOL]` TESTED: Added RED-first command-panel source-contract coverage for tab preservation, selected-command update ordering, and history refresh.
 - 2026-09-14 `[CODE]` FIXED: Git Changes bare file-status letters now share explicit vertical centering and line-height with adjacent Stage/Unstage `+`/`−` row actions, without changing glyph color, size, or action geometry.
 - 2026-09-14 `[TOOL]` VALIDATED: New focused alignment source contract passes; `npm run check` reports 0 errors and 0 warnings, and diff hygiene passes with line-ending notices only. Full Stack Git panel contract remains 43/44 due one unrelated stale legacy row-selector assertion.
 - 2026-09-14 `[CODE]` ADDED: Stack Browser Git Changes rows can add eligible unstaged untracked paths to `.gitignore` through a right-click `Add to .gitignore` flow that confirms ancestor/exact-path choices, writes escaped root-anchored patterns to the repo-root `.gitignore`, preserves LF/CRLF, deduplicates, and refreshes status so ignored rows disappear.

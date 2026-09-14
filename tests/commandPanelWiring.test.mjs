@@ -416,6 +416,34 @@ test('starting a quick command closes prior expanded runs for only that command'
   assert.match(commandPanelSource, /expandedRunIds = new Set\(\[\.\.\.expandedRunIds\]\.filter\(\(id\) => !priorRunIds\.has\(id\)\)\.concat\(runId\)\)/);
 });
 
+test('saved-command selection preserves Previous runs and refreshes the newly selected command history', () => {
+  assert.match(commandPanelSource, /function selectCommand\(entry: QuickCommandEntry\) \{[\s\S]*const preservePreviousRuns = activeTab === 'previousRuns';[\s\S]*startEditEntry\(entry\);[\s\S]*if \(preservePreviousRuns\) \{[\s\S]*activeTab = 'previousRuns';[\s\S]*void refreshHistory\(\);[\s\S]*\}/);
+  assert.match(commandPanelSource, /function startEditEntry\(entry: QuickCommandEntry\) \{[\s\S]*activeTab = 'configuration';/);
+});
+
+test('context Edit command always opens Configuration without changing ordinary row selection behavior', () => {
+  assert.match(commandPanelSource, /function editContextEntry\(\) \{[\s\S]*if \(!contextEntry\) return;[\s\S]*startEditEntry\(contextEntry\);[\s\S]*contextEntry = null;[\s\S]*\}/);
+  assert.doesNotMatch(commandPanelSource, /function editContextEntry\(\) \{[^}]*selectCommand\(contextEntry\)/);
+});
+
+test('context Previous runs selects its command and refreshes history exactly once', () => {
+  const showHistorySource = commandPanelSource.slice(
+    commandPanelSource.indexOf('function showHistory()'),
+    commandPanelSource.indexOf('function editContextEntry()')
+  );
+  assert.match(showHistorySource, /if \(!contextEntry\) return;/);
+  assert.match(showHistorySource, /startEditEntry\(contextEntry\);/);
+  assert.match(showHistorySource, /activeTab = 'previousRuns';/);
+  assert.match(showHistorySource, /contextEntry = null;/);
+  assert.equal(showHistorySource.match(/refreshHistory\(\)/g)?.length, 1);
+  assert.doesNotMatch(showHistorySource, /selectCommand\(/);
+});
+
+test('saved-command row left click selects except actions and suppressed post-drag click', () => {
+  assert.match(commandPanelSource, /function handleCommandRowClick\(event: MouseEvent, entry: QuickCommandEntry\) \{[\s\S]*closest\('\.command-row-actions'\)[\s\S]*suppressCommandClickId === entry\.id[\s\S]*event\.preventDefault\(\);[\s\S]*event\.stopPropagation\(\);[\s\S]*suppressCommandClickId = null;[\s\S]*return;[\s\S]*selectCommand\(entry\);[\s\S]*\}/);
+  assert.match(commandPanelSource, /<li[\s\S]*?on:click\|capture=\{\(event\) => handleCommandRowClick\(event, entry\)\}/);
+});
+
 test('command panel terminal events clear active quick command state immediately', () => {
   assert.match(commandPanelSource, /payload\.kind === 'stopped' \|\| payload\.kind === 'exit'/);
   assert.match(commandPanelSource, /activeRunIds = new Set\(\[\.\.\.activeRunIds\]\.filter\(\(runId\) => runId !== payload\.runId\)\)/);

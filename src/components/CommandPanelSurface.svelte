@@ -501,12 +501,16 @@
     return true;
   }
 
-  function suppressCommandRowClick(event: MouseEvent, entry: QuickCommandEntry) {
+  function handleCommandRowClick(event: MouseEvent, entry: QuickCommandEntry) {
     if (event.target instanceof Element && event.target.closest('.command-row-actions')) return;
-    if (suppressCommandClickId !== entry.id) return;
-    event.preventDefault();
-    event.stopPropagation();
-    suppressCommandClickId = null;
+    if (suppressCommandClickId === entry.id) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressCommandClickId = null;
+      return;
+    }
+    if (event.target instanceof Element && event.target.closest('.command-select, .command-context-trigger')) return;
+    selectCommand(entry);
   }
 
   function suppressNextCommandClick(id: string) {
@@ -597,9 +601,27 @@
   }
   function cancelListResize(event: PointerEvent) { if (resizePointerId === event.pointerId) { listWidth = resizeStartWidth; resizePointerId = null; } }
   function closePanel() { void hideCommandPanel().catch((error) => console.error('Failed to hide command panel', error)); }
-  function selectCommand(entry: QuickCommandEntry) { startEditEntry(entry); contextEntry = null; activeTab = 'configuration'; }
-  function showHistory() { cancelReorderForAction(); if (contextEntry) selectCommand(contextEntry); activeTab = 'previousRuns'; contextEntry = null; void refreshHistory(); }
-  function editContextEntry() { if (contextEntry) selectCommand(contextEntry); }
+  function selectCommand(entry: QuickCommandEntry) {
+    const preservePreviousRuns = activeTab === 'previousRuns';
+    startEditEntry(entry);
+    contextEntry = null;
+    if (preservePreviousRuns) {
+      activeTab = 'previousRuns';
+      void refreshHistory();
+    }
+  }
+  function showHistory() {
+    if (!contextEntry) return;
+    startEditEntry(contextEntry);
+    activeTab = 'previousRuns';
+    contextEntry = null;
+    void refreshHistory();
+  }
+  function editContextEntry() {
+    if (!contextEntry) return;
+    startEditEntry(contextEntry);
+    contextEntry = null;
+  }
   function duplicateContextEntry() { if (contextEntry) duplicateEntry(contextEntry); }
   function openContextMenu(event: MouseEvent, entry: QuickCommandEntry) { event.preventDefault(); cancelReorderForAction(); const panelBounds = panelElement.getBoundingClientRect(); contextMenuPosition = { x: Math.max(8, Math.min(event.clientX - panelBounds.left, panelBounds.width - 172)), y: Math.max(8, Math.min(event.clientY - panelBounds.top, panelBounds.height - 92)) }; contextEntry = entry; void focusContextMenu(); }
   function openKeyboardContextMenu(event: KeyboardEvent, entry: QuickCommandEntry) { if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return; event.preventDefault(); cancelReorderForAction(); const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect(); const panelBounds = panelElement.getBoundingClientRect(); contextMenuPosition = { x: Math.max(8, Math.min(bounds.left - panelBounds.left, panelBounds.width - 172)), y: Math.max(8, Math.min(bounds.bottom - panelBounds.top, panelBounds.height - 92)) }; contextEntry = entry; void focusContextMenu(); }
@@ -890,7 +912,7 @@
         <ul bind:this={commandListElement} class:command-list-reordering={draggingCommandId !== null} aria-label="Saved quick command order">
           {#each entries as entry (entry.id)}
             <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
-            <li data-selected={editor.id === entry.id} data-command-id={entry.id} data-dragging={draggingCommandId === entry.id} data-drop-target={dropTargetCommandId === entry.id} on:contextmenu={(event) => openContextMenu(event, entry)} on:pointerdown={(event) => startCommandPointerDrag(event, entry)} on:pointermove={(event) => updateCommandPointerDrag(event, entry)} on:pointerup={(event) => finishCommandPointerDrag(event)} on:pointercancel={cancelCommandPointerDrag} on:lostpointercapture={cancelCommandPointerDrag} on:click|capture={(event) => suppressCommandRowClick(event, entry)}>
+            <li data-selected={editor.id === entry.id} data-command-id={entry.id} data-dragging={draggingCommandId === entry.id} data-drop-target={dropTargetCommandId === entry.id} on:contextmenu={(event) => openContextMenu(event, entry)} on:pointerdown={(event) => startCommandPointerDrag(event, entry)} on:pointermove={(event) => updateCommandPointerDrag(event, entry)} on:pointerup={(event) => finishCommandPointerDrag(event)} on:pointercancel={cancelCommandPointerDrag} on:lostpointercapture={cancelCommandPointerDrag} on:click|capture={(event) => handleCommandRowClick(event, entry)}>
               <div class="command-row">
                 <button class="command-select" type="button" aria-label={`Edit ${entry.label}`} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+Home Alt+End" on:click={() => selectCommand(entry)} on:keydown={(event) => commandRowKeydown(event, entry)}><strong>{entry.label}</strong></button>
                 <button class="command-context-trigger" type="button" aria-label={`More options for ${entry.label}`} aria-haspopup="menu" on:click|stopPropagation={() => selectCommand(entry)} on:keydown={(event) => openKeyboardContextMenu(event, entry)}></button>
