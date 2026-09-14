@@ -277,7 +277,7 @@ test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackGitPanel, /aria-label="Unstage all staged files"[\s\S]*unstagePaths\(stagedEntries\.map\(\(entry\) => entry\.path\)\)/);
   assert.match(stackGitPanel, /aria-label="Stage"[\s\S]*handleChangeRowAction\(entry, 'unstaged'\)/);
   assert.match(stackGitPanel, /aria-label="Unstage"[\s\S]*handleChangeRowAction\(entry, 'staged'\)/);
-  assert.match(stackGitPanel, /type="submit" class="stack-git-button--outline" disabled=\{!commitMessage\.trim\(\) \|\| !canCommit \|\| operationBusy\}>Commit<\/button>/);
+  assert.match(stackGitPanel, /type="submit" class="stack-git-button--outline" disabled=\{!commitMessage\.trim\(\) \|\| !canCommit \|\| gitMutationBlocked\}>Commit<\/button>/);
   assert.match(stackGitPanel, /Commit message/);
   assert.match(stackPopupSurface, /stackGitSummaryParts\(gitStatus\)/);
   assert.match(stackPopupSurface, /stackGitStatusForEntry\(entry, gitStatus, gitStatusPath, currentPath\)/);

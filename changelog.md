@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-09-13 `[CODE]` FIXED: Stack Git row mutations now use visit epochs; folder changes clear old pending optimistic state, preventing A→B→A navigation from reviving or settling an old A request while preserving distinct-row concurrency within one visit.
+- 2026-09-13 `[TOOL]` VALIDATED: Focused Stack Git panel contracts passed 44/44, `npm run check` found 0 errors with 3 pre-existing unused-selector warnings, and `git diff --check` passed with line-ending notices only.
+- 2026-09-13 `[CODE]` FIXED: Individual Stack Git Stage/Unstage moves now update only their target row optimistically, keep unrelated rows actionable, retain pending state across status refreshes, reconcile on success, and restore the original row on backend failure.
+- 2026-09-13 `[TOOL]` VALIDATED: `node --test tests/stackGitPanelRedContract.test.mjs` passed 39/39, including source contracts for optimistic individual moves, per-row pending disablement, concurrent-row availability, refresh reconciliation, and failure rollback.
 - 2026-09-13 `[CODE]` FIXED: Escape in Stack Browser folder search now unfocuses the input while preserving its query, filtered results, and open Stack Browser.
 - 2026-09-13 `[TOOL]` VALIDATED: RED-first Escape blur contract passed; `npm run check` found 0 errors and 3 unrelated existing Stack Git warnings; diff hygiene passed; independent review found no blocking issue. Full toolbar test file retains 2 unrelated stale failures.
 - 2026-09-13 `[CODE]` FIXED: Quick Command transcript tail attachment now changes only after explicit wheel, scrollbar, or scrolling-key input, preventing large output batches and browser scroll anchoring from silently detaching an untouched live transcript.

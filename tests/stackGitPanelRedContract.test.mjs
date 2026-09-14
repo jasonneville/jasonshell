@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import ts from 'typescript';
 
 function readRepoFile(path) {
   const url = new URL(`../${path}`, import.meta.url);
@@ -18,6 +19,15 @@ const stackPopupRs = readRepoFile('src-tauri/src/stack_popup.rs');
 const gitStatusRs = readRepoFile('src-tauri/src/stack_popup/git_status.rs');
 const mainRs = readRepoFile('src-tauri/src/main.rs');
 const contracts = readRepoFile('src-tauri/src/contracts.rs');
+
+async function importPanelHelpers() {
+  const source = panel.match(/<script context="module" lang="ts">([\s\S]*?)<\/script>/)?.[1] ?? '';
+  assert.ok(source, 'StackGitPanel module helpers must exist');
+  const javascript = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`);
+}
 
 function stripRustTestBlocks(source) {
   return source.replace(/\n#\[cfg\(test\)\][\s\S]*$/m, '\n');
@@ -215,6 +225,78 @@ test('stack git history files and diffs use stale-safe loading, status symbols, 
   assert.doesNotMatch(panel, /diffDrawerHistory/);
 });
 
+test('individual stage and unstage rows move optimistically, remain concurrent, roll back, and reconcile', () => {
+  assert.match(panel, /let pendingChangeRowPaths = new Set<string>\(\);/);
+  assert.match(panel, /function applyPendingChangeRows\(entries: StackGitFileStatus\[\]\)/);
+  assert.match(panel, /status = \{ \.\.\.status!, entries: applyPendingChangeRows\(status!\.entries\) \};/);
+  assert.match(panel, /const originalEntry = \{ \.\.\.entry \};/);
+  assert.match(panel, /group === 'staged'[\s\S]*staged: false,[\s\S]*unstaged: true[\s\S]*staged: true,[\s\S]*unstaged: false/);
+  assert.match(panel, /pendingChangeRowPaths = new Set\(pendingChangeRowPaths\)\.add\(entry\.path\);/);
+  assert.match(panel, /pendingChangeRowPaths\.delete\(entry\.path\)/);
+  assert.match(panel, /restoreChangeRow\(mutation\);[\s\S]*failOperation/);
+  assert.match(panel, /await refreshAfterMutation\(\);/);
+  assert.doesNotMatch(panel, /function handleChangeRowAction\([^]*?if \(operationBusy\) return;/);
+  assert.match(panel, /disabled=\{operationBusy \|\| pendingChangeRowPaths\.has\(entry\.path\)\}/);
+});
+
+test('pending individual row mutations gate conflicting git mutations but retain distinct-row concurrency', () => {
+  assert.match(panel, /\$: gitMutationBlocked = operationBusy \|\| pendingChangeRowPaths\.size > 0;/);
+  assert.match(panel, /function handleChangeRowAction\([^]*?if \(operationBusy \|\| pendingChangeRowPaths\.has\(entry\.path\) \|\| !status\) return;/);
+  assert.doesNotMatch(panel, /function handleChangeRowAction\([^)]*\) \{\s*if \(gitMutationBlocked/);
+  assert.match(panel, /async function stagePaths\([^]*?if \(!paths\.length \|\| gitMutationBlocked\) return;/);
+  assert.match(panel, /async function discardPaths\([^]*?if \(!entries\.length \|\| gitMutationBlocked\) return;/);
+  assert.match(panel, /async function commitChanges\([^]*?gitMutationBlocked/);
+  assert.match(panel, /async function syncRemote\([^]*?gitMutationBlocked/);
+  assert.match(panel, /async function stashChanges\([^]*?gitMutationBlocked/);
+  assert.match(panel, /disabled=\{!status \|\| gitMutationBlocked\} aria-label="Fetch"/);
+  assert.match(panel, /aria-label="Stage all unstaged files"[^>]*disabled=\{!canStageGitSelection\(unstagedEntries\) \|\| gitMutationBlocked\}/);
+  assert.match(panel, /aria-label="Discard"[^>]*disabled=\{gitMutationBlocked\}/);
+  assert.match(panel, /disabled=\{!commitMessage\.trim\(\) \|\| !canCommit \|\| gitMutationBlocked\}>Commit<\/button>/);
+  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| gitMutationBlocked \? 'true' : 'false'\}/);
+});
+
+test('pending optimistic row survives omitted refresh and failed mutation restores original ordering', async () => {
+  const { reconcilePendingChangeRows, restorePendingChangeRow } = await importPanelHelpers();
+  const first = { path: 'first', staged: false, unstaged: true };
+  const pending = { path: 'pending', staged: true, unstaged: false };
+  const last = { path: 'last', staged: false, unstaged: true };
+  const mutation = { originalEntry: { ...pending, staged: false, unstaged: true }, optimisticEntry: pending, originalIndex: 1, requestId: 4 };
+
+  const refreshed = reconcilePendingChangeRows([first, last], [mutation]);
+  assert.deepEqual(refreshed, [first, pending, last]);
+  assert.deepEqual(restorePendingChangeRow(refreshed.filter((entry) => entry.path !== 'pending'), mutation), [first, mutation.originalEntry, last]);
+});
+
+test('successful concurrent row completion cannot replace existing row failure display', async () => {
+  const { settleRowOperationDisplay } = await importPanelHelpers();
+  const failed = settleRowOperationDisplay({ state: 'active', label: 'Staging', detail: '' }, 'error', 'Stage failed: denied', 'Staging');
+  const lateSuccess = settleRowOperationDisplay(failed, 'success', '', 'Staged');
+
+  assert.deepEqual(lateSuccess, failed);
+  assert.equal(lateSuccess.state, 'error');
+  assert.equal(lateSuccess.detail, 'Stage failed: denied');
+});
+
+test('row mutation scope rejects old-folder state and completion', async () => {
+  const { mutationBelongsToFolder } = await importPanelHelpers();
+  const mutation = { folderPath: 'C:/old', requestId: 9 };
+
+  assert.equal(mutationBelongsToFolder(mutation, 'C:/old'), true);
+  assert.equal(mutationBelongsToFolder(mutation, 'C:/new'), false);
+});
+
+test('A to B to A without replacement invalidates old visit mutation state and completion', async () => {
+  const { mutationBelongsToVisit, mutationOwnsPendingState } = await importPanelHelpers();
+  const oldRequest = { folderPath: 'C:/A', visitEpoch: 3, requestId: 10 };
+  const pending = new Map([['C:/A\0same.txt', oldRequest]]);
+
+  pending.clear();
+  assert.equal(mutationOwnsPendingState(pending, 'C:/A\0same.txt', oldRequest), false);
+  assert.equal(mutationBelongsToVisit(oldRequest, 'C:/A', 5), false);
+  assert.match(panel, /changeRowsVisitEpoch \+= 1;\s*pendingChangeRows\.clear\(\);\s*pendingChangeRowPaths = new Set\(\);/);
+  assert.match(panel, /mutationBelongsToVisit\(mutation, folderPath, changeRowsVisitEpoch\)/);
+});
+
 test('stack git file symbols match OpenChamber glyphs and status colors', () => {
   assert.match(panel, /if \(statusKind === 'added'\) return 'A';/);
   assert.match(panel, /if \(statusKind === 'deleted'\) return 'D';/);
@@ -305,7 +387,7 @@ test('stack git commit push validates remote early and preserves refresh warning
   assert.match(panel, /operationRefreshWarning/);
   assert.match(panel, /Refresh warning/);
   assert.match(panel, /stackGitStash\(folderPath, stashMessage\.trim\(\) \|\| 'WIP', status\.entries\.some\(/);
-  assert.match(panel, /disabled=\{!status \|\| operationBusy \|\| !hasDirtyWorkingTree\}/);
+  assert.match(panel, /disabled=\{!status \|\| gitMutationBlocked \|\| !hasDirtyWorkingTree\}/);
 });
 
 test('Stack Browser navigation shortcuts never capture Backspace from editable controls', () => {
@@ -380,7 +462,7 @@ test('StackGitPanel branch dropdown rows checkout and create branch from selecte
   assert.match(panel, /let branchLoading = false;/);
   assert.match(panel, /let branchToken = 0;/);
   assert.match(panel, /const token = \+\+branchToken;/);
-  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| operationBusy \? 'true' : 'false'\}/);
+  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| gitMutationBlocked \? 'true' : 'false'\}/);
 });
 
 test('StackGitPanel branch dropdown measures available space and cleans resize listener lifecycle', () => {
@@ -453,7 +535,7 @@ test('stack git dropdown confirms local branch deletion and protects current and
   assert.match(panel, /function operationErrorMessage\(error: unknown, fallback: string\)/);
   assert.match(panel, /typeof error === 'string' && error\.trim\(\)/);
   assert.match(panel, /error instanceof Error && error\.message/);
-  assert.match(panel, /if \(branch\.remote \|\| isCurrentBranch\(branch, currentBranchLabel\) \|\| operationBusy\) return;/);
+  assert.match(panel, /if \(branch\.remote \|\| isCurrentBranch\(branch, currentBranchLabel\) \|\| gitMutationBlocked\) return;/);
   assert.match(panel, /kind: 'delete-branch'/);
   assert.match(panel, /Delete local branch/);
   assert.match(panel, /bind:this=\{branchPickerButton\}/);
@@ -680,7 +762,7 @@ test('StackGitPanel shows sequential operation progress, detailed failures, and 
   assert.match(panel, /let operationLabel = '';/);
   assert.match(panel, /operationLabel = 'Committing';[\s\S]*await tick\(\);[\s\S]*stackGitCommit/);
   assert.match(panel, /operationLabel = 'Pushing';[\s\S]*await tick\(\);[\s\S]*stackGitPush/);
-  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| operationBusy \? 'true' : 'false'\}/);
+  assert.match(panel, /aria-busy=\{statusLoading \|\| viewLoading \|\| branchLoading \|\| diffLoading \|\| gitMutationBlocked \? 'true' : 'false'\}/);
   assert.match(panel, /role=\{errorMessage \? 'alert' : 'status'\}/);
   assert.match(panel, /<details[^>]*class="stack-git-operation-output"[\s\S]*<summary>Command output<\/summary>[\s\S]*<pre>\{operationOutput\}<\/pre>/);
   assert.match(panel, /operationErrorMessage\(error, `\$\{operationLabel\} failed`\)/);

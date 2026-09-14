@@ -2,7 +2,6 @@
 
 ## Core Loop
 
-- Read agents.md in C:/Users/jnev1/.codex directory.
 - Read `master_spec.md` first before engineering work in `C:\dev\jasonshell`.
 - Inspect available Codex skills, load every relevant skill, and skip irrelevant skills.
 - Use Context7 MCP when current framework/library documentation is needed.
@@ -20,6 +19,7 @@
 
 ## Validation
 
-- Use RED-first tests for implementation work when practical.
+- Use RED-first tests for implementation work.
+- Fully cover edge cases and functionality.
 - Run focused validation for touched surfaces.
 - Run QA/adversarial review before declaring substantial changes complete.

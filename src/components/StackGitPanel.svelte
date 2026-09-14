@@ -1,3 +1,66 @@
+<script context="module" lang="ts">
+  export type PendingChangeRow<T extends { path: string }> = {
+    folderPath: string;
+    visitEpoch: number;
+    originalEntry: T;
+    optimisticEntry: T;
+    originalIndex: number;
+    requestId: number;
+  };
+
+  export type RowOperationDisplay = {
+    state: 'active' | 'success' | 'error';
+    label: string;
+    detail: string;
+  };
+
+  export function reconcilePendingChangeRows<T extends { path: string }>(entries: T[], pendingRows: PendingChangeRow<T>[]) {
+    const pendingByPath = new Map(pendingRows.map((pending) => [pending.optimisticEntry.path, pending]));
+    const reconciled = entries.map((entry) => pendingByPath.get(entry.path)?.optimisticEntry ?? entry);
+    const missing = pendingRows
+      .filter((pending) => !entries.some((entry) => entry.path === pending.optimisticEntry.path))
+      .sort((left, right) => left.originalIndex - right.originalIndex || left.requestId - right.requestId);
+    for (const pending of missing) {
+      reconciled.splice(Math.min(Math.max(pending.originalIndex, 0), reconciled.length), 0, pending.optimisticEntry);
+    }
+    return reconciled;
+  }
+
+  export function restorePendingChangeRow<T extends { path: string }>(entries: T[], pending: PendingChangeRow<T>) {
+    const existingIndex = entries.findIndex((entry) => entry.path === pending.originalEntry.path);
+    if (existingIndex >= 0) return entries.map((entry, index) => index === existingIndex ? pending.originalEntry : entry);
+    const restored = [...entries];
+    restored.splice(Math.min(Math.max(pending.originalIndex, 0), restored.length), 0, pending.originalEntry);
+    return restored;
+  }
+
+  export function settleRowOperationDisplay(
+    current: RowOperationDisplay,
+    outcome: 'success' | 'error',
+    detail: string,
+    label: string
+  ): RowOperationDisplay {
+    if (outcome === 'success' && current.state === 'error') return current;
+    return { state: outcome, label, detail: outcome === 'error' ? detail : '' };
+  }
+
+  export function mutationBelongsToFolder(mutation: { folderPath: string }, folderPath: string) {
+    return mutation.folderPath === folderPath;
+  }
+
+  export function mutationBelongsToVisit(
+    mutation: { folderPath: string; visitEpoch: number },
+    folderPath: string,
+    visitEpoch: number
+  ) {
+    return mutation.folderPath === folderPath && mutation.visitEpoch === visitEpoch;
+  }
+
+  export function mutationOwnsPendingState<T>(pending: Map<string, T>, key: string, mutation: T) {
+    return pending.get(key) === mutation;
+  }
+</script>
+
 <script lang="ts">
   import { afterUpdate, onMount, tick } from 'svelte';
   import * as stackPopup from '../lib/stackPopup';
@@ -122,12 +185,18 @@
   let branchDropdownObservedPanel: HTMLElement | null = null;
   let branchDropdownObservedPicker: HTMLDivElement | null = null;
   let branchDeleteInProgress = false;
+  let pendingChangeRowPaths = new Set<string>();
+  const pendingChangeRows = new Map<string, PendingChangeRow<StackGitFileStatus>>();
+  let changeRowRequestId = 0;
+  let pendingChangeRowsFolder = folderPath;
+  let changeRowsVisitEpoch = 0;
 
   $: groupedEntries = groupStackGitEntries(status?.entries ?? []);
   $: stagedEntries = groupedEntries.staged;
   $: unstagedEntries = groupedEntries.unstaged;
   $: canCommit = canCommitGitStatus(status);
   $: hasDirtyWorkingTree = groupedEntries.totalCount > 0;
+  $: gitMutationBlocked = operationBusy || pendingChangeRowPaths.size > 0;
   $: remoteUrl = status?.remoteRepositoryUrl ?? null;
   $: localBranches = branches.filter((branch) => !branch.remote);
   $: remoteBranches = branches.filter((branch) => branch.remote);
@@ -140,6 +209,13 @@
 
   $: if (mounted && folderPath) {
     void refreshStatus();
+  }
+
+  $: if (folderPath !== pendingChangeRowsFolder) {
+    pendingChangeRowsFolder = folderPath;
+    changeRowsVisitEpoch += 1;
+    pendingChangeRows.clear();
+    pendingChangeRowPaths = new Set();
   }
 
   $: if (!branchDropdownOpen) {
@@ -262,7 +338,7 @@
     action: () => Promise<StackGitOperationSummary>,
     refreshBranchState = false
   ) {
-    if (operationBusy) return;
+    if (gitMutationBlocked) return;
     beginOperation(activeLabel);
     await tick();
     try {
@@ -421,6 +497,13 @@
     collapsedChangeGroups = next;
   }
 
+  function applyPendingChangeRows(entries: StackGitFileStatus[]) {
+    const pending = [...pendingChangeRows.values()].filter((mutation) =>
+      mutationBelongsToVisit(mutation, folderPath, changeRowsVisitEpoch)
+    );
+    return reconcilePendingChangeRows(entries, pending);
+  }
+
   async function refreshStatus() {
     const token = ++statusToken;
     if (!folderPath) {
@@ -446,7 +529,7 @@
     try {
       const nextStatus = await stackPopup.getStackGitStatus(folderPath);
       if (token !== statusToken) return;
-      status = nextStatus;
+      status = nextStatus ? { ...nextStatus, entries: applyPendingChangeRows(nextStatus.entries) } : null;
       if (!nextStatus) {
         history = [];
         branches = [];
@@ -701,18 +784,18 @@
   $: diffGutterWidth = `${Math.max(3, ...renderedDiffRows.flatMap((row) => [String(row.oldLineNumber).length, String(row.newLineNumber).length]))}ch`;
 
   async function stagePaths(paths: string[]) {
-    if (!paths.length || operationBusy) return;
+    if (!paths.length || gitMutationBlocked) return;
     if (!stackPopup.stackGitAddPaths || !status) return;
     await runStackGitOperation('Staging', 'Staged', 'Stage failed', async () => await stackPopup.stackGitAddPaths(folderPath, paths));
   }
 
   async function unstagePaths(paths: string[]) {
-    if (!paths.length || operationBusy || !status) return;
+    if (!paths.length || gitMutationBlocked || !status) return;
     await runStackGitOperation('Unstaging', 'Unstaged', 'Unstage failed', () => stackPopup.stackGitUnstagePaths(folderPath, paths));
   }
 
   async function discardPaths(entries: StackGitFileStatus[]) {
-    if (!entries.length || operationBusy) return;
+    if (!entries.length || gitMutationBlocked) return;
     const confirmation = confirmStackGitDiscard(entries);
     if (!confirmation) return;
     if (confirmation.blocked) {
@@ -723,7 +806,7 @@
   }
 
   async function commitChanges(pushAfter = false) {
-    if (!status || !commitMessage.trim() || !canCommit || operationBusy) return;
+    if (!status || !commitMessage.trim() || !canCommit || gitMutationBlocked) return;
     if (pushAfter && !status.remoteRepositoryUrl) {
       beginOperation('Pushing');
       await tick();
@@ -776,7 +859,7 @@
   }
 
   async function syncRemote(operation: 'fetch' | 'pull' | 'push') {
-    if (!status || operationBusy) return;
+    if (!status || gitMutationBlocked) return;
     const labels = operation === 'fetch'
       ? ['Fetching', 'Fetched']
       : operation === 'pull'
@@ -792,7 +875,7 @@
   }
 
   async function checkoutBranch(branch: string) {
-    if (!branch || operationBusy || !status) return;
+    if (!branch || gitMutationBlocked || !status) return;
     if (hasDirtyWorkingTree) {
       openPendingConfirm({
         kind: 'checkout',
@@ -819,7 +902,7 @@
   }
 
   async function confirmCheckout(branch: string) {
-    if (!branch || operationBusy) return;
+    if (!branch || gitMutationBlocked) return;
     branchDeleteErrorBranchName = '';
     branchDeleteErrorMessage = '';
     branch = matchLocalBranchName(branch);
@@ -843,7 +926,7 @@
 
   async function createBranch() {
     const name = newBranchDraft.trim();
-    if (!name || operationBusy || !status) return;
+    if (!name || gitMutationBlocked || !status) return;
     branchDeleteErrorBranchName = '';
     branchDeleteErrorMessage = '';
     if (hasDirtyWorkingTree) {
@@ -867,7 +950,7 @@
 
   async function stashChanges() {
     const currentStatus = status;
-    if (!currentStatus || operationBusy) return;
+    if (!currentStatus || gitMutationBlocked) return;
     await runStackGitOperation('Stashing', 'Stashed', 'Stash failed', ((status: StackGitStatus) => async () => {
       const result = await stackPopup.stackGitStash(folderPath, stashMessage.trim() || 'WIP', status.entries.some((entry) => entry.status === 'untracked'));
       stashMessage = '';
@@ -876,21 +959,22 @@
   }
 
   async function applyStash(stashRef: string) {
-    if (!stashRef || operationBusy) return;
+    if (!stashRef || gitMutationBlocked) return;
     await runStackGitOperation('Applying stash', 'Applied stash', 'Stash apply failed', () => stackPopup.stackGitStashApply(folderPath, stashRef));
   }
 
   async function popStash(stashRef: string) {
-    if (!stashRef || operationBusy) return;
+    if (!stashRef || gitMutationBlocked) return;
     openPendingConfirm({ kind: 'stash-pop', title: 'Pop stash?', message: 'Pop applies the stash and removes it from the list.', stashRef });
   }
 
   async function dropStash(stashRef: string) {
-    if (!stashRef || operationBusy) return;
+    if (!stashRef || gitMutationBlocked) return;
     openPendingConfirm({ kind: 'stash-drop', title: 'Drop stash?', message: 'Drop removes this stash permanently.', stashRef });
   }
 
   async function confirmPendingAction() {
+    if (gitMutationBlocked) return;
     const action = pendingConfirm;
     closePendingConfirm();
     if (!action) return;
@@ -962,7 +1046,7 @@
   }
 
   function deleteLocalBranch(branch: StackGitBranches['branches'][number]) {
-    if (branch.remote || isCurrentBranch(branch, currentBranchLabel) || operationBusy) return;
+    if (branch.remote || isCurrentBranch(branch, currentBranchLabel) || gitMutationBlocked) return;
     const branchName = normalizeBranchLabel(branch);
     const row = branch as StackGitBranchRow;
     openPendingConfirm({
@@ -1155,8 +1239,82 @@
   }
 
   function handleChangeRowAction(entry: StackGitFileStatus, group: 'staged' | 'unstaged') {
-    if (group === 'staged') void unstagePaths([entry.path]);
-    else void stagePaths([entry.path]);
+    if (operationBusy || pendingChangeRowPaths.has(entry.path) || !status) return;
+    void mutateChangeRow(entry, group);
+  }
+
+  function restoreChangeRow(mutation: PendingChangeRow<StackGitFileStatus>) {
+    if (!status) return;
+    status = { ...status, entries: restorePendingChangeRow(status.entries, mutation) };
+  }
+
+  async function mutateChangeRow(entry: StackGitFileStatus, group: 'staged' | 'unstaged') {
+    const originalEntry = { ...entry };
+    const optimisticEntry = group === 'staged'
+      ? { ...entry, staged: false, unstaged: true }
+      : { ...entry, staged: true, unstaged: false };
+    const activeLabel = group === 'staged' ? 'Unstaging' : 'Staging';
+    const successLabel = group === 'staged' ? 'Unstaged' : 'Staged';
+    const fallback = group === 'staged' ? 'Unstage failed' : 'Stage failed';
+    const requestFolderPath = folderPath;
+    const requestVisitEpoch = changeRowsVisitEpoch;
+    const requestId = ++changeRowRequestId;
+    const mutation: PendingChangeRow<StackGitFileStatus> = {
+      folderPath: requestFolderPath,
+      visitEpoch: requestVisitEpoch,
+      originalEntry,
+      optimisticEntry,
+      originalIndex: status?.entries.findIndex((candidate) => candidate.path === entry.path) ?? 0,
+      requestId
+    };
+    const mutationKey = `${requestFolderPath}\0${entry.path}`;
+
+    pendingChangeRows.set(mutationKey, mutation);
+    pendingChangeRowPaths = new Set(pendingChangeRowPaths).add(entry.path);
+    status = { ...status!, entries: applyPendingChangeRows(status!.entries) };
+    operationState = 'active';
+    operationLabel = activeLabel;
+    operationOutput = '';
+    operationErrorDetail = '';
+    operationRefreshWarning = '';
+    errorMessage = '';
+
+    try {
+      const result = group === 'staged'
+        ? await stackPopup.stackGitUnstagePaths(requestFolderPath, [entry.path])
+        : await stackPopup.stackGitAddPaths(requestFolderPath, [entry.path]);
+      if (!mutationOwnsPendingState(pendingChangeRows, mutationKey, mutation)) return;
+      if (!mutationBelongsToVisit(mutation, folderPath, changeRowsVisitEpoch)) {
+        pendingChangeRows.delete(mutationKey);
+        return;
+      }
+      statusMessage = result.summary;
+      const display = settleRowOperationDisplay(
+        { state: operationState as RowOperationDisplay['state'], label: operationLabel, detail: operationErrorDetail },
+        'success',
+        '',
+        successLabel
+      );
+      if (display.state === 'success') completeOperation(display.label, result);
+      try {
+        await refreshAfterMutation();
+      } catch (refreshError) {
+        if (!mutationOwnsPendingState(pendingChangeRows, mutationKey, mutation)) return;
+        operationRefreshWarning = operationErrorMessage(refreshError, 'Refresh warning');
+      }
+      if (!mutationOwnsPendingState(pendingChangeRows, mutationKey, mutation)) return;
+      pendingChangeRows.delete(mutationKey);
+      pendingChangeRowPaths.delete(entry.path);
+      pendingChangeRowPaths = new Set(pendingChangeRowPaths);
+    } catch (error) {
+      if (!mutationOwnsPendingState(pendingChangeRows, mutationKey, mutation)) return;
+      pendingChangeRows.delete(mutationKey);
+      if (!mutationBelongsToVisit(mutation, folderPath, changeRowsVisitEpoch)) return;
+      pendingChangeRowPaths.delete(entry.path);
+      pendingChangeRowPaths = new Set(pendingChangeRowPaths);
+      restoreChangeRow(mutation);
+      failOperation(activeLabel, error, fallback);
+    }
   }
 
   function handleChangeRowKeydown(event: KeyboardEvent, entry: StackGitFileStatus, group: 'staged' | 'unstaged') {
@@ -1305,11 +1463,11 @@
 </script>
 
 <svelte:window on:keydown={handleEscape} on:pointerdown={handleBranchPickerPointerdown} />
-<section class="stack-git-panel" aria-label="Git panel" aria-busy={statusLoading || viewLoading || branchLoading || diffLoading || operationBusy ? 'true' : 'false'}>
+<section class="stack-git-panel" aria-label="Git panel" aria-busy={statusLoading || viewLoading || branchLoading || diffLoading || gitMutationBlocked ? 'true' : 'false'}>
   <header class="stack-git-panel-header">
     <div class="stack-git-panel-row stack-git-panel-row--primary">
       <div class="stack-git-branch-picker" bind:this={branchPickerElement} on:focusout={handleBranchPickerFocusout}>
-        <button bind:this={branchPickerButton} type="button" class="stack-git-branch-selector" aria-label={`Branch ${currentBranchLabel}`} aria-expanded={branchDropdownOpen} aria-controls="stack-git-branch-dropdown" title={currentBranchLabel} on:click={toggleBranchDropdown}>
+        <button bind:this={branchPickerButton} type="button" class="stack-git-branch-selector" aria-label={`Branch ${currentBranchLabel}`} aria-expanded={branchDropdownOpen} aria-controls="stack-git-branch-dropdown" title={currentBranchLabel} disabled={gitMutationBlocked} on:click={toggleBranchDropdown}>
           <span class="stack-git-branch-selector__icon" aria-hidden="true">⑂</span>
           <span class="stack-git-branch-selector__label">{currentBranchLabel}</span>
         </button>
@@ -1340,7 +1498,7 @@
                           class:current={isCurrentBranch(branch, currentBranchLabel)}
                           class="stack-git-branch-row"
                           aria-current={isCurrentBranch(branch, currentBranchLabel) ? 'page' : undefined}
-                          disabled={isCurrentBranch(branch, currentBranchLabel) || operationBusy}
+                          disabled={isCurrentBranch(branch, currentBranchLabel) || gitMutationBlocked}
                           on:click={() => void checkoutBranch(branch.name)}
                         >
                           <code>{isCurrentBranch(branch, currentBranchLabel) ? '*' : 'loc'}</code>
@@ -1361,7 +1519,7 @@
                             data-stack-git-branch-delete={branch.name}
                             aria-label={`Delete local branch ${normalizeBranchLabel(branch)}`}
                             title={`Delete local branch ${normalizeBranchLabel(branch)}`}
-                            disabled={operationBusy}
+                            disabled={gitMutationBlocked}
                             on:click={() => deleteLocalBranch(branch)}
                           >
                             <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14">
@@ -1392,7 +1550,7 @@
                         class:current={isCurrentBranch(branch, currentBranchLabel)}
                         class="stack-git-branch-row"
                         aria-current={isCurrentBranch(branch, currentBranchLabel) ? 'page' : undefined}
-                        disabled={isCurrentBranch(branch, currentBranchLabel) || operationBusy}
+                        disabled={isCurrentBranch(branch, currentBranchLabel) || gitMutationBlocked}
                         on:click={() => void checkoutBranch(branch.name)}
                       >
                         <code>{branch.remote ? 'rem' : 'loc'}</code>
@@ -1423,7 +1581,7 @@
                     {/each}
                   </select>
                 </label>
-                <button type="submit" disabled={!newBranchDraft.trim() || operationBusy}>Create</button>
+                <button type="submit" disabled={!newBranchDraft.trim() || gitMutationBlocked}>Create</button>
               </form>
             {:else}
               <div class="stack-git-empty stack-git-branch-dropdown__state">No branches loaded</div>
@@ -1450,9 +1608,9 @@
       {/if}
 
       <div class="stack-git-sync-actions" aria-label="Git sync actions">
-        <button type="button" class="stack-git-icon-button" disabled={!status || operationBusy} aria-label="Fetch" title="Fetch" on:click={() => void syncRemote('fetch')}>↓</button>
-        <button type="button" class="stack-git-icon-button" disabled={!status || operationBusy} aria-label="Pull" title="Pull" on:click={() => void syncRemote('pull')}>⇣</button>
-        <button type="button" class="stack-git-icon-button" disabled={!status || operationBusy || !remoteUrl} aria-label="Push" title="Push" on:click={() => void syncRemote('push')}>⇡</button>
+        <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked} aria-label="Fetch" title="Fetch" on:click={() => void syncRemote('fetch')}>↓</button>
+        <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked} aria-label="Pull" title="Pull" on:click={() => void syncRemote('pull')}>⇣</button>
+        <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked || !remoteUrl} aria-label="Push" title="Push" on:click={() => void syncRemote('push')}>⇡</button>
       </div>
 
       <div class="stack-git-view-tabs" role="tablist" aria-label="Repository views">
@@ -1500,7 +1658,7 @@
             <div class="stack-git-history-commit">
               <div class="stack-git-row-shell">
                 <div class="stack-git-change-group-shell">
-                  <button type="button" class="stack-git-change-group__bulk" aria-label="Unstage all staged files" title="Unstage all" disabled={!canUnstageGitSelection(stagedEntries) || operationBusy} on:click={() => void unstagePaths(stagedEntries.map((entry) => entry.path))}>−</button>
+                  <button type="button" class="stack-git-change-group__bulk" aria-label="Unstage all staged files" title="Unstage all" disabled={!canUnstageGitSelection(stagedEntries) || gitMutationBlocked} on:click={() => void unstagePaths(stagedEntries.map((entry) => entry.path))}>−</button>
                   <button type="button" class="stack-git-stream-row stack-git-change-group-row" aria-expanded={!collapsedChangeGroups.has('staged')} aria-controls="stack-git-change-group-files-staged" on:click={() => toggleChangeGroup('staged')}>
                     <span class="stack-git-change-group-row__title">{changeGroupLabel('Staged', groupedEntries.stagedCount)}</span>
                     <span aria-hidden="true" class="stack-git-history-file__chevron"></span>
@@ -1512,7 +1670,7 @@
                   {#each stagedEntries as entry, entryIndex (entry.path + (entry.unstaged ? '-both-staged' : '-staged'))}
                     {@const pathParts = stackGitPathParts(entry.relativePath)}
                     <div class="stack-git-history-file-shell stack-git-change-group-file-shell" role="listitem">
-                      <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Unstage" title={changeRowActionLabel('staged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'staged')}>{changeRowActionSymbol('staged')}</button>
+                      <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Unstage" title={changeRowActionLabel('staged')} disabled={operationBusy || pendingChangeRowPaths.has(entry.path)} on:click={() => handleChangeRowAction(entry, 'staged')}>{changeRowActionSymbol('staged')}</button>
                       <div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && diffDrawerStaged} aria-controls={changeGroupFileId(true, entryIndex)} on:click={() => openChangeDiff(entry, true)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'staged')}>
                         <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
                         <span class="stack-git-path">
@@ -1544,7 +1702,7 @@
             <div class="stack-git-history-commit">
               <div class="stack-git-row-shell">
                 <div class="stack-git-change-group-shell">
-                  <button type="button" class="stack-git-change-group__bulk" aria-label="Stage all unstaged files" title="Stage all" disabled={!canStageGitSelection(unstagedEntries) || operationBusy} on:click={() => void stagePaths(unstagedEntries.map((entry) => entry.path))}>+</button>
+                  <button type="button" class="stack-git-change-group__bulk" aria-label="Stage all unstaged files" title="Stage all" disabled={!canStageGitSelection(unstagedEntries) || gitMutationBlocked} on:click={() => void stagePaths(unstagedEntries.map((entry) => entry.path))}>+</button>
                   <button type="button" class="stack-git-stream-row stack-git-change-group-row" aria-expanded={!collapsedChangeGroups.has('unstaged')} aria-controls="stack-git-change-group-files-unstaged" on:click={() => toggleChangeGroup('unstaged')}>
                     <span class="stack-git-change-group-row__title">{changeGroupLabel('Unstaged', groupedEntries.unstagedCount)}</span>
                     <span aria-hidden="true" class="stack-git-history-file__chevron"></span>
@@ -1556,7 +1714,7 @@
                   {#each unstagedEntries as entry, entryIndex (entry.path + (entry.staged ? '-both-unstaged' : '-unstaged'))}
                     {@const pathParts = stackGitPathParts(entry.relativePath)}
                     <div class="stack-git-history-file-shell stack-git-change-group-file-shell" role="listitem">
-                      <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
+                      <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy || pendingChangeRowPaths.has(entry.path)} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
                       <div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-controls={changeGroupFileId(false, entryIndex)} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')}>
                         <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
                         <span class="stack-git-path">
@@ -1571,7 +1729,7 @@
                         <span class="stack-git-history-file__chevron" aria-hidden="true"></span>
                       </div>
                       {#if canDiscardEntry(entry)}
-                        <button type="button" class="stack-git-change-row__discard stack-git-change-group-file__discard" aria-label="Discard" title={`Discard ${entry.relativePath}`} disabled={operationBusy} on:click={() => void discardPaths([entry])}>↺</button>
+                        <button type="button" class="stack-git-change-row__discard stack-git-change-group-file__discard" aria-label="Discard" title={`Discard ${entry.relativePath}`} disabled={gitMutationBlocked} on:click={() => void discardPaths([entry])}>↺</button>
                       {/if}
                       {#if diffDrawerOpen && entry.path === selectedChangePaths[0] && !diffDrawerStaged}
                         <div id={changeGroupFileId(false, entryIndex)} class="stack-git-change-diff-drawer" role="region" aria-label={`Diff for ${entry.relativePath}`}>
@@ -1677,9 +1835,9 @@
                     </div>
                   </button>
                   <div class="stack-git-row-actions">
-                    <button type="button" on:click={() => void applyStash(stashRef)}>Apply</button>
-                    <button type="button" on:click={() => void popStash(stashRef)}>Pop</button>
-                    <button type="button" on:click={() => void dropStash(stashRef)}>Drop</button>
+                    <button type="button" disabled={gitMutationBlocked} on:click={() => void applyStash(stashRef)}>Apply</button>
+                    <button type="button" disabled={gitMutationBlocked} on:click={() => void popStash(stashRef)}>Pop</button>
+                    <button type="button" disabled={gitMutationBlocked} on:click={() => void dropStash(stashRef)}>Drop</button>
                   </div>
                 </div>
                 {#if selectedStashRef === stashRef}
@@ -1755,7 +1913,7 @@
                   </div>
                 </button>
                 <div class="stack-git-row-actions">
-                  <button type="button" disabled={isCurrentBranch(branch, currentBranchLabel) || operationBusy} on:click={() => void checkoutBranch(branch.name)}>Checkout</button>
+                  <button type="button" disabled={isCurrentBranch(branch, currentBranchLabel) || gitMutationBlocked} on:click={() => void checkoutBranch(branch.name)}>Checkout</button>
                 </div>
               </div>
             {/each}
@@ -1768,7 +1926,7 @@
               <span>Checkout</span>
               <input value={branchDraft} placeholder="branch name" on:input={(event) => branchDraft = event.currentTarget.value} />
             </label>
-            <button type="submit" disabled={!branchDraft.trim() || operationBusy}>Checkout</button>
+            <button type="submit" disabled={!branchDraft.trim() || gitMutationBlocked}>Checkout</button>
           </form>
 
           <form class="stack-git-branch-form" on:submit|preventDefault={() => void createBranch()}>
@@ -1784,7 +1942,7 @@
                 {/each}
               </select>
             </label>
-            <button type="submit" disabled={!newBranchDraft.trim() || operationBusy}>Create</button>
+            <button type="submit" disabled={!newBranchDraft.trim() || gitMutationBlocked}>Create</button>
           </form>
         </div>
       {/if}
@@ -1806,6 +1964,7 @@
         bind:this={commitTextarea}
         bind:value={commitMessage}
         aria-label="Commit message"
+        disabled={gitMutationBlocked}
         placeholder={canCommit ? `${stagedEntries.length} staged file(s)` : 'Stage files before commit'}
         rows="1"
         on:input={resizeCommitTextarea}
@@ -1813,10 +1972,10 @@
       ></textarea>
 
       <div class="stack-git-commit-actions">
-        <button type="button" class="stack-git-commit-stash" disabled={!status || operationBusy || !hasDirtyWorkingTree} on:click={() => void stashChanges()}>Stash</button>
+        <button type="button" class="stack-git-commit-stash" disabled={!status || gitMutationBlocked || !hasDirtyWorkingTree} on:click={() => void stashChanges()}>Stash</button>
         <div class="stack-git-commit-actions__primary">
-          <button type="submit" class="stack-git-button--outline" disabled={!commitMessage.trim() || !canCommit || operationBusy}>Commit</button>
-          <button type="button" class="stack-git-button--primary" disabled={!commitMessage.trim() || !canCommit || operationBusy || !remoteUrl} on:click={() => void commitChanges(true)}>Commit &amp; Push</button>
+          <button type="submit" class="stack-git-button--outline" disabled={!commitMessage.trim() || !canCommit || gitMutationBlocked}>Commit</button>
+          <button type="button" class="stack-git-button--primary" disabled={!commitMessage.trim() || !canCommit || gitMutationBlocked || !remoteUrl} on:click={() => void commitChanges(true)}>Commit &amp; Push</button>
         </div>
       </div>
     </form>
@@ -1830,7 +1989,7 @@
         <p id="stack-git-confirm-message">{pendingConfirmLabel()}</p>
         <div class="stack-git-confirm-actions">
           <button bind:this={pendingConfirmCancelButton} type="button" on:click={closePendingConfirm}>Cancel</button>
-          <button bind:this={pendingConfirmConfirmButton} type="button" class="danger" disabled={operationBusy} on:click={() => void confirmPendingAction()}>Confirm</button>
+          <button bind:this={pendingConfirmConfirmButton} type="button" class="danger" disabled={gitMutationBlocked} on:click={() => void confirmPendingAction()}>Confirm</button>
         </div>
       </div>
     </div>
