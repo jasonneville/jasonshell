@@ -1,5 +1,7 @@
 ## Change Ledger
 
+- 2026-09-14 `[CODE]` FIXED: Git Changes bare file-status letters now share explicit vertical centering and line-height with adjacent Stage/Unstage `+`/`−` row actions, without changing glyph color, size, or action geometry.
+- 2026-09-14 `[TOOL]` VALIDATED: New focused alignment source contract passes; `npm run check` reports 0 errors and 0 warnings, and diff hygiene passes with line-ending notices only. Full Stack Git panel contract remains 43/44 due one unrelated stale legacy row-selector assertion.
 - 2026-09-14 `[CODE]` ADDED: Stack Browser Git Changes rows can add eligible unstaged untracked paths to `.gitignore` through a right-click `Add to .gitignore` flow that confirms ancestor/exact-path choices, writes escaped root-anchored patterns to the repo-root `.gitignore`, preserves LF/CRLF, deduplicates, and refreshes status so ignored rows disappear.
 - 2026-09-14 `[CODE]` HARDENED: Git ignore rejects root, outside-repository, missing, tracked, staged, and already ignored paths; directory patterns include trailing slash, and the shared `StackConfirmDialog.svelte` now standardizes Stack Git destructive confirmations plus Stack Browser delete confirmation with focus trap/return, Escape/backdrop policy, and busy/disabled behavior.
 - 2026-09-14 `[TOOL]` TESTED: Added source-contract coverage in `tests/stackGitIgnoreBackend.test.mjs` and `tests/stackGitIgnoreUi.test.mjs`, plus updated Stack Browser Git status contracts; no runtime browser QA claimed.

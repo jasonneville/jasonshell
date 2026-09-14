@@ -732,6 +732,7 @@ test('StackGitPanel changes view collapses staged and unstaged groups with histo
   assert.match(panel, /\.stack-git-change-group-file-shell \{[\s\S]*gap:\s*0;[\s\S]*grid-template-columns:\s*max-content minmax\(0, 1fr\) max-content;/);
   assert.match(panel, /\.stack-git-change-group-file-shell:hover,[\s\S]*\.stack-git-change-group-file-shell:focus-within \{[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-control-hover\) 76%, var\(--js-color-surface-overlay\)\);[\s\S]*border-color:\s*color-mix\(in srgb, var\(--js-color-accent-border\) 62%, var\(--js-color-border-soft\)\);/);
   assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-change-row__action \{[\s\S]*grid-column:\s*1;/);
+  assert.match(panel, /\.stack-git-change-group-file-shell > \.stack-git-change-row__action,[\s\S]*\.stack-git-change-group-file \.stack-git-badge \{[\s\S]*align-self:\s*center;[\s\S]*line-height:\s*1;/);
   assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk,[\s\S]*\.stack-git-panel button\.stack-git-change-row__action/);
   assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk \{[\s\S]*align-items:\s*center;[\s\S]*height:\s*100%;[\s\S]*line-height:\s*1;[\s\S]*justify-content:\s*center;/);
   assert.match(panel, /\.stack-git-panel button\.stack-git-change-group__bulk \{[\s\S]*min-width:\s*calc\(var\(--stack-git-change-guide-offset\) \* 2\);[\s\S]*width:\s*calc\(var\(--stack-git-change-guide-offset\) \* 2\);/);

@@ -2769,6 +2769,12 @@
     grid-column: 1;
   }
 
+  .stack-git-change-group-file-shell > .stack-git-change-row__action,
+  .stack-git-change-group-file .stack-git-badge {
+    align-self: center;
+    line-height: 1;
+  }
+
   .stack-git-change-group-file-shell > .stack-git-history-file {
     align-items: center;
     cursor: pointer;
