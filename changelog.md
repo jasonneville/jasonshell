@@ -1,5 +1,9 @@
 ## Change Ledger
 
+- 2026-09-13 `[CODE]` FIXED: Quick Command transcript tail attachment now changes only after explicit wheel, scrollbar, or scrolling-key input, preventing large output batches and browser scroll anchoring from silently detaching an untouched live transcript.
+- 2026-09-13 `[TOOL]` VALIDATED: RED-first intent-gating contract passed with focused command-panel tests 19/19; `npm run check` reported 0 errors with 3 unrelated existing Stack Git warnings, and diff hygiene passed. Runtime high-volume output remains a manual smoke surface.
+- 2026-09-13 `[CODE]` FIXED: Quick Command transcripts now tail new output while at the bottom, detach when the user scrolls up, and reattach when the user returns to the bottom.
+- 2026-09-13 `[TOOL]` VALIDATED: RED-first transcript-tail source contract passes with all 16 command-panel wiring tests; focused command-panel tests pass 19/19, `npm run check` reports 0 errors with 3 unrelated existing Stack Git warnings, and diff hygiene passes. Runtime scroll interaction remains a manual smoke surface.
 - 2026-09-13 `[CODE]` FIXED: Starting a Quick Command now collapses previously expanded output-history runs for that saved command, opens the new run, and preserves other commands' expansion state.
 - 2026-09-13 `[TOOL]` VALIDATED: Focused command-panel contracts passed 15/15, `npm run check` reported 0 errors with 3 unrelated existing Stack Git warnings, diff hygiene passed, and independent review found no issues.
 - 2026-09-13 `[CODE]` Added conditional accessible clear control to Stack Browser folder search; clearing resets filtered rows and viewport while preserving search-input focus.

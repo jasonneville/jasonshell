@@ -112,7 +112,12 @@
   let historyPollTimer: number | null = null;
   let historyUpdateFrame: number | null = null;
   let historyUpdateQueued = false;
+  let transcriptTailFrame: number | null = null;
+  let transcriptTailPending = false;
   let lastLiveHistoryUpdateAtByRun = new Map<string, number>();
+  let transcriptTailAttached = new WeakMap<HTMLElement, boolean>();
+  let transcriptScrollIntent = new WeakSet<HTMLElement>();
+  let transcriptPointerScrollShell: HTMLElement | null = null;
   let transcriptSegmentCache = new Map<string, TranscriptSegment[]>();
   let transcriptSegmentCacheOrder: string[] = [];
   let shellSurfaceHotkeyHandled = false;
@@ -557,6 +562,7 @@
       for (const run of allHistory) if (run.commandId === selectedId && run.running) nextExpandedIds.add(historyRunKey(run));
       expandedRunIds = nextExpandedIds;
       updatePendingInputFromHistory();
+      scheduleTranscriptTail();
     } catch (error) { if (disposed) return; if (requestId !== historyRequestId || editor.id !== selectedId) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed && requestId === historyRequestId && editor.id === selectedId) historyLoading = false; }
   }
 
@@ -577,7 +583,7 @@
   function isRunStopping(run: QuickCommandRunHistoryEntry): boolean { return run.running && (latestRunControlKind(run) === 'stopping' || stoppingRunIds.has(run.runId)); }
   function isCommandStopping(commandId: string): boolean { return allHistory.some((run) => run.commandId === commandId && isRunStopping(run)); }
   function isRunExpanded(run: QuickCommandRunHistoryEntry): boolean { return expandedRunIds.has(historyRunKey(run)); }
-  function handleHistoryRunToggle(event: Event, run: QuickCommandRunHistoryEntry) { const details = event.currentTarget as HTMLDetailsElement | null; if (!details) return; if (run.running) { details.open = true; return; } const id = historyRunKey(run); const next = new Set(expandedRunIds); if (details.open) next.add(id); else next.delete(id); expandedRunIds = next; }
+  function handleHistoryRunToggle(event: Event, run: QuickCommandRunHistoryEntry) { const details = event.currentTarget as HTMLDetailsElement | null; if (!details) return; if (run.running) { details.open = true; scheduleTranscriptTail(); return; } const id = historyRunKey(run); const next = new Set(expandedRunIds); if (details.open) { next.add(id); scheduleTranscriptTail(); } else next.delete(id); expandedRunIds = next; }
   function startListResize(event: PointerEvent) { if (structuralMutationBusy() || pointerDrag) return; event.preventDefault(); resizeStartWidth = listWidth; resizePointerId = event.pointerId; (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); }
   function resizeList(event: PointerEvent) { if (resizePointerId !== event.pointerId || !panelElement) return; const panelLeft = panelElement.getBoundingClientRect().left; listWidth = Math.round(Math.min(Math.max(event.clientX - panelLeft - 16, 128), 420)); }
   function stopListResize(event: PointerEvent) {
@@ -628,6 +634,43 @@
   function getSelectionWithinShell(shell: HTMLElement): Selection | null { const selection = window.getSelection(); if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null; const range = selection.getRangeAt(0); if (!shell.contains(range.commonAncestorContainer)) return null; const anchor = selection.anchorNode; const focus = selection.focusNode; if (!anchor || !focus) return null; const anchorShell = (anchor instanceof Element ? anchor : anchor.parentElement)?.closest('.command-transcript-shell'); const focusShell = (focus instanceof Element ? focus : focus.parentElement)?.closest('.command-transcript-shell'); return anchorShell === shell && focusShell === shell ? selection : null; }
   function handleTranscriptKeydown(event: KeyboardEvent) { if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return; const shell = event.currentTarget as HTMLElement; if (!getSelectionWithinShell(shell)) return; try { if (document.execCommand('copy')) { event.preventDefault(); event.stopPropagation(); } } catch { /* native default */ } }
   function handleTranscriptContextMenu(event: MouseEvent) { const shell = event.currentTarget as HTMLElement; if (getSelectionWithinShell(shell)) event.stopPropagation(); }
+  function isTranscriptAtBottom(shell: HTMLElement): boolean { return shell.scrollHeight - shell.scrollTop - shell.clientHeight <= 2; }
+  function transcriptShellForEvent(event: Event): HTMLElement | null { const target = event.target; return target instanceof Element ? target.closest<HTMLElement>('.command-transcript-shell') : null; }
+  function markTranscriptScrollIntent(event: Event) {
+    const shell = transcriptShellForEvent(event);
+    if (!shell) return;
+    if (event instanceof KeyboardEvent && (event.ctrlKey || event.metaKey || event.altKey || !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key))) return;
+    if (event instanceof PointerEvent) {
+      const bounds = shell.getBoundingClientRect();
+      if (event.target !== shell || event.clientX < bounds.right - Math.max(16, shell.offsetWidth - shell.clientWidth)) return;
+      transcriptPointerScrollShell = shell;
+      return;
+    }
+    transcriptScrollIntent.add(shell);
+    window.requestAnimationFrame(() => transcriptScrollIntent.delete(shell));
+  }
+  function endTranscriptPointerScroll() { transcriptPointerScrollShell = null; }
+  function handleTranscriptScroll(event: Event) {
+    const shell = transcriptShellForEvent(event);
+    if (!shell) return;
+    if (!transcriptScrollIntent.has(shell) && transcriptPointerScrollShell !== shell) return;
+    transcriptScrollIntent.delete(shell);
+    transcriptTailAttached.set(shell, isTranscriptAtBottom(shell));
+  }
+  function scheduleTranscriptTail() {
+    if (transcriptTailPending || disposed) return;
+    transcriptTailPending = true;
+    void tick().then(() => {
+      if (disposed) return;
+      transcriptTailFrame = window.requestAnimationFrame(() => {
+        transcriptTailFrame = null;
+        transcriptTailPending = false;
+        for (const shell of panelElement?.querySelectorAll<HTMLElement>('.command-transcript-shell') ?? []) {
+          if (transcriptTailAttached.get(shell) !== false) shell.scrollTop = shell.scrollHeight;
+        }
+      });
+    });
+  }
   function handleTranscriptUrlAuxClick(event: MouseEvent, url: string) { event.preventDefault(); event.stopPropagation(); void openTranscriptUrl(url); }
   function commandRowKeydown(event: KeyboardEvent, entry: QuickCommandEntry) { if (handleCommandReorderKeydown(event, entry)) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectCommand(entry); } else { openKeyboardContextMenu(event, entry); } }
   function shouldPollHistory(): boolean {
@@ -775,6 +818,7 @@
       historyUpdateQueued = false;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
       updatePendingInputFromHistory();
+      scheduleTranscriptTail();
     });
   }
 
@@ -828,13 +872,13 @@
     window.addEventListener('keydown', keydownHandler, true);
     window.addEventListener('keyup', keyupHandler, true);
     historyPollTimer = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
-    return () => { disposed = true; stopCommandAutoScroll(); pointerDrag = null; if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); historyUpdateQueued = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); while (unlisteners.length) { try { unlisteners.pop()?.(); } catch (error) { console.error('Failed to dispose command panel listener', error); } } };
+    return () => { disposed = true; stopCommandAutoScroll(); pointerDrag = null; if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); if (transcriptTailFrame !== null) window.cancelAnimationFrame(transcriptTailFrame); historyUpdateQueued = false; transcriptTailPending = false; window.removeEventListener('keydown', keydownHandler, true); window.removeEventListener('keyup', keyupHandler, true); while (unlisteners.length) { try { unlisteners.pop()?.(); } catch (error) { console.error('Failed to dispose command panel listener', error); } } };
   });
 </script>
 
 <svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
 
-<div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={cancelListResize}>
+<div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:scroll|capture={handleTranscriptScroll} on:wheel|capture={markTranscriptScrollIntent} on:pointerdown|capture={markTranscriptScrollIntent} on:keydown|capture={markTranscriptScrollIntent} on:pointerup|capture={endTranscriptPointerScroll} on:pointercancel|capture={endTranscriptPointerScroll} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={cancelListResize}>
   <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}><MaterialSymbolIcon name="close" /></MeltActionButton></header>
   {#if panelError}<p class="command-panel-error" role="alert">{panelError}</p>{/if}
   {#if pendingInputError}<p class="command-panel-error" role="alert">{pendingInputError}</p>{/if}

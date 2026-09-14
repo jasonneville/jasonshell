@@ -43,3 +43,4 @@ Thumbs.db
 target-pi-check/*
 NUL
 .harness/**
+.agent-checkpoints/

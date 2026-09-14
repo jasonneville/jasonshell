@@ -383,6 +383,26 @@ test('command panel transcript host remains a labelled read-only focusable log w
   assert.doesNotMatch(commandPanelSource, /on:contextmenu\|preventDefault\|stopPropagation/);
 });
 
+test('quick command transcripts tail output until the user scrolls away from bottom', () => {
+  assert.match(commandPanelSource, /let transcriptTailAttached = new WeakMap<HTMLElement, boolean>\(\);/);
+  assert.match(commandPanelSource, /let transcriptScrollIntent = new WeakSet<HTMLElement>\(\);/);
+  assert.match(commandPanelSource, /let transcriptPointerScrollShell: HTMLElement \| null = null;/);
+  assert.match(commandPanelSource, /function markTranscriptScrollIntent\(event: Event\)/);
+  assert.match(commandPanelSource, /if \(!transcriptScrollIntent\.has\(shell\) && transcriptPointerScrollShell !== shell\) return;/);
+  assert.match(commandPanelSource, /transcriptScrollIntent\.delete\(shell\);/);
+  assert.match(commandPanelSource, /function isTranscriptAtBottom\(shell: HTMLElement\)/);
+  assert.match(commandPanelSource, /shell\.scrollHeight - shell\.scrollTop - shell\.clientHeight <= 2/);
+  assert.match(commandPanelSource, /function handleTranscriptScroll\(event: Event\)/);
+  assert.match(commandPanelSource, /transcriptTailAttached\.set\(shell, isTranscriptAtBottom\(shell\)\)/);
+  assert.match(commandPanelSource, /function scheduleTranscriptTail\(\)/);
+  assert.match(commandPanelSource, /shell\.scrollTop = shell\.scrollHeight/);
+  assert.match(commandPanelSource, /on:scroll\|capture=\{handleTranscriptScroll\}/);
+  assert.match(commandPanelSource, /on:wheel\|capture=\{markTranscriptScrollIntent\}/);
+  assert.match(commandPanelSource, /on:pointerdown\|capture=\{markTranscriptScrollIntent\}/);
+  assert.match(commandPanelSource, /on:keydown\|capture=\{markTranscriptScrollIntent\}/);
+  assert.match(commandPanelSource, /on:pointerup\|capture=\{endTranscriptPointerScroll\}/);
+});
+
 test('command panel keeps stopping run visible with disabled stop affordance', () => {
   assert.match(commandPanelSource, /latestRunControlKind\(|isRunStopping\(|isCommandStopping\(/);
   assert.match(commandPanelSource, /return run\.running && \(latestRunControlKind\(run\) === 'stopping' \|\| stoppingRunIds\.has\(run\.runId\)\)/);
