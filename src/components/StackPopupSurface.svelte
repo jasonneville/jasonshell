@@ -1516,6 +1516,15 @@
     emitVisibleRowsWindowChanged();
   }
 
+  function handleStackSearchKeydown(event: KeyboardEvent) {
+    const input = event.currentTarget as HTMLInputElement;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      input.blur();
+    }
+    event.stopPropagation();
+  }
+
   async function clearStackSearch() {
     searchQuery = '';
     detailsBodyScrollTop = 0;
@@ -2325,7 +2334,7 @@
             spellcheck="false"
             autocomplete="off"
             on:input={handleStackSearchInput}
-            on:keydown={(event) => event.stopPropagation()}
+            on:keydown={handleStackSearchKeydown}
           />
           {#if searchQuery}
             <MeltActionButton class="stack-search-clear-button" ariaLabel="Clear search" tooltip="Clear search" onClick={clearStackSearch}>

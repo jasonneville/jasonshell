@@ -146,3 +146,22 @@ test('stack browser search exposes a clear button only for a non-empty query', (
   assert.doesNotMatch(clearButtonStyles, /margin-left:\s*-/, 'clear button avoids brittle negative margin');
   assert.match(stackPopupSource, /function clearStackSearch\(\)[\s\S]*searchQuery = '';/);
 });
+
+test('Escape unfocuses stack browser search without closing or clearing it', () => {
+  const searchWrapperSource = sourceBetween(stackPopupSource, '<div class="stack-search">', '{#if createFolderDraft');
+  const searchKeydownSource = sourceBetween(
+    stackPopupSource,
+    'function handleStackSearchKeydown',
+    'async function clearStackSearch'
+  );
+
+  assert.match(searchWrapperSource, /on:keydown=\{handleStackSearchKeydown\}/);
+  assert.match(
+    searchKeydownSource,
+    /if \(event\.key === 'Escape'\) \{\s*event\.preventDefault\(\);\s*input\.blur\(\);\s*\}/,
+    'Escape branch prevents default and blurs input'
+  );
+  assert.match(searchKeydownSource, /event\.stopPropagation\(\)/);
+  assert.doesNotMatch(searchKeydownSource, /searchQuery\s*=/);
+  assert.doesNotMatch(searchKeydownSource, /closeStackPopupFromSurface|hideStackPopup/);
+});

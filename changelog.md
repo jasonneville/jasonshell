@@ -1,5 +1,7 @@
 ## Change Ledger
 
+- 2026-09-13 `[CODE]` FIXED: Escape in Stack Browser folder search now unfocuses the input while preserving its query, filtered results, and open Stack Browser.
+- 2026-09-13 `[TOOL]` VALIDATED: RED-first Escape blur contract passed; `npm run check` found 0 errors and 3 unrelated existing Stack Git warnings; diff hygiene passed; independent review found no blocking issue. Full toolbar test file retains 2 unrelated stale failures.
 - 2026-09-13 `[CODE]` FIXED: Quick Command transcript tail attachment now changes only after explicit wheel, scrollbar, or scrolling-key input, preventing large output batches and browser scroll anchoring from silently detaching an untouched live transcript.
 - 2026-09-13 `[TOOL]` VALIDATED: RED-first intent-gating contract passed with focused command-panel tests 19/19; `npm run check` reported 0 errors with 3 unrelated existing Stack Git warnings, and diff hygiene passed. Runtime high-volume output remains a manual smoke surface.
 - 2026-09-13 `[CODE]` FIXED: Quick Command transcripts now tail new output while at the bottom, detach when the user scrolls up, and reattach when the user returns to the bottom.
