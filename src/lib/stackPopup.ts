@@ -589,6 +589,12 @@ export function stackGitCommit(folderPath: string, message: string, paths: strin
   });
 }
 
+export function stackGitIgnorePath(folderPath: string, path: string): Promise<StackGitOperationResult> {
+  return invoke<StackGitOperationResult>(IPC_COMMANDS.stackGitIgnorePath, {
+    request: { folderPath, path }
+  });
+}
+
 export function stackGitCommitFiles(folderPath: string, commitHash: string): Promise<StackGitCommitFiles> {
   return invoke<StackGitCommitFiles>(IPC_COMMANDS.stackGitCommitFiles, {
     request: { folderPath, commitHash }

@@ -40,12 +40,12 @@ pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
     StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
     StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
-    StackGitLog, StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest,
-    StackGitStageRequest, StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
-    StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
-    StackGitStatus, StackGitTree, StackGitTreeRequest, StackItem, StackItemIconResolutionBatch,
-    StackNativeDragPreparation, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize,
-    StackPopupRuntimeState,
+    StackGitIgnorePathRequest, StackGitLog, StackGitLogRequest, StackGitOperationResult,
+    StackGitRevertRequest, StackGitStageRequest, StackGitStashFileDiff,
+    StackGitStashFileDiffRequest, StackGitStashFiles, StackGitStashFilesRequest,
+    StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
+    StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
+    StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 pub use terminal::{
     StackTerminalPollResult, StackTerminalRenameRequest, StackTerminalResizeRequest,
@@ -489,6 +489,22 @@ pub async fn stack_git_add_paths(
     )
     .map_err(CallerAuthError::into_string)?;
     git_status::stack_git_add_paths_async(request).await
+}
+
+#[tauri::command]
+pub async fn stack_git_ignore_path(
+    window: WebviewWindow,
+    request: StackGitIgnorePathRequest,
+) -> Result<StackGitOperationResult, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::STACK_GIT_IGNORE_PATH,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_ignore_path_async(request).await
 }
 
 #[tauri::command]

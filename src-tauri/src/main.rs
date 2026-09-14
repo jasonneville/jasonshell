@@ -195,6 +195,7 @@ fn main() {
             stack_popup::get_stack_git_status,
             stack_popup::open_stack_git_remote_url,
             stack_popup::stack_git_add_paths,
+            stack_popup::stack_git_ignore_path,
             stack_popup::stack_git_unstage_paths,
             stack_popup::stack_git_revert_paths,
             stack_popup::stack_git_diff,

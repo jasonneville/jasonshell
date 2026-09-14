@@ -7,6 +7,7 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import StackGitPanel from './StackGitPanel.svelte';
+  import StackConfirmDialog from './StackConfirmDialog.svelte';
   import StackTerminalPane from './StackTerminalPane.svelte';
   import {
     beginStackPopupFocusLossHold,
@@ -134,7 +135,6 @@
   let backgroundMenuElement: HTMLDivElement | null = null;
   let rowSubmenuElement: HTMLDivElement | null = null;
   let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
-  let deleteCancelButton: HTMLButtonElement | null = null;
   let rowSubmenuOpensLeft = false;
   let createFolderDraft: string | null = null;
   let renameDraft: string | null = null;
@@ -977,8 +977,6 @@
       paths: deletePrompt.paths,
       folderPath: currentPath
     };
-    await tick();
-    deleteCancelButton?.focus();
   }
 
   function cancelDeleteConfirmation() {
@@ -1575,11 +1573,11 @@
   }
 
   function stackGitStatusSymbol(status: StackGitFileStatusKind | null | undefined) {
-    if (status === 'added') return '+';
-    if (status === 'deleted') return '-';
+    if (status === 'added') return 'A';
+    if (status === 'deleted') return 'D';
     if (status === 'modified') return 'M';
     if (status === 'untracked') return '?';
-    if (status === 'conflict') return '!';
+    if (status === 'conflict') return 'M';
     return null;
   }
 
@@ -2474,7 +2472,7 @@
                 </span>
               {/if}
               {#if gitEntryStatus}
-                <span class={`git-file-badge git-status-badge git-status-${gitEntryStatus}`} aria-label={stackGitStatusLabel(gitEntryStatus)} title={stackGitStatusLabel(gitEntryStatus)}>{stackGitStatusSymbol(gitEntryStatus)}</span>
+                <span class={`git-status-badge git-status-${gitEntryStatus}`} aria-label={stackGitStatusLabel(gitEntryStatus)} title={stackGitStatusLabel(gitEntryStatus)}>{stackGitStatusSymbol(gitEntryStatus)}</span>
               {/if}
             </span>
             <span role="gridcell" aria-colindex="2">{entry.typeLabel}</span>
@@ -2564,23 +2562,7 @@
   {/if}
 
   {#if deleteConfirmation}
-    <div class="delete-confirm-backdrop" role="presentation" on:click|stopPropagation>
-      <div
-        class="delete-confirm-dialog"
-        role="dialog"
-        tabindex="-1"
-        aria-modal="true"
-        aria-labelledby="stack-delete-confirm-title"
-        aria-describedby="stack-delete-confirm-message"
-      >
-        <h2 id="stack-delete-confirm-title">{deleteConfirmation.title}</h2>
-        <p id="stack-delete-confirm-message">{deleteConfirmation.message}</p>
-        <div class="delete-confirm-actions">
-          <button type="button" bind:this={deleteCancelButton} on:click={cancelDeleteConfirmation}>Cancel</button>
-          <MeltActionButton class="danger" onClick={() => void confirmDeleteSelection()}>Delete</MeltActionButton>
-        </div>
-      </div>
-    </div>
+    <StackConfirmDialog title={deleteConfirmation.title} message={deleteConfirmation.message} confirmLabel="Delete" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={detailsGrid} onCancel={cancelDeleteConfirmation} onConfirm={() => void confirmDeleteSelection()} />
   {/if}
 
   <button

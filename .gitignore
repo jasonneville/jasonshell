@@ -44,3 +44,4 @@ target-pi-check/*
 NUL
 .harness/**
 .agent-checkpoints/
+/docs/scheduled/

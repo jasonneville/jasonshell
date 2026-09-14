@@ -127,7 +127,8 @@ impl<'a> ActorGuard<'a> {
     fn release_lock(&mut self) {
         if self.locked {
             self.locked = false;
-            self.shared.record_actor_lock_duration(self.started.elapsed());
+            self.shared
+                .record_actor_lock_duration(self.started.elapsed());
             leave_actor_lock();
         }
     }
@@ -347,11 +348,10 @@ impl Scheduler {
         let mut state = self.shared.lock_state()?;
         state.metrics.actor_lock_max_ns = self.shared.actor_lock_max_ns.load(Ordering::Relaxed);
         state.metrics.actor_lock_entries = self.shared.actor_lock_entries.load(Ordering::Relaxed);
-        state.metrics.actor_lock_io_checks = self.shared.actor_lock_io_checks.load(Ordering::Relaxed);
-        state.metrics.actor_lock_io_violations = self
-            .shared
-            .actor_lock_io_violations
-            .load(Ordering::Relaxed);
+        state.metrics.actor_lock_io_checks =
+            self.shared.actor_lock_io_checks.load(Ordering::Relaxed);
+        state.metrics.actor_lock_io_violations =
+            self.shared.actor_lock_io_violations.load(Ordering::Relaxed);
         Ok(state.metrics)
     }
     fn close(&mut self) {

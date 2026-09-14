@@ -2,15 +2,18 @@ use crate::stack_popup::models::{
     StackGitBranch, StackGitBranchRequest, StackGitBranches, StackGitCommitFile,
     StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
     StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
-    StackGitFileStatus, StackGitFileStatusKind, StackGitLog, StackGitLogEntry, StackGitLogRequest,
-    StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest, StackGitStashEntry,
-    StackGitStashFile, StackGitStashFileDiff, StackGitStashFileDiffRequest, StackGitStashFiles,
-    StackGitStashFilesRequest, StackGitStashRefRequest, StackGitStashRequest, StackGitStashes,
-    StackGitStatus, StackGitTree, StackGitTreeEntry, StackGitTreeRequest,
+    StackGitFileStatus, StackGitFileStatusKind, StackGitIgnorePathRequest, StackGitLog,
+    StackGitLogEntry, StackGitLogRequest, StackGitOperationResult, StackGitRevertRequest,
+    StackGitStageRequest, StackGitStashEntry, StackGitStashFile, StackGitStashFileDiff,
+    StackGitStashFileDiffRequest, StackGitStashFiles, StackGitStashFilesRequest,
+    StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
+    StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
 use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 const DEFAULT_LOG_LIMIT: usize = 40;
@@ -73,6 +76,14 @@ pub(crate) async fn stack_git_add_paths_async(
     tauri::async_runtime::spawn_blocking(move || stack_git_add_paths(request))
         .await
         .map_err(|error| format!("Failed to join stack git add task: {error}"))?
+}
+
+pub(crate) async fn stack_git_ignore_path_async(
+    request: StackGitIgnorePathRequest,
+) -> Result<StackGitOperationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_ignore_path(request))
+        .await
+        .map_err(|error| format!("Failed to join stack git ignore task: {error}"))?
 }
 
 pub(crate) async fn stack_git_commit_async(
@@ -262,6 +273,196 @@ fn stack_git_add_paths(request: StackGitStageRequest) -> Result<StackGitOperatio
         summary: format!("Added {} file(s)", pathspecs.len()),
         output: git_operation_output(&output),
     })
+}
+
+fn stack_git_ignore_path(
+    request: StackGitIgnorePathRequest,
+) -> Result<StackGitOperationResult, String> {
+    static GITIGNORE_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = GITIGNORE_WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Git ignore writer unavailable".to_string())?;
+    let repo_root = repo_root_for_folder(&request.folder_path)?
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let (relative_path, is_directory) = git_ignore_target(&repo_root, &request.path)?;
+    require_untracked_git_ignore_target(&repo_root, &relative_path, true)?;
+    let pattern = git_ignore_pattern(&relative_path, is_directory);
+    let gitignore_path = repo_root.join(".gitignore");
+    let (mut gitignore, existing) = open_safe_gitignore(&gitignore_path)?;
+
+    if gitignore_has_exact_pattern(&existing, pattern.as_bytes()) {
+        return Ok(StackGitOperationResult {
+            repository_root: repo_root.to_string_lossy().into_owned(),
+            summary: format!("Ignore pattern already exists: {pattern}"),
+            output: pattern,
+        });
+    }
+    require_untracked_git_ignore_target(&repo_root, &relative_path, false)?;
+
+    let newline = if existing.windows(2).any(|bytes| bytes == b"\r\n") {
+        b"\r\n".as_slice()
+    } else {
+        b"\n".as_slice()
+    };
+    let mut appended = Vec::with_capacity(pattern.len() + (newline.len() * 2));
+    if !existing.is_empty() && !existing.ends_with(b"\n") {
+        appended.extend_from_slice(newline);
+    }
+    appended.extend_from_slice(pattern.as_bytes());
+    appended.extend_from_slice(newline);
+    gitignore
+        .write_all(&appended)
+        .map_err(|error| format!("Failed to update repository .gitignore: {error}"))?;
+
+    Ok(StackGitOperationResult {
+        repository_root: repo_root.to_string_lossy().into_owned(),
+        summary: format!("Ignored {relative_path}"),
+        output: pattern,
+    })
+}
+
+fn git_ignore_target(repo_root: &Path, requested_path: &str) -> Result<(String, bool), String> {
+    if requested_path.is_empty() || requested_path.chars().any(char::is_control) {
+        return Err("Git ignore path is invalid".to_string());
+    }
+    let requested = Path::new(requested_path);
+    if requested.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        return Err("Git ignore path is invalid".to_string());
+    }
+    let candidate = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        repo_root.join(requested)
+    };
+    let target = canonicalize_existing_path(&candidate)
+        .map_err(|_| "Git ignore target must exist".to_string())?;
+    if target == repo_root || !target.starts_with(repo_root) {
+        return Err("Git ignore target must be inside the repository".to_string());
+    }
+    let metadata = std::fs::metadata(&target)
+        .map_err(|error| format!("Git ignore target unavailable: {error}"))?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err("Git ignore target must be a file or directory".to_string());
+    }
+    let relative = target
+        .strip_prefix(repo_root)
+        .map_err(|_| "Git ignore target must be inside the repository".to_string())?
+        .to_str()
+        .ok_or_else(|| "Git ignore path is not valid Unicode".to_string())?
+        .replace('\\', "/");
+    if relative.is_empty() {
+        return Err("Git ignore target must not be the repository root".to_string());
+    }
+    Ok((relative, metadata.is_dir()))
+}
+
+fn literal_git_pathspec(relative_path: &str) -> String {
+    format!(":(literal){relative_path}")
+}
+
+fn require_untracked_git_ignore_target(
+    repo_root: &Path,
+    relative_path: &str,
+    tracked_only: bool,
+) -> Result<(), String> {
+    let pathspec = literal_git_pathspec(relative_path);
+    let tracked = git_stdout_bytes(
+        repo_root,
+        &["ls-files", "--cached", "-z", "--", pathspec.as_str()],
+    )?
+    .unwrap_or_default();
+    if !tracked.is_empty() {
+        return Err("Tracked or staged paths cannot be hidden by .gitignore".to_string());
+    }
+    if tracked_only {
+        return Ok(());
+    }
+    let untracked = git_stdout_bytes(
+        repo_root,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            pathspec.as_str(),
+        ],
+    )?
+    .unwrap_or_default();
+    if untracked.is_empty() {
+        return Err("Git ignore target is not a current untracked change".to_string());
+    }
+    Ok(())
+}
+
+fn git_ignore_pattern(relative_path: &str, is_directory: bool) -> String {
+    let mut pattern = String::with_capacity(relative_path.len() + 2);
+    pattern.push('/');
+    for character in relative_path.chars() {
+        if matches!(character, '\\' | '!' | '*' | '?' | '[' | ']' | '#' | ' ') {
+            pattern.push('\\');
+        }
+        pattern.push(character);
+    }
+    if is_directory {
+        pattern.push('/');
+    }
+    pattern
+}
+
+fn open_safe_gitignore(path: &Path) -> Result<(std::fs::File, Vec<u8>), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).append(true).create(true);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // Open the directory entry itself. Following it before handle validation would
+        // allow a raced symlink/junction to redirect the subsequent append.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("Failed to open repository .gitignore: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Failed to inspect repository .gitignore: {error}"))?;
+    if !metadata.is_file() || metadata_is_reparse_point(&metadata) {
+        return Err("Repository .gitignore must be a regular file".to_string());
+    }
+
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)
+        .map_err(|error| format!("Failed to read repository .gitignore: {error}"))?;
+    Ok((file, content))
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+fn gitignore_has_exact_pattern(content: &[u8], pattern: &[u8]) -> bool {
+    content
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.strip_suffix(b"\r").unwrap_or(line) == pattern)
 }
 
 fn stack_git_commit(request: StackGitCommitRequest) -> Result<StackGitOperationResult, String> {
@@ -2082,6 +2283,204 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
     use std::time::Duration;
+
+    fn init_ignore_test_repo(name: &str) -> Option<std::path::PathBuf> {
+        if Command::new("git").arg("--version").output().is_err() {
+            return None;
+        }
+        let repo = std::env::temp_dir().join(format!(
+            "jasonshell-git-ignore-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&repo).expect("repo dir");
+        let output = Command::new("git")
+            .arg("init")
+            .arg(&repo)
+            .output()
+            .expect("git init");
+        assert!(output.status.success(), "git init failed: {output:?}");
+        Some(fs::canonicalize(repo).expect("canonical repo"))
+    }
+
+    fn ignore_request(repo: &Path, target: &Path) -> super::StackGitIgnorePathRequest {
+        super::StackGitIgnorePathRequest {
+            folder_path: repo.to_string_lossy().into_owned(),
+            path: target.to_string_lossy().into_owned(),
+        }
+    }
+
+    #[test]
+    fn git_ignore_appends_root_anchored_file_directory_and_nested_patterns() {
+        let Some(repo) = init_ignore_test_repo("paths") else {
+            return;
+        };
+        let nested = repo.join("nested");
+        let directory = repo.join("cache");
+        fs::create_dir_all(&nested).expect("nested dir");
+        fs::create_dir_all(&directory).expect("cache dir");
+        let file = nested.join("note.txt");
+        fs::write(&file, b"note").expect("file");
+        fs::write(directory.join("item.bin"), b"item").expect("dir file");
+
+        super::stack_git_ignore_path(ignore_request(&repo, &file)).expect("ignore file");
+        super::stack_git_ignore_path(ignore_request(&repo, &directory)).expect("ignore dir");
+
+        assert_eq!(
+            fs::read(repo.join(".gitignore")).expect("gitignore"),
+            b"/nested/note.txt\n/cache/\n"
+        );
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn git_ignore_escapes_metacharacters_and_duplicate_is_noop() {
+        let Some(repo) = init_ignore_test_repo("literal") else {
+            return;
+        };
+        let file = repo.join("#draft [x]!.txt");
+        fs::write(&file, b"draft").expect("file");
+
+        let first = super::stack_git_ignore_path(ignore_request(&repo, &file)).expect("first");
+        let original = fs::read(repo.join(".gitignore")).expect("gitignore");
+        let second = super::stack_git_ignore_path(ignore_request(&repo, &file)).expect("duplicate");
+
+        assert_eq!(original, b"/\\#draft\\ \\[x\\]\\!.txt\n");
+        assert_eq!(
+            fs::read(repo.join(".gitignore")).expect("gitignore"),
+            original
+        );
+        assert!(first.summary.contains("Ignored"));
+        assert!(second.summary.contains("already"));
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn git_ignore_pattern_escapes_wildcards_as_literals() {
+        assert_eq!(
+            super::git_ignore_pattern("nested/a*b?.txt", false),
+            "/nested/a\\*b\\?.txt"
+        );
+    }
+
+    #[test]
+    fn git_ignore_preserves_existing_lf_and_crlf_content() {
+        let Some(lf_repo) = init_ignore_test_repo("lf") else {
+            return;
+        };
+        let lf_file = lf_repo.join("new.txt");
+        fs::write(&lf_file, b"new").expect("file");
+        fs::write(lf_repo.join(".gitignore"), b"existing").expect("existing ignore");
+        super::stack_git_ignore_path(ignore_request(&lf_repo, &lf_file)).expect("append lf");
+        assert_eq!(
+            fs::read(lf_repo.join(".gitignore")).unwrap(),
+            b"existing\n/new.txt\n"
+        );
+
+        let Some(crlf_repo) = init_ignore_test_repo("crlf") else {
+            return;
+        };
+        let crlf_file = crlf_repo.join("other.txt");
+        fs::write(&crlf_file, b"other").expect("file");
+        fs::write(crlf_repo.join(".gitignore"), b"one\r\ntwo\r\n").expect("existing ignore");
+        super::stack_git_ignore_path(ignore_request(&crlf_repo, &crlf_file)).expect("append crlf");
+        assert_eq!(
+            fs::read(crlf_repo.join(".gitignore")).unwrap(),
+            b"one\r\ntwo\r\n/other.txt\r\n"
+        );
+        fs::remove_dir_all(lf_repo).ok();
+        fs::remove_dir_all(crlf_repo).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_ignore_rejects_reparse_point_without_modifying_target() {
+        use std::os::windows::fs::symlink_file;
+
+        let Some(repo) = init_ignore_test_repo("reparse") else {
+            return;
+        };
+        let outside = repo
+            .parent()
+            .expect("parent")
+            .join(format!("outside-gitignore-{}.txt", std::process::id()));
+        fs::write(&outside, b"outside\r\n").expect("outside file");
+        let gitignore = repo.join(".gitignore");
+        if symlink_file(&outside, &gitignore).is_err() {
+            fs::remove_file(outside).ok();
+            fs::remove_dir_all(repo).ok();
+            return;
+        }
+
+        let error = super::open_safe_gitignore(&gitignore).expect_err("reject reparse point");
+
+        assert!(error.contains("regular file"), "unexpected error: {error}");
+        assert_eq!(
+            fs::read(&outside).expect("outside unchanged"),
+            b"outside\r\n"
+        );
+        fs::remove_file(gitignore).ok();
+        fs::remove_file(outside).ok();
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn git_ignore_rejects_missing_outside_root_and_control_character_targets() {
+        let Some(repo) = init_ignore_test_repo("reject-path") else {
+            return;
+        };
+        let outside = repo
+            .parent()
+            .expect("parent")
+            .join("outside-ignore-target.txt");
+        fs::write(&outside, b"outside").expect("outside");
+
+        assert!(
+            super::stack_git_ignore_path(ignore_request(&repo, &repo.join("missing"))).is_err()
+        );
+        assert!(super::stack_git_ignore_path(ignore_request(&repo, &outside)).is_err());
+        assert!(super::stack_git_ignore_path(ignore_request(&repo, &repo)).is_err());
+        assert!(
+            super::stack_git_ignore_path(super::StackGitIgnorePathRequest {
+                folder_path: repo.to_string_lossy().into_owned(),
+                path: "bad\0path".to_string(),
+            })
+            .is_err()
+        );
+        fs::remove_file(outside).ok();
+        fs::remove_dir_all(repo).ok();
+    }
+
+    #[test]
+    fn git_ignore_rejects_tracked_staged_and_non_status_targets() {
+        let Some(repo) = init_ignore_test_repo("reject-git") else {
+            return;
+        };
+        let tracked = repo.join("tracked.txt");
+        let staged = repo.join("staged.txt");
+        let hidden = repo.join("hidden.tmp");
+        fs::write(&tracked, b"tracked").expect("tracked");
+        fs::write(&staged, b"staged").expect("staged");
+        fs::write(&hidden, b"hidden").expect("hidden");
+        let add = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .arg("add")
+            .arg("tracked.txt")
+            .arg("staged.txt")
+            .output()
+            .expect("git add");
+        assert!(add.status.success());
+        fs::write(repo.join(".gitignore"), b"*.tmp\n").expect("gitignore");
+
+        assert!(super::stack_git_ignore_path(ignore_request(&repo, &tracked)).is_err());
+        assert!(super::stack_git_ignore_path(ignore_request(&repo, &staged)).is_err());
+        assert!(super::stack_git_ignore_path(ignore_request(&repo, &hidden)).is_err());
+        fs::remove_dir_all(repo).ok();
+    }
 
     #[test]
     fn commit_file_parser_handles_nul_status_paths_and_renames() {

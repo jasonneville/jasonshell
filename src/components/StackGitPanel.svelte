@@ -59,12 +59,31 @@
   export function mutationOwnsPendingState<T>(pending: Map<string, T>, key: string, mutation: T) {
     return pending.get(key) === mutation;
   }
+
+  export type StackGitIgnoreChoice = { relativePath: string; absolutePath: string; kind: 'folder' | 'file' };
+
+  export function canStackGitIgnoreEntry(entry: { status: string; unstaged: boolean }) {
+    return entry.status === 'untracked' && entry.unstaged;
+  }
+
+  export function stackGitIgnoreChoices(repositoryRoot: string, relativePath: string): StackGitIgnoreChoice[] {
+    const segments = relativePath.replaceAll('\\', '/').split('/').filter(Boolean);
+    if (!repositoryRoot || !segments.length || segments.some((segment) => segment === '.' || segment === '..')) return [];
+    const separator = repositoryRoot.includes('\\') ? '\\' : '/';
+    const root = repositoryRoot.replace(/[\\/]+$/, '');
+    return segments.map((_, index) => ({
+      relativePath: segments.slice(0, index + 1).join('/'),
+      absolutePath: `${root}${separator}${segments.slice(0, index + 1).join(separator)}`,
+      kind: index === segments.length - 1 ? 'file' : 'folder'
+    }));
+  }
 </script>
 
 <script lang="ts">
   import { afterUpdate, onMount, tick } from 'svelte';
   import * as stackPopup from '../lib/stackPopup';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import StackConfirmDialog from './StackConfirmDialog.svelte';
   import {
     canCommitGitStatus,
     canStageGitSelection,
@@ -164,11 +183,7 @@
     removeWorktree?: boolean;
     worktreePath?: string;
   } | null = null;
-  let pendingConfirmCancelButton: HTMLButtonElement | null = null;
-  let pendingConfirmConfirmButton: HTMLButtonElement | null = null;
-  let pendingConfirmDialogElement: HTMLDivElement | null = null;
   let pendingConfirmFocusOrigin: HTMLElement | null = null;
-  let pendingConfirmWasOpen = false;
   let appliedInitialChangeFilter: StackGitFileStatus['status'] | 'all' = initialChangeFilter;
 
   let statusToken = 0;
@@ -190,6 +205,12 @@
   let changeRowRequestId = 0;
   let pendingChangeRowsFolder = folderPath;
   let changeRowsVisitEpoch = 0;
+  let gitIgnoreMenu: { x: number; y: number; entry: StackGitFileStatus } | null = null;
+  let gitIgnoreMenuElement: HTMLDivElement | null = null;
+  let gitIgnoreChoices: StackGitIgnoreChoice[] = [];
+  let selectedGitIgnorePath = '';
+  let gitIgnoreConfirmOpen = false;
+  let gitIgnoreFocusOrigin: HTMLElement | null = null;
 
   $: groupedEntries = groupStackGitEntries(status?.entries ?? []);
   $: stagedEntries = groupedEntries.staged;
@@ -1329,6 +1350,44 @@
     }
   }
 
+  function openGitIgnoreMenu(event: MouseEvent, entry: StackGitFileStatus) {
+    if (!canStackGitIgnoreEntry(entry) || gitMutationBlocked || !status) return;
+    gitIgnoreFocusOrigin = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    gitIgnoreMenu = { x: Math.max(8, Math.min(event.clientX, window.innerWidth - 176)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 48)), entry };
+  }
+
+  function openGitIgnoreConfirm() {
+    if (!gitIgnoreMenu || !status) return;
+    const choices = stackGitIgnoreChoices(status.repositoryRoot, gitIgnoreMenu.entry.relativePath);
+    if (!choices.length) return;
+    gitIgnoreChoices = choices;
+    selectedGitIgnorePath = choices[choices.length - 1].absolutePath;
+    gitIgnoreMenu = null;
+    gitIgnoreConfirmOpen = true;
+  }
+
+  async function confirmGitIgnore() {
+    if (!selectedGitIgnorePath || gitMutationBlocked) return;
+    beginOperation('Adding ignore rule');
+    try {
+      const result = await stackPopup.stackGitIgnorePath(folderPath, selectedGitIgnorePath);
+      statusMessage = result.summary;
+      completeOperation('Added to .gitignore', result);
+      gitIgnoreConfirmOpen = false;
+      await refreshAfterMutation();
+    } catch (error) {
+      failOperation('Adding ignore rule', error, 'Add to .gitignore failed');
+    } finally {
+      operationBusy = false;
+    }
+  }
+
+  function closeGitIgnoreUi() {
+    if (operationBusy === true) return;
+    gitIgnoreMenu = null;
+    gitIgnoreConfirmOpen = false;
+  }
+
   function closeDiffDrawer() {
     diffToken += 1;
     diffDrawerOpen = false;
@@ -1349,6 +1408,10 @@
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (gitIgnoreMenu || gitIgnoreConfirmOpen) {
+      closeGitIgnoreUi();
+      return;
+    }
     if (pendingConfirm) {
       closePendingConfirm();
       return;
@@ -1394,6 +1457,7 @@
   }
 
   function handleBranchPickerPointerdown(event: PointerEvent) {
+    if (gitIgnoreMenu && !(event.target instanceof Node && gitIgnoreMenuElement?.contains(event.target))) gitIgnoreMenu = null;
     if (!branchDropdownOpen || pendingConfirm || branchDeleteInProgress) return;
     const target = event.target as Node | null;
     if (target && branchPickerElement?.contains(target)) return;
@@ -1417,21 +1481,6 @@
     }
   }
 
-  function handlePendingConfirmKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Tab') return;
-    const focusables = [pendingConfirmCancelButton, pendingConfirmConfirmButton].filter(
-      (button): button is HTMLButtonElement => Boolean(button && !button.disabled)
-    );
-    if (!focusables.length) return;
-
-    const currentIndex = focusables.findIndex((button) => button === document.activeElement);
-    const nextIndex = event.shiftKey
-      ? (currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1)
-      : (currentIndex < 0 || currentIndex === focusables.length - 1 ? 0 : currentIndex + 1);
-    event.preventDefault();
-    focusables[nextIndex]?.focus();
-  }
-
   $: if (initialChangeFilter !== appliedInitialChangeFilter) {
     appliedInitialChangeFilter = initialChangeFilter;
     selectedChangePaths = [];
@@ -1440,22 +1489,6 @@
       if (diffDrawerOpen) void refreshChangesDiff();
     }
   }
-
-  $: if (pendingConfirm && !pendingConfirmWasOpen) {
-    pendingConfirmFocusOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    void tick().then(() => pendingConfirmCancelButton?.focus());
-  }
-
-  $: if (!pendingConfirm && pendingConfirmWasOpen) {
-    const origin = pendingConfirmFocusOrigin;
-    pendingConfirmFocusOrigin = null;
-    void tick().then(() => {
-      const target = origin as HTMLElement | null;
-      target?.focus();
-    });
-  }
-
-  $: pendingConfirmWasOpen = Boolean(pendingConfirm);
 
   $: if (status && activeView === 'changes') ensureChangeSelection();
   $: if (status && activeView === 'stashes') ensureStashSelection();
@@ -1715,7 +1748,7 @@
                     {@const pathParts = stackGitPathParts(entry.relativePath)}
                     <div class="stack-git-history-file-shell stack-git-change-group-file-shell" role="listitem">
                       <button type="button" class="stack-git-change-row__action stack-git-change-group-file__action" aria-label="Stage" title={changeRowActionLabel('unstaged')} disabled={operationBusy || pendingChangeRowPaths.has(entry.path)} on:click={() => handleChangeRowAction(entry, 'unstaged')}>{changeRowActionSymbol('unstaged')}</button>
-                      <div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-controls={changeGroupFileId(false, entryIndex)} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')}>
+                      <div class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded={diffDrawerOpen && selectedChangePaths.includes(entry.path) && !diffDrawerStaged} aria-controls={changeGroupFileId(false, entryIndex)} on:click={() => openChangeDiff(entry, false)} on:keydown={(event) => handleChangeRowKeydown(event, entry, 'unstaged')} on:contextmenu|preventDefault|stopPropagation={(event) => openGitIgnoreMenu(event, entry)}>
                         <span class={statusBadgeClass(entry.status)} aria-label={gitStatusLabel(entry.status)}>{gitStatusSymbol(entry.status)}</span>
                         <span class="stack-git-path">
                           <span class="stack-git-path__dir">{pathParts.directory}</span>
@@ -1981,18 +2014,20 @@
     </form>
   {/if}
 
-  {#if pendingConfirm}
-    <div class="stack-git-confirm-backdrop" role="presentation">
-      <button type="button" class="stack-git-confirm-backdrop-hitbox" aria-label="Dismiss confirmation dialog" on:click={closePendingConfirm}></button>
-      <div bind:this={pendingConfirmDialogElement} class="stack-git-confirm-dialog" role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="stack-git-confirm-title" aria-describedby="stack-git-confirm-message" on:keydown={handlePendingConfirmKeydown}>
-        <h3 id="stack-git-confirm-title">{pendingConfirm.title}</h3>
-        <p id="stack-git-confirm-message">{pendingConfirmLabel()}</p>
-        <div class="stack-git-confirm-actions">
-          <button bind:this={pendingConfirmCancelButton} type="button" on:click={closePendingConfirm}>Cancel</button>
-          <button bind:this={pendingConfirmConfirmButton} type="button" class="danger" disabled={gitMutationBlocked} on:click={() => void confirmPendingAction()}>Confirm</button>
-        </div>
-      </div>
+  {#if gitIgnoreMenu}
+    <div bind:this={gitIgnoreMenuElement} class="stack-git-context-menu" role="menu" aria-label="Git file actions" style:left={`${gitIgnoreMenu.x}px`} style:top={`${gitIgnoreMenu.y}px`}>
+      <button type="button" role="menuitem" on:click={openGitIgnoreConfirm}>Add to .gitignore</button>
     </div>
+  {/if}
+
+  {#if gitIgnoreConfirmOpen}
+    <StackConfirmDialog title="Add to .gitignore" confirmLabel="Add rule" busy={operationBusy} initialFocus="confirm" returnFocus={gitIgnoreFocusOrigin} onCancel={closeGitIgnoreUi} onConfirm={() => void confirmGitIgnore()}>
+      <fieldset class="stack-git-ignore-choices"><legend>Choose file or ancestor folder</legend>{#each gitIgnoreChoices as choice}<label><input type="radio" name="stack-git-ignore-target" value={choice.absolutePath} bind:group={selectedGitIgnorePath} /><span><strong>{choice.relativePath}</strong><small>{choice.kind === 'file' ? 'File' : 'Folder'}</small></span></label>{/each}</fieldset>
+    </StackConfirmDialog>
+  {/if}
+
+  {#if pendingConfirm}
+    <StackConfirmDialog title={pendingConfirm.title} message={pendingConfirmLabel()} confirmLabel="Confirm" tone="danger" busy={gitMutationBlocked} initialFocus="cancel" returnFocus={pendingConfirmFocusOrigin} onCancel={closePendingConfirm} onConfirm={() => void confirmPendingAction()} />
   {/if}
 </section>
 
@@ -2581,24 +2616,6 @@
     background: color-mix(in srgb, var(--js-color-control-hover) 84%, var(--js-color-accent-border));
   }
 
-  .stack-git-panel button.stack-git-change-row__content,
-  .stack-git-panel button.stack-git-change-row__content:hover:not(:disabled),
-  .stack-git-panel button.stack-git-change-row__content:focus-visible {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    color: inherit;
-    cursor: pointer;
-    display: flex;
-    flex: 1 1 auto;
-    gap: 8px;
-    height: 34px;
-    min-width: 0;
-    outline: 0;
-    padding: 0 4px;
-    text-align: left;
-  }
-
   .stack-git-change-row__status {
     align-items: center;
     display: inline-flex;
@@ -3154,59 +3171,37 @@
     padding: 0 10px;
   }
 
-  .stack-git-confirm-backdrop {
-    background: rgba(0, 0, 0, 0.56);
-    display: grid;
-    inset: 0;
-    place-items: center;
-    padding: 12px;
+  .stack-git-context-menu {
+    background: var(--js-color-surface-raised);
+    border: 1px solid var(--js-color-border);
+    border-radius: var(--js-radius-sm);
+    box-shadow: var(--js-shadow-raised);
+    padding: 4px;
     position: fixed;
-    z-index: 100;
+    width: 168px;
+    z-index: 95;
   }
 
-  .stack-git-confirm-backdrop-hitbox {
+  .stack-git-panel .stack-git-context-menu button {
     background: transparent;
     border: 0;
-    inset: 0;
-    min-height: 0;
-    min-width: 0;
-    padding: 0;
-    position: absolute;
+    color: var(--js-color-text);
+    justify-content: flex-start;
+    min-height: 30px;
+    padding: 0 9px;
+    width: 100%;
   }
 
-  .stack-git-confirm-dialog {
-    background: color-mix(in srgb, var(--js-color-surface-raised) 94%, #101827);
-    border: 1px solid color-mix(in srgb, var(--js-color-border) 72%, var(--js-color-accent-border));
-    border-radius: var(--js-radius-md);
-    box-shadow: var(--js-shadow-raised);
-    display: grid;
-    gap: 12px;
-    max-width: min(28rem, calc(100vw - 2rem));
-    padding: 12px;
-    position: relative;
-    z-index: 1;
-  }
+  .stack-git-panel .stack-git-context-menu button:hover,
+  .stack-git-panel .stack-git-context-menu button:focus-visible { background: var(--js-color-control-hover); }
 
-  .stack-git-confirm-dialog h3,
-  .stack-git-confirm-dialog p {
-    margin: 0;
-  }
-
-  .stack-git-confirm-dialog p {
-    color: var(--js-color-text-muted);
-    font-size: 0.72rem;
-    line-height: 1.45;
-  }
-
-  .stack-git-confirm-actions {
-    justify-content: flex-end;
-  }
-
-  .stack-git-confirm-actions .danger {
-    background: var(--js-color-error);
-    border-color: var(--js-color-error-border);
-    color: var(--js-color-text-strong);
-  }
+  .stack-git-ignore-choices { border: 0; display: grid; gap: 4px; margin: 0; padding: 0; }
+  .stack-git-ignore-choices legend { color: var(--js-color-text-muted); font-size: .64rem; font-weight: 750; margin-bottom: 6px; }
+  .stack-git-ignore-choices label { align-items: center; border: 1px solid var(--js-color-border-soft); border-radius: var(--js-radius-sm); cursor: pointer; display: grid; gap: 8px; grid-template-columns: auto 1fr; padding: 7px 9px; }
+  .stack-git-ignore-choices label:has(input:checked) { background: var(--js-bg-active); border-color: var(--js-color-accent-border); }
+  .stack-git-ignore-choices span { display: flex; justify-content: space-between; min-width: 0; }
+  .stack-git-ignore-choices strong { font-size: .7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stack-git-ignore-choices small { color: var(--js-color-text-muted); font-size: .58rem; text-transform: uppercase; }
 
   @container (max-width: 42rem) {
     .stack-git-panel-row--secondary {

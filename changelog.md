@@ -1,5 +1,10 @@
 ## Change Ledger
 
+- 2026-09-14 `[CODE]` ADDED: Stack Browser Git Changes rows can add eligible unstaged untracked paths to `.gitignore` through a right-click `Add to .gitignore` flow that confirms ancestor/exact-path choices, writes escaped root-anchored patterns to the repo-root `.gitignore`, preserves LF/CRLF, deduplicates, and refreshes status so ignored rows disappear.
+- 2026-09-14 `[CODE]` HARDENED: Git ignore rejects root, outside-repository, missing, tracked, staged, and already ignored paths; directory patterns include trailing slash, and the shared `StackConfirmDialog.svelte` now standardizes Stack Git destructive confirmations plus Stack Browser delete confirmation with focus trap/return, Escape/backdrop policy, and busy/disabled behavior.
+- 2026-09-14 `[TOOL]` TESTED: Added source-contract coverage in `tests/stackGitIgnoreBackend.test.mjs` and `tests/stackGitIgnoreUi.test.mjs`, plus updated Stack Browser Git status contracts; no runtime browser QA claimed.
+- 2026-09-13 `[CODE]` FIXED: Stack Browser normal-list Git row accents now exactly match the corresponding added, deleted, modified/conflict, and untracked glyph colors.
+- 2026-09-13 `[CODE]` CHANGED: Stack Browser's normal file list now matches the Git workbench with bare colored `A`, `D`, `M`, and `?` status letters; conflicts render as amber `M`.
 - 2026-09-13 `[CODE]` FIXED: Stack Git row mutations now use visit epochs; folder changes clear old pending optimistic state, preventing A→B→A navigation from reviving or settling an old A request while preserving distinct-row concurrency within one visit.
 - 2026-09-13 `[TOOL]` VALIDATED: Focused Stack Git panel contracts passed 44/44, `npm run check` found 0 errors with 3 pre-existing unused-selector warnings, and `git diff --check` passed with line-ending notices only.
 - 2026-09-13 `[CODE]` FIXED: Individual Stack Git Stage/Unstage moves now update only their target row optimistically, keep unrelated rows actionable, retain pending state across status refreshes, reconcile on success, and restore the original row on backend failure.

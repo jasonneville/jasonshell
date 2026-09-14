@@ -1155,7 +1155,10 @@ fn t02_05_public_source_failure_states_are_distinct() {
         (ProtocolErrorCode::SourceChanged, SourceState::Changed),
         (ProtocolErrorCode::SharingViolation, SourceState::Conflict),
         (ProtocolErrorCode::Readonly, SourceState::Readonly),
-        (ProtocolErrorCode::EncodingRequired, SourceState::DecisionRequired),
+        (
+            ProtocolErrorCode::EncodingRequired,
+            SourceState::DecisionRequired,
+        ),
         (ProtocolErrorCode::IoFailure, SourceState::ReadLimited),
     ];
     for (code, expected) in states {

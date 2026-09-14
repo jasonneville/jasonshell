@@ -355,16 +355,22 @@ test('stack git workbench rejects stale async data and confirms mutating git com
   assert.match(stackGitPanel, /void confirmPendingAction\(\)/);
 });
 
-test('stack git badges have distinct compact colors without changing row layout columns', () => {
+test('stack browser rows use the workbench bare status-letter appearance without changing row layout columns', () => {
   assert.match(stackPopupCss, /\.stack-git-summary/);
   assert.match(stackPopupCss, /\.git-status-badge/);
+  assert.match(stackPopupSurface, /class=\{`git-status-badge git-status-\$\{gitEntryStatus\}`\}/);
+  assert.doesNotMatch(stackPopupSurface, /class=\{`git-file-badge git-status-badge/);
   for (const status of ['modified', 'added', 'deleted', 'untracked', 'conflict']) {
     assert.match(stackPopupCss, new RegExp(`\\.git-status-badge\\.git-status-${status}`));
   }
-  assert.match(stackPopupCss, /box-shadow: inset 5px 0 0 #52f28a;/);
-  assert.match(stackPopupCss, /box-shadow: inset 5px 0 0 #ffd84d;/);
-  assert.match(stackPopupCss, /box-shadow: inset 5px 0 0 #ff6464;/);
-  assert.match(stackPopupCss, /box-shadow: inset 5px 0 0 #8ab4ff;/);
+  assert.match(stackPopupSurface, /if \(status === 'added'\) return 'A';/);
+  assert.match(stackPopupSurface, /if \(status === 'deleted'\) return 'D';/);
+  assert.match(stackPopupSurface, /if \(status === 'conflict'\) return 'M';/);
+  assert.match(stackPopupCss, /\.git-status-badge \{[\s\S]*background: transparent;[\s\S]*border: 0;/);
+  assert.match(stackPopupCss, /\.git-status-badge\.git-status-added \{ color: #76ad4f; \}/);
+  assert.match(stackPopupCss, /\.git-status-badge\.git-status-deleted \{ color: #da5b4a; \}/);
+  assert.match(stackPopupCss, /\.git-status-badge\.git-status-modified,[\s\S]*\.git-status-badge\.git-status-conflict \{\s*color: #c67f13;\s*\}/);
+  assert.match(stackPopupCss, /\.git-status-badge\.git-status-untracked \{ color: #479fe6; \}/);
   assert.match(stackPopupCss, /grid-template-columns: minmax\(10rem, 1fr\) 5\.5rem 5rem 8\.5rem;/);
 });
 

@@ -132,6 +132,7 @@ pub mod commands {
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
     pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
+    pub const STACK_GIT_IGNORE_PATH: &str = "stack_git_ignore_path";
     pub const STACK_GIT_UNSTAGE_PATHS: &str = "stack_git_unstage_paths";
     pub const STACK_GIT_REVERT_PATHS: &str = "stack_git_revert_paths";
     pub const STACK_GIT_DIFF: &str = "stack_git_diff";
@@ -305,6 +306,7 @@ pub mod commands {
         GET_STACK_GIT_STATUS,
         OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
+        STACK_GIT_IGNORE_PATH,
         STACK_GIT_UNSTAGE_PATHS,
         STACK_GIT_REVERT_PATHS,
         STACK_GIT_DIFF,
@@ -543,6 +545,7 @@ mod tests {
         assert!(unique.contains("read_stack_folder"));
         assert!(unique.contains("get_stack_git_status"));
         assert!(unique.contains("stack_git_add_paths"));
+        assert!(unique.contains("stack_git_ignore_path"));
         assert!(unique.contains("stack_git_commit"));
         assert!(unique.contains("stack_git_commit_files"));
         assert!(unique.contains("stack_git_commit_file_diff"));

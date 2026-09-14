@@ -89,6 +89,7 @@ export const IPC_COMMANDS = {
   getStackGitStatus: 'get_stack_git_status',
   openStackGitRemoteUrl: 'open_stack_git_remote_url',
   stackGitAddPaths: 'stack_git_add_paths',
+  stackGitIgnorePath: 'stack_git_ignore_path',
   stackGitUnstagePaths: 'stack_git_unstage_paths',
   stackGitRevertPaths: 'stack_git_revert_paths',
   stackGitDiff: 'stack_git_diff',

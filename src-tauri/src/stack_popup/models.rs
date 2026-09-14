@@ -132,6 +132,13 @@ pub struct StackGitStageRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StackGitIgnorePathRequest {
+    pub folder_path: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackGitCommitRequest {
     pub folder_path: String,
     pub message: String,
