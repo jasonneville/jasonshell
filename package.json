@@ -10,6 +10,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:node": "node scripts/clean-dist-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
     "test:search": "npm run test:node",
+    "p03:experiment": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stack-text-editor/launch-p03-experiment.ps1",
     "cargo:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "smoke:runtime": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/runtime-smoke.ps1 -DryRun",

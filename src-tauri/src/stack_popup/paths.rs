@@ -18,11 +18,15 @@ pub(crate) fn normalize_existing_path(path: &str) -> Result<String, String> {
 
     let candidate = normalize_stack_path_candidate(trimmed);
 
-    let pathbuf =
-        resolve_stack_alias_path(&candidate).unwrap_or_else(|| PathBuf::from(candidate.clone()));
+    let pathbuf = resolve_stack_path_candidate(&candidate);
     fs::canonicalize(&pathbuf)
         .map(|path| stack_display_path_string(&path.to_string_lossy()))
         .map_err(|error| format!("Failed to resolve stack path: {error}"))
+}
+
+pub(crate) fn resolve_stack_path_candidate(path: &str) -> PathBuf {
+    let candidate = normalize_stack_path_candidate(path);
+    resolve_stack_alias_path(&candidate).unwrap_or_else(|| PathBuf::from(candidate))
 }
 
 pub(crate) fn stack_display_path_string(value: &str) -> String {

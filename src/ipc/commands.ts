@@ -86,6 +86,7 @@ export const IPC_COMMANDS = {
   endStackPopupFocusLossHold: 'end_stack_popup_focus_loss_hold',
   resizeStackPopup: 'resize_stack_popup',
   readStackFolder: 'read_stack_folder',
+  readStackBasicTextFile: 'read_stack_basic_text_file',
   getStackGitStatus: 'get_stack_git_status',
   openStackGitRemoteUrl: 'open_stack_git_remote_url',
   stackGitAddPaths: 'stack_git_add_paths',

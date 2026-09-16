@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import {
+  acknowledgeTaskGalleryTransition,
+  shouldDeferTaskGalleryClose,
+  shouldCancelTaskGalleryClose
+} from '../dist-tests/lib/taskbarUi.js';
 
 const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 const bottomBarCssSource = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
@@ -48,6 +53,50 @@ test('capsule hover opens gallery after a cancellable dwell', () => {
   const capsuleButton = bottomBarSource.match(/class={`task-button task-capsule[\s\S]*?<\/MeltActionButton>/)?.[0] ?? '';
   assert.match(capsuleButton, /onMouseEnter=\{\(event\) => scheduleTaskGalleryOpen\(group, event\)\}/);
   assert.match(capsuleButton, /onMouseLeave=\{\(\) => scheduleTaskGalleryClose\(group\.key\)\}/);
+});
+
+test('rapid capsule click opens focused gallery from captured pointer release without dwell', () => {
+  assert.match(bottomBarSource, /pendingTaskGalleryGroupKey = pendingTaskGalleryPointer\([\s\S]*?taskGroupDisplay\(group\) === 'capsule'/);
+  assert.match(bottomBarSource, /resolveTaskGalleryPointerRelease\([\s\S]*?pendingTaskGalleryGroupKey,[\s\S]*?taskGroupDragStarted/);
+  assert.match(bottomBarSource, /if \(galleryReleaseResult\.openGroupKey\)[\s\S]*?openTaskGallery\(galleryGroup, galleryAnchor, true\)/);
+});
+
+test('click-open guard survives native show resolution until nonce-matched gallery entry', () => {
+  assert.match(bottomBarSource, /taskGalleryClickTransitionNonce = focusGallery \? nonce : null;[\s\S]*?await showTaskGalleryNative\(/);
+  assert.match(bottomBarSource, /function\s+scheduleTaskGalleryClose\s*\(groupKey: string\)[\s\S]*?shouldDeferTaskGalleryClose\(taskGalleryClickTransitionNonce, taskGalleryOpenNonce\)/);
+  assert.doesNotMatch(bottomBarSource, /await showTaskGalleryNative\([\s\S]*?finally \{[\s\S]*?taskGalleryClickTransitionNonce === nonce[\s\S]*?taskGalleryClickTransitionNonce = null;/);
+  assert.match(gallerySource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery', nonce: payload\.nonce \}\)/);
+  assert.match(bottomBarSource, /openTaskGallery\(group, event\.currentTarget as HTMLElement \| null, true\)/);
+
+  const clickNonce = 'click-session';
+  let transitionNonce = clickNonce;
+
+  // Native show Promise resolution is intentionally not a lifecycle input.
+  assert.equal(shouldDeferTaskGalleryClose(transitionNonce, clickNonce), true);
+  transitionNonce = acknowledgeTaskGalleryTransition(transitionNonce, 'stale-session');
+  assert.equal(shouldDeferTaskGalleryClose(transitionNonce, clickNonce), true);
+
+  // Actual pointer entry acknowledges only its own session and hands off normal departure closing.
+  transitionNonce = acknowledgeTaskGalleryTransition(transitionNonce, clickNonce);
+  assert.equal(shouldDeferTaskGalleryClose(transitionNonce, clickNonce), false);
+});
+
+test('gallery close cancellation requires current gallery nonce but preserves preview entry', () => {
+  const currentNonce = 'current-session';
+
+  assert.equal(
+    shouldCancelTaskGalleryClose({ source: 'gallery', nonce: 'stale-session' }, currentNonce),
+    false
+  );
+  assert.equal(
+    shouldCancelTaskGalleryClose({ source: 'gallery', nonce: currentNonce }, currentNonce),
+    true
+  );
+  assert.equal(shouldCancelTaskGalleryClose({ source: 'preview' }, currentNonce), true);
+  assert.match(
+    bottomBarSource,
+    /if \(!shouldCancelTaskGalleryClose\(event\.payload, taskGalleryOpenNonce\)\) return;\s*cancelTaskGalleryClose\(\);/
+  );
 });
 
 test('gallery lifecycle closes on escape and stale snapshot', () => {
@@ -125,11 +174,11 @@ test('gallery closes after pointer leaves both tabs and task preview', () => {
   assert.match(gallerySource, /TASK_PREVIEW_HOVER_ENTER_EVENT/);
   assert.match(gallerySource, /TASK_PREVIEW_HIDE_REQUEST_EVENT/);
   assert.match(bottomBarSource, /onMouseLeave=\{\(\) => scheduleTaskGalleryClose\(group\.key\)\}/);
-  assert.match(gallerySource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery' \}\)/);
-  assert.match(gallerySource, /function\s+handleGalleryPointerEnter\s*\([\s\S]*?cancelGalleryHoverClose\(\);[\s\S]*?emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery' \}\)/);
+  assert.match(gallerySource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery', nonce: payload\.nonce \}\)/);
+  assert.match(gallerySource, /function\s+handleGalleryPointerEnter\s*\([\s\S]*?cancelGalleryHoverClose\(\);[\s\S]*?emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'gallery', nonce: payload\.nonce \}\)/);
   assert.match(taskPreviewSurfaceSource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'preview' \}\)/);
   assert.match(bottomBarSource, /type TaskPreviewHoverEnter/);
-  assert.match(bottomBarSource, /listen<\s*TaskPreviewHoverEnter\s*>\(TASK_PREVIEW_HOVER_ENTER_EVENT, \(\) => \{/s);
+  assert.match(bottomBarSource, /listen<\s*TaskPreviewHoverEnter\s*>\(TASK_PREVIEW_HOVER_ENTER_EVENT, \(event\) => \{/s);
   assert.match(gallerySource, /if \(event\.payload\.source === 'preview'\) \{/);
   assert.doesNotMatch(gallerySource, /listen\(TASK_PREVIEW_HOVER_ENTER_EVENT, cancelGalleryHoverClose\)/);
   assert.match(gallerySource, /on:pointerenter=\{handleGalleryPointerEnter\}/);

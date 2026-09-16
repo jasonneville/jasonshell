@@ -9,6 +9,7 @@
   import StackGitPanel from './StackGitPanel.svelte';
   import StackConfirmDialog from './StackConfirmDialog.svelte';
   import StackTerminalPane from './StackTerminalPane.svelte';
+  import StackTextEditor from './StackTextEditor.svelte';
   import {
     beginStackPopupFocusLossHold,
     copyStackItems,
@@ -88,6 +89,7 @@
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
+
   import {
     STACK_BROWSER_FRONTEND_EVENTS,
     STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS,
@@ -108,6 +110,13 @@
     type StackBrowserMarqueeRect
   } from '../features/stack-browser/viewModel';
   import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
+  import {
+    beginBasicTextEditorExit,
+    cancelPendingEditorExit,
+    resetBasicTextEditorViewport,
+    takePendingEditorExit,
+    type PendingBasicTextEditorExit
+  } from '../features/stack-browser/basicTextEditorExit';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
   const STACK_POPUP_MIN_WIDTH = 560;
@@ -117,12 +126,16 @@
   const STACK_CONTEXT_MENU_VIEWPORT_PADDING = 8;
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
+  const STACK_BASIC_TEXT_EXTENSIONS = new Set([
+    'txt', 'md', 'json', 'js', 'ts', 'svelte', 'css', 'html', 'xml', 'yml', 'yaml', 'csv', 'log'
+  ]);
   type StackContextMenuPlacement = {
     x: number;
     y: number;
     maxHeight?: number;
     width?: number;
     submenuMaxHeight?: number;
+    submenuTop?: number;
   };
 
   type StackBrowserViewMode = 'files' | 'terminal';
@@ -134,6 +147,7 @@
   let rowMenuElement: HTMLDivElement | null = null;
   let backgroundMenuElement: HTMLDivElement | null = null;
   let rowSubmenuElement: HTMLDivElement | null = null;
+  let rowSubmenuPanelElement: HTMLDivElement | null = null;
   let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
   let rowSubmenuOpensLeft = false;
   let createFolderDraft: string | null = null;
@@ -215,6 +229,10 @@
   let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
   let stackTerminalPane: StackTerminalPane | null = null;
   let stackPopupSurface: HTMLElement | null = null;
+  let editorPath: string | null = null;
+  let editorDirty = false;
+  let pendingEditorExit: PendingBasicTextEditorExit | null = null;
+  let editorExitFocusOrigin: HTMLElement | null = null;
   let shellSurfaceHotkeyHandled = false;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
@@ -335,10 +353,12 @@
 
     pendingOpenRequestKey = requestKey;
     try {
-      await stopCurrentStackTerminal();
-      stackBrowserViewMode = 'files';
-      await openFolder(path);
       lastHandledOpenRequestKey = requestKey;
+      await requestEditorExit(async () => {
+        await stopCurrentStackTerminal();
+        stackBrowserViewMode = 'files';
+        await performOpenFolder(path);
+      });
     } finally {
       if (pendingOpenRequestKey === requestKey) {
         pendingOpenRequestKey = null;
@@ -347,6 +367,10 @@
   }
 
   async function openFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
+    await requestEditorExit(() => performOpenFolder(folderPath, _options));
+  }
+
+  async function performOpenFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
     closeMenus();
     prepareGitStateForFolderCommit(folderPath);
     stackState = openStackFolder(stackState, folderPath);
@@ -354,6 +378,10 @@
   }
 
   async function submitPathDraft() {
+    if (editorPath) {
+      await requestEditorExit(() => submitPathDraft());
+      return;
+    }
     clearPathSuggestions();
     const folderPath = pathDraft.trim();
     if (!folderPath) {
@@ -868,6 +896,10 @@
   }
 
   async function navigateHistory(direction: -1 | 1) {
+    if (editorPath) {
+      await requestEditorExit(() => navigateHistory(direction));
+      return;
+    }
     const nextState = navigateStackHistory(stackState, direction);
     prepareGitStateForFolderCommit(nextState.currentPath);
     stackState = nextState;
@@ -878,9 +910,19 @@
     closeMenus();
     if (entry.entryType === 'Folder' || isStackBrowsableArchiveEntry(entry)) {
       await openFolder(entry.path);
+    } else if (entry.entryType === 'File' && isStackBasicTextFile(entry.path)) {
+      editorPath = entry.path;
+      return;
     } else {
       await openStackItem(entry.path);
     }
+  }
+
+  function isStackBasicTextFile(path: string) {
+    const filename = path.split(/[\\/]/).at(-1) ?? '';
+    const extensionIndex = filename.lastIndexOf('.');
+    if (extensionIndex <= 0 || extensionIndex === filename.length - 1) return false;
+    return STACK_BASIC_TEXT_EXTENSIONS.has(filename.slice(extensionIndex + 1).toLocaleLowerCase());
   }
 
   async function openSelectedWithPicker() {
@@ -1134,10 +1176,57 @@
     }
   }
 
-  async function closeStackPopupFromSurface() {
-    await stopCurrentStackTerminal();
-    stackBrowserViewMode = 'files';
-    await hideStackPopup();
+  function handleEditorDirtyChange(dirty: boolean) {
+    editorDirty = dirty;
+  }
+
+  function requestEditorClose(dirty: boolean) {
+    editorDirty = dirty;
+    void requestEditorExit(() => {
+      focusDetailsGrid();
+    });
+  }
+
+  function dismissEditor() {
+    const viewport = resetBasicTextEditorViewport({ scrollTop: detailsBodyScrollTop, height: detailsBodyHeight });
+    detailsBodyScrollTop = viewport.scrollTop;
+    detailsBodyHeight = viewport.height;
+    editorPath = null;
+    editorDirty = false;
+  }
+
+  async function requestEditorExit(action: () => void | Promise<void>) {
+    const request = beginBasicTextEditorExit(pendingEditorExit, Boolean(editorPath), editorDirty, action, dismissEditor);
+    pendingEditorExit = request.state;
+    if (request.completion) {
+      await request.completion;
+      return;
+    }
+    if (!request.accepted) return;
+    editorExitFocusOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
+
+  function cancelEditorExit() {
+    pendingEditorExit = cancelPendingEditorExit(pendingEditorExit);
+  }
+
+  async function confirmEditorExit() {
+    const pending = takePendingEditorExit(pendingEditorExit);
+    pendingEditorExit = pending.state;
+    const action = pending.action;
+    if (!action) return;
+    dismissEditor();
+    await action();
+  }
+
+  function closeStackPopupFromSurface() {
+    void requestEditorExit(async () => {
+      await stopCurrentStackTerminal();
+      stackBrowserViewMode = 'files';
+      await hideStackPopup();
+    }).catch((error) => {
+      console.error('Failed to hide stack popup', error);
+    });
   }
 
   async function openSelectedFolderInVscode() {
@@ -1441,7 +1530,8 @@
     return {
       ...menu,
       width: rect.width,
-      submenuMaxHeight: maxHeight
+      submenuMaxHeight: maxHeight,
+      submenuTop: Math.max(0, triggerTop - rect.top)
     };
   }
 
@@ -1466,6 +1556,23 @@
 
   function contextSubmenuMaxHeightCss(menu: StackContextMenuPlacement) {
     return `${Math.max(0, Math.round(menu.submenuMaxHeight ?? menu.maxHeight ?? availableContextMenuHeight()))}px`;
+  }
+
+  function contextSubmenuTopCss(menu: StackContextMenuPlacement) {
+    return `${Math.max(0, Math.round(menu.submenuTop ?? 0))}px`;
+  }
+
+  async function handleRowMenuKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      closeMenus();
+      return;
+    }
+    if (event.key !== 'ArrowRight' || !(event.target as HTMLElement).closest('.submenu-trigger')) {
+      return;
+    }
+    event.preventDefault();
+    await tick();
+    rowSubmenuPanelElement?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
   }
 
   function focusDetailsGrid() {
@@ -1512,6 +1619,21 @@
     }
     await tick();
     emitVisibleRowsWindowChanged();
+  }
+
+  async function pinCurrentFolderToQuickBar() {
+    closeMenus();
+    if (!currentPath) {
+      return;
+    }
+
+    try {
+      await pinStackFolder(currentPath);
+      errorMessage = '';
+    } catch (error) {
+      console.error('Failed to pin current stack folder', error);
+      errorMessage = operationErrorMessage(error, 'Pin unavailable');
+    }
   }
 
   function handleStackSearchKeydown(event: KeyboardEvent) {
@@ -2026,9 +2148,7 @@
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) return;
-    void hideStackPopup().catch((error) => {
-      console.error('Failed to hide stack popup from hotkey', error);
-    });
+    void closeStackPopupFromSurface();
   }
 
   function isEditableKeyTarget(target: EventTarget | null) {
@@ -2039,7 +2159,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (gitStatusPopupOpen || isEditableKeyTarget(event.target)) {
+    if (editorPath || gitStatusPopupOpen || isEditableKeyTarget(event.target)) {
       return;
     }
 
@@ -2321,6 +2441,7 @@
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled={!hasSelection} onClick={() => void deleteSelected()}><MaterialSymbolIcon name="delete" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="New folder" tooltip="New folder" disabled={!currentPath} onClick={beginCreateFolder}><MaterialSymbolIcon name="create_new_folder" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Reveal selected item" tooltip="Reveal selected item" disabled={!selectedEntry} onClick={() => void revealSelected()}><MaterialSymbolIcon name="preview" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Pin to quick bar" tooltip="Pin to quick bar" disabled={!currentPath} onClick={() => void pinCurrentFolderToQuickBar()}><MaterialSymbolIcon name="add_location" /></MeltActionButton>
       <div class="stack-search">
         <MaterialSymbolIcon name="search" />
         <div class="stack-search-input-wrapper">
@@ -2378,7 +2499,9 @@
       <MeltActionButton onClick={cancelInlineEditor}>Cancel</MeltActionButton>
     </form>
   {/if}
-  {#if gitStatusPopupOpen}
+  {#if editorPath}
+    <StackTextEditor path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} />
+  {:else if gitStatusPopupOpen}
     <StackGitPanel
       folderPath={currentPath}
       initialStatus={gitStatus}
@@ -2498,41 +2621,41 @@
   {/if}
   {#if rowMenu}
     <div
-      class="context-menu"
-      style={`left:${rowMenu.x}px;top:${rowMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(rowMenu)};--stack-context-menu-left:${rowMenu.x}px;--stack-context-menu-top:${rowMenu.y}px;--stack-context-menu-width:${contextMenuWidthCss(rowMenu)};--stack-context-submenu-max-height:${contextSubmenuMaxHeightCss(rowMenu)}`}
-      role="menu"
-      tabindex="-1"
+      class="context-menu-shell"
+      style={`left:${rowMenu.x}px;top:${rowMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(rowMenu)};--stack-context-menu-left:${rowMenu.x}px;--stack-context-menu-top:${rowMenu.y}px;--stack-context-menu-width:${contextMenuWidthCss(rowMenu)};--stack-context-submenu-max-height:${contextSubmenuMaxHeightCss(rowMenu)};--stack-context-submenu-top:${contextSubmenuTopCss(rowMenu)}`}
+      role="none"
       bind:this={rowMenuElement}
       on:click|stopPropagation
       on:contextmenu|stopPropagation
-      on:keydown={(event) => event.key === 'Escape' && closeMenus()}
-      on:scroll={() => void positionOpenMenus()}
+      on:keydown={(event) => void handleRowMenuKeydown(event)}
     >
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</MeltActionButton>
-      <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
-        <MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</MeltActionButton>
-        <div class="context-menu context-submenu-panel" role="menu">
-          {#each openWithSuggestions as app (app.id)}
-            <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</MeltActionButton>
-          {/each}
-          <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</MeltActionButton>
+      <div class="context-menu context-menu-scroll" role="menu" tabindex="-1" on:scroll={() => void positionOpenMenus()}>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</MeltActionButton>
+        <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
+          <MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</MeltActionButton>
         </div>
+        <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('here')}>Extract here</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder')}>Extract to folder</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('here', 'sevenZip')}>Extract here with 7-Zip</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder', 'sevenZip')}>Extract to folder with 7-Zip</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
+        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</MeltActionButton>
       </div>
-      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('here')}>Extract here</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder')}>Extract to folder</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('here', 'sevenZip')}>Extract here with 7-Zip</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder', 'sevenZip')}>Extract to folder with 7-Zip</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</MeltActionButton>
+      <div bind:this={rowSubmenuPanelElement} class="context-menu context-submenu-panel" role="menu">
+        {#each openWithSuggestions as app (app.id)}
+          <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</MeltActionButton>
+        {/each}
+        <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</MeltActionButton>
+      </div>
     </div>
   {/if}
 
@@ -2563,6 +2686,10 @@
 
   {#if deleteConfirmation}
     <StackConfirmDialog title={deleteConfirmation.title} message={deleteConfirmation.message} confirmLabel="Delete" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={detailsGrid} onCancel={cancelDeleteConfirmation} onConfirm={() => void confirmDeleteSelection()} />
+  {/if}
+
+  {#if pendingEditorExit}
+    <StackConfirmDialog title="Discard unsaved draft?" message="Your changes will be lost." confirmLabel="Discard" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={editorExitFocusOrigin} onCancel={cancelEditorExit} onConfirm={() => void confirmEditorExit()} />
   {/if}
 
   <button

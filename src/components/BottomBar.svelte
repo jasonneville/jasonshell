@@ -69,13 +69,20 @@
     type TaskPreviewHoverEnter,
     TASK_PREVIEW_HIDE_REQUEST_EVENT,
     type TaskPreviewHideRequest,
+    acknowledgeTaskGalleryTransition,
+    shouldCancelTaskGalleryClose,
+    shouldDeferTaskGalleryClose,
     taskWindowActionLabel,
     taskWindowLabel
   } from '../lib/taskbarUi';
   import {
+    clearTaskGalleryClickSuppressionOnPointerDown,
+    pendingTaskGalleryPointer,
     pendingTaskbarTilePointer,
+    resolveTaskGalleryPointerRelease,
     resolveTaskbarTilePointerRelease,
-    shouldSuppressTaskbarTileClick
+    shouldSuppressTaskbarTileClick,
+    shouldSuppressTaskGalleryClick
   } from '../lib/taskbarTilePointer';
   import {
     activateTaskWindow,
@@ -134,6 +141,7 @@
   let taskGroupDragElement: HTMLElement | null = null;
   let taskGroupDragRects: ReturnType<typeof taskGroupRects> = [];
   let pendingTaskWindowHwnd: string | null = null;
+  let pendingTaskGalleryGroupKey: string | null = null;
   let suppressClickTaskWindowHwnd: string | null = null;
   let suppressClickTaskGalleryGroupKey: string | null = null;
   let taskGalleryOpenTimer: number | null = null;
@@ -142,6 +150,7 @@
   let taskStripWidth = 0;
   let taskGalleryOpenGroupKey: string | null = null;
   let taskGalleryOpenNonce: string | null = null;
+  let taskGalleryClickTransitionNonce: string | null = null;
   let taskGalleryOpenAnchor: { left: number; width: number } | null = null;
   let taskStripEl: HTMLDivElement | null = null;
   let quickLaunchPanelOpen = false;
@@ -635,6 +644,7 @@
     const nonce = taskGalleryOpenNonce;
     taskGalleryOpenGroupKey = null;
     taskGalleryOpenNonce = null;
+    taskGalleryClickTransitionNonce = null;
     taskGalleryOpenAnchor = null;
     if (!nonce) return;
     await hideTaskGalleryNative(nonce).catch((error) => {
@@ -654,6 +664,7 @@
     }
     taskGalleryOpenGroupKey = group.key;
     taskGalleryOpenNonce = nonce;
+    taskGalleryClickTransitionNonce = focusGallery ? nonce : null;
     taskGalleryOpenAnchor = rect ? { left: rect.left, width: rect.width } : null;
     try {
       await showTaskGalleryNative({
@@ -670,6 +681,7 @@
       if (taskGalleryOpenNonce === nonce) {
         taskGalleryOpenGroupKey = null;
         taskGalleryOpenNonce = null;
+        taskGalleryClickTransitionNonce = null;
         taskGalleryOpenAnchor = null;
       }
       console.error(`Failed to show task gallery for ${group.key}`, error);
@@ -689,6 +701,7 @@
     cancelTaskGalleryOpen();
     cancelTaskGalleryClose();
     if (taskGalleryOpenGroupKey !== groupKey) return;
+    if (shouldDeferTaskGalleryClose(taskGalleryClickTransitionNonce, taskGalleryOpenNonce)) return;
     taskGalleryCloseTimer = window.setTimeout(() => {
       taskGalleryCloseTimer = null;
       if (taskGalleryOpenGroupKey === groupKey) void closeTaskGallery();
@@ -769,6 +782,7 @@
     taskGroupDragElement = null;
     taskGroupDragRects = [];
     pendingTaskWindowHwnd = null;
+    pendingTaskGalleryGroupKey = null;
   }
   function cancelTaskGroupPointerDrag() {
     releaseTaskGroupPointerCapture();
@@ -782,6 +796,11 @@
       return;
     }
     cancelTaskGalleryOpen();
+    suppressClickTaskGalleryGroupKey = clearTaskGalleryClickSuppressionOnPointerDown(
+      suppressClickTaskGalleryGroupKey,
+      event.button,
+      taskGroupDisplay(group) === 'capsule'
+    );
     const target = event.currentTarget as HTMLElement;
     draggingGroupKey = group.key;
     dropTargetGroupKey = group.key;
@@ -792,6 +811,11 @@
     taskGroupDragOriginalOrder = taskWindowGroups.map((item) => item.key);
     taskGroupDragElement = target;
     taskGroupDragRects = taskGroupRects();
+    pendingTaskGalleryGroupKey = pendingTaskGalleryPointer(
+      event.button,
+      group.key,
+      taskGroupDisplay(group) === 'capsule'
+    );
     // Capture immediately so crossing a neighbor before the drag threshold does not drop rightward moves.
     captureTaskGroupPointer(event.pointerId);
   }
@@ -827,6 +851,11 @@
       pendingTaskWindowHwnd,
       taskGroupDragStarted
     );
+    const galleryReleaseResult = resolveTaskGalleryPointerRelease(
+      pendingTaskGalleryGroupKey,
+      taskGroupDragStarted
+    );
+    const galleryAnchor = taskGroupDragElement;
     if (taskGroupDragStarted && draggingGroupKey) {
       applyTaskGroupPointerPlacement(event.clientX);
       taskGroupOrder = taskbarGroupOrderFromDisplacement(
@@ -839,11 +868,22 @@
     releaseTaskGroupPointerCapture();
     resetTaskGroupPointerDrag();
     suppressClickTaskWindowHwnd = releaseResult.suppressClickHwnd;
-    suppressClickTaskGalleryGroupKey = didDrag ? releasedGroupKey : null;
+    suppressClickTaskGalleryGroupKey = galleryReleaseResult.suppressClickGroupKey
+      ?? (didDrag ? releasedGroupKey : null);
     if (releaseResult.activateHwnd) {
       const taskWindow = openWindows.find((item) => item.hwnd === releaseResult.activateHwnd);
       if (taskWindow) {
         void toggleWindow(taskWindow);
+      }
+    }
+    if (galleryReleaseResult.openGroupKey) {
+      const galleryGroup = resolveTaskGalleryOpenGroup(galleryReleaseResult.openGroupKey);
+      if (galleryGroup) {
+        if (taskGalleryOpenGroupKey === galleryGroup.key) {
+          void closeTaskGallery();
+        } else {
+          void openTaskGallery(galleryGroup, galleryAnchor, true);
+        }
       }
     }
   }
@@ -864,9 +904,17 @@
   function handleTaskGalleryClick(group: TaskWindowGroup, event: MouseEvent) {
     event.stopPropagation();
     cancelTaskGalleryOpen();
-    if (suppressClickTaskGalleryGroupKey === group.key) {
-      event.preventDefault();
+    const hasMatchingSuppression = suppressClickTaskGalleryGroupKey === group.key;
+    const shouldSuppress = shouldSuppressTaskGalleryClick(
+      suppressClickTaskGalleryGroupKey,
+      group.key,
+      event.detail
+    );
+    if (hasMatchingSuppression) {
       suppressClickTaskGalleryGroupKey = null;
+    }
+    if (shouldSuppress) {
+      event.preventDefault();
       return;
     }
     if (taskGalleryOpenGroupKey === group.key) {
@@ -1056,6 +1104,7 @@
       if (event.payload.nonce && event.payload.nonce !== taskGalleryOpenNonce) return;
       taskGalleryOpenGroupKey = null;
       taskGalleryOpenNonce = null;
+      taskGalleryClickTransitionNonce = null;
       taskGalleryOpenAnchor = null;
     }));
 
@@ -1063,9 +1112,16 @@
       void refreshLauncherSections();
     }));
 
-    registerAsyncUnlistener(listen<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, () => {
+    registerAsyncUnlistener(listen<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, (event) => {
       clearPreviewHideTimer();
+      if (!shouldCancelTaskGalleryClose(event.payload, taskGalleryOpenNonce)) return;
       cancelTaskGalleryClose();
+      if (event.payload.source === 'gallery') {
+        taskGalleryClickTransitionNonce = acknowledgeTaskGalleryTransition(
+          taskGalleryClickTransitionNonce,
+          event.payload.nonce
+        );
+      }
     }));
 
     registerAsyncUnlistener(listen<TaskPreviewHideRequest>(TASK_PREVIEW_HIDE_REQUEST_EVENT, (event: { payload: TaskPreviewHideRequest }) => {

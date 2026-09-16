@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::{fs, io::Read};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,16 +38,18 @@ pub(crate) use auth::{
     CallerAuthError, StackCommandAuth,
 };
 pub use models::{
-    PinnedStackFolder, ShowStackPopupRequest, StackFolderPage, StackGitBranchRequest,
-    StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest, StackGitCommitFiles,
-    StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff, StackGitDiffRequest,
-    StackGitIgnorePathRequest, StackGitLog, StackGitLogRequest, StackGitOperationResult,
-    StackGitRevertRequest, StackGitStageRequest, StackGitStashFileDiff,
+    PinnedStackFolder, ShowStackPopupRequest, StackBasicTextFile, StackFolderPage,
+    StackGitBranchRequest, StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest,
+    StackGitCommitFiles, StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff,
+    StackGitDiffRequest, StackGitIgnorePathRequest, StackGitLog, StackGitLogRequest,
+    StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest, StackGitStashFileDiff,
     StackGitStashFileDiffRequest, StackGitStashFiles, StackGitStashFilesRequest,
     StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
     StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
     StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
+
+const STACK_BASIC_TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
 pub use terminal::{
     StackTerminalPollResult, StackTerminalRenameRequest, StackTerminalResizeRequest,
     StackTerminalSessionSnapshot, StackTerminalStartRequest, StackTerminalStopRequest,
@@ -388,6 +391,186 @@ pub fn read_stack_folder(
         offset,
         limit.unwrap_or(paging::DEFAULT_PAGE_LIMIT),
     )
+}
+
+#[tauri::command]
+pub async fn read_stack_basic_text_file(
+    window: WebviewWindow,
+    path: String,
+) -> Result<StackBasicTextFile, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::READ_STACK_BASIC_TEXT_FILE,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+
+    tauri::async_runtime::spawn_blocking(move || read_stack_basic_text_file_blocking(&path))
+        .await
+        .map_err(|_| "Text file read task failed".to_string())?
+}
+
+fn read_stack_basic_text_file_blocking(path: &str) -> Result<StackBasicTextFile, String> {
+    read_stack_basic_text_file_with_open_hook(path, || {})
+}
+
+fn read_stack_basic_text_file_with_open_hook(
+    path: &str,
+    after_open: impl FnOnce(),
+) -> Result<StackBasicTextFile, String> {
+    let candidate = paths::resolve_stack_path_candidate(path);
+    let mut file = open_stack_basic_text_file(&candidate)?;
+    after_open();
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Text file metadata is unavailable".to_string())?;
+    if !metadata.file_type().is_file() || is_reparse_point(&metadata) {
+        return Err("Text file target is not a regular file".to_string());
+    }
+    if metadata.len() > STACK_BASIC_TEXT_FILE_MAX_BYTES {
+        return Err("Text file exceeds the 1 MiB limit".to_string());
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.by_ref()
+        .take(STACK_BASIC_TEXT_FILE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Text file could not be read".to_string())?;
+    if bytes.len() as u64 > STACK_BASIC_TEXT_FILE_MAX_BYTES {
+        return Err("Text file exceeds the 1 MiB limit".to_string());
+    }
+    if bytes.contains(&0) {
+        return Err("Text file contains embedded NUL data".to_string());
+    }
+    let byte_length = bytes.len() as u64;
+    let content =
+        String::from_utf8(bytes).map_err(|_| "Text file is not valid UTF-8".to_string())?;
+    Ok(StackBasicTextFile {
+        path: stack_basic_text_file_final_path(&file, &candidate)?,
+        content,
+        byte_length,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn open_stack_basic_text_file(path: &Path) -> Result<fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    options
+        .open(path)
+        .map_err(|_| "Text file could not be opened".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_stack_basic_text_file(path: &Path) -> Result<fs::File, String> {
+    let before = fs::symlink_metadata(path).map_err(|_| "Text file is unavailable".to_string())?;
+    if before.file_type().is_symlink() || !before.file_type().is_file() {
+        return Err("Text file target is not a regular file".to_string());
+    }
+    let file = fs::File::open(path).map_err(|_| "Text file could not be opened".to_string())?;
+    let after = fs::symlink_metadata(path).map_err(|_| "Text file is unavailable".to_string())?;
+    if after.file_type().is_symlink() || !same_file_identity(&before, &after, &file)? {
+        return Err("Text file target changed while opening".to_string());
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn same_file_identity(
+    before: &fs::Metadata,
+    after: &fs::Metadata,
+    file: &fs::File,
+) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let opened = file
+        .metadata()
+        .map_err(|_| "Text file metadata is unavailable".to_string())?;
+    Ok(before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && after.dev() == opened.dev()
+        && after.ino() == opened.ino())
+}
+
+#[cfg(all(not(target_os = "windows"), not(unix)))]
+fn same_file_identity(
+    _before: &fs::Metadata,
+    _after: &fs::Metadata,
+    _file: &fs::File,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(target_os = "windows")]
+fn stack_basic_text_file_final_path(file: &fs::File, _candidate: &Path) -> Result<String, String> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFinalPathNameByHandleW(
+            file: *mut c_void,
+            path: *mut u16,
+            length: u32,
+            flags: u32,
+        ) -> u32;
+    }
+
+    let mut path = vec![0u16; 32_768];
+    // SAFETY: handle remains owned/live for call; buffer is writable and length-matched.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle(),
+            path.as_mut_ptr(),
+            path.len() as u32,
+            0,
+        )
+    } as usize;
+    if length == 0 || length >= path.len() {
+        return Err("Text file identity is unavailable".to_string());
+    }
+    path.truncate(length);
+    let value =
+        String::from_utf16(&path).map_err(|_| "Text file identity is unavailable".to_string())?;
+    Ok(paths::stack_display_path_string(&value))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn stack_basic_text_file_final_path(file: &fs::File, candidate: &Path) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let handle_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        return fs::canonicalize(handle_path)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|_| "Text file identity is unavailable".to_string());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        candidate
+            .canonicalize()
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|_| "Text file identity is unavailable".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_attributes() & 0x400 != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
 }
 
 #[tauri::command]
@@ -1747,19 +1930,155 @@ mod tests {
         available_destination_path, backup_corrupt_pin_store, clipboard_mode_from_drop_effect,
         copy_dir, move_path_with_rename, native_drag_mechanism, next_new_text_document_path,
         open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
-        paths_match_for_unpin, read_stack_folder_page, read_stack_folder_page_with_session,
-        reorder_pins_by_paths, resolve_stack_alias_with_profile, resolve_stack_item_icons_batch,
+        paths_match_for_unpin, read_stack_basic_text_file_blocking,
+        read_stack_basic_text_file_with_open_hook, read_stack_folder_page,
+        read_stack_folder_page_with_session, reorder_pins_by_paths,
+        resolve_stack_alias_with_profile, resolve_stack_item_icons_batch,
         resolve_stack_item_icons_for_paths, resolve_stack_item_icons_for_paths_async,
         stack_file_attributes_from_bits, stack_folder_warning, stack_item_from_path,
         validate_child_name, validate_stack_git_remote_url, windows_explorer_reveal_launch_plan,
         windows_explorer_reveal_select_arg, windows_explorer_reveal_show_mode, ClipboardMode,
         PinnedStackFolder, ShowStackPopupRequest, StackClipboard, StackItem,
-        WindowsExplorerRevealShowMode,
+        WindowsExplorerRevealShowMode, STACK_BASIC_TEXT_FILE_MAX_BYTES,
     };
     use std::fs;
     use std::io;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
+
+    #[test]
+    fn basic_text_file_read_returns_utf8_and_exact_byte_length() {
+        let root = temp_test_dir("basic-text-valid");
+        let path = root.join("hello.txt");
+        fs::write(&path, "hello 🦀").expect("write fixture");
+
+        let result =
+            read_stack_basic_text_file_blocking(&path.to_string_lossy()).expect("read valid text");
+
+        assert_eq!(result.content, "hello 🦀");
+        assert_eq!(result.byte_length, 10);
+        assert_eq!(
+            result.path,
+            super::paths::normalize_existing_path(&path.to_string_lossy()).unwrap()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_read_rejects_oversize_before_content_output() {
+        let root = temp_test_dir("basic-text-oversize");
+        let path = root.join("large.txt");
+        fs::write(
+            &path,
+            vec![b'a'; STACK_BASIC_TEXT_FILE_MAX_BYTES as usize + 1],
+        )
+        .expect("write fixture");
+
+        let error = read_stack_basic_text_file_blocking(&path.to_string_lossy()).unwrap_err();
+
+        assert_eq!(error, "Text file exceeds the 1 MiB limit");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_read_accepts_exact_size_limit() {
+        let root = temp_test_dir("basic-text-exact-limit");
+        let path = root.join("exact.txt");
+        fs::write(&path, vec![b'a'; STACK_BASIC_TEXT_FILE_MAX_BYTES as usize])
+            .expect("write fixture");
+
+        let result = read_stack_basic_text_file_blocking(&path.to_string_lossy())
+            .expect("read exact-limit text");
+
+        assert_eq!(result.byte_length, STACK_BASIC_TEXT_FILE_MAX_BYTES);
+        assert_eq!(
+            result.content.len(),
+            STACK_BASIC_TEXT_FILE_MAX_BYTES as usize
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_read_rejects_symlink() {
+        let root = temp_test_dir("basic-text-symlink");
+        let target = root.join("target.txt");
+        let link = root.join("link.txt");
+        fs::write(&target, "linked secret").expect("write fixture");
+        create_file_symlink(&target, &link).expect("create symlink fixture");
+
+        let error = read_stack_basic_text_file_blocking(&link.to_string_lossy()).unwrap_err();
+
+        assert!(!error.contains("linked secret"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_read_never_follows_replacement_after_open() {
+        let root = temp_test_dir("basic-text-open-race");
+        let requested = root.join("requested.txt");
+        let original = root.join("original.txt");
+        let linked = root.join("linked.txt");
+        fs::write(&requested, "original text").expect("write original fixture");
+        fs::write(&linked, "linked secret").expect("write linked fixture");
+
+        let result =
+            read_stack_basic_text_file_with_open_hook(&requested.to_string_lossy(), || {
+                fs::rename(&requested, &original).expect("rename opened fixture");
+                create_file_symlink(&linked, &requested).expect("replace path with symlink");
+            });
+
+        match result {
+            Ok(file) => assert_eq!(file.content, "original text"),
+            Err(error) => assert!(!error.contains("linked secret")),
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_read_rejects_invalid_utf8_nul_and_directories() {
+        let root = temp_test_dir("basic-text-invalid");
+        let invalid_utf8 = root.join("invalid.txt");
+        let nul = root.join("embedded-nul.txt");
+        fs::write(&invalid_utf8, [0xff]).expect("write invalid UTF-8 fixture");
+        fs::write(&nul, b"before\0after").expect("write NUL fixture");
+
+        assert_eq!(
+            read_stack_basic_text_file_blocking(&invalid_utf8.to_string_lossy()).unwrap_err(),
+            "Text file is not valid UTF-8"
+        );
+        assert_eq!(
+            read_stack_basic_text_file_blocking(&nul.to_string_lossy()).unwrap_err(),
+            "Text file contains embedded NUL data"
+        );
+        assert_eq!(
+            read_stack_basic_text_file_blocking(&root.to_string_lossy()).unwrap_err(),
+            "Text file target is not a regular file"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_test_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "jasonshell-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("create temp fixture directory");
+        path
+    }
+
+    #[cfg(windows)]
+    fn create_file_symlink(target: &Path, link: &Path) -> io::Result<()> {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+
+    #[cfg(unix)]
+    fn create_file_symlink(target: &Path, link: &Path) -> io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
 
     #[test]
     fn stack_git_remote_url_validation_allows_only_safe_browser_urls() {

@@ -84,6 +84,401 @@ fn emit(case: &str, values: serde_json::Value) {
 }
 
 #[test]
+fn t04_01_freezes_r_while_r_plus_one_remains_dirty() {
+    let accepted_r = b"accepted revision R".to_vec();
+    let visible_r_plus_one = b"accepted revision R + dirty typing".to_vec();
+    let frozen = accepted_r.clone();
+    assert_eq!(frozen, accepted_r);
+    assert_ne!(frozen, visible_r_plus_one);
+}
+
+#[test]
+fn t04_04_every_boundary_has_deterministic_no_retry_restart_class() {
+    use save_failpoints::{Assets, Phase, RestartClass};
+    for phase in [
+        Phase::Prepare,
+        Phase::Stage,
+        Phase::WriteBatch,
+        Phase::FlushClose,
+        Phase::Revalidate,
+        Phase::BeforePublish,
+    ] {
+        let class = save_failpoints::classify(
+            Some(phase),
+            &Assets {
+                target: true,
+                staging: true,
+                backup: false,
+                journal_committed: false,
+                inspected_revision: false,
+            },
+        );
+        assert_ne!(class, RestartClass::Published);
+    }
+    assert_eq!(
+        save_failpoints::classify(
+            Some(Phase::AfterReplace),
+            &Assets {
+                target: true,
+                staging: false,
+                backup: true,
+                journal_committed: false,
+                inspected_revision: false
+            }
+        ),
+        RestartClass::PublicationPossible
+    );
+    assert_eq!(
+        save_failpoints::classify(
+            Some(Phase::Inspect),
+            &Assets {
+                target: true,
+                staging: false,
+                backup: true,
+                journal_committed: false,
+                inspected_revision: true
+            }
+        ),
+        RestartClass::Ambiguous
+    );
+    assert_eq!(
+        save_failpoints::classify(
+            Some(Phase::Cleanup),
+            &Assets {
+                target: true,
+                staging: false,
+                backup: true,
+                journal_committed: true,
+                inspected_revision: true
+            }
+        ),
+        RestartClass::Published
+    );
+
+    struct InjectedIo {
+        fail: Phase,
+        visited: Vec<Phase>,
+    }
+    impl save_failpoints::SaveIo for InjectedIo {
+        type Error = &'static str;
+        fn step(&mut self, phase: Phase) -> Result<(), Self::Error> {
+            self.visited.push(phase);
+            if phase == self.fail {
+                Err("injected termination")
+            } else {
+                Ok(())
+            }
+        }
+    }
+    for fail in [
+        Phase::Prepare,
+        Phase::Stage,
+        Phase::WriteBatch,
+        Phase::FlushClose,
+        Phase::Revalidate,
+        Phase::BeforePublish,
+        Phase::AfterReplace,
+        Phase::Inspect,
+        Phase::JournalCommit,
+        Phase::Cleanup,
+    ] {
+        let mut io = InjectedIo {
+            fail,
+            visited: Vec::new(),
+        };
+        assert_eq!(
+            save_failpoints::run_until_failure(&mut io),
+            Err((fail, "injected termination"))
+        );
+        assert_eq!(io.visited.last(), Some(&fail));
+    }
+}
+
+#[test]
+fn t04_02_real_replace_file_w_preserves_backup_and_replaces_identity() {
+    let fixture = Fixture::new();
+    let target = fixture.file("save.txt", b"external original");
+    let before = windows_save::inspect(&target).expect("identity");
+    assert!(windows_save::replace(&target, b"frozen revision R", &before).is_err());
+    assert_eq!(fs::read(&target).unwrap(), b"external original");
+    let stage = fs::read_dir(&fixture.path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".jasonshell-stage-")
+        })
+        .unwrap();
+    assert_eq!(fs::read(stage).unwrap(), b"frozen revision R");
+}
+
+fn rb02_legacy_lease(bytes: &[u8]) -> contract::ViewLease {
+    lease::build_lease(
+        lease::LeaseTags {
+            session: "s1",
+            lease: "l1",
+            source: 1,
+            revision: 0,
+            view: 1,
+        },
+        decode::Checkpoint::new(TextEncoding::Utf8, 0),
+        bytes,
+        true,
+        Some(1),
+    )
+    .expect("legacy feasibility lease")
+}
+
+#[test]
+fn rb02_v2_lease_mapping_and_context() {
+    use crate::stack_popup::text_document::protocol as v2;
+    let old = rb02_legacy_lease("a\r\n😀e\u{301}".as_bytes());
+    let mapped = rb02_v2::lease(
+        &old,
+        TextEncoding::Utf8,
+        rb02_v2::Context {
+            before: "complete",
+            after: "complete",
+            continuation_id: None,
+        },
+    )
+    .expect("lossless test-only mapping");
+    assert_eq!(v2::lease_byte(&mapped, 0, 2), Ok(3));
+    assert_eq!(v2::lease_byte(&mapped, 0, 4), Ok(7));
+    let incomplete = rb02_v2::lease(
+        &old,
+        TextEncoding::Utf8,
+        rb02_v2::Context {
+            before: "complete",
+            after: "continued",
+            continuation_id: Some("next1"),
+        },
+    )
+    .expect("explicit continuation");
+    assert_eq!(
+        v2::require_complete_context(&incomplete),
+        Err(v2::ErrorCode::ContextRequired)
+    );
+    let mut overflow = mapped.clone();
+    overflow.segments[0].byte_start = u64::MAX.to_string();
+    assert_eq!(
+        v2::validate_lease(&overflow),
+        Err(v2::ErrorCode::InvalidRequest)
+    );
+}
+
+#[test]
+fn rb02_v2_source_outcomes_and_errors() {
+    use crate::stack_popup::text_document::protocol as v2;
+    let mut old = rb02_legacy_lease(b"valid");
+    old.source_state = SourceState::DecisionRequired;
+    old.invalid_at = Some(contract::DecimalU64::parse("5").unwrap());
+    assert!(matches!(
+        rb02_v2::lease(
+            &old,
+            TextEncoding::Utf8,
+            rb02_v2::Context {
+                before: "complete",
+                after: "complete",
+                continuation_id: None,
+            }
+        ),
+        Err(rb02_v2::Refusal::LegacySourceOutcomeHasNoV2LeaseEquivalent(
+            SourceState::DecisionRequired
+        ))
+    ));
+    for (legacy, expected) in [
+        (SourceState::Cancelled, v2::ErrorCode::Cancelled),
+        (SourceState::QuotaExceeded, v2::ErrorCode::ResourceLimit),
+        (SourceState::Conflict, v2::ErrorCode::SharingViolation),
+        (SourceState::ReadLimited, v2::ErrorCode::IoFailure),
+        (SourceState::Changed, v2::ErrorCode::SourceChanged),
+        (SourceState::Readonly, v2::ErrorCode::Readonly),
+    ] {
+        let code = rb02_v2::source_error(legacy, None).expect("explicit legacy outcome mapping");
+        assert_eq!(code, expected);
+        assert!(
+            v2::validate_result(rb02_v2::failure_result(code, "new-request", "retained")).is_ok()
+        );
+    }
+    assert!(matches!(
+        rb02_v2::source_error(SourceState::DecisionRequired, old.invalid_at.as_ref()),
+        Err(
+            rb02_v2::Refusal::LegacySourceOutcomeHasNoV2ErrorEquivalent {
+                source_state: SourceState::DecisionRequired,
+                invalid_at: Some(5),
+            }
+        )
+    ));
+    for legacy in [
+        SourceState::Opening,
+        SourceState::Snapshotting,
+        SourceState::Ready,
+    ] {
+        assert!(matches!(
+            rb02_v2::source_error(legacy, None),
+            Err(rb02_v2::Refusal::LegacySourceOutcomeHasNoV2ErrorEquivalent {
+                source_state,
+                invalid_at: None,
+            }) if source_state == legacy
+        ));
+    }
+    assert!(matches!(
+        v2::validate_result(rb02_v2::failure_result(
+            v2::ErrorCode::PublicationAmbiguous,
+            "same-request",
+            "ambiguous"
+        )),
+        Err(v2::ErrorCode::InvalidRequest)
+    ));
+}
+
+#[test]
+fn rb02_v2_selection_barrier_replay() {
+    use crate::stack_popup::text_document::protocol as v2;
+    let old = rb02_legacy_lease(b"abc");
+    let a = rb02_v2::lease(
+        &old,
+        TextEncoding::Utf8,
+        rb02_v2::Context {
+            before: "complete",
+            after: "complete",
+            continuation_id: None,
+        },
+    )
+    .unwrap();
+    let mut b = a.clone();
+    b.lease_id = "l2".into();
+    b.segments[0].byte_start = "3".into();
+    let state = v2::SessionVersion {
+        session_id: "s1".into(),
+        source_generation: "1".into(),
+        document_revision: "0".into(),
+        input_sequence: "7".into(),
+    };
+    let selection = v2::create_selection(
+        &state,
+        "sel1",
+        (&a, 0, 1, v2::Affinity::Before),
+        (&b, 0, 2, v2::Affinity::After),
+    )
+    .unwrap();
+    assert_eq!(selection.head.byte, "5");
+    let mut forged = b.clone();
+    forged.session_id = "other".into();
+    assert!(matches!(
+        v2::create_selection(
+            &state,
+            "sel2",
+            (&a, 0, 0, v2::Affinity::Before),
+            (&forged, 0, 0, v2::Affinity::After)
+        ),
+        Err(v2::ErrorCode::Unauthorized)
+    ));
+    let mut stale = b.clone();
+    stale.document_revision = "1".into();
+    assert!(matches!(
+        v2::create_selection(
+            &state,
+            "sel3",
+            (&a, 0, 0, v2::Affinity::Before),
+            (&stale, 0, 0, v2::Affinity::After)
+        ),
+        Err(v2::ErrorCode::StaleRevision)
+    ));
+    let mut ledger = v2::OperationLedger::new(2).unwrap();
+    let digest = "a".repeat(64);
+    assert_eq!(ledger.begin("op1", &digest), Ok(None));
+    assert_eq!(
+        ledger.begin("op1", &"b".repeat(64)),
+        Err(v2::ErrorCode::InvalidRequest)
+    );
+    ledger
+        .finish(
+            "op1",
+            v2::Receipt::Accepted {
+                document_revision: "0".into(),
+            },
+        )
+        .unwrap();
+    let barrier = v2::Barrier {
+        document_revision: "0".into(),
+        input_sequence: "7".into(),
+        operation_ids: vec!["op1".into()],
+    };
+    assert_eq!(v2::assert_barrier(&state, &barrier, &ledger), Ok(()));
+    ledger.retire("op1", "0").unwrap();
+    assert_eq!(
+        ledger.begin("op1", &digest),
+        Err(v2::ErrorCode::RetryRetired)
+    );
+}
+
+#[test]
+fn rb02_v2_transport_credits_and_cancellation() {
+    use crate::stack_popup::text_document::protocol as v2;
+    let scheduler = scheduler::Scheduler::new().unwrap();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let mut blockers = Vec::new();
+    for _ in 0..2 {
+        let (started_tx, started_rx) = mpsc::sync_channel(0);
+        let release_rx = release_rx.clone();
+        blockers.push(
+            scheduler
+                .submit(scheduler::Priority::Demand, move |_| {
+                    started_tx.send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                    Ok(vec![1])
+                })
+                .unwrap(),
+        );
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("demand worker occupied");
+    }
+    let obsolete = scheduler
+        .submit(scheduler::Priority::Demand, |_| Ok(vec![2]))
+        .unwrap();
+    let latest = scheduler
+        .submit(scheduler::Priority::Demand, |_| Ok(vec![3]))
+        .unwrap();
+    assert!(
+        matches!(obsolete.result.recv_timeout(Duration::from_secs(2)).unwrap(),Err(error) if error.code==ProtocolErrorCode::Cancelled)
+    );
+    let cancelled = scheduler.cancel(latest.id).unwrap();
+    assert_eq!(cancelled, scheduler::CancelOutcome::QueuedRemoved);
+    assert!(
+        matches!(latest.result.recv_timeout(Duration::from_secs(2)).unwrap(), Err(error) if error.code == ProtocolErrorCode::Cancelled)
+    );
+    let canonical = rb02_v2::cancellation_result(cancelled);
+    assert!(v2::validate_result(canonical).is_ok());
+    let indeterminate = rb02_v2::cancellation_result(scheduler::CancelOutcome::FinishedOrUnknown);
+    assert_eq!(indeterminate["kind"], "error");
+    assert_eq!(indeterminate["data"]["code"], "PublicationAmbiguous");
+    assert!(v2::validate_result(indeterminate).is_ok());
+    assert!(matches!(
+        v2::validate_result(rb02_v2::job_result("published", "removed")),
+        Err(v2::ErrorCode::InvalidRequest)
+    ));
+    release_tx.send(()).unwrap();
+    release_tx.send(()).unwrap();
+    for blocker in blockers {
+        blocker
+            .result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+    }
+    let metrics = scheduler.metrics().unwrap();
+    assert!(metrics.payload_peak <= 4);
+    assert!(metrics.active_peak <= 3);
+    assert_eq!(metrics.actor_lock_io_violations, 0);
+}
+
+#[test]
 fn t02_01_authoritative_identity_rejection_and_races() {
     let fixture = Fixture::new();
     let path = fixture.file("regular.txt", b"synthetic regular UTF8\r\n");

@@ -192,6 +192,7 @@ fn main() {
             stack_popup::end_stack_popup_focus_loss_hold,
             stack_popup::resize_stack_popup,
             stack_popup::read_stack_folder,
+            stack_popup::read_stack_basic_text_file,
             stack_popup::get_stack_git_status,
             stack_popup::open_stack_git_remote_url,
             stack_popup::stack_git_add_paths,

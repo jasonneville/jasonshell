@@ -36,6 +36,93 @@ export type CalendarMonthModel = {
   weeks: CalendarDayCell[][];
 };
 
+export type CalendarWheelNavigationState = {
+  accumulatedDelta: number;
+  direction: -1 | 0 | 1;
+  lastInputTime: number | null;
+  lastNavigationTime: number | null;
+};
+
+export type CalendarWheelNavigationInput = {
+  deltaX: number;
+  deltaY: number;
+  deltaMode: number;
+  timeStamp: number;
+};
+
+export type CalendarWheelNavigationResult = {
+  state: CalendarWheelNavigationState;
+  monthDelta: -1 | 0 | 1;
+  consumed: boolean;
+  preventDefault: boolean;
+};
+
+const CALENDAR_WHEEL_PIXEL_THRESHOLD = 100;
+const CALENDAR_WHEEL_LINE_PIXELS = 40;
+const CALENDAR_WHEEL_PAGE_PIXELS = 800;
+const CALENDAR_WHEEL_THROTTLE_MS = 500;
+const CALENDAR_WHEEL_IDLE_RESET_MS = 700;
+
+export function createCalendarWheelNavigationState(): CalendarWheelNavigationState {
+  return { accumulatedDelta: 0, direction: 0, lastInputTime: null, lastNavigationTime: null };
+}
+
+export function reduceCalendarWheelNavigation(
+  state: CalendarWheelNavigationState,
+  input: CalendarWheelNavigationInput
+): CalendarWheelNavigationResult {
+  const modeScale = input.deltaMode === 1
+    ? CALENDAR_WHEEL_LINE_PIXELS
+    : input.deltaMode === 2
+      ? CALENDAR_WHEEL_PAGE_PIXELS
+      : 1;
+  const deltaX = input.deltaX * modeScale;
+  const deltaY = input.deltaY * modeScale;
+
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY) || deltaY === 0 || Math.abs(deltaX) > Math.abs(deltaY)) {
+    return { state, monthDelta: 0, consumed: false, preventDefault: false };
+  }
+
+  const direction: -1 | 1 = deltaY > 0 ? 1 : -1;
+  const idleReset = state.lastInputTime !== null
+    && input.timeStamp - state.lastInputTime > CALENDAR_WHEEL_IDLE_RESET_MS;
+  const directionChanged = state.direction !== 0 && state.direction !== direction;
+  const baseAccumulation = idleReset || directionChanged ? 0 : state.accumulatedDelta;
+  const inCooldown = state.lastNavigationTime !== null
+    && input.timeStamp - state.lastNavigationTime < CALENDAR_WHEEL_THROTTLE_MS;
+
+  if (inCooldown) {
+    return {
+      state: { ...state, accumulatedDelta: 0, direction, lastInputTime: input.timeStamp },
+      monthDelta: 0,
+      consumed: true,
+      preventDefault: true
+    };
+  }
+
+  const accumulatedDelta = baseAccumulation + deltaY;
+  if (Math.abs(accumulatedDelta) < CALENDAR_WHEEL_PIXEL_THRESHOLD) {
+    return {
+      state: { ...state, accumulatedDelta, direction, lastInputTime: input.timeStamp },
+      monthDelta: 0,
+      consumed: true,
+      preventDefault: true
+    };
+  }
+
+  return {
+    state: {
+      accumulatedDelta: 0,
+      direction,
+      lastInputTime: input.timeStamp,
+      lastNavigationTime: input.timeStamp
+    },
+    monthDelta: direction,
+    consumed: true,
+    preventDefault: true
+  };
+}
+
 export function topBarIdentityState(
   pinnedPlaceCount: number,
   programCount: number,

@@ -182,6 +182,23 @@ extern "system" {
         required: *mut u32,
     ) -> i32;
     fn ConvertSidToStringSidW(sid: *const c_void, text: *mut *mut u16) -> i32;
+    fn GetNamedSecurityInfoW(
+        object: *const u16,
+        object_type: u32,
+        security_info: u32,
+        owner: *mut *mut c_void,
+        group: *mut *mut c_void,
+        dacl: *mut *mut c_void,
+        sacl: *mut *mut c_void,
+        descriptor: *mut *mut c_void,
+    ) -> u32;
+    fn ConvertSecurityDescriptorToStringSecurityDescriptorW(
+        descriptor: *const c_void,
+        revision: u32,
+        security_info: u32,
+        text: *mut *mut u16,
+        length: *mut u32,
+    ) -> i32;
 }
 #[link(name = "crypt32")]
 extern "system" {
@@ -217,7 +234,7 @@ pub(crate) fn wide(path: &Path) -> Result<Vec<u16>> {
     if value.len() > 32760 || value.contains(&0) {
         return Err(failure(
             ProtocolErrorCode::UnsupportedTarget,
-            "invalid path length or NUL",
+            "invalid path",
         ));
     }
     value.push(0);
@@ -530,6 +547,41 @@ pub(crate) fn free_space(path: &Path) -> Result<u64> {
     Ok(free)
 }
 pub(crate) fn private_directory(path: &Path) -> Result<()> {
+    let sid_text = current_user_sid()?;
+    let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid_text})")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut descriptor = ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(os_error());
+    }
+    let name = wide(path)?;
+    let security = SecurityAttributes {
+        length: std::mem::size_of::<SecurityAttributes>() as u32,
+        descriptor,
+        inherit: 0,
+    };
+    let created = unsafe { CreateDirectoryW(name.as_ptr(), &security) };
+    let error = std::io::Error::last_os_error();
+    unsafe {
+        LocalFree(descriptor);
+    }
+    if created == 0 {
+        return Err(io_failure(error));
+    }
+    Ok(())
+}
+
+pub(crate) fn current_user_sid() -> Result<String> {
     let mut raw_token = ptr::null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), 8, &mut raw_token) } == 0 {
         return Err(os_error());
@@ -564,35 +616,151 @@ pub(crate) fn private_directory(path: &Path) -> Result<()> {
         text
     }
     .map_err(|_| failure(ProtocolErrorCode::IoFailure, "invalid current-user SID"))?;
-    let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid_text})")
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
-    let mut descriptor = ptr::null_mut();
-    if unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            sddl.as_ptr(),
-            1,
-            &mut descriptor,
-            ptr::null_mut(),
-        )
-    } == 0
-    {
-        return Err(os_error());
+    Ok(sid_text)
+}
+
+/// Test-only recovery ACL policy: owner=current user; protected DACL; full-control
+/// directory ACEs only. Explicit allows are limited to user and SYSTEM. Inherited
+/// user/SYSTEM/Builtin Administrators ACEs are tolerated; every other allow fails.
+pub(crate) fn validate_private_recovery_sddl(sddl: &str, user_sid: &str) -> Result<()> {
+    let owner = sddl
+        .strip_prefix("O:")
+        .and_then(|rest| rest.split_once("G:").map(|(owner, _)| owner));
+    if owner != Some(user_sid) || !sddl.contains("D:P") {
+        return Err(failure(
+            ProtocolErrorCode::IoFailure,
+            "recovery ACL policy mismatch",
+        ));
     }
+
+    let mut user_allow = false;
+    let dacl = sddl
+        .split_once("D:P")
+        .map(|(_, dacl)| dacl)
+        .unwrap_or_default();
+    for body in dacl
+        .split('(')
+        .skip(1)
+        .filter_map(|ace| ace.split_once(')').map(|v| v.0))
+    {
+        let fields: Vec<_> = body.split(';').collect();
+        if fields.len() != 6 {
+            return Err(failure(
+                ProtocolErrorCode::IoFailure,
+                "recovery ACL policy mismatch",
+            ));
+        }
+        if fields[0] == "D" {
+            continue;
+        }
+        if fields[0] != "A" || fields[2] != "FA" {
+            return Err(failure(
+                ProtocolErrorCode::IoFailure,
+                "recovery ACL policy mismatch",
+            ));
+        }
+        let inherited = fields[1].contains("ID");
+        let flags_ok = fields[1] == "OICI" || fields[1] == "OICIID";
+        let principal_ok =
+            fields[5] == user_sid || fields[5] == "SY" || (inherited && fields[5] == "BA");
+        if !flags_ok || !principal_ok {
+            return Err(failure(
+                ProtocolErrorCode::IoFailure,
+                "recovery ACL policy mismatch",
+            ));
+        }
+        user_allow |= fields[5] == user_sid;
+    }
+    if !user_allow {
+        return Err(failure(
+            ProtocolErrorCode::IoFailure,
+            "recovery ACL policy mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn security_read_error() -> super::contract::ProtocolError {
+    failure(
+        ProtocolErrorCode::IoFailure,
+        "security descriptor read failed",
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn security_read_error_for_test(_status: u32) -> super::contract::ProtocolError {
+    security_read_error()
+}
+
+/// Reads owner/group/DACL through Win32. Failures never disclose the input path.
+pub(crate) fn security_sddl(path: &Path) -> Result<String> {
+    const SE_FILE_OBJECT: u32 = 1;
+    const OWNER_GROUP_DACL: u32 = 0x1 | 0x2 | 0x4;
     let name = wide(path)?;
-    let security = SecurityAttributes {
-        length: std::mem::size_of::<SecurityAttributes>() as u32,
-        descriptor,
-        inherit: 0,
+    let mut descriptor = ptr::null_mut();
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_GROUP_DACL,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut descriptor,
+        )
     };
-    let created = unsafe { CreateDirectoryW(name.as_ptr(), &security) };
-    let error = std::io::Error::last_os_error();
+    if status != 0 {
+        return Err(security_read_error());
+    }
+    let mut text = ptr::null_mut();
+    let mut length = 0;
+    let converted = unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor,
+            1,
+            OWNER_GROUP_DACL,
+            &mut text,
+            &mut length,
+        )
+    };
+    if converted == 0 {
+        let error = std::io::Error::last_os_error();
+        unsafe { LocalFree(descriptor) };
+        return Err(failure(
+            ProtocolErrorCode::IoFailure,
+            format!(
+                "security descriptor conversion failed (os={:?})",
+                error.raw_os_error()
+            ),
+        ));
+    }
+    let units = unsafe { std::slice::from_raw_parts(text, length as usize) };
+    let value = String::from_utf16(units.strip_suffix(&[0]).unwrap_or(units));
     unsafe {
+        LocalFree(text as *mut c_void);
         LocalFree(descriptor);
     }
-    if created == 0 {
-        return Err(io_failure(error));
+    value.map_err(|_| {
+        failure(
+            ProtocolErrorCode::IoFailure,
+            "security descriptor encoding invalid",
+        )
+    })
+}
+
+pub(crate) fn set_write_time(file: &File, value: u64) -> Result<()> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetFileTime(
+            file: Handle,
+            creation: *const u64,
+            access: *const u64,
+            write: *const u64,
+        ) -> i32;
+    }
+    if unsafe { SetFileTime(file.as_raw_handle(), ptr::null(), ptr::null(), &value) } == 0 {
+        return Err(os_error());
     }
     Ok(())
 }

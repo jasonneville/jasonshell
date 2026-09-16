@@ -2,13 +2,13 @@
 
 **Document ID:** STACK-TEXT-PLAN-2026-09-07  
 **Date:** 2026-09-07  
-**Status:** P00 policy packet passed on 2026-09-07 after explicit review; P01 passed on 2026-09-08 after independent `PhaseOneGateReview` final PASS for T01-01–T01-04 and Main's approval of the mandatory phase commit. The 2026-09-08 P02 handoff remains historical feasibility evidence; the current worktree P02 rerun is **In review** pending independent storage/security review, coordinator signoff, native cross-window authorization review, populated scale evidence, and P04 recovery-root proof. P03 is not accepted; the joined architecture gate remains blocked. P04–P11 remain Not started.
+**Status (updated 2026-09-16):** P00 policy and P01 v2 contract acceptance remain recorded; `stack-text-editor.v2` is canonical. P02 is **Accepted for canonical-v2 non-scale storage exit only** after technical review PASS, named independent storage/safety ACCEPT, named independent security/privacy ACCEPT, and coordinator ACCEPT against packet `P02/20260916-p02-rb02-nonscale-05`. This authorizes P04 entry only. P03 remains **Blocked**; P04 is eligible to start but has not passed; P05–P12 remain **Not started**. P04 owns recovery-root/saving/recovery-security proof. Populated scale remains post-landing P12 NFR-6 debt/risk. No scale result, huge-file readiness, recovery, product integration, or production success is claimed.
 **Owner:** Repository owner / implementation lead.  
 **Reviewers:** frontend, Rust/storage, Windows safety, QA/performance, and accessibility owners.  
 **Basis:** [Technical research and design review](stack-browser-quick-view-editor-research.md), with its FR-1–FR-12, NFR-1–NFR-9, AC-1–AC-12, and EC-1–EC-24 identifiers preserved.  
 **Current-behavior authority:** [`master_spec.md`](../master_spec.md). Proposed behavior here does not supersede current behavior until implemented and verified.
 
-**Reading guide:** Start with [worker instructions](#how-workers-execute-this-plan), [shared contracts](#api-contracts), and the [dependency graph](#acceptance-criteria-and-dependency-graph). Approve [Phase 00](#phase-00--policy-and-approval) before experiments. The critical early gates are [storage](#phase-02--stable-source-and-paged-storage-feasibility), [input/view](#phase-03--bounded-editor-view-feasibility), and [Windows save/recovery](#phase-04--windows-save-and-recovery-feasibility). Finish with [packaged qualification](#phase-10--packaged-performance-security-and-adversarial-qualification) and [release handoff](#phase-11--release-handoff-and-enablement).
+**Reading guide:** Start with [2026-09-15 Re-baseline](#2026-09-15-re-baseline), then [worker instructions](#how-workers-execute-this-plan), [shared contracts](#api-contracts), and the [dependency graph](#acceptance-criteria-and-dependency-graph). P00 policy approval is recorded; do not restart broad discovery. The critical remaining gates are [storage](#phase-02--stable-source-and-paged-storage-feasibility), [input/view](#phase-03--bounded-editor-view-feasibility), and [Windows save/recovery](#phase-04--windows-save-and-recovery-feasibility). Historical execution records retain their original revisions and results; they do not override the re-baseline.
 
 ## Context
 
@@ -18,12 +18,89 @@ The intended architecture is a **Rust-owned, disk-backed logical document with a
 
 This plan turns the research into worker-sized execution instructions. Read the research for rationale and primary-source evidence; use this document for sequence, ownership, deliverables, tests, and permission to advance. Plan confidence is sufficient for targeted feasibility work, not a promise that CodeMirror projection or universal Windows save exclusion will succeed. The research's approximately 75% architecture confidence remains unchanged until those experiments produce evidence.
 
-**Core completion means P00–P11 pass.** A passing experiment is not product completion. An optional convenience is not needed to declare core complete, but none of the required editing, huge-file, data-safety, or accessibility behavior may be deferred under that label.
+**Enabled landing requires P00–P11 except only populated scale evidence reassigned to P12. Full core acceptance means P00–P12 pass.** P12 debt forbids huge-file-readiness, NFR-6-pass, or unqualified production-success claims. No other editing, safety, authorization, privacy, recovery, input, or accessibility requirement is deferred.
+
+## 2026-09-15 Re-baseline
+
+**Decision ID:** STACK-TEXT-RB-2026-09-15. **Owner:** Planning/documentation lead; Integrator/coordinator owns future gate decisions. **Disposition:** Current planning baseline recorded; verification subgates below remain open. This is not implementation authorization, fresh runtime validation, reviewer signoff, or phase promotion.
+
+**User decision B — enabled landing with post-landing scale debt (2026-09-15):** User accepts shipping Quick Edit enabled before the multi-hour populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM runner completes. Only that scale campaign and NFR-6 acceptance/refutation move to P12. Canonical-v2 RB-02 compatibility/revalidation, fresh required non-scale P02 evidence, actual native authorization, independent storage/security/privacy review, coordinator disposition, P03 native IME/AT/giant-grapheme proof, P04 recovery-root proof, safe refusal, and all other gates remain pre-landing obligations. Landing must identify unresolved NFR-6 scale risk.
+
+**Precedence and scope:** This record and the current phase-status table govern the next handoff. P00 policies, FR/NFR/AC/EC identifiers, phase test recipes, budgets, and the dependency graph remain binding. Dated P01 v1, P02, P03, and original planning records below are preserved as historical evidence, including failures and old approval labels. Their words “current”, “accepted”, “draft”, and “next” describe their own wave only. Do not rewrite their artifacts or infer current acceptance from historical PASS counts.
+
+### RB-01 — Contract authority and evidence lineage
+
+| Boundary | Evidence anchor | Current interpretation |
+|---|---|---|
+| Editor source baseline | Editor commit `e00ceee` (2026-09-09); later HEAD work concerns unrelated Git/Quick Commands/task-gallery changes | Later shell work does not implement or promote the editor. |
+| Canonical future-facing contract | `src-tauri/src/stack_popup/text_document/protocol.rs:7`; `src/features/stack-browser/textEditorProtocol.ts:2`; [P01 v2 evidence, Scope and Contract](stack-text-editor-p01-v2-evidence.md) | `stack-text-editor.v2` governs future consumers. P01 v2 acceptance is recorded, not rerun here. |
+| Isolated P02 lineage | `src-tauri/src/stack_popup/text_document/feasibility/contract.rs:13-15`; `scripts/stack-text-editor/p02-run.mjs:69,379`; `tests/fixtures/stack-text-editor-protocol.json:4-5` | Base `stack-text-editor.v1` plus local `stack-text-editor.p02-feasibility.v2`; the local suffix is not canonical v2 compatibility. Sources remain debug/test-only. |
+| Latest recorded P02 run | 2026-09-09 revalidation below; `changelog.md` 2026-09-09 TOOL entries | 31 Rust PASS / 2 ignored; runner 20 PASS / 6 explicit BLOCK, including actual `stack-popup` authorization and `top-bar` rejection. Recorded results, not fresh validation or a phase pass. |
+| Current implementation boundary | `src-tauri/src/stack_popup/text_document/mod.rs`; P01 v2 evidence Scope | Only protocol and test/debug feasibility modules; no production editor IPC, document actor, file provider, UI, save/recovery engine, or CodeMirror product route. TypeScript contract has no production imports. |
+| P03 evidence boundary | Historical 2026-09-08 blocked handoff and T03-04/06/07/08 below | No current P03 projection experiment source is present. P01's isolated probe is not a replacement P03 harness or projection pass. |
+
+Line references identify inspected baseline locations, not immutable line numbers. The older v1 acceptance and draft-v2 language below is historical; it MUST NOT displace current canonical v2.
+
+### RB-02 — P02 compatibility/revalidation subgate (accepted, non-scale test-only)
+
+**2026-09-16 coordinator disposition:** `P02/20260916-p02-rb02-nonscale-05` records 25/25 executed checks passing, including four isolated canonical-v2 checks and actual WebviewWindow authorization, with nonzero discovery and exact source/fixture hashes. Native command `025` is present in `commands.json` and matches `matrix.json`. Technical review returned PASS; named independent storage/safety and security/privacy reviewers each returned ACCEPT; coordinator accepted canonical-v2 non-scale P02/RB-02 storage exit. P04 entry is authorized, but P04 recovery and six omitted P12/NFR-6 populated-scale rows remain open.
+
+**Preflight packet:** [`stack-text-editor-p02-rb02-contract-delta.md`](stack-text-editor-p02-rb02-contract-delta.md) records current delta analysis, artifact/hash limits, per-claim proposed dispositions, non-runnable v2 check targets, and ordered rerun handoff. It does not close this subgate or record reviewer/coordinator approval.
+
+**Owner:** Integrator/contract owner with Rust storage owner. **Required reviewers:** independent storage/safety and security/privacy reviewers; coordinator records disposition. P02 MUST NOT promote on v1 evidence alone.
+
+Before reuse or rerun, produce a **v1 → canonical v2 contract-delta table**. Each row MUST name old/new fields and semantics, actual producer/consumer paths, impacted T02/T03 claims, source/fixture hashes and original run IDs, proposed compatibility check, and reuse/rerun rationale. Cover at least lease mapping and bounds; `sourceState`/`invalidAt` outcomes; selections/ownership/expiry; incomplete grapheme context; input barriers/revisions/replay; errors/cancellation/publication; transport credits and resource limits. Unknown impact is not “unchanged”. This record requires that analysis; it does not claim to have completed it.
+
+Permitted decisions, made per evidence claim:
+
+- **REUSE ISOLATED:** Only when schema impact is demonstrably isolated from the measured storage behavior, the source/inputs/environment remain applicable, and original artifacts plus hashes are available for independent inspection. Supply fresh v2 boundary/consumer checks showing that any proposed seam preserves semantics and bounds. Reviewers must explicitly approve the isolation argument. Reused artifacts retain their v1/local-v2 labels; the new compatibility report links them rather than relabeling them.
+- **RERUN AFFECTED:** If mapping, validation, errors, ownership, scheduling, bounds, or any measured behavior changes, rerun all affected non-scale tests and native evidence against the reviewed v2-compatible test-only path. Preserve original outputs and failing cases; use a new run directory and exact source/fixture manifest. Route populated scale evidence to P12; an adapter is not evidence of isolation by itself.
+- **BLOCK / RETURN TO DESIGN:** Missing provenance, unavailable artifacts, unknown impact, semantic mismatch, or unsafe compatibility means no reuse/pass. Reconstruct reproducible evidence or return the conflicting guarantee to P00/P01; do not add a silent same-version shim, merely change revision strings, or weaken a budget/test to pass.
+
+**Acceptance:** Met for canonical-v2 non-scale P02/RB-02 only. Every delta and affected non-scale T02 claim has reviewed disposition and required observed evidence; discovery counts are nonzero, and skipped/ignored/P12 rows remain explicit. Technical review PASS, named independent storage/safety ACCEPT, named independent security/privacy ACCEPT, and coordinator ACCEPT are recorded. P04 recovery-root/saving/recovery-security remains a separate pre-landing obligation; populated multi-GiB/over-RAM proof remains unresolved P12 debt.
+
+### RB-03 — P03 remains blocked; contract repair is not projection proof
+
+Canonical v2 structurally addresses the v1 combined cross-lease selection gap through `create_stack_text_selection` and Rust test `combined_cross_lease_selection_checks_ownership_revision_direction` (`protocol.rs:219,1074`). That establishes a contract-level representation/validation path, not working cross-lease selection, mutation/export, history, IME, or AT in a mounted projection. Explicit incomplete grapheme context likewise does not solve bounded renderer continuation.
+
+**Owner:** Editor-engine/input-feasibility lead with QA/performance and accessibility/design owners. Before any current P03 pass claim, reproduce/reconstruct a **test-only P03 harness against canonical v2**. Recover historical source by verified provenance if available; otherwise record reconstruction explicitly, including missing artifacts. Record exact source/dependency versions, fixture seeds/hashes, commands, native runtime/input profiles, and test isolation. Preserve the original blocked record and rerun T03-01–T03-09; do not transfer historical partial PASS labels to new source.
+
+Required unresolved witnesses remain:
+
+- **T03-06:** Real combined cross-lease selection/mutation/export and undo/redo against the reference oracle; stale/released/expired ownership and delayed ACK/paging interleavings must reject safely without losing text.
+- **T03-04:** Actual non-Latin native IME composition/candidates in the editor input thread while an adjacent lease arrives; exactly one commit and sensible undo. Synthetic composition and Latin fallback do not pass.
+- **T03-07:** Retain/reproduce `a` + 20,000 combining acute accents: historical complete boundary 20,001 versus bounded boundary 16,384. Require correct giant-line/grapheme/bidi caret, selection and copy under unchanged bounded-memory/foreground budgets. A passing negative regression documenting failure is not gate closure; no fake newline, hidden whole-file buffer, or raised cap.
+- **T03-08:** Listening-capable human reviewer using actual WebView2 with NVDA/Narrator across leases/continuation; no skipped/duplicated speech/text, selection loss, or focus reset. DOM/automation/basic P01 accessibility evidence is insufficient.
+
+**Acceptance:** All T03-01–T03-09 have fresh v2 harness evidence and engine/accessibility reviewer signoff. Missing harness/native capability/human AT evidence or an unresolved counterexample keeps P03 Blocked and the architecture gate closed.
+
+### RB-04 — Architecture and product boundary
+
+The target remains the existing `stack-popup` content region alternating file grid/Git, eventually adding explicit Quick Edit in that same slot. Terminal belongs to the separate `terminal-panel`; no embedded CLI/terminal UI revival or Stack Browser terminal ownership assumption is permitted.
+
+P05/P06/P08 cannot start before the joined P02/P03/P04 architecture gate passes; their existing additional exit dependencies remain unchanged. P04 entry is now authorized by coordinator acceptance of the P02 **non-scale storage exit** (RB-02, T02-01–T02-05 except P12-owned populated scale, target/resource evidence, and named independent storage/safety and security/privacy signoffs). P04 itself is not passed. P04 recovery-root proof remains open: `snapshotComplete` is not `recoveryComplete`. P12 does not weaken or defer P04.
+
+**This request authorizes canonical documentation changes only.** No production or feasibility implementation, editor route/IPC/provider/actor, save/recovery engine, UI, source/script/test/manifest/Cargo/capability change, generated evidence update, phase commit, or terminal UI revival is included. Future experiments require a separate scoped handoff and must stay test-only; product implementation remains behind the hard gate.
+
+### RB-05 — Ordered next planning and verification handoff
+
+These are future actions, not executed work. Role assignments are responsibilities, not invented personal approvals. Each owner records commands/procedures, expected versus observed results, hashes/run IDs, reviewer identity, date, and explicit ACCEPT/REJECT/BLOCK in the phase evidence convention.
+
+| Order | Owner / action | Required evidence and acceptance | Reject / remain blocked when |
+|---|---|---|---|
+| 1 | Planning lead + Integrator: acknowledge RB-01 inventory, assign actual workers/reviewers and scope a separate test-only verification wave. | Handoff names canonical v2, isolated v1 P02, absent P03 harness, unchanged budgets/target slot and excluded production paths. | Any historical PASS becomes current by assertion; source/evidence ownership is unclear. |
+| 2 | Contract + storage owners: complete RB-02 delta table before selecting P02 reuse or reruns. | Independent reviewers approve per-claim REUSE ISOLATED / RERUN AFFECTED / BLOCK decisions with provenance and concrete v2 boundary test recipes. | Unmapped delta, unavailable evidence, revision relabel, or unproved consumer compatibility. |
+| 3 | QA/performance + storage owner: execute RB-02 v2 boundary checks and affected non-scale P02 tests/native probes. | T02 matrix, manifests, commands/exits, byte oracle, actual authorized/unauthorized windows; independent storage/security/privacy review and coordinator disposition. | Missing native/privacy review, zero discovery, unexplained non-scale failure, or unresolved compatibility; P02 remains In review. Populated scale belongs to P12. |
+| 4 | Frontend/input + QA/accessibility owners, after separate authorization: recover/reconstruct v2 P03 harness, reproduce failures, then execute T03-01–T03-09. This lane may run alongside step 3 once step 2 identifies shared-contract impact. | Harness provenance/isolation, oracle traces, withheld-read/ACK cases, giant combining/grapheme evidence, native IME and human AT signoff per RB-03. | Contract tests alone, missing harness, unobserved IME/AT, or unresolved T03-07 failure; P03 remains Blocked. |
+| 5 | Coordinator + Windows save/recovery owner: review bounded non-scale P02 storage exit and recovery debt; only then issue P04 handoff. | Entry decision lists accepted non-scale P02 evidence, P12 debt, and open recovery obligation. T04-01–T04-05 still prove R/R+1 bytes, publication races/failpoints, restart classification, private roots and retention. | Historical P02 PASS, unresolved RB-02/storage/native/security signoffs, snapshot=recovery claim, or unsafe publication loss. |
+| 6 | Integrator/coordinator + Product/review owner and independent gate reviewers: review joined packet. | Accept only when compatible non-scale P02 storage, P04 recovery, and all P03/P04 tests/signoffs close every pre-landing architecture obligation; record P12 debt. | Missing/BLOCK pre-landing evidence, native IME/AT gap, security/storage/coordinator gap, or recovery failure. |
+
+**Verification commands:** For a separately authorized wave, use the existing [P01 v2 reproduction](stack-text-editor-p01-v2-evidence.md#reproduction) and P02 runner as inspected at handoff. Capture `cargo test --manifest-path src-tauri/Cargo.toml stack_popup::text_document::feasibility -- --nocapture` as P02-lineage evidence only; it cannot certify v2 compatibility. RB-02 must specify additional affected tests and runner arguments before execution. No current runnable P03 command is claimed: step 4 must deliver an exact recipe with its reconstructed harness. Never rerun an absent historical command by guessing or overwrite an old evidence directory. Documentation-only hygiene is `node --test tests/changelogPolicyHygiene.test.mjs` plus scoped `git diff --check`; neither proves runtime feasibility.
 
 ## How workers execute this plan
 
 1. Read the current master spec, this plan, the cited research sections, and the actual files owned by the step. Resolve symbols/callers with the available language server before changing exported APIs. Source locations below are navigation guidance, not immutable line numbers.
-2. Check the phase's **entry dependencies** and assigned file ownership. Do not start a dependent phase against a failed or merely compiling prerequisite. P02/P03 may run concurrently; P04 depends only on P02. Their join is a hard architecture gate.
+2. Check the phase's **entry dependencies** and assigned file ownership. Do not start a dependent phase against a failed or merely compiling prerequisite. P02/P03 may run concurrently; P04 now has the separately accepted P02 non-scale storage-exit handoff under RB-02/RB-04. P04-owned recovery proof stays open until demonstrated. Their join remains a hard architecture gate.
 3. Take one `PNN-xx` step. Implement its stated output and failure behavior, not an inferred smaller feature. Write meaningful regression tests RED-first where practical; prove the consumer-visible behavior. A missing import or an unconditional “not implemented” assertion is not useful RED evidence.
 4. Use the phase's `TNN-xx` test recipes. They are planned tests, not existing commands or completed results. Keep unit/integration tests for plausible regressions; use executable experiments and packaged/manual scenarios for engine feasibility, timing, native focus, IME, and assistive technology. Do not generate source-string tests just to prove wiring.
 5. During a shared-worktree parallel wave, workers do **not** run overlapping formatters, builds, linters, or project-wide suites. The integration/QA owner validates the stable combined wave once; isolated focused RED/GREEN runs are allowed only when they cannot race shared generated output. `dist-tests` is shared generated output.
@@ -100,7 +177,7 @@ Names of new files are **proposed destinations**, not files created by this plan
 
 ## API Contracts
 
-P01 freezes the exact field-level schema before parallel workers code. The following semantic contract is already binding within this plan; P01 cannot alter it implicitly.
+Canonical `stack-text-editor.v2` is the current P01 field-level boundary; see RB-01/RB-02 and the P01 v2 evidence. The following semantic contract remains binding. Older frozen-v1 execution records are historical, not an alternative contract for new consumers.
 
 ### Message and coordinate contract
 
@@ -178,6 +255,7 @@ flowchart TD
   P08 --> P10
   P09 --> P10
   P10 --> P11[11 Release handoff]
+  P11 --> P12[12 Post-landing scale requalification]
 ```
 
 **Additional exit dependencies:** P06 can develop alongside P05 against the frozen contract, but P06 cannot pass without P05 and the actual Rust bridge. P08 can develop alongside P05/P06, but cannot pass without both. P09 may develop and evaluate completed UI portions while P07/P08 run, but its final exit requires both P07 and P08 so every final control/dialog is covered. P10 then retests the combined feature. A parallel start does not authorize a mocked integration gate.
@@ -185,17 +263,18 @@ flowchart TD
 | Phase | Current status | Promotion proof |
 |---|---|---|
 | P00 | Passed | T00-01/T00-02/T00-03 policy review PASS recorded 2026-09-07 by PolicyGateReview after the five bounded corrections; no runtime/filesystem proof implied. |
-| P01 | Passed | Corrected serial T01-01–T01-04 execution PASS, all seven repair findings closed, independent `PhaseOneGateReview` final PASS, and Main approval recorded below; the accepted P01 scope is committed before any dependent phase advances. |
-| P02 | In review | Historical 2026-09-08 feasibility evidence remains recorded below. Current 2026-09-09 worktree rerun passes the bounded small-corpus checks and the actual `stack-popup`/`top-bar` WebviewWindow probe, but does not establish populated multi-GiB/over-RAM scale evidence, independent storage/security review, coordinator signoff, or P04 recovery-root proof. |
-| P03 | Blocked | Bounded local editing demonstrated, but frozen v1 cannot express a combined cross-lease selection; combining-context counterexample fails; native non-Latin composition and human AT continuity remain unproved. No P06 promotion. |
-| P04 | Not started | Windows save/recovery failure and concurrency guarantees demonstrated, not assumed. |
+| P01 | Passed (v2 contract scope) | Current P01 v2 evidence records independent code/artifact/documentation acceptance. Older v1 gate/commit narratives remain historical; no later phase is promoted. |
+| P02 | Accepted — non-scale storage exit only | Technical PASS, named independent storage/safety ACCEPT, named independent security/privacy ACCEPT, and coordinator ACCEPT recorded against `P02/20260916-p02-rb02-nonscale-05`. P04 recovery-root/saving/recovery-security proof and P12 populated scale remain open; no product or huge-file PASS. |
+| P03 | Blocked | V2 structurally repairs the historical v1 selection gap, not actual projection behavior. No current P03 harness; RB-03 requires reproduction/reconstruction against v2 and all T03 evidence. Native IME/AT and the 20,000-combining-mark failure remain unresolved; no P06 promotion. |
+| P04 | Blocked | Packet 08 passes exact test-only recovery ACL allowlist/ownership/rights checks, bounded redacted ACL/path diagnostics, metadata, process-child restart, and simulated limiter evidence; native successful oplock, forced crash, real disk-full, complete retention, and named reviews remain open. |
 | P05 | Not started | Production byte model, index, history, authorization and scheduler pass. |
 | P06 | Not started | Actual slot/engine/IPC integration and persistent session behavior pass. |
 | P07 | Not started | Global navigation, search/replace and text clipboard pass. |
 | P08 | Not started | Save/Save As/Reload/disposition and durable recovery pass in actual app. |
 | P09 | Not started | Packaged design, ergonomics, reflow and accessibility workflows pass. |
-| P10 | Not started | All research acceptance scenarios and release budgets pass on supported matrix. |
-| P11 | Not started | Documentation, packaged enablement smoke, recovery-compatible handoff and owner acceptance. |
+| P10 | Not started | All pre-landing scenarios/budgets pass; P12-owned populated scale/NFR-6 proof remains explicitly open. |
+| P11 | Not started | Packaged enabled smoke, recovery-compatible handoff, owner acceptance, and explicit unresolved P12/NFR-6 risk. |
+| P12 | Not started | Post-landing populated multi-hour scale requalification accepts/refutes NFR-6; failure triggers scoped disablement and retained evidence. |
 
 ## Phase 00 — Policy and approval
 
@@ -482,6 +561,8 @@ Do not inherit the historical PASS labels.
 
 ### P01 contract implementation record — 2026-09-07
 
+> Historical v1-era record, including the draft-v2 paragraph below. Superseded for current contract/status by RB-01 and accepted P01 v2 evidence; original results and provenance remain unchanged.
+
 **Status:** **Passed.** The corrected serial P01 repair rerun completed on 2026-09-08 with T01-01–T01-04 execution results PASS. All seven repair contracts are closed, and fresh native/control compatibility evidence is recorded below. `PhaseOneGateReview` independently returned final PASS; Main approved promotion and the mandatory P01 phase commit. Historical failures, raw timing evidence and correction provenance remain preserved.
 
 **Accepted schema revision:** `stack-text-editor.v1`.
@@ -610,11 +691,11 @@ Prove that supported local files open before EOF with truthful source generation
 | T02-04 | **Given** BOM/no-BOM UTF-8, UTF-16LE/BE, non-BMP, CRLF block split, mixed newline, no final newline, and far invalid bytes; **when** chunk boundaries vary byte-by-byte; **then** compare decoded text, UTF-16 offsets, and bytes with a simple oracle. | Valid text/offsets match; CRLF counts once; untouched bytes stay identical; invalid tails remain explicitly marked. |
 | T02-05 | **Given** one blocked scan, rapid caret reads, obsolete scroll requests, and cancellation; **when** the scheduler receives them concurrently; **then** record order, queue limits, cancellation, and actor lock duration. | Interactive reads win, obsolete work coalesces, no unbounded queue forms, and no lock spans blocking I/O. |
 
-**Exit gate:** T02-01–T02-05, lease schema, target matrix, resource traces, and storage-safety reviewer sign-off. **Stop condition:** full snapshot/index is required before first edit, source bytes are mutable, invalid data is silently repaired, or memory scales with file size; return to P00/P01 and do not start P05.
+**Exit gate:** RB-02 compatibility/revalidation, T02-01–T02-05 non-scale evidence, canonical-v2-compatible lease semantics, target/resource evidence, actual native authorization, independent storage/security/privacy review, and coordinator disposition. Populated multi-hour scale evidence remains unpassed P12 debt. P04 recovery-root acceptance remains open. **Stop condition:** any non-scale case requires full snapshot/index before first edit, source bytes are mutable, invalid data is silently repaired, or configured bounds fail; return to P00/P01 and do not start P05.
 
 ### P02 execution and independent safety handoff — 2026-09-08
 
-**Historical handoff status: Accepted on 2026-09-08.** `PhaseTwoGateReview` independently returned final PASS for P02-01–P02-05/T02-01–T02-05 at the declared feasibility scope, and Main approved this phase-local commit. The current worktree rerun is recorded below as In review. P03 remains unaccepted; its detailed blocked handoff remains separate and does not enter this P02 snapshot.
+**Historical handoff status: Accepted on 2026-09-08.** `PhaseTwoGateReview` independently returned final PASS for P02-01–P02-05/T02-01–T02-05 at the declared feasibility scope, and Main approved this phase-local commit. The later 2026-09-09 rerun below was recorded as In review at that time; current coordinator acceptance is governed by the 2026-09-16 RB-02 record above and fresh packet section below. P03 remains unaccepted; its detailed blocked handoff remains separate and does not enter this P02 snapshot.
 
 | Step | Execution | Test | Execution evidence |
 |---|---|---|---|
@@ -624,18 +705,26 @@ Prove that supported local files open before EOF with truthful source generation
 | P02-04 | PASS | T02-04 PASS | Byte-split UTF-8/UTF-16LE/BE, BOM, scalar/CRLF/mixed-EOL, checkpoint, and invalid-tail comparisons against the independent byte oracle. |
 | P02-05 | PASS | T02-05 PASS | Fixed workers, separate background capacity, urgent reads, bounded credits, latest-seek coalescing, cancellation, and no blocking I/O under the actor lock in the isolated scheduler. |
 
-- **Scale evidence:** [`P02/20260908-storage-populated-02/matrix.json`](../test-results/stack-text-editor/P02/20260908-storage-populated-02/matrix.json), with exact argv/environment/exit/counts in `commands.json`, raw per-invocation stdout/stderr, fixture/source hashes in manifests, and measurements in `observations.json`. There were **23/23 passing focused invocations**, including ten populated scale cases, seed `305419896`, from 1 MiB through over-RAM giant-line/high-line-count files. The giant over-RAM source was **34,349,514,765 bytes** against **34,282,385,408 bytes physical RAM**; full edited SHA-256 matched the independent oracle. Its original/add/node/index cache peaks were 131,072/65,536/8,192/8,192 bytes, dirty evictions zero, native peak working set 13,606,912 bytes, and peak commitment 9,363,456 bytes. Private disk grew with the document rather than resident storage.
-- **Actual caller followup:** [`P02/20260908-native-caller-repair-1788862340945/matrix.json`](../test-results/stack-text-editor/P02/20260908-native-caller-repair-1788862340945/matrix.json), `native-caller-result.json`, source hashes, build logs, and `host-final-delayed.json`. The debug probe's canonical-path conversion had a retained RED then **1/1 GREEN** regression; the repair only moved validated evidence-root conversion to ordinary DOS syntax before the existing source opener, with no storage-policy change. The repaired packaged probe accepted the authorized window before any copy/index bytes and denied the unauthorized window before path disclosure. The large-storage core was not rerun after this probe-path-only repair; its unchanged core hashes are recorded.
-- **Independent review:** [`independent-safety-review.json`](../test-results/stack-text-editor/P02/20260908-native-caller-repair-1788862340945/independent-safety-review.json) records the storage-safety PASS recommendation, and `PhaseTwoGateReview` returned final PASS for P02-01–P02-05/T02-01–T02-05 at experiment scope. A surviving writable mapped view caused protected-open `SharingViolation`/OS 32 refusal; this does **not** prove a Read oplock independently excludes every mapped writer. The earlier blocking RW-oplock attempt and corrected refusal evidence remain retained.
+- **Scale evidence historical record:** Prior documentation cites `P02/20260908-storage-populated-02` and records 23/23 passing focused invocations plus scale measurements. That directory and its manifests/outputs are unavailable in this checkout; values cannot support current reuse or close RB-02.
+- **Actual caller followup historical record:** Prior documentation cites `P02/20260908-native-caller-repair-1788862340945` and records a 1/1 repaired packaged-probe regression. That directory and its manifests/outputs are unavailable in this checkout. Large-storage core was not rerun after the probe-path repair; no current reuse decision follows.
+- **Independent review historical record:** Prior documentation records a storage-safety PASS recommendation and phase-local review. Cited review artifacts are unavailable in this checkout and cannot be independently inspected or used as current approval. The recorded mapped-view refusal does **not** prove a Read oplock independently excludes every mapped writer.
 - **Limits:** fixed local NTFS/default-stream scope; no cross-account ACL signoff or key-erasure measurement; scheduler not yet the production actor; `snapshotComplete` is not `recoveryComplete`, which remains false pending P04. The frozen P01 base `stack-text-editor.v1` remains the envelope revision, while P02's additive `ViewLease.sourceState`/`invalidAt` fields use feasibility-local revision `stack-text-editor.p02-feasibility.v2`; this is a P02 contract amendment, not an unchanged v1 claim. No source-mutation/save/recovery guarantee or P05 implementation follows from this result.
 
-### Current P02 worktree revalidation — 2026-09-09
+### Latest recorded P02 worktree revalidation — 2026-09-09
+
+> Recorded execution, not rerun on 2026-09-15. Its v1 envelope is isolated feasibility lineage, not the current P01 contract; RB-02 governs compatibility and evidence reuse.
 
 **Status: In review.** The current debug/test-only worktree implementation passes 31 focused Rust tests (`2 ignored`) and the serial Windows P02 runner records 20 PASS plus 6 explicit BLOCK outcomes. The runner includes every P02 test, emits the target-policy matrix and explicit STOP recommendation, and records the exact native authorization result. The actual probe reports `authorizationMode=actual-webview-window`, `actualAuthorizedWindow=stack-popup`, `actualUnauthorizedWindow=top-bar`, rejection of existing and missing unauthorized targets, zero rejected content disclosure, and feasibility-local revision `stack-text-editor.p02-feasibility.v2`. Unrequested populated scale gates remain BLOCK. No production editor command/provider or save/recovery integration is enabled.
 
 - **Public source-state outcomes:** `Cancelled`, `QuotaExceeded`, `Conflict`, and `ReadLimited` are distinct from `DecisionRequired`; quota failure, cancellation, source conflict, and unreadable-source paths must not collapse to generic `Failed`.
 - **Policy boundary:** ordinary local NTFS regular unnamed default-stream single-link files are the only proven editable target class. Read-only, hard-linked, reparse, named-stream, device, UNC/remote/cloud/offline, sparse/compressed/encrypted/special targets and writer modes without exclusion remain refused or unsupported. Pre-existing writable mapped views remain refused.
-- **Schema boundary:** P01's frozen `stack-text-editor.v1` envelope remains intact; P02's additive lease fields are identified by `stack-text-editor.p02-feasibility.v2` in the fixture, runner matrix, environment, and native probe result.
+- **Schema boundary (P02 lineage only):** The isolated feasibility base remains `stack-text-editor.v1`; additive lease fields are identified by `stack-text-editor.p02-feasibility.v2` in the fixture, runner matrix, environment, and native probe result. Current canonical P01 is `stack-text-editor.v2`; no equivalence or promotion follows without RB-02.
+
+### Fresh P02/RB-02 non-scale evidence — 2026-09-16
+
+Run `test-results/stack-text-editor/P02/20260916-p02-rb02-nonscale-05/` is the current manifested evidence root. All 25 executed checks pass: RB-02 canonical-v2 4/4, T02/control/oracle 20/20, and actual native authorization 1/1. Discovery found 26 tests, including four canonical-v2 checks, with zero missing descriptors. Actual `stack-popup` authorization and `top-bar` rejection cover existing and missing targets without rejected-open content disclosure. Native command `025` records exit 0 and matching stdout/stderr references. Native output records `snapshotComplete=true` and `recoveryComplete=false`.
+
+Packet-generation status was **IN_REVIEW**. Subsequent technical review PASS, named independent storage/safety ACCEPT, named independent security/privacy ACCEPT, and coordinator ACCEPT close P02/RB-02 for canonical-v2 non-scale storage only. P04 recovery-root/saving/recovery-security proof remains entirely P04-owned. Six unexecuted populated scale outcomes remain explicit `P12/NFR-6` debt and do not become accepted.
 
 ## Phase 03 — Bounded editor-view feasibility
 
@@ -686,11 +775,15 @@ A lease/segment mapping note, adversarial corpus report, traces for composition/
 
 `T03-01`–`T03-09` pass, including native WebView2 IME/AT evidence in `test-results/stack-text-editor/P03/<run-id>/`; the engine owner and accessibility reviewer sign the report. Any impossible IME, long-line, bidi/grapheme, selection/undo, or AT invariant blocks P06.
 
+**Fresh canonical-v2 reconstruction — 2026-09-16:** `P03/20260916-p03-reconstruction-01` records seven passing bounded test-model checks. T03-01/02/03/05/06/09 automated oracles pass within frozen limits. T03-07 establishes a file-backed complete 20,001-UTF-16-unit combining boundary, bounded selection/copy, and no synthetic newline without importing `harness.mjs`, but remains **BLOCK** because mounted CodeMirror caret/bidi interaction was not exercised. T03-04 and T03-08 remain **BLOCK** pending actual WebView2 non-Latin candidate composition and named human NVDA/Narrator sessions. No phase promotion or production-readiness claim.
+
 **Stop condition**
 
 Do not proceed if the adapter needs fake content, synthetic line breaks, a resident whole-file model, or an inaccessible hidden buffer. Escalate the failed corpus and architecture alternative through the P00/P01 decision process.
 
 ### P03 execution, repair, and blocked handoff — 2026-09-08
+
+> Historical v1 projection execution; no current P03 projection source is present. Keep these results/counterexamples recognizable. RB-03 supersedes the old next-decision wording: v2 fixes selection representation, while real projection, IME, AT and giant-grapheme proof remain blocked.
 
 **Status: Blocked, not approved.** The dedicated projection worker implemented and exercised the real bounded-text adapter against the frozen `stack-text-editor.v1` contract. No fake text, synthetic document newline, full-document CodeMirror buffer, production provider, P06 wiring, or schema change substitutes for a missing invariant.
 
@@ -730,7 +823,7 @@ Prove streaming freeze-revision save, `ReplaceFileW` backup publication, metadat
 
 **Owner (role):** Windows save/recovery owner with Rust storage owner and security/privacy reviewer.
 
-**Entry dependencies:** P02 Stable-source and paged-storage feasibility; parallel remaining P03.
+**Entry dependencies:** Met for P02. Coordinator explicitly accepted the canonical-v2 non-scale stable-source and paged-storage exit after technical PASS and named independent storage/safety and security/privacy ACCEPT reviews against `P02/20260916-p02-rb02-nonscale-05`; P04 may enter and may run parallel with remaining P03. P04 owns the still-open recovery-root, saving/publication, retention, and recovery-security proof; no complete-recovery claim follows from P02 acceptance.
 
 **Owned/proposed paths**
 
@@ -756,7 +849,7 @@ Prove streaming freeze-revision save, `ReplaceFileW` backup publication, metadat
 | T04-04 | **Given** every failpoint and process termination; **when** restart scans target/staging/backup/journal; **then** classify `not-started`, `staged`, `publication-possible`, `published`, or `ambiguous`. | Classification and safe disposition are deterministic; AlreadyPublished differs from Cancelled; no timer cleanup or blind retry. |
 | T04-05 | **Given** incomplete/complete encrypted backing, disk-full, corrupt journal, and stale temp marker text; **when** recovery scans; **then** inspect reconstruction, ACL/encryption, logs, retention, and quota. | Incomplete is limited recovery; complete reconstructs bytes; corrupt/old assets quarantine/retain by policy; marker text is absent from diagnostics and dirty data is not evicted. |
 
-**Exit gate:** T04-01–T04-05, failpoint/support matrices, recovery schema, privacy review, and Windows save reviewer sign-off. **Stop condition:** truncation, silent conflict overwrite, unexplained publication, plaintext private journal, or unsupported guarantee reported as success blocks P05/P08.
+**Exit gate:** T04-01–T04-05, failpoint/support matrices, recovery schema, privacy review, and Windows save reviewer sign-off. Only P12-owned populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM scale evidence is deferred; recovery, lifecycle, integrity, budget-control, native, privacy, and safe-refusal proof remain pre-landing requirements. **Stop condition:** truncation, silent conflict overwrite, unexplained publication, plaintext private journal, or unsupported guarantee reported as success blocks P05/P08.
 
 ## Phase 05 — Production document kernel and indexing
 
@@ -774,7 +867,7 @@ Turn approved P02/P03/P04 contracts into production Rust session storage without
 - Proposed tests: colocated Rust modules or new `src-tauri/tests/document_kernel.rs`; exact placement is not an existing-file claim.
 - Existing `src-tauri/src/stack_popup/{models.rs,auth.rs}` are references only. Do not edit `main.rs`, `contracts.rs`, `auth.rs`, frontend wrappers, UI, or dependencies here.
 
-**Required outputs:** typed production schemas/decimal wire conversion; differential/property harness versus simple in-memory oracle; versioned paged index/checkpoint format; compaction/reclamation/quota policy; 10×-size and actor-lock report.
+**Required outputs:** typed production schemas/decimal wire conversion; differential/property harness versus simple in-memory oracle; versioned paged index/checkpoint format; compaction/reclamation/quota policy; bounded non-scale resource and actor-lock report. P12 owns the populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM and 10× scale report.
 
 | Step | Implement | Acceptance criterion | Required tests |
 |---|---|---|---|
@@ -782,7 +875,7 @@ Turn approved P02/P03/P04 contracts into production Rust session storage without
 | P05-02 | Implement bounded range read, lease issuance, ordered edit batches, idempotent retry, stale rejection, and normalized anchor response. Blocking read/index/save runs outside actor lock. | One in-flight batch plus bounded speculative queue preserves text; duplicate operation acknowledges once; stale reply cannot install a lease. | T05-02 |
 | P05-03 | Implement byte-faithful UTF-8/UTF-16/BOM/CRLF/invalid-tail metrics, giant-line continuation, no-final-newline behavior, and checkpoints. | Oracle mapping/serialization matches; continuation never adds logical newlines; unknown lines remain explicit. | T05-03 |
 | P05-04 | Implement stable anchors/selections, session undo/redo, deleted-range and inserted-payload retention, and save-root references. Hydration/index updates are not history. | Global selection/history survive projection replacement/unloaded ranges; compaction cannot delete history/save-reachable data. Undo back to a saved root is clean despite a new revision; redo away is dirty. | T05-04 |
-| P05-05 | Implement paged sparse index/search coverage, demand scheduling, compaction/reclamation, cancellation, and quotas across all stores/cache/pending bytes. | 10× originals do not proportionally grow resident text; ResourceLimit preserves reconstructable dirty state. | T05-05 |
+| P05-05 | Implement paged sparse index/search coverage, demand scheduling, compaction/reclamation, cancellation, and quotas across all stores/cache/pending bytes. | Configured bounds hold under bounded non-scale pressure; ResourceLimit preserves reconstructable dirty state. Populated 10× scaling is P12 evidence. | T05-05 |
 
 | Test | Method and setup | Passing result |
 |---|---|---|
@@ -790,9 +883,9 @@ Turn approved P02/P03/P04 contracts into production Rust session storage without
 | T05-02 | **Given** lease, edits A/B, delayed/out-of-order acknowledgements, duplicate A, stale base, and new lease; **when** replies arrive adversarially; **then** compare authoritative text and pending queue. | A/B are ordered once; duplicate A is idempotent; stale edit reconciles without loss; lease does not overtake pending mapping. |
 | T05-03 | **Given** P02 corpus, giant no-newline and combining/RTL segments; **when** random chunk splits and leases decode/map/save; **then** compare bytes/newlines/UTF-16 offsets/continuations to oracle. | Valid content matches; invalid tails remain marked; no synthetic newline or replacement character enters storage. |
 | T05-04 | **Given** cross-boundary edits/selection, undo/redo, frozen save root, and compaction; **when** hydration/index/reclamation interleave; **then** replay against reference editor. | Document, anchors, and history match; hydration is not undoable; required roots/payloads remain readable. Undo to the saved content clears dirty state without a whole-file comparison, while redo and pending input mark it dirty. |
-| T05-05 | **Given** high-line-count/1 GiB/10× fixtures, blocked scans, cancellation, and low disk quota; **when** reads/index/compaction/edits run; **then** record RAM/disk/lock/queue/reconstruction. | Bounds and priority hold; cancellation is truthful; quota failure does not fabricate exact metadata or drop dirty state. |
+| T05-05 | **Given** bounded non-scale high-line-count fixtures, blocked scans, cancellation, and low disk quota; **when** reads/index/compaction/edits run; **then** record RAM/disk/lock/queue/reconstruction. | Bounds and priority hold; cancellation is truthful; quota failure does not fabricate exact metadata or drop dirty state. Populated 1 GiB/10× proof is deferred only to P12. |
 
-**Exit gate:** T05-01–T05-05, schemas, differential corpus report, resource/lock traces, and Rust kernel review. **Stop condition:** whole-file renderer model, dropped pending text, history loss, exact claim for unknown metrics, or long I/O under actor lock blocks P06/P07/P08.
+**Exit gate:** T05-01–T05-05, schemas, differential corpus report, bounded non-scale resource/lock traces, and Rust kernel review. Only P12-owned populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM and 10× scale evidence is deferred; bounded kernel, integrity, history, cancellation, quota/budget-control, authorization, and actor-lock checks remain pre-landing. **Stop condition:** whole-file renderer model, dropped pending text, history loss, exact claim for unknown metrics, or long I/O under actor lock blocks P06/P07/P08.
 
 ## Phase 06 — Stack Browser workbench and editing integration
 
@@ -841,7 +934,7 @@ Production slot integration, controller state machine, lifecycle/disposition mat
 
 **Exit gate**
 
-`T06-01`–`T06-09` pass, P05 bridge/index artifacts are accepted, and the workbench owner plus Integrator sign the integration matrix with packaged WebView2 evidence.
+`T06-01`–`T06-09` pass, P05 bridge/index artifacts are accepted, and the workbench owner plus Integrator sign the integration matrix with packaged WebView2 evidence. Only P12-owned populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM scale evidence is deferred; lifecycle, integrity, budget-control, native, privacy, IME/AT, and safe-refusal proof remain pre-landing requirements.
 
 **Stop condition**
 
@@ -935,7 +1028,7 @@ Integrate proven publication with the production kernel/session lifecycle. Save 
 | T08-05 | **Given** low quota, blocked SMB-like I/O and cancel during scan/stage/publication; **when** save/recovery/index pressure and cancellation occur; **then** inspect status, bytes, dirty state and resource metrics. | No truncation/dropped text; queued work cancels within the approved budget; AlreadyPublished/ambiguous outcomes are accurate. Visible content and safe recovery remain without a dependency on P07 clipboard/export. |
 | T08-06 | **Given** stored A, draft B and an incomplete protected snapshot; **when** external open is requested/cancelled, snapshot fails/completes or Save first fails; **then** observe backing references, source restrictions and launch. After a permitted launch, let the external editor write C. | No launch occurs before a safe restriction handoff; Cancel/failed Save opens nothing implicitly. Completed backing retains B while compatible external writing is allowed; C produces the defined conflict rather than corrupting B. No implicit plaintext draft temp is created. |
 
-**Exit gate:** T08-01–T08-06, recovery schema/integrity/privacy review, P06 lifecycle evidence, Windows save review, and all P05 gates. **Stop condition:** dirty-session loss, unconfirmed replacement, incomplete recovery claimed complete, private leakage, unsafe quota eviction, or cancellation that misreports publication blocks P10 and reopens affected P06/P09 gates; independent P07 work may continue only if its own entry guarantees still hold.
+**Exit gate:** T08-01–T08-06, recovery schema/integrity/privacy review, P06 lifecycle evidence, Windows save review, and all P05 pre-landing gates. Only P12-owned populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM scale evidence is deferred; recovery, lifecycle, integrity, budget-control, native, privacy, IME/AT, and safe-refusal proof remain pre-landing requirements. **Stop condition:** dirty-session loss, unconfirmed replacement, incomplete recovery claimed complete, private leakage, unsafe quota eviction, or cancellation that misreports publication blocks P10 and reopens affected P06/P09 gates; independent P07 work may continue only if its own entry guarantees still hold.
 
 ## Phase 09 — Design-system, ergonomics, and accessibility qualification
 
@@ -994,26 +1087,26 @@ Block P10 if labels/roles/focus/errors/skip link fail, forced colors or 320px hi
 **Owner:** QA/performance owner, with independent Windows safety and accessibility reviewers.  
 **Entry dependencies:** P07, P08 and P09 passed; P05/P06 actual-integration exits passed; no unresolved architecture-gate defect.  
 **Owned/proposed paths:** Editor-focused tests/fixtures, existing measurement/smoke conventions and run artifacts. Integration fixes return to their owning module/phase.  
-**Required outputs:** Research AC-1–AC-12 evidence matrix, complete test results, release traces, resource/latency summary, regression report and independent review disposition.  
+**Required outputs:** Research AC-1–AC-12 evidence matrix, with only P12-owned populated NFR-6 scale evidence marked open; complete results for every other AC and pre-landing requirement; release traces, bounded non-scale resource/latency summary, regression report and independent review disposition.
 **Trace:** All FR/NFR/AC/EC; research G5.
 
 | Step | Implement | Acceptance criterion | Required tests |
 |---|---|---|---|
-| P10-01 | Exercise the full end-to-end acceptance matrix with the final combined feature. Run byte-oracle/property regressions, concurrency scheduling, native failure injection and crash/restart coverage on the actual supported filesystem/target matrix. | Every research AC has observed passing evidence; all 24 EC cases have a supported outcome or approved explicit refusal. Save output/recovery is verified by exact bytes, not merely successful return codes. | T10-01 |
-| P10-02 | Measure release-mode first open, sustained input, paging, long-line operations and other-shell interference across the corpus, warm/cold states and reference/constrained hardware. Tune measured bottlenecks without weakening semantic guarantees. | NFR-1–NFR-6 hold under approved conditions, including editable prefix while EOF/index/snapshot remain pending. The report includes failures/outliers and global resource use. | T10-02 |
+| P10-01 | Exercise the full end-to-end acceptance matrix with the final combined feature. Run byte-oracle/property regressions, concurrency scheduling, native failure injection and crash/restart coverage on the actual supported filesystem/target matrix. | Every research AC has observed passing evidence except only P12-owned populated NFR-6 scale evidence within AC-12; all other AC-12 evidence and all 24 EC cases have a supported outcome or approved explicit refusal. Save output/recovery is verified by exact bytes, not merely successful return codes. | T10-01 |
+| P10-02 | Measure release-mode behavior across required non-scale corpus and hardware. | NFR-1–NFR-5 and non-populated-scale resource controls hold. NFR-6 populated scale acceptance remains explicitly open for P12. | T10-02 |
 | P10-03 | Run adversarial authorization/content/privacy/target testing and independent storage/security review. Probe every content mutation/export command, not only Save. Inspect packaged dependency/worker loading and test-only surface exclusion. | Unauthorized surfaces/forged ranges/session IDs cannot disclose or change files. Content remains inert; private recovery data and temp ownership satisfy policy; no test-only bypass ships. | T10-03 |
 | P10-04 | Re-run final native keyboard, clipboard/drop, IME/AT, theme/forced-color/reflow and popup lifecycle workflows after all commands/dialogs are present. Exercise file-grid and Git regressions plus top-bar/search/terminal activity under load. | P07/P08 additions do not invalidate P03/P09 feasibility or existing shell semantics; dirty state survives hide/switch/reopen. | T10-04 |
 | P10-05 | Run the stable integrated repository validation once, triage failures without suppressing assertions, and assemble a gate packet reviewed by someone other than the implementation owner. | Touched behavior has no unexplained failure; pre-existing unrelated blockers remain explicitly distinguished and cannot stand in for missing editor proof. No severe safety/accessibility defect is waived as cosmetic. | T10-05 |
 
 | Test | Method and setup | Passing result |
 |---|---|---|
-| T10-01 | Given approved fixtures and generated edit histories, perform open → edit before EOF → page → global select/find/replace/undo → save → close/reopen and interrupt each native save/recovery phase. Include save R with subsequent R+1 edits. | Then complete bytes/history agree with the oracle; retained draft, saved revision, target bytes and recovered revision are correctly distinguished. Every AC/EC row links actual evidence. |
-| T10-02 | Given 1 MiB/100 MiB/1 GiB/10 GiB and a populated file larger than available RAM, vary line lengths/encodings, delay remainder reads, then type/scroll during scan/search/save/cancel. Repeat on declared reference and constrained systems. | Then approved latency thresholds pass; 10× original size does not produce proportional resident text/index/history memory; loaded text stays usable. Snapshot/staging disk growth is reported, not hidden as RAM success. |
+| T10-01 | Given approved fixtures and generated edit histories, perform open → edit before EOF → page → global select/find/replace/undo → save → close/reopen and interrupt each native save/recovery phase. Include save R with subsequent R+1 edits. | Then complete bytes/history agree with the oracle; retained draft, saved revision, target bytes and recovered revision are correctly distinguished. Every AC/EC row links actual evidence, except only AC-12's P12-owned populated NFR-6 scale evidence is explicitly open. |
+| T10-02 | Given required non-scale fixtures, vary line lengths/encodings and delayed reads, then type/scroll during scan/search/save/cancel on declared systems. | Pre-landing thresholds pass. Report P12 omission as unresolved NFR-6 risk; never infer multi-GiB/over-RAM readiness from smaller or sparse fixtures. |
 | T10-03 | Given cross-webview and forged session/lease/revision/job requests, oversize/overflow payloads, malicious HTML/SVG/modelines/links, wrong-owner recovery data and raced paths, invoke all exposed routes. | Then unauthorized requests fail before disclosure/mutation; text cannot execute/fetch; no secret content is logged; CSP and temp/backup/recovery protections survive packaging. |
 | T10-04 | Given the final command set, use actual Alt+1/Ctrl+Space, Windows IME, native clipboard/file drops, screen-reader navigation across a projection, all supported themes, forced colors and 320px layout. Run alongside Git/file operations and shell panels. | Then focus and composition remain usable, the right subsystem owns every action, unchanged shell workflows still operate, and all P09 criteria pass on the final surface. |
 | T10-05 | Given the completed integrated branch/worktree, execute the repository commands in the validation section and inspect every reported result plus independent review findings. | Then editor-related checks and phase evidence pass, results are reproducible, no fake/not-run test is counted as success, and any external release blocker is explicitly open. |
 
-**Exit gate:** T10-01–T10-05 pass, research AC-1–AC-12 are complete, and QA plus independent Windows/accessibility reviewers sign off. Blocked hardware/IME/AT/native tests keep this phase blocked; do not reinterpret browser tests as equivalent.  
+**Exit gate:** T10-01–T10-05 pass; every AC-1–AC-12 criterion and pre-landing item is complete except only P12-owned populated NFR-6 scale evidence within AC-12; QA plus independent Windows/accessibility reviewers sign off. This exception does not waive recovery, lifecycle, integrity, budget-control, authorization, privacy, native, IME/AT, accessibility, safe-refusal, or any other AC evidence. Blocked hardware/IME/AT/native tests keep this phase blocked; do not reinterpret browser tests as equivalent.
 **Stop condition:** Any data loss, unauthorized access, unexplained semantic mismatch, unapproved target/budget change, inaccessible projection boundary, or missing packaged evidence. Fix and rerun the affected upstream tests plus this integration matrix.
 
 ## Phase 11 — Release handoff and enablement
@@ -1029,17 +1122,29 @@ Block P10 if labels/roles/focus/errors/skip link fail, forced colors or 320px hi
 | P11-01 | Remove experiment-only entry points/providers/failpoints from shipped runtime paths. Retain meaningful deterministic regression fixtures and controlled developer harnesses under appropriate test boundaries. Verify no alternate/full-file fallback remains wired. | Production opens the proved real document/view/save path; development experiments cannot bypass authorization or produce fake success. | T11-01 |
 | P11-02 | Update the Stack Browser, command/event, persistence, validation and known-risk sections of `master_spec.md` to describe actual implemented behavior. Update affected existing user docs and append changelog history per policy. Keep research as historical design rationale and this plan as execution/evidence index. | Commands, formats, shortcuts, supported targets, recovery/durability limits and measured conditions match the shipped build; no proposal or target is described as an observed guarantee. | T11-02 |
 | P11-03 | Package and enable the feature through the existing application workflow. Perform a clean-profile and retained-profile smoke, including recovering a supported interrupted dirty session and ordinary non-editor shell use. Document safe feature withdrawal without deleting recoverable drafts. | A user can discover Quick Edit, edit/save/reopen, cancel disposal, recover a draft and return to Files/Git. Disabling/upgrading cannot silently erase or reinterpret retained recovery data. | T11-03 |
-| P11-04 | Resolve the release evidence checklist, record final owner acceptance and hand workers an exact completed/pending inventory. Only separately approved optional features may remain pending. | P00–P11 are passed with evidence and no core follow-up disguised as completion. | T11-04 |
+| P11-04 | Resolve release checklist and exact completed/pending inventory. Identify P12 as accepted post-landing debt, not optional completion. | P00–P11 pre-landing obligations pass; enabled landing states unresolved NFR-6 risk and forbids huge-file-readiness/full-production-success claims. | T11-04 |
 
 | Test | Method and setup | Passing result |
 |---|---|---|
 | T11-01 | Given a release package and a normal selected file, open/edit/save using only public UI. Inspect available commands and runtime artifacts for test-only controls. | Then only the authorized production path is reachable; no mock provider, debug source override or placeholder success path is present. |
 | T11-02 | Given the final command registry, recovery schema, keymap and observed evidence, reconcile changed documentation and plan status. | Then every documented feature is exercised or explicitly limited, no undocumented schema/key behavior remains, and research targets are not mislabeled as measurements. |
 | T11-03 | Given clean and retained profiles with synthetic files/drafts, install/launch the package, edit/save, hide/reopen, recover after controlled interruption, and exercise the documented upgrade/disable path. | Then saved bytes and recoverable revision match expected content, unsupported recovery versions remain preserved with actionable messaging, and normal shell/Git/default Open remain intact. |
-| T11-04 | Given all phase records, attempt release signoff with one required test deliberately marked Not run or a core defect open; then review the genuinely complete packet. | Then incomplete signoff is rejected; final acceptance requires all core gates and evidence, not an aggregate green build alone. |
+| T11-04 | Given all phase records, attempt release signoff with one required pre-landing test marked Not run or a core defect open; then review the P12 debt record. | Incomplete pre-landing signoff is rejected; enabled landing requires every non-P12 gate plus explicit unresolved NFR-6 risk, not an aggregate green build. |
 
-**Exit gate:** T11-01–T11-04 pass; product owner accepts the actual supported contract and QA evidence. Only now is the core design implemented and ready to hand off.  
+**Exit gate:** T11-01–T11-04 pass; product owner accepts enabled landing with actual supported contract, QA evidence, and unresolved P12 risk. Full core/NFR-6 acceptance remains unavailable until P12 passes.
 **Stop condition:** Documentation is ahead of code, a packaged workflow differs from the tested build, an upgrade/disable path endangers drafts, or any core phase remains blocked.
+
+## Phase 12 — Post-landing scale requalification
+
+**Trigger:** After Quick Edit ships enabled. **Owner:** QA/performance owner with storage owner; independent storage/security/privacy reviewers inspect results; integrator/coordinator records ACCEPT/REJECT and disable/re-enable disposition.
+
+**Scope:** P12 owns only multi-hour populated 1 MiB/100 MiB/1 GiB/multi-GiB/over-RAM runner evidence and NFR-6 acceptance/refutation. It cannot substitute for canonical-v2 compatibility, native authorization, P03 IME/AT/giant-grapheme, P04 recovery, security/privacy, safe-refusal, or another gate.
+
+**Required evidence:** New retained run directory; exact source/dependency/fixture manifest and hashes; generated-byte method; commands, exits, durations, host/RAM/storage/runtime conditions; differential byte oracle; cache, queue, disk, renderer/backend/native private-memory observations; all failures, skips, outliers, cancellation, and artifacts. Use populated bytes—not sparse/logical-size substitutes—at every required size.
+
+**Acceptance:** NFR-6 holds without file-size-proportional resident renderer/backend text, index, history, or queue growth; ceilings, byte integrity, responsiveness, cancellation, disk accounting, and supported-scope behavior satisfy approved guarantees for every fixture. Independent reviewers and coordinator record ACCEPT. Until then: open acceptance debt/risk; no huge-file readiness claim.
+
+**Failure / rollback:** Any scale, budget, or data-integrity failure requires disabling Quick Edit for affected target scope, preserving artifacts, and investigating/remediating before re-enabling that scope. Do not raise ceilings, narrow supported guarantees, relabel sparse data, discard failures, or reduce fixture scope silently. If scope cannot be isolated safely, disable Quick Edit globally while preserving recoverable drafts and safe read/export paths.
 
 ## Validation commands and evidence method
 
@@ -1117,7 +1222,7 @@ The research remains the detailed failure matrix. The tables below ensure none o
 | NFR-3 | P01, P02, P03, P06, P10 | T01-03; T02-02; T03-02; T06-08; T10-02 |
 | NFR-4 | P03, P06, P09, P10 | T03-07; T06-03; T09-02; T10-02 |
 | NFR-5 | P01, P02, P04, P08, P10 | T01-04; T02-05; T04-04; T08-05; T10-02 |
-| NFR-6 | P01, P02, P05, P07, P08, P10 | T01-04; T02-03; T05-05; T07-07; T08-05; T10-02 |
+| NFR-6 | P01, P02, P05, P07, P08, P10, P12 | Pre-landing bounded controls: T01-04; T02-03; T05-05; T07-07; T08-05; T10-02. Final populated scale acceptance/refutation: P12. |
 | NFR-7 | P02, P03, P04, P05, P07, P08 | Byte/selection/history oracles in those phases; T10-01 |
 | NFR-8 | P03, P06, P09, P10 | T03-08; T06-06; T09-01–T09-07; T10-04 |
 | NFR-9 | P00, P01, P02, P04, P05, P07, P08, P10 | T00-02; T01-01; T02-01; T04-05; T05-01; T07-05–T07-06; T08-02–T08-03; T10-03 |
@@ -1176,8 +1281,8 @@ Before marking the design implemented, verify:
 
 - [ ] P00 decisions and experiment/production/release authorizations are recorded separately.
 - [ ] P02/P03/P04 feasibility gates passed without a resident full-file fallback, fake text, or unsupported safety claim.
-- [ ] Every P00–P11 step and required test has a named owner and passing evidence; all 12 research ACs are closed.
-- [ ] All 12 FRs, 9 NFRs and 24 ECs have final evidence or explicitly approved target-policy handling; no core capability is deferred.
+- [ ] Every P00–P11 pre-landing step/test has named owner and passing evidence; P12 has owner, trigger, evidence contract, rollback, and current disposition.
+- [ ] All 12 FRs and 24 ECs have final evidence or approved target-policy handling; NFR-6 alone may remain explicit post-landing P12 debt until requalified.
 - [ ] Actual packaged WebView2 keyboard, IME, native clipboard, screen-reader, contrast, forced-colors and 320px workflows passed.
 - [ ] Performance/resource targets passed under declared conditions; all outliers, cancellation limits and disk demands are visible in the report.
 - [ ] Save/conflict/recovery tests cover source generation, exact frozen bytes, R+1 edits, crash phases, quotas and private data protection.
@@ -1186,6 +1291,8 @@ Before marking the design implemented, verify:
 - [ ] Owner accepts the release and the documented supported-target/save/durability guarantees.
 
 ## Planning record and evidence boundary
+
+> Historical 2026-09-07/08 planning and review record through the end of this document. Its v1 decision, pending-review labels, commands and next steps describe that wave only; the 2026-09-15 re-baseline and current phase table govern future work.
 
 **Action — 2026-09-07:** Read the current architecture, original research, dependency/test scripts, changelog policy and existing implementation-plan conventions. Reconciled native-readiness facts with the policy packet; Integrator owns policy, shared contracts, dependency graph, release qualification and reconciliation.
 **Decision:** Treat the user's full implementation request as authorization for the conservative baseline and the complete gated plan. Keep D-4–D-7 guarantees strict: unsupported target rows refuse or remain read-only; protected source/recovery are prerequisites; uncertain publication refuses rather than overwrites; dirty/ambiguous recovery is never evicted.

@@ -3,6 +3,7 @@
 # Dependencies
 node_modules/
 dist-text-probe/
+dist-p03-experiment/
 
 # Frontend build/test output
 dist/

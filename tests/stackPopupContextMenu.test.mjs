@@ -20,10 +20,24 @@ test('row context menu exposes Open with picker plus suggested developer apps', 
 });
 
 test('Open with flyout has a bridge so rightward mouse movement stays inside submenu zone', () => {
-  assert.match(css, /\.context-submenu::after/);
-  assert.match(css, /left: 100%;/);
-  assert.match(css, /\.context-submenu:hover \.context-submenu-panel/);
+  assert.match(css, /\.context-submenu-panel::before/);
+  assert.match(css, /right: 100%;/);
+  assert.match(css, /\.context-menu-shell:has\(\.context-submenu:hover\) > \.context-submenu-panel/);
   assert.doesNotMatch(css, /left: calc\(100% \+ 0\.25rem\)/);
+});
+
+test('Open with flyout is a sibling of the independently scrolling root menu', () => {
+  const rowMenu = surface.slice(
+    surface.indexOf('{#if rowMenu}'),
+    surface.indexOf('{#if backgroundMenu}')
+  );
+
+  assert.match(rowMenu, /class="context-menu-shell"/);
+  assert.match(rowMenu, /class="context-menu context-menu-scroll"[\s\S]*?<\/div>\s*<div bind:this=\{rowSubmenuPanelElement\} class="context-menu context-submenu-panel"/);
+  assert.match(rowMenu, /on:keydown=\{\(event\) => void handleRowMenuKeydown\(event\)\}/);
+  assert.match(surface, /event\.key !== 'ArrowRight'[\s\S]*?rowSubmenuPanelElement\?\.querySelector<HTMLElement>\('button:not\(:disabled\)'\)\?\.focus\(\)/);
+  assert.match(css, /\.context-menu-scroll\s*\{[\s\S]*?overflow-y:\s*auto;/);
+  assert.match(css, /\.context-menu-shell\s*\{[\s\S]*?overflow:\s*visible;/);
 });
 
 test('Open with picker is backed by a Tauri command wrapper', () => {

@@ -74,10 +74,10 @@ test('stack popup wires computed context menu max-height CSS variables', () => {
     /--stack-context-submenu-max-height:\$\{contextSubmenuMaxHeightCss\(rowMenu\)\}/,
     'Row submenu must receive computed max-height from available viewport.'
   );
-  assert.doesNotMatch(
+  assert.match(
     stackPopupSource,
-    /contextSubmenuTopCss|--stack-context-submenu-top/,
-    'Submenu must stay attached to its trigger instead of fixed-jumping away from pointer path.'
+    /--stack-context-submenu-top:\$\{contextSubmenuTopCss\(rowMenu\)\}/,
+    'Non-clipped sibling submenu must retain measured trigger-row alignment.'
   );
 });
 
@@ -91,7 +91,7 @@ test('stack submenu stays attached to trigger and scrolls internally', () => {
   );
   assert.match(
     submenuPanelRule,
-    /top\s*:\s*0\s*;/,
+    /top\s*:\s*var\(--stack-context-submenu-top, 0\)\s*;/,
     'Submenu panel top must align with the trigger row.'
   );
   assert.doesNotMatch(
@@ -109,4 +109,15 @@ test('stack submenu stays attached to trigger and scrolls internally', () => {
     /overflow-y\s*:\s*auto\s*;/,
     'Submenu panel must scroll internally.'
   );
+});
+
+test('row menu shell keeps flyout outside both independent scroll containers', () => {
+  const shellRule = cssRule(stackPopupCss, '.context-menu-shell');
+  const rootScrollRule = cssRule(stackPopupCss, '.context-menu-scroll');
+  const submenuPanelRule = cssRule(stackPopupCss, '.context-submenu-panel');
+
+  assert.match(shellRule, /overflow\s*:\s*visible\s*;/);
+  assert.match(rootScrollRule, /overflow-y\s*:\s*auto\s*;/);
+  assert.match(submenuPanelRule, /overflow-y\s*:\s*auto\s*;/);
+  assert.match(stackPopupSource, /--stack-context-submenu-top:\$\{contextSubmenuTopCss\(rowMenu\)\}/);
 });

@@ -43,6 +43,12 @@ export type StackGitFileStatus = {
   unstagedDeletions?: number;
 };
 
+export type StackBasicTextFile = {
+  path: string;
+  content: string;
+  byteLength: number;
+};
+
 export type StackGitStatus = {
   repositoryRoot: string;
   branch: string;
@@ -555,6 +561,10 @@ export function showStackItemProperties(path: string): Promise<void> {
 
 export function openStackItem(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openStackItem, { path });
+}
+
+export function readStackBasicTextFile(path: string): Promise<StackBasicTextFile> {
+  return invoke<StackBasicTextFile>(IPC_COMMANDS.readStackBasicTextFile, { path });
 }
 
 export function openStackItemWithPicker(path: string): Promise<void> {

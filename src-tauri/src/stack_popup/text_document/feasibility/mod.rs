@@ -9,13 +9,23 @@ pub(crate) mod index;
 pub(crate) mod lease;
 #[cfg(windows)]
 pub(crate) mod native;
+#[cfg(windows)]
+pub(crate) mod recovery;
+#[cfg(windows)]
+pub(crate) mod save_failpoints;
 pub(crate) mod scheduler;
 #[cfg(windows)]
 pub(crate) mod session;
 #[cfg(windows)]
 pub(crate) mod source;
+#[cfg(windows)]
+pub(crate) mod windows_save;
 #[cfg(all(windows, debug_assertions))]
 pub(crate) use session::install_native_probe;
+#[cfg(all(test, windows))]
+mod p04_tests;
+#[cfg(all(test, windows))]
+mod rb02_v2;
 #[cfg(all(test, windows))]
 mod tests;
 

@@ -5,8 +5,10 @@
   import {
     addCalendarMonths,
     calendarMonthModel,
+    createCalendarWheelNavigationState,
     formatCalendarLongDate,
-    formatCalendarTimezone
+    formatCalendarTimezone,
+    reduceCalendarWheelNavigation
   } from '../features/top-bar/topBarUxState';
   import { formatShellTime, getInitialShellPreferences, type ShellPreferences } from '../lib/shellPreferences';
   import { hideCalendarPanel } from '../lib/calendarPanel';
@@ -16,6 +18,7 @@
   let viewDate = new Date(now.getFullYear(), now.getMonth(), 1);
   let selectedDate = now;
   let shellPreferences: ShellPreferences = getInitialShellPreferences();
+  let calendarWheelNavigationState = createCalendarWheelNavigationState();
 
   $: calendarModel = calendarMonthModel(viewDate, { selectedDate, today: now });
   $: selectedLongDate = formatCalendarLongDate(selectedDate);
@@ -32,8 +35,19 @@
   }
 
   function handleCalendarWheel(event: WheelEvent) {
-    event.preventDefault();
-    jumpCalendarMonths(event.deltaY > 0 ? 1 : -1);
+    const result = reduceCalendarWheelNavigation(calendarWheelNavigationState, {
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode,
+      timeStamp: event.timeStamp
+    });
+    calendarWheelNavigationState = result.state;
+    if (result.preventDefault) {
+      event.preventDefault();
+    }
+    if (result.monthDelta !== 0) {
+      jumpCalendarMonths(result.monthDelta);
+    }
   }
 
   function handleCalendarKeydown(event: KeyboardEvent) {
@@ -58,7 +72,7 @@
   aria-label="Calendar and time"
   tabindex="0"
   on:keydown={handleCalendarKeydown}
-  on:wheel={handleCalendarWheel}
+  on:wheel|nonpassive={handleCalendarWheel}
 >
   <header class="calendar-panel-header">
     <div>

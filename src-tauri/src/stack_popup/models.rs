@@ -130,6 +130,14 @@ pub struct StackGitStageRequest {
     pub paths: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StackBasicTextFile {
+    pub path: String,
+    pub content: String,
+    pub byte_length: u64,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackGitIgnorePathRequest {

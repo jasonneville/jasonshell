@@ -129,6 +129,7 @@ pub mod commands {
     pub const END_STACK_POPUP_FOCUS_LOSS_HOLD: &str = "end_stack_popup_focus_loss_hold";
     pub const RESIZE_STACK_POPUP: &str = "resize_stack_popup";
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
+    pub const READ_STACK_BASIC_TEXT_FILE: &str = "read_stack_basic_text_file";
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
     pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
@@ -303,6 +304,7 @@ pub mod commands {
         END_STACK_POPUP_FOCUS_LOSS_HOLD,
         RESIZE_STACK_POPUP,
         READ_STACK_FOLDER,
+        READ_STACK_BASIC_TEXT_FILE,
         GET_STACK_GIT_STATUS,
         OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
@@ -543,6 +545,7 @@ mod tests {
         assert!(unique.contains("end_stack_popup_focus_loss_hold"));
         assert!(unique.contains("resize_stack_popup"));
         assert!(unique.contains("read_stack_folder"));
+        assert!(unique.contains("read_stack_basic_text_file"));
         assert!(unique.contains("get_stack_git_status"));
         assert!(unique.contains("stack_git_add_paths"));
         assert!(unique.contains("stack_git_ignore_path"));

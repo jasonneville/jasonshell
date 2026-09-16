@@ -127,7 +127,8 @@
 
   function handleGalleryPointerEnter() {
     cancelGalleryHoverClose();
-    void emit<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, { source: 'gallery' });
+    if (!payload) return;
+    void emit<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, { source: 'gallery', nonce: payload.nonce });
   }
 
   async function activateFocused(minimizeIfActive = false) {
@@ -235,6 +236,7 @@
         class:focused={index === focusedIndex}
         class:active={item.isActive}
         class:minimized={item.isMinimized}
+        title={item.title}
         tabindex={index === focusedIndex ? 0 : -1}
         on:focus={(event) => { focusedHwnd = item.hwnd; void queuePreview(item, event.currentTarget); }}
         on:mouseenter={(event) => void queuePreview(item, event.currentTarget)}

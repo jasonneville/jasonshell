@@ -8,7 +8,15 @@ const materialSymbolRegistrySource = readFileSync(
   new URL('../src/components/icons/materialSymbolIcons.ts', import.meta.url),
   'utf8'
 );
+const materialSymbolIconSource = readFileSync(
+  new URL('../src/components/icons/MaterialSymbolIcon.svelte', import.meta.url),
+  'utf8'
+);
 const stackPopupStyles = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
+const quickBarPinIcon = readFileSync(
+  new URL('../src/assets/icons/add_location_24dp_E3E3E3_FILL0_wght300_GRAD0_opsz24.svg', import.meta.url),
+  'utf8'
+);
 
 function sourceBetween(source, startNeedle, endNeedle) {
   const start = source.indexOf(startNeedle);
@@ -42,6 +50,7 @@ test('shared Material Symbols registry includes every stack browser toolbar icon
     'delete',
     'create_new_folder',
     'preview',
+    'add_location',
     'search'
   ]) {
     assert.match(materialSymbolRegistrySource, new RegExp(`['"]${iconName}['"]`), `${iconName} registered`);
@@ -60,7 +69,8 @@ test('stack browser uses official outlined Material Symbol paths', () => {
     drive_file_rename: 'b309b0f6d5a68db21283af9bb2286c22d9d44e835cec7e42879fc5b0cc3ab5fa',
     delete: 'eecc33e20fd234261ab77b3ff520bbf40c565367c473db76b14ab0d3794d4df6',
     create_new_folder: '84a67975f945bc893ce48e0afdbc5c3319ab3698b2b9e56d1c5ac9c3b252861b',
-    preview: '38eefe2fcb5408235a9777ebe087b891cd6c0d6ed91b4d4b583069d37f423500'
+    preview: '38eefe2fcb5408235a9777ebe087b891cd6c0d6ed91b4d4b583069d37f423500',
+    add_location: '5d82cb3b4359490bb7963e115e92917bfac97712cd395c27818ea9c64086522b'
   };
 
   for (const [iconName, expectedHash] of Object.entries(officialPathHashes)) {
@@ -103,6 +113,27 @@ test('stack browser toolbar text buttons are Material Symbol icon buttons with a
   for (const text of ['Back', 'Forward', 'Refresh', 'Cut selected item', 'Paste into current folder', 'Rename selected item', 'Delete selected item', 'New folder', 'Reveal selected item']) {
     assert.doesNotMatch(stackToolbarSource, new RegExp(`>${text}<`), `${text} toolbar text is removed`);
   }
+});
+
+test('stack browser pins the current folder from a shared 1rem Material Symbol immediately after Reveal', () => {
+  assert.equal(
+    createHash('sha256').update(quickBarPinIcon).digest('hex'),
+    '6842216e981258d074fa733c3bbaaf692c301eafea7b45d8743059bf79d7a895',
+    'quick-bar pin icon exactly matches supplied SVG'
+  );
+  assert.match(materialSymbolRegistrySource, /['"]add_location['"]/, 'add_location is registered');
+  assert.doesNotMatch(stackPopupSource, /quickBarPinIcon/, 'standalone quick-bar icon URL is removed');
+  assert.doesNotMatch(stackToolbarSource, /<img\b/, 'toolbar avoids native-size standalone image rendering');
+  assert.match(materialSymbolIconSource, /width:\s*1rem;/, 'shared icon width is exactly 1rem');
+  assert.match(materialSymbolIconSource, /height:\s*1rem;/, 'shared icon height is exactly 1rem');
+  assert.match(
+    stackPopupSource,
+    /async function pinCurrentFolderToQuickBar\(\)[\s\S]*if \(!currentPath\) \{[\s\S]*await pinStackFolder\(currentPath\);/
+  );
+  assert.match(
+    stackToolbarSource,
+    /ariaLabel="Reveal selected item"[\s\S]*?<\/MeltActionButton>\s*<MeltActionButton\s+class="stack-action-icon-button"\s+ariaLabel="Pin to quick bar"\s+tooltip="Pin to quick bar"\s+disabled=\{!currentPath\}\s+onClick=\{\(\) => void pinCurrentFolderToQuickBar\(\)\}>\s*<MaterialSymbolIcon\s+name="add_location"\s*\/\>/
+  );
 });
 
 test('stack browser search wrapper uses icon-only chrome while context menus keep text labels', () => {

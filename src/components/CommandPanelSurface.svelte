@@ -60,6 +60,9 @@
   const commandPanelCancelIconUrl = new URL('../assets/icons/cancel_presentation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url).href;
   const COMMAND_REORDER_DRAG_THRESHOLD_PX = 6;
   const COMMAND_REORDER_AUTOSCROLL_EDGE_PX = 36;
+  const QUICK_COMMAND_TRANSCRIPT_DEFAULT_FONT_SIZE_PX = 11;
+  const QUICK_COMMAND_TRANSCRIPT_MIN_FONT_SIZE_PX = 9;
+  const QUICK_COMMAND_TRANSCRIPT_MAX_FONT_SIZE_PX = 28;
 
   let entries: QuickCommandEntry[] = [];
   let loading = true;
@@ -126,6 +129,7 @@
   let artifactPickerBusy = false;
   let artifactOpenBusy = false;
   let selectedSavedCommand: QuickCommandEntry | null = null;
+  let transcriptFontSize = QUICK_COMMAND_TRANSCRIPT_DEFAULT_FONT_SIZE_PX;
 
   $: structuralMutationPending = mutationInFlight || mutationQueue.length > 0;
   $: selectedSavedCommand = editor.id ? entries.find((entry) => entry.id === editor.id) ?? null : null;
@@ -654,11 +658,41 @@
     if (contextEntry) { event.preventDefault(); contextEntry = null; }
   }
   function getSelectionWithinShell(shell: HTMLElement): Selection | null { const selection = window.getSelection(); if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null; const range = selection.getRangeAt(0); if (!shell.contains(range.commonAncestorContainer)) return null; const anchor = selection.anchorNode; const focus = selection.focusNode; if (!anchor || !focus) return null; const anchorShell = (anchor instanceof Element ? anchor : anchor.parentElement)?.closest('.command-transcript-shell'); const focusShell = (focus instanceof Element ? focus : focus.parentElement)?.closest('.command-transcript-shell'); return anchorShell === shell && focusShell === shell ? selection : null; }
-  function handleTranscriptKeydown(event: KeyboardEvent) { if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return; const shell = event.currentTarget as HTMLElement; if (!getSelectionWithinShell(shell)) return; try { if (document.execCommand('copy')) { event.preventDefault(); event.stopPropagation(); } } catch { /* native default */ } }
+  function clampTranscriptFontSize(value: number): number { return Math.min(QUICK_COMMAND_TRANSCRIPT_MAX_FONT_SIZE_PX, Math.max(QUICK_COMMAND_TRANSCRIPT_MIN_FONT_SIZE_PX, Math.round(value))); }
+  function zoomTranscriptFont(delta: number) {
+    const nextFontSize = clampTranscriptFontSize(transcriptFontSize + delta);
+    if (nextFontSize === transcriptFontSize) return;
+    transcriptFontSize = nextFontSize;
+    scheduleTranscriptTail();
+  }
+  function isTranscriptFontZoomKey(event: KeyboardEvent): boolean {
+    if (!event.ctrlKey || event.altKey || event.metaKey) return false;
+    if (event.key === '-' && !event.shiftKey) return true;
+    return event.key === '+' || event.key === '=';
+  }
+  function handleTranscriptKeydown(event: KeyboardEvent) {
+    if (isTranscriptFontZoomKey(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      zoomTranscriptFont(event.key === '-' ? -1 : 1);
+      return;
+    }
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return;
+    const shell = event.currentTarget as HTMLElement;
+    if (!getSelectionWithinShell(shell)) return;
+    try { if (document.execCommand('copy')) { event.preventDefault(); event.stopPropagation(); } } catch { /* native default */ }
+  }
+  function handleTranscriptFontZoomWheel(event: WheelEvent) {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.deltaY !== 0) zoomTranscriptFont(event.deltaY > 0 ? -1 : 1);
+  }
   function handleTranscriptContextMenu(event: MouseEvent) { const shell = event.currentTarget as HTMLElement; if (getSelectionWithinShell(shell)) event.stopPropagation(); }
   function isTranscriptAtBottom(shell: HTMLElement): boolean { return shell.scrollHeight - shell.scrollTop - shell.clientHeight <= 2; }
   function transcriptShellForEvent(event: Event): HTMLElement | null { const target = event.target; return target instanceof Element ? target.closest<HTMLElement>('.command-transcript-shell') : null; }
   function markTranscriptScrollIntent(event: Event) {
+    if (event instanceof WheelEvent && event.ctrlKey) return;
     const shell = transcriptShellForEvent(event);
     if (!shell) return;
     if (event instanceof KeyboardEvent && (event.ctrlKey || event.metaKey || event.altKey || !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key))) return;
@@ -900,7 +934,7 @@
 
 <svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
 
-<div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px`} on:scroll|capture={handleTranscriptScroll} on:wheel|capture={markTranscriptScrollIntent} on:pointerdown|capture={markTranscriptScrollIntent} on:keydown|capture={markTranscriptScrollIntent} on:pointerup|capture={endTranscriptPointerScroll} on:pointercancel|capture={endTranscriptPointerScroll} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={cancelListResize}>
+<div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px; --quick-command-transcript-font-size: ${transcriptFontSize}px`} on:scroll|capture={handleTranscriptScroll} on:wheel|capture={markTranscriptScrollIntent} on:pointerdown|capture={markTranscriptScrollIntent} on:keydown|capture={markTranscriptScrollIntent} on:pointerup|capture={endTranscriptPointerScroll} on:pointercancel|capture={endTranscriptPointerScroll} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={cancelListResize}>
   <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}><MaterialSymbolIcon name="close" /></MeltActionButton></header>
   {#if panelError}<p class="command-panel-error" role="alert">{panelError}</p>{/if}
   {#if pendingInputError}<p class="command-panel-error" role="alert">{pendingInputError}</p>{/if}
@@ -942,11 +976,10 @@
       {#if activeTab === 'configuration'}
         <div id="command-panel-configuration" class="command-pane" role="tabpanel">{#if formErrors.length}<ul class="command-form-errors" role="alert">{#each formErrors as error (error)}<li>{error}</li>{/each}</ul>{/if}<label><span>Label</span><input value={editor.label} maxlength="96" spellcheck="false" on:input={(event) => (editor = { ...editor, label: inputValue(event) })} /></label><label><span>Mode</span><select value={editor.mode} on:change={(event) => (editor = { ...editor, mode: selectedMode(event) })}>{#each QUICK_COMMAND_MODES as mode}<option value={mode}>{modeLabels[mode]}</option>{/each}</select></label>{#if editor.mode === 'direct'}<label><span>Program</span><input value={editor.targetPath} spellcheck="false" placeholder="git.exe" on:input={(event) => (editor = { ...editor, targetPath: inputValue(event) })} /></label>{/if}<label><span>Working directory</span><input value={editor.cwd} spellcheck="false" placeholder="Optional absolute path" on:input={(event) => (editor = { ...editor, cwd: inputValue(event) })} /></label><label><span>Artifact location</span><div class="command-artifact-input-shell"><input value={editor.artifactLocation} spellcheck="false" placeholder="Optional absolute Windows path" on:input={(event) => (editor = { ...editor, artifactLocation: inputValue(event) })} /><MeltActionButton class="command-icon-button command-artifact-picker-button" ariaLabel="Pick artifact folder" disabled={artifactPickerBusy} onClick={() => void pickArtifactLocation()}><MaterialSymbolIcon name="folder" /></MeltActionButton></div></label>{#if editor.mode === 'direct'}<label><span>Arguments (one per line)</span><textarea rows="5" spellcheck="false" value={editor.argsText} on:input={(event) => (editor = { ...editor, argsText: textareaValue(event) })}></textarea></label>{:else}<label><span>Commands (one per line)</span><textarea rows="8" spellcheck="false" value={editor.commandsText} placeholder={'cd C:\\dev\\my-app\npython app.py'} on:input={(event) => (editor = { ...editor, commandsText: textareaValue(event) })}></textarea></label>{/if}<div class="command-editor-actions"><MeltActionButton class="command-text-button command-editor-icon-button" ariaLabel="Save command" disabled={saving || Boolean(runningId)} onClick={() => void saveEntry()}><img class="command-save-icon" src={commandPanelSaveIconUrl} alt="" aria-hidden="true" draggable="false" />{saving ? 'Saving…' : ''}</MeltActionButton><MeltActionButton class="command-text-button command-editor-icon-button" ariaLabel="Cancel command editing" disabled={saving || Boolean(runningId)} onClick={startNewEntry}><img class="command-cancel-icon" src={commandPanelCancelIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton></div></div>
       {:else}
-        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host">{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)} on:toggle={(event) => handleHistoryRunToggle(event, run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} ><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-static-element-interactions a11y-no-noninteractive-element-interactions --><div class="command-transcript-shell" role="region" tabindex="0" aria-label="Merged transcript" on:keydown={handleTranscriptKeydown} on:contextmenu={handleTranscriptContextMenu}>{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(run.runId, line.sequence, `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`, line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind === 'url'}<a class={`command-transcript-token command-transcript-token--${segment.kind}`} href={segment.text} rel="noreferrer noopener" on:click={(event) => handleTranscriptUrlClick(event, segment.text)} on:auxclick={(event) => handleTranscriptUrlAuxClick(event, segment.text)} on:contextmenu={(event) => handleTranscriptUrlContextMenu(event)}>{segment.text}</a>{:else if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</div></div></details>{/each}{/if}</div></div></div>
+        <div id="command-panel-previous-runs" class="command-pane" role="tabpanel" aria-busy={historyLoading}><div class="command-history-host">{#if historyLoading && !history.length}<p class="command-list-state command-history-loading">Loading output…</p>{:else if !editor.id}<p class="command-list-state">Select a command to view runs.</p>{:else if !history.length}<p class="command-list-state">No runs yet.</p>{/if}<div class="command-history-list">{#if history.length}{#each history as run (historyRunKey(run))}<details class="command-history-run" open={run.running || isRunExpanded(run)} on:toggle={(event) => handleHistoryRunToggle(event, run)}><summary class:running={run.running} aria-label={historyRunSummary(run)} ><div class="command-history-meta"><strong>{commandLabelFor(run.commandId)}</strong><span>{historyRunStatus(run)} · {formatRunTime(run.startedAtEpochMs)} · PID {run.processId}</span></div>{#if run.running}<span class="command-history-live">Live</span>{/if}</summary><div class="command-history-body"><!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-static-element-interactions a11y-no-noninteractive-element-interactions --><div class="command-transcript-shell" role="region" tabindex="0" aria-label="Merged transcript" on:wheel|capture|nonpassive={handleTranscriptFontZoomWheel} on:keydown={handleTranscriptKeydown} on:contextmenu={handleTranscriptContextMenu}>{#if run.transcript.length}{#each run.transcript as line (line.sequence ?? `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`)}<div class={`command-transcript-line ${transcriptLineClass(line.kind)} ${line.secret ? 'secret' : ''} ${line.redacted ? 'redacted' : ''}`} data-kind={line.kind}>{#each transcriptBodySegments(run.runId, line.sequence, `${line.kind}:${line.requestId ?? line.body}:${line.atEpochMs ?? ''}`, line.body) as segment, segmentIndex (segmentIndex)}{#if segment.kind === 'url'}<a class={`command-transcript-token command-transcript-token--${segment.kind}`} href={segment.text} rel="noreferrer noopener" on:click={(event) => handleTranscriptUrlClick(event, segment.text)} on:auxclick={(event) => handleTranscriptUrlAuxClick(event, segment.text)} on:contextmenu={(event) => handleTranscriptUrlContextMenu(event)}>{segment.text}</a>{:else if segment.kind}<span class={`command-transcript-token command-transcript-token--${segment.kind}`}>{segment.text}</span>{:else}{segment.text}{/if}{/each}</div>{/each}{:else if run.stdout || run.stderr}<pre class="command-transcript-body">{run.stdout}{run.stderr}</pre>{:else}<p class="command-list-state">Waiting for transcript…</p>{/if}</div></div></details>{/each}{/if}</div></div></div>
       {/if}
     </section>
   </section>
   {#if contextEntry}<div bind:this={contextMenuElement} class="command-context-menu" role="menu" style={`left: ${contextMenuPosition.x}px; top: ${contextMenuPosition.y}px`}><button bind:this={contextMenuFirstAction} type="button" role="menuitem" on:click={showHistory}>View output history</button><button type="button" role="menuitem" on:click={editContextEntry}>Edit command</button><button type="button" role="menuitem" on:click={duplicateContextEntry}>Duplicate command</button></div>{/if}
   {#if deleteConfirmation}<div class="delete-confirm-backdrop" role="presentation" on:click|stopPropagation><div bind:this={deleteConfirmationDialog} class="delete-confirm-dialog" role="alertdialog" tabindex="-1" aria-modal="true" aria-labelledby="command-delete-confirm-title" aria-describedby="command-delete-confirm-message" on:keydown={handleDeleteConfirmationKeydown}><h2 id="command-delete-confirm-title">Confirm Delete</h2><p id="command-delete-confirm-message">Delete quick command “{deleteConfirmation.label}”? This cannot be undone.</p><div class="delete-confirm-actions"><MeltActionButton class="command-text-button" disabled={deleteConfirmationBusy} onClick={cancelDeleteEntry}>Cancel</MeltActionButton><MeltActionButton class="command-text-button danger" disabled={deleteConfirmationBusy} onClick={() => void confirmDeleteEntry()}>Delete</MeltActionButton></div></div></div>{/if}
 </div>
-

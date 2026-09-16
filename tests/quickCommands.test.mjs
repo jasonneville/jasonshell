@@ -32,6 +32,8 @@ import {
 const quickCommandsSource = readFileSync(new URL('../src-tauri/src/quick_commands.rs', import.meta.url), 'utf8');
 
 const source = readFileSync(new URL('../src/lib/quickCommands.ts', import.meta.url), 'utf8');
+const commandPanelSource = readFileSync(new URL('../src/components/CommandPanelSurface.svelte', import.meta.url), 'utf8');
+const commandPanelCss = readFileSync(new URL('../src/components/CommandPanelSurface.css', import.meta.url), 'utf8');
 
 test('quick command wrapper exposes stable mode contract and defaults', () => {
   assert.deepEqual(QUICK_COMMAND_MODES, ['direct', 'commandBlock']);
@@ -399,6 +401,29 @@ test('quick command backend decodes terminal bytes and strips ansi controls befo
   assert.match(quickCommandsSource, /sanitize_terminal_text\(/);
   assert.match(quickCommandsSource, /GetOEMCP/);
   assert.match(quickCommandsSource, /MultiByteToWideChar/);
+});
+
+test('quick command output supports bounded transcript-only Ctrl keyboard and wheel zoom', () => {
+  assert.match(commandPanelSource, /const QUICK_COMMAND_TRANSCRIPT_DEFAULT_FONT_SIZE_PX = 11;/);
+  assert.match(commandPanelSource, /const QUICK_COMMAND_TRANSCRIPT_MIN_FONT_SIZE_PX = 9;/);
+  assert.match(commandPanelSource, /const QUICK_COMMAND_TRANSCRIPT_MAX_FONT_SIZE_PX = 28;/);
+  assert.match(commandPanelSource, /let transcriptFontSize = QUICK_COMMAND_TRANSCRIPT_DEFAULT_FONT_SIZE_PX;/);
+  assert.match(commandPanelSource, /function clampTranscriptFontSize[^{]*\{ return Math\.min\(QUICK_COMMAND_TRANSCRIPT_MAX_FONT_SIZE_PX, Math\.max\(QUICK_COMMAND_TRANSCRIPT_MIN_FONT_SIZE_PX, Math\.round\(value\)\)\); \}/);
+  assert.match(commandPanelSource, /if \(!event\.ctrlKey \|\| event\.altKey \|\| event\.metaKey\) return false;/);
+  assert.match(commandPanelSource, /event\.key === '\+' \|\| event\.key === '='/);
+  assert.match(commandPanelSource, /event\.key === '-' && !event\.shiftKey/);
+  assert.match(commandPanelSource, /zoomTranscriptFont\(event\.key === '-' \? -1 : 1\)/);
+  assert.match(commandPanelSource, /function handleTranscriptFontZoomWheel\(event: WheelEvent\)[\s\S]*?if \(!event\.ctrlKey\) return;[\s\S]*?event\.preventDefault\(\)/);
+  assert.match(commandPanelSource, /if \(event\.deltaY !== 0\) zoomTranscriptFont\(event\.deltaY > 0 \? -1 : 1\);/);
+  assert.match(commandPanelSource, /class="command-transcript-shell"[^>]*on:wheel\|capture\|nonpassive=\{handleTranscriptFontZoomWheel\}/);
+  assert.match(commandPanelSource, /--quick-command-transcript-font-size: \$\{transcriptFontSize\}px/);
+  assert.match(commandPanelSource, /event instanceof WheelEvent && event\.ctrlKey/);
+  assert.match(commandPanelCss, /\.command-transcript-shell \{[^}]*font: var\(--quick-command-transcript-font-size, 0\.67rem\)\/1\.45/s);
+});
+
+test('quick command transcript zoom re-tails only after effective size changes and preserves detached shells', () => {
+  assert.match(commandPanelSource, /function zoomTranscriptFont\(delta: number\) \{[\s\S]*?const nextFontSize = clampTranscriptFontSize\(transcriptFontSize \+ delta\);[\s\S]*?if \(nextFontSize === transcriptFontSize\) return;[\s\S]*?transcriptFontSize = nextFontSize;[\s\S]*?scheduleTranscriptTail\(\);[\s\S]*?\}/);
+  assert.match(commandPanelSource, /if \(transcriptTailAttached\.get\(shell\) !== false\) shell\.scrollTop = shell\.scrollHeight;/);
 });
 
 test('Quick Command stop does not shell out to taskkill tree kill by default', () => {

@@ -37,6 +37,7 @@ test('stack browser file-list git status matches workbench glyphs and bare color
   assert.match(surface, /if \(status === 'untracked'\) return '\?';/);
   assert.match(surface, /if \(status === 'conflict'\) return 'M';/);
   assert.match(css, /\.git-status-badge \{[\s\S]*background: transparent;[\s\S]*border: 0;[\s\S]*font-size: 0\.65rem;[\s\S]*font-weight: 600;/);
+  assert.match(css, /\.git-status-badge \{[\s\S]*position: relative;[\s\S]*top: 1px;/);
   assert.match(css, /\.git-status-badge\.git-status-added \{ color: #76ad4f; \}/);
   assert.match(css, /\.git-status-badge\.git-status-deleted \{ color: #da5b4a; \}/);
   assert.match(css, /\.git-status-badge\.git-status-modified,[\s\S]*\.git-status-badge\.git-status-conflict \{\s*color: #c67f13;\s*\}/);

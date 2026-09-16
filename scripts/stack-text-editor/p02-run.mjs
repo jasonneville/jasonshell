@@ -12,6 +12,7 @@ import { generateCorpus, writeCorpusManifest, assertFreeSpace } from './corpusGe
 import { decodeByteText, encodeByteText } from './byteTextOracle.mjs';
 import { DeterministicRangeIo } from './controlledIo.mjs';
 import { createMeasurementRun, writeMeasurementArtifact } from './measurement.mjs';
+import { persistCommandRecord } from './commandManifest.mjs';
 
 const args = process.argv.slice(2);
 const value = (name, fallback) => { const index = args.indexOf(name); return index < 0 ? fallback : args[index + 1]; };
@@ -30,6 +31,10 @@ const observations = [];
 const outcomes = [];
 const testPrefix = 'stack_popup::text_document::feasibility::tests::';
 const tests = [
+  ['RB-02-v2', 'rb02_v2_lease_mapping_and_context'],
+  ['RB-02-v2', 'rb02_v2_source_outcomes_and_errors'],
+  ['RB-02-v2', 'rb02_v2_selection_barrier_replay'],
+  ['RB-02-v2', 'rb02_v2_transport_credits_and_cancellation'],
   ['T02-01', 't02_01_authoritative_identity_rejection_and_races'],
   ['T02-01', 't02_01_identity_captures_reparse_metadata_and_rejects_named_streams'],
   ['T02-01', 't02_01_reparse_ancestor_and_final_refuse'],
@@ -51,13 +56,16 @@ const tests = [
   ['control', 't02_resource_control'],
 ];
 const sourceFiles = [
-  ...['mod','native','source','backing','contract','decode','hash','index','lease','scheduler','session','tests'].map(name => `src-tauri/src/stack_popup/text_document/feasibility/${name}.rs`),
+  ...['mod','native','source','backing','contract','decode','hash','index','lease','rb02_v2','scheduler','session','tests'].map(name => `src-tauri/src/stack_popup/text_document/feasibility/${name}.rs`),
   'src-tauri/src/stack_popup/text_document/mod.rs', 'src-tauri/src/stack_popup/text_document/protocol.rs',
   'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock',
   'src-tauri/src/main.rs', 'src-tauri/src/stack_popup.rs',
-  'tests/fixtures/stack-text-editor-protocol.json',
+  'src/features/stack-browser/textEditorProtocol.ts',
+  'tests/fixtures/stack-text-editor-protocol.json', 'tests/fixtures/stack-text-v2.json',
+  'tests/fixtures/stack-text-request-v2.json', 'tests/fixtures/stack-text-results-v2.json',
   'scripts/stack-text-editor/p02-run.mjs', 'scripts/stack-text-editor/corpusGenerator.mjs',
-  'scripts/stack-text-editor/byteTextOracle.mjs', 'scripts/stack-text-editor/controlledIo.mjs', 'scripts/stack-text-editor/measurement.mjs'
+  'scripts/stack-text-editor/byteTextOracle.mjs', 'scripts/stack-text-editor/controlledIo.mjs', 'scripts/stack-text-editor/measurement.mjs',
+  'scripts/stack-text-editor/commandManifest.mjs'
 ];
 const sourceManifest = [];
 for (const path of sourceFiles) {
@@ -66,7 +74,7 @@ for (const path of sourceFiles) {
   const destination = join(output, 'source-snapshot', path); await mkdir(dirname(destination), { recursive: true }); await copyFile(path, destination);
 }
 await writeFile(join(output, 'source-manifest.json'), JSON.stringify(sourceManifest, null, 2));
-await writeFile(join(output, 'environment.json'), JSON.stringify({ platform: process.platform, osRelease: release(), node: process.version, cpu: cpus()[0]?.model, logicalCpus: cpus().length, totalPhysicalMemoryBytes: String(totalmem()), seed, schemaRevision: 'stack-text-editor.v1', feasibilitySchemaRevision: 'stack-text-editor.p02-feasibility.v2', context7: 'unavailable', lsp: 'unavailable', nativeUi: args.includes('--actual-window-probe') ? 'actual-webview-window-probe' : 'not-launched', desktopSettings: 'untouched', sourceRevision: 'source-manifest-sha256', invokedArguments: args }, null, 2));
+await writeFile(join(output, 'environment.json'), JSON.stringify({ platform: process.platform, osRelease: release(), node: process.version, cpu: cpus()[0]?.model, logicalCpus: cpus().length, totalPhysicalMemoryBytes: String(totalmem()), seed, schemaRevision: 'stack-text-editor.v1', feasibilitySchemaRevision: 'stack-text-editor.p02-feasibility.v2', canonicalRevalidationSchemaRevision: 'stack-text-editor.v2', canonicalRevalidationScope: 'test-only-RB-02', context7: 'unavailable', lsp: 'unavailable', nativeUi: args.includes('--actual-window-probe') ? 'actual-webview-window-probe' : 'not-launched', desktopSettings: 'untouched', sourceRevision: 'source-manifest-sha256', invokedArguments: args }, null, 2));
 
 async function runTest(group, name, env = {}, ignored = false) {
   const id = String(commands.length + 1).padStart(3, '0');
@@ -150,6 +158,10 @@ const describedTests = new Set([
 ]);
 const discoveredSet = new Set(discoveredTests);
 const ignoredSet = new Set(discoveredIgnoredTests);
+const rb02Tests = tests.filter(([group]) => group === 'RB-02-v2').map(([, name]) => name);
+if (rb02Tests.length === 0 || rb02Tests.some(name => !discoveredSet.has(name))) {
+  throw new Error(JSON.stringify({ canonicalV2ZeroDiscoveryRejected: true, expected: rb02Tests, discovered: discoveredTests }));
+}
 const missingDescriptors = discoveredTests.filter(name => !describedTests.has(name));
 const staleDescriptors = tests
   .map(([, name]) => name)
@@ -165,6 +177,10 @@ await writeFile(join(output, 'test-discovery.json'), JSON.stringify({
   described: [...describedTests],
   allDiscoveredTestsHaveRunnerDescriptors: missingDescriptors.length === 0,
   allIgnoredTestsHaveExplicitRunnerHandling: unhandledIgnoredTests.length === 0,
+  canonicalV2Schema: 'stack-text-editor.v2',
+  canonicalV2Checks: rb02Tests,
+  canonicalV2DiscoveryCount: rb02Tests.length,
+  canonicalV2ZeroDiscoveryRejected: true,
 }, null, 2));
 
 function blockedOutcome(group, test, reason) {
@@ -210,7 +226,7 @@ async function runActualWindowProbe() {
     new Promise(resolveEnd => stdout.end(resolveEnd)),
     new Promise(resolveEnd => stderr.end(resolveEnd)),
   ]);
-  commands.push({
+  await persistCommandRecord(output, commands, {
     id,
     executable: 'cargo',
     args: ['run', '--manifest-path', 'src-tauri/Cargo.toml'],
@@ -298,13 +314,13 @@ for (const size of sizes) {
   }
 }
 for (const required of ['1MiB', '100MiB', '1GiB']) {
-  if (!requestedScaleSizes.has(required)) blockedOutcome('T02-02/T02-03', `populated_${required}`, 'required populated size was not requested');
+  if (!requestedScaleSizes.has(required)) blockedOutcome('P12/NFR-6', `populated_${required}`, 'deferred P12 populated size was not requested');
 }
 if (![...requestedScaleSizes].some(size => sizeBytes[size] && sizeBytes[size] >= 1024 ** 2)) {
-  blockedOutcome('T02-02/T02-03', 'populated_high_line_fixture', 'no populated high-line fixture was executed');
+  blockedOutcome('P12/NFR-6', 'populated_high_line_fixture', 'deferred P12 populated high-line fixture was not executed');
 }
-if (!requestedScaleSizes.has('multiGiB')) blockedOutcome('T02-02/T02-03', 'populated_multiGiB', 'multi-GiB populated run was not executed');
-if (!requestedScaleSizes.has('overRam')) blockedOutcome('T02-03', 'populated_overRam', 'over-RAM populated run was not executed');
+if (!requestedScaleSizes.has('multiGiB')) blockedOutcome('P12/NFR-6', 'populated_multiGiB', 'deferred P12 multi-GiB populated run was not executed');
+if (!requestedScaleSizes.has('overRam')) blockedOutcome('P12/NFR-6', 'populated_overRam', 'deferred P12 over-RAM populated run was not executed');
 const targetPolicyMatrix = [
   {
     targetClass: 'local-ntfs-regular-unnamed-default-stream-single-link',
@@ -357,9 +373,9 @@ const stopGoRecommendation = {
   ],
   pendingPromotionProof: [
     'independent storage/security review and coordinator signoff',
-    'populated scale evidence',
     'P04 recovery-root verification',
   ],
+  postLandingDebt: ['P12 populated scale and NFR-6 acceptance/refutation'],
 };
 await writeFile(join(output, 'target-policy.json'), JSON.stringify(targetPolicyMatrix, null, 2));
 await writeFile(join(output, 'recommendation.json'), JSON.stringify(stopGoRecommendation, null, 2));
@@ -371,12 +387,38 @@ const blockers = [
   'No phase acceptance: independent storage/security review and coordinator signoff required.',
   'Actual Tauri cross-window source-open authorization needs native integration review; Rust entry accepts only WebviewWindow, never a request label.',
   'SnapshotComplete is not recoveryComplete: P04 recovery-root verification remains outside P02.',
-  ...(sizes.includes('overRam') ? [] : ['Over-RAM populated run not requested; T02-03 scaling gate BLOCKED.']),
-  ...(sizes.includes('multiGiB') ? [] : ['Multi-GiB populated run not requested; T02-02 scale gate BLOCKED.']),
+  ...(sizes.includes('overRam') ? [] : ['Over-RAM populated run not requested; retained as non-gate P12/NFR-6 debt.']),
+  ...(sizes.includes('multiGiB') ? [] : ['Multi-GiB populated run not requested; retained as non-gate P12/NFR-6 debt.']),
   ...(args.includes('--actual-window-probe') ? [] : ['Actual WebviewWindow authorization probe not executed; T02-01 gate BLOCKED.']),
 ];
-const status = outcomes.some(outcome=>outcome.status==='FAIL')?'FAIL':outcomes.some(outcome=>outcome.status==='BLOCK')?'BLOCK':'IN_REVIEW';
-await writeFile(join(output,'matrix.json'),JSON.stringify({ phase:'P02',status,matrix,outcomes,blockers,seed,sourceManifest:'source-manifest.json',commands:'commands.json',observations:'observations.json',targetPolicy:'target-policy.json',recommendation:'recommendation.json',schemaRevision:'stack-text-editor.v1',feasibilitySchemaRevision:'stack-text-editor.p02-feasibility.v2',noSchemaChanges:false,schemaNote:'ViewLease sourceState and invalidAt are P02-local additive fields; frozen v1 base remains unchanged.' },null,2));
+const reviewPacket = {
+  scope: 'P02 test-only non-scale feasibility and RB-02 canonical-v2 compatibility',
+  storageSafety: {
+    status: 'PENDING-INDEPENDENT-REVIEW',
+    evidence: ['authenticated encrypted backing', 'tamper refusal', 'quota refusal retains readable dirty root', 'pre-existing mapped writer refused'],
+  },
+  securityPrivacy: {
+    status: 'PENDING-INDEPENDENT-REVIEW',
+    nativeAuthorizationEvidence: outcomes.find(outcome => outcome.test === 'actual_webview_window_authorization')?.status ?? 'BLOCK',
+    expectedAuthorizedWindow: 'stack-popup',
+    expectedUnauthorizedWindow: 'top-bar',
+    sourceTextLogged: false,
+    sourceSnapshotContainsFixtures: false,
+  },
+  completionSemantics: {
+    snapshotCompleteIsRecoveryComplete: false,
+    snapshotComplete: true,
+    recoveryComplete: false,
+    recoveryOwner: 'P04',
+  },
+  scale: { status: 'DEFERRED-P12-NFR-6', gateForThisNonScaleRun: false },
+  coordinatorDisposition: 'PENDING',
+  gateDisposition: 'BLOCKED-PENDING-REVIEWS-COORDINATOR-AND-P04',
+};
+await writeFile(join(output, 'review-packet.json'), JSON.stringify(reviewPacket, null, 2));
+const nonScaleOutcomes = outcomes.filter(outcome => outcome.group !== 'P12/NFR-6');
+const status = nonScaleOutcomes.some(outcome=>outcome.status==='FAIL')?'FAIL':nonScaleOutcomes.some(outcome=>outcome.status==='BLOCK')?'BLOCK':'IN_REVIEW';
+await writeFile(join(output,'matrix.json'),JSON.stringify({ phase:'P02',status,matrix,outcomes,blockers,seed,sourceManifest:'source-manifest.json',commands:'commands.json',observations:'observations.json',targetPolicy:'target-policy.json',recommendation:'recommendation.json',reviewPacket:'review-packet.json',schemaRevision:'stack-text-editor.v1',feasibilitySchemaRevision:'stack-text-editor.p02-feasibility.v2',canonicalRevalidationSchemaRevision:'stack-text-editor.v2',canonicalRevalidationChecks:rb02Tests,noSchemaChanges:false,schemaNote:'Legacy v1/local-v2 truth is retained; canonical v2 evidence is limited to isolated RB-02 tests and is not runtime or production proof.' },null,2));
 console.log(JSON.stringify({
   output,
   outcomes: outcomes.length,
@@ -385,4 +427,4 @@ console.log(JSON.stringify({
   status,
   blockers,
 },null,2));
-if(outcomes.some(outcome=>outcome.status!=='PASS'))process.exitCode=1;
+if(nonScaleOutcomes.some(outcome=>outcome.status!=='PASS'))process.exitCode=1;

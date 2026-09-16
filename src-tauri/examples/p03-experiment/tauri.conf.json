@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "JasonShell P03 Experiment",
+  "version": "0.1.0",
+  "identifier": "com.jnev1.jasonshell.p03-experiment",
+  "bundle": { "active": false, "icon": ["../../icons/icon.png"] },
+  "build": { "frontendDist": "../../../dist-p03-experiment" },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'",
+      "capabilities": []
+    },
+    "windows": []
+  }
+}

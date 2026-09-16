@@ -900,7 +900,8 @@
 }
 
 .details-table,
-.stack-popup > .stack-git-panel {
+.stack-popup > .stack-git-panel,
+.stack-popup > .stack-text-editor {
   grid-row: 4;
 }
 
@@ -1252,7 +1253,9 @@
   height: 1rem;
   justify-content: center;
   margin-left: 0.1rem;
+  position: relative;
   text-transform: uppercase;
+  top: 1px;
   width: 1rem;
 }
 
@@ -1286,22 +1289,35 @@
   z-index: 50;
 }
 
+.context-menu-shell {
+  overflow: visible;
+  position: fixed;
+  z-index: 50;
+}
+
+.context-menu-scroll {
+  left: auto;
+  overflow-y: auto;
+  position: static;
+  top: auto;
+}
+
 .context-submenu {
   position: relative;
 }
 
-.context-submenu::after {
+.context-submenu-panel::before {
   bottom: 0;
   content: '';
   position: absolute;
   top: 0;
   width: 0.42rem;
-  left: 100%;
+  right: 100%;
 }
 
-.context-submenu.left::after {
-  left: auto;
-  right: 100%;
+.context-menu-shell:has(.context-submenu.left) > .context-submenu-panel::before {
+  left: 100%;
+  right: auto;
 }
 
 .context-submenu-panel {
@@ -1311,17 +1327,19 @@
   min-width: 9rem;
   overflow-y: auto;
   position: absolute;
-  top: 0;
+  top: var(--stack-context-submenu-top, 0);
   z-index: 60;
 }
 
-.context-submenu.left .context-submenu-panel {
+.context-menu-shell:has(.context-submenu.left) > .context-submenu-panel {
   left: auto;
   right: 100%;
 }
 
-.context-submenu:hover .context-submenu-panel,
-.context-submenu:focus-within .context-submenu-panel {
+.context-menu-shell:has(.context-submenu:hover) > .context-submenu-panel,
+.context-menu-shell:has(.context-submenu:focus-within) > .context-submenu-panel,
+.context-menu-shell > .context-submenu-panel:hover,
+.context-menu-shell > .context-submenu-panel:focus-within {
   display: grid;
 }
 

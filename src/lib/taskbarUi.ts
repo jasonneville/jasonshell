@@ -10,9 +10,9 @@ export const TASK_PREVIEW_HIDE_DELAY_MS = 140;
 
 export type TaskPreviewHideRequestMode = 'schedule' | 'immediate';
 
-export type TaskPreviewHoverEnter = {
-  source: 'gallery' | 'preview';
-};
+export type TaskPreviewHoverEnter =
+  | { source: 'gallery'; nonce: string }
+  | { source: 'preview' };
 
 export type TaskPreviewHideRequest = {
   mode: TaskPreviewHideRequestMode;
@@ -23,6 +23,27 @@ export type TaskbarWindowsSnapshotPayload = {
   sequence: number;
   windows: TaskbarWindow[];
 };
+
+export function shouldDeferTaskGalleryClose(
+  transitionNonce: string | null,
+  openNonce: string | null
+) {
+  return transitionNonce !== null && transitionNonce === openNonce;
+}
+
+export function shouldCancelTaskGalleryClose(
+  event: TaskPreviewHoverEnter,
+  openNonce: string | null
+) {
+  return event.source === 'preview' || event.nonce === openNonce;
+}
+
+export function acknowledgeTaskGalleryTransition(
+  transitionNonce: string | null,
+  enteredNonce: string
+) {
+  return transitionNonce === enteredNonce ? null : transitionNonce;
+}
 
 export function taskWindowLabel(taskWindow: TaskbarWindow) {
   return taskWindow.title || taskWindow.processName;
