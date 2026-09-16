@@ -6,6 +6,7 @@ import ts from 'typescript';
 const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte', import.meta.url), 'utf8');
 const surfaceCss = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
 const editor = readFileSync(new URL('../src/components/StackTextEditor.svelte', import.meta.url), 'utf8');
+const adapter = readFileSync(new URL('../src/features/stack-browser/stackTextEditorAdapter.ts', import.meta.url), 'utf8');
 
 async function importExitState() {
   const source = readFileSync(new URL('../src/features/stack-browser/basicTextEditorExit.ts', import.meta.url), 'utf8');
@@ -111,13 +112,13 @@ test('normal text files route to the directly mounted editor while unsupported f
 test('editor replaces the file or Git content row and owns internal scrolling', () => {
   assert.match(surfaceCss, /\.details-table,\s*\.stack-popup > \.stack-git-panel,\s*\.stack-popup > \.stack-text-editor\s*\{\s*grid-row: 4;/);
   assert.match(editor, /\.stack-text-editor-field\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
-  assert.match(editor, /textarea\s*\{[^}]*box-sizing:\s*border-box;[^}]*height:\s*100%;[^}]*overflow:\s*auto;/s);
+  assert.match(editor, /\.stack-text-editor-host\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
 });
 
-test('editor exposes loading, errors, file context, labelled draft textarea, and explicit close', () => {
+test('editor exposes loading, errors, file context, labelled CodeMirror host, and explicit close', () => {
   assert.match(editor, /readStackBasicTextFile\(filePath\)/);
   assert.match(editor, /Draft only — saving is not available yet/);
-  assert.match(editor, /<textarea[\s\S]*bind:value=\{draft\}[\s\S]*aria-label="File contents"/);
+  assert.match(editor, /<div[\s\S]*bind:this=\{editorHost\}[\s\S]*class="stack-text-editor-host"[\s\S]*role="group"[\s\S]*aria-label="File contents"/);
   assert.match(editor, /\{#if loading\}[\s\S]*Loading file…/);
   assert.match(editor, /role="alert"/);
   assert.match(editor, /onDismiss/);
@@ -127,21 +128,42 @@ test('editor exposes loading, errors, file context, labelled draft textarea, and
 test('each successful file load focuses editor at document and viewport start after paint', () => {
   assert.match(
     editor,
-    /initialContent = result\.content;[\s\S]*draft = result\.content;[\s\S]*await tick\(\);\s*if \(sequence !== requestSequence \|\| filePath !== path\) return;\s*if \(textarea\) \{\s*textarea\.focus\(\);[\s\S]*textarea\.setSelectionRange\(0, 0\);[\s\S]*textarea\.scrollTop = 0;/
+    /initialContent = result\.content;[\s\S]*await tick\(\);[\s\S]*const mountedAdapter = createStackTextEditorAdapter\([\s\S]*editorAdapter = mountedAdapter;[\s\S]*await new Promise<void>\(\(resolve\) => window\.requestAnimationFrame\(\(\) => resolve\(\)\)\);\s*if \(disposed \|\| sequence !== requestSequence \|\| filePath !== path \|\| editorAdapter !== mountedAdapter\) return;\s*mountedAdapter\.focusAtStart\(\);/
   );
 });
 
+test('component creates adapter only for current successful load and destroys every prior view', () => {
+  assert.match(editor, /import \{[\s\S]*createStackTextEditorAdapter[\s\S]*stackTextEditorAdapter/);
+  assert.match(editor, /function destroyEditor\(\)[\s\S]*editorAdapter\?\.destroy\(\);[\s\S]*editorAdapter = null;/);
+  assert.match(editor, /const sequence = \+\+requestSequence;[\s\S]*destroyEditor\(\);/);
+  assert.match(editor, /if \(disposed \|\| sequence !== requestSequence \|\| filePath !== path\) return;[\s\S]*createStackTextEditorAdapter/);
+  assert.match(editor, /onDestroy\(\(\) => \{[\s\S]*disposed = true;[\s\S]*requestSequence \+= 1;[\s\S]*destroyEditor\(\);/);
+});
+
+test('adapter explicitly composes CodeMirror draft features and owns dirty Escape routing', () => {
+  assert.match(adapter, /EditorState\.create/);
+  assert.match(adapter, /new EditorView/);
+  for (const extension of ['history()', 'lineNumbers()', 'highlightActiveLine()', 'drawSelection()', 'bracketMatching()']) {
+    assert.ok(adapter.includes(extension), `missing explicit ${extension}`);
+  }
+  assert.match(adapter, /keymap\.of\(\[[\s\S]*\.\.\.defaultKeymap[\s\S]*\.\.\.historyKeymap[\s\S]*\.\.\.searchKeymap/);
+  assert.match(adapter, /EditorView\.updateListener\.of\([\s\S]*update\.docChanged[\s\S]*onChange\(draft, dirty\)/);
+  assert.match(adapter, /EditorView\.domEventHandlers\(\{[\s\S]*keydown\(event\)[\s\S]*event\.key !== 'Escape'[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)[\s\S]*onDismiss\(dirty\)/);
+  assert.match(adapter, /destroy\(\) \{[\s\S]*view\.destroy\(\)/);
+  assert.doesNotMatch(adapter, /basicSetup|syntaxHighlighting|foldGutter|autocompletion|linter/);
+});
+
 test('editor has no persistence or test-only product dependency', () => {
-  const combined = `${surface}\n${editor}`;
-  assert.doesNotMatch(combined, /TextEditorProjectionExperiment|P03|P04/);
-  assert.doesNotMatch(editor, /localStorage|writeStack|saveStack/);
+  const combined = `${surface}\n${editor}\n${adapter}`;
+  assert.doesNotMatch(combined, /TextEditorProjectionExperiment|P03|P04|modern-editor-features-research-plan/);
+  assert.doesNotMatch(combined, /localStorage|writeStack|saveStack|invoke\(/);
 });
 
 test('every editor exit routes through one parent-owned dirty-draft guard', () => {
   assert.match(editor, /export let onDirtyChange: \(dirty: boolean\) => void;/);
   assert.match(editor, /export let onDismiss: \(dirty: boolean\) => void;/);
   assert.match(editor, /onClick=\{\(\) => onDismiss\(dirty\)\}/);
-  assert.match(editor, /if \(event\.key !== 'Escape'\) return;[\s\S]*onDismiss\(dirty\);/);
+  assert.match(editor, /onDismiss: \(currentDirty\) => onDismiss\(currentDirty\)/);
 
   assert.match(surface, /function requestEditorExit\(action: \(\) => void \| Promise<void>\)/);
   assert.match(surface, /function dismissEditor\(\)[\s\S]*detailsBodyScrollTop = viewport\.scrollTop;[\s\S]*detailsBodyHeight = viewport\.height;[\s\S]*editorPath = null;/);

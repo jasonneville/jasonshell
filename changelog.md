@@ -1,5 +1,7 @@
 ## Change Ledger
 
+- 2026-09-16 `[CODE]` Stack Browser small resident draft editor now mounts a dedicated explicitly composed CodeMirror 6 adapter with local history/search/editing state, token-based theme bridge, dirty/Escape callbacks, focus-at-start, stale-load guards, and deterministic view destruction; no save, persistence, recovery, projection, syntax, folding, XML, IPC, or backend capability was added.
+- 2026-09-16 `[TOOL]` RED-first focused editor contract failed on the absent adapter, then passed 12/12; `npm run check`, `npm run build`, and `git diff --check` passed (build retained its non-failing existing >500 kB chunk warning).
 - 2026-09-16 `[CODE]` DOCS: Added Stack Browser modern editor features research/implementation plan for draft-only CodeMirror exploration, XML/parser gates, projection/save boundaries, and verification roadmap; no application behavior changed.
 - 2026-09-16 `[CODE]` FIXED: Stack basic text editor now resets focused caret and viewport to document start after each successful file load and Svelte paint; added focused source-contract regression coverage and preserved draft-only/no-persistence behavior.
 - 2026-09-16 `[CODE]` DOCS: Documented visible Stack Browser basic text editor integration: allowlisted small UTF-8 text files open in `StackTextEditor.svelte` through `read_stack_basic_text_file`; unsupported files retain external open behavior.

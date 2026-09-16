@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
+  import {
+    createStackTextEditorAdapter,
+    type StackTextEditorAdapter
+  } from '../features/stack-browser/stackTextEditorAdapter';
   import { readStackBasicTextFile } from '../lib/stackPopup';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
@@ -8,20 +12,28 @@
   export let onDirtyChange: (dirty: boolean) => void;
   export let onDismiss: (dirty: boolean) => void;
 
-  let textarea: HTMLTextAreaElement | null = null;
+  let editorHost: HTMLDivElement | null = null;
+  let editorAdapter: StackTextEditorAdapter | null = null;
   let loading = true;
   let errorMessage = '';
   let initialContent = '';
   let draft = '';
   let requestSequence = 0;
+  let disposed = false;
 
   $: filename = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
   $: dirty = draft !== initialContent;
   $: onDirtyChange(dirty);
   $: void loadFile(path);
 
+  function destroyEditor() {
+    editorAdapter?.destroy();
+    editorAdapter = null;
+  }
+
   async function loadFile(filePath: string) {
     const sequence = ++requestSequence;
+    destroyEditor();
     loading = true;
     errorMessage = '';
     initialContent = '';
@@ -29,30 +41,42 @@
 
     try {
       const result = await readStackBasicTextFile(filePath);
-      if (sequence !== requestSequence || filePath !== path) return;
+      if (disposed || sequence !== requestSequence || filePath !== path) return;
       initialContent = result.content;
       draft = result.content;
       loading = false;
       await tick();
-      if (sequence !== requestSequence || filePath !== path) return;
-      if (textarea) {
-        textarea.focus();
-        textarea.setSelectionRange(0, 0);
-        textarea.scrollTop = 0;
+      if (disposed || sequence !== requestSequence || filePath !== path) return;
+      if (!editorHost) return;
+      const mountedAdapter = createStackTextEditorAdapter({
+        parent: editorHost,
+        content: result.content,
+        onChange: (currentDraft, currentDirty) => {
+          draft = currentDraft;
+          dirty = currentDirty;
+        },
+        onDismiss: (currentDirty) => onDismiss(currentDirty)
+      });
+      if (disposed || sequence !== requestSequence || filePath !== path) {
+        mountedAdapter.destroy();
+        return;
       }
+      editorAdapter = mountedAdapter;
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      if (disposed || sequence !== requestSequence || filePath !== path || editorAdapter !== mountedAdapter) return;
+      mountedAdapter.focusAtStart();
     } catch (error) {
-      if (sequence !== requestSequence || filePath !== path) return;
+      if (disposed || sequence !== requestSequence || filePath !== path) return;
       loading = false;
       errorMessage = error instanceof Error && error.message ? error.message : String(error);
     }
   }
 
-  function handleEditorKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    onDismiss(dirty);
-  }
+  onDestroy(() => {
+    disposed = true;
+    requestSequence += 1;
+    destroyEditor();
+  });
 </script>
 
 <section class="stack-text-editor" aria-labelledby="stack-text-editor-title" aria-busy={loading}>
@@ -76,16 +100,15 @@
   {:else if errorMessage}
     <div class="stack-text-editor-state surface-state error" role="alert">{errorMessage}</div>
   {:else}
-    <label class="stack-text-editor-field">
+    <div class="stack-text-editor-field">
       <span class="stack-text-editor-label">File contents</span>
-      <textarea
-        bind:this={textarea}
-        bind:value={draft}
+      <div
+        bind:this={editorHost}
+        class="stack-text-editor-host"
+        role="group"
         aria-label="File contents"
-        spellcheck="false"
-        on:keydown={handleEditorKeydown}
-      ></textarea>
-    </label>
+      ></div>
+    </div>
   {/if}
 </section>
 
@@ -152,23 +175,12 @@
 
   .stack-text-editor-field { display: grid; min-height: 0; overflow: hidden; }
   .stack-text-editor-label { height: 1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0 0 0 0); }
-  textarea {
-    background: transparent;
-    border: 0;
+  .stack-text-editor-host {
     box-sizing: border-box;
-    color: var(--js-color-text-strong);
-    font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
-    font-size: 0.78rem;
     height: 100%;
-    line-height: 1.55;
     min-height: 0;
-    outline: 0;
-    overflow: auto;
-    padding: var(--js-space-3);
-    resize: none;
-    tab-size: 2;
+    overflow: hidden;
     width: 100%;
   }
-  textarea:focus { box-shadow: inset 0 0 0 1px var(--js-color-accent-border); }
   .stack-text-editor-state { align-self: center; justify-self: center; }
 </style>
