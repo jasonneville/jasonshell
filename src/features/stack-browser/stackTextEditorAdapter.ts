@@ -1,7 +1,9 @@
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { bracketMatching } from '@codemirror/language';
+import { bracketMatching, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { searchKeymap } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
+import { tags } from '@lezer/highlight';
+import { installStackTextEditorLanguage } from './stackTextEditorLanguages';
 import {
   drawSelection,
   EditorView,
@@ -13,26 +15,38 @@ import {
 export interface StackTextEditorAdapterOptions {
   parent: HTMLElement;
   content: string;
+  path: string;
+  fontStack: string;
   onChange: (draft: string, dirty: boolean) => void;
   onDismiss: (dirty: boolean) => void;
 }
 
 export interface StackTextEditorAdapter {
   focusAtStart(): void;
+  setFont(fontStack: string): void;
   destroy(): void;
 }
 
-const stackEditorTheme = EditorView.theme({
+const calmEditorForeground = 'color-mix(in srgb, var(--js-color-text) 82%, var(--js-bg-surface))';
+const calmEditorCaret = 'color-mix(in srgb, var(--js-color-text-strong) 84%, var(--js-bg-surface))';
+const calmEditorAccent = 'color-mix(in srgb, var(--js-color-accent) 72%, var(--js-color-text))';
+const calmEditorMuted = 'color-mix(in srgb, var(--js-color-text) 72%, var(--js-bg-surface))';
+
+export const stackEditorTheme = EditorView.theme({
   '&': {
     backgroundColor: 'transparent',
-    color: 'var(--js-color-text-strong)',
-    fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, monospace',
+    color: calmEditorForeground,
     fontSize: '0.78rem',
     height: '100%'
   },
   '&.cm-focused': { outline: 'var(--js-focus-ring)' },
   '.cm-scroller': { lineHeight: '1.55', overflow: 'auto' },
-  '.cm-content': { caretColor: 'var(--js-color-text-strong)', padding: 'var(--js-space-3) 0' },
+  '.cm-content': { caretColor: calmEditorCaret, padding: 'var(--js-space-3) 0' },
+  '.cm-cursor': {
+    borderLeft: '0',
+    backgroundColor: calmEditorCaret,
+    width: '0.62em'
+  },
   '.cm-line': { padding: '0 var(--js-space-3)' },
   '.cm-gutters': {
     backgroundColor: 'var(--js-bg-surface)',
@@ -45,14 +59,34 @@ const stackEditorTheme = EditorView.theme({
   }
 });
 
+export function stackEditorFontTheme(fontStack: string) {
+  return EditorView.theme({ '.cm-scroller': { fontFamily: fontStack } });
+}
+
+const stackHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: calmEditorAccent },
+  { tag: [tags.name, tags.propertyName, tags.attributeName], color: calmEditorForeground },
+  { tag: [tags.string, tags.inserted], color: calmEditorAccent },
+  { tag: [tags.number, tags.bool, tags.null], color: calmEditorForeground, fontWeight: '600' },
+  { tag: [tags.comment, tags.meta], color: calmEditorMuted, fontStyle: 'italic' },
+  { tag: [tags.typeName, tags.className, tags.tagName], color: calmEditorAccent, fontWeight: '600' },
+  { tag: [tags.operator, tags.punctuation], color: calmEditorMuted },
+  { tag: tags.invalid, color: calmEditorForeground, textDecoration: 'underline wavy' }
+]);
+
 export function createStackTextEditorAdapter({
   parent,
   content,
+  path,
+  fontStack,
   onChange,
   onDismiss
 }: StackTextEditorAdapterOptions): StackTextEditorAdapter {
   let draft = content;
   let dirty = false;
+  let destroyed = false;
+  const languageCompartment = new Compartment();
+  const fontCompartment = new Compartment();
 
   const state = EditorState.create({
     doc: content,
@@ -64,6 +98,9 @@ export function createStackTextEditorAdapter({
       highlightActiveLine(),
       drawSelection(),
       bracketMatching(),
+      syntaxHighlighting(stackHighlightStyle),
+      languageCompartment.of([]),
+      fontCompartment.of(stackEditorFontTheme(fontStack)),
       EditorView.contentAttributes.of({ 'aria-label': 'File contents', spellcheck: 'false' }),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
@@ -86,7 +123,18 @@ export function createStackTextEditorAdapter({
 
   const view = new EditorView({ state, parent });
 
+  void installStackTextEditorLanguage(path, {
+    apply: (language) => {
+      view.dispatch({ effects: languageCompartment.reconfigure(language) });
+    },
+    isDestroyed: () => destroyed
+  });
+
   return {
+    setFont(fontStack: string) {
+      if (destroyed) return;
+      view.dispatch({ effects: fontCompartment.reconfigure(stackEditorFontTheme(fontStack)) });
+    },
     focusAtStart() {
       view.dispatch({
         selection: { anchor: 0 },
@@ -97,6 +145,7 @@ export function createStackTextEditorAdapter({
       view.scrollDOM.scrollLeft = 0;
     },
     destroy() {
+      destroyed = true;
       view.destroy();
     }
   };

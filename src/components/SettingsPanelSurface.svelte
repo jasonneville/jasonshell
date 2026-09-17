@@ -13,6 +13,7 @@
     getInitialShellPreferences,
     installGoogleFontPreference,
     patchShellPreferences,
+    STACK_EDITOR_FONT_OPTIONS,
     setShellPreferences,
     shellFontOptions,
     type ShellPreferences
@@ -48,6 +49,7 @@
     value: option.value,
     label: option.label
   }));
+  const stackEditorFontSelectOptions = STACK_EDITOR_FONT_OPTIONS.map((font) => ({ value: font.id, label: font.label }));
   const dateFormatExamples = [
     'EEE, MMM d',
     'EEEE, MMMM d',
@@ -121,6 +123,10 @@
     googleFontError = '';
   }
 
+  function handleStackEditorFontChange(value: string) {
+    updatePreferences({ stackEditorFontId: value as ShellPreferences['stackEditorFontId'] });
+  }
+
   function handleGoogleFontLinkInput(event: Event) {
     const target = event.currentTarget instanceof HTMLInputElement ? event.currentTarget : null;
     googleFontLink = target?.value ?? '';
@@ -180,6 +186,7 @@
   function resetPresentation() {
     preferences = setShellPreferences({
       fontId: 'open-sans',
+      stackEditorFontId: 'google-sans-code',
       customFonts: preferences.customFonts,
       dateFormat: 'EEE, MMM d',
       use24HourTime: false,
@@ -262,6 +269,13 @@
       value={preferences.fontId}
       options={fontSelectOptions}
       onChange={handleFontChange}
+    />
+
+    <MeltSelect
+      label="Stack text editor font"
+      value={preferences.stackEditorFontId}
+      options={stackEditorFontSelectOptions}
+      onChange={handleStackEditorFontChange}
     />
 
     <div class="google-font-installer">

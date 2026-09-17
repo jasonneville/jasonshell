@@ -7,12 +7,35 @@ const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte
 const surfaceCss = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
 const editor = readFileSync(new URL('../src/components/StackTextEditor.svelte', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../src/features/stack-browser/stackTextEditorAdapter.ts', import.meta.url), 'utf8');
+const languageRegistryUrl = new URL('../src/features/stack-browser/stackTextEditorLanguages.ts', import.meta.url);
+const languageRegistry = (() => {
+  try { return readFileSync(languageRegistryUrl, 'utf8'); } catch { return ''; }
+})();
 
 async function importExitState() {
   const source = readFileSync(new URL('../src/features/stack-browser/basicTextEditorExit.ts', import.meta.url), 'utf8');
   const javascript = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
   }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`);
+}
+
+async function importLanguageRegistry() {
+  const javascript = ts.transpileModule(languageRegistry, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`);
+}
+
+async function importEditorAdapter() {
+  let javascript = ts.transpileModule(adapter, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  const languageStub = `data:text/javascript,${encodeURIComponent('export async function installStackTextEditorLanguage() {}')}`;
+  javascript = javascript.replace("'./stackTextEditorLanguages'", JSON.stringify(languageStub));
+  javascript = javascript.replace(/from '(@[^']+)'/g, (_match, specifier) => (
+    `from ${JSON.stringify(import.meta.resolve(specifier))}`
+  ));
   return import(`data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`);
 }
 
@@ -150,7 +173,131 @@ test('adapter explicitly composes CodeMirror draft features and owns dirty Escap
   assert.match(adapter, /EditorView\.updateListener\.of\([\s\S]*update\.docChanged[\s\S]*onChange\(draft, dirty\)/);
   assert.match(adapter, /EditorView\.domEventHandlers\(\{[\s\S]*keydown\(event\)[\s\S]*event\.key !== 'Escape'[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)[\s\S]*onDismiss\(dirty\)/);
   assert.match(adapter, /destroy\(\) \{[\s\S]*view\.destroy\(\)/);
-  assert.doesNotMatch(adapter, /basicSetup|syntaxHighlighting|foldGutter|autocompletion|linter/);
+  assert.doesNotMatch(adapter, /basicSetup|foldGutter|autocompletion|linter/);
+});
+
+test('Stack editor font is preference-driven and reconfigures mounted view without recreation', () => {
+  assert.match(adapter, /fontStack: string/);
+  assert.match(adapter, /setFont\(fontStack: string\): void/);
+  assert.match(adapter, /const fontCompartment = new Compartment\(\)/);
+  assert.match(adapter, /fontCompartment\.of\(stackEditorFontTheme\(fontStack\)\)/);
+  assert.match(adapter, /view\.dispatch\(\{ effects: fontCompartment\.reconfigure\(stackEditorFontTheme\(fontStack\)\) \}\)/);
+  assert.doesNotMatch(adapter, /fontFamily:\s*'"Google Sans Code"/);
+  assert.match(editor, /addShellPreferencesChangeListener/);
+  assert.match(editor, /stackEditorFontById\(preferences\.stackEditorFontId\)\.stack/);
+  assert.match(editor, /fontStack: stackEditorFontStack/);
+  assert.match(editor, /editorAdapter\?\.setFont\(stackEditorFontStack\)/);
+  assert.match(editor, /const removePreferencesListener = addShellPreferencesChangeListener/);
+  assert.match(editor, /onDestroy\(\(\) => \{[\s\S]*removePreferencesListener\(\);[\s\S]*destroyEditor\(\);/);
+});
+
+test('Stack editor font theme targets CodeMirror rendered text scroller', async () => {
+  const { stackEditorFontTheme } = await importEditorAdapter();
+  const extension = stackEditorFontTheme('Regression Face, monospace');
+  const rules = extension.flatMap((part) => part?.value?.rules ?? []);
+
+  assert.ok(
+    rules.some((rule) => /\.cm-scroller\s*\{font-family:\s*Regression Face, monospace;\}/.test(rule)),
+    `expected actual CodeMirror theme rule to target .cm-scroller; got ${JSON.stringify(rules)}`
+  );
+});
+
+test('Stack editor theme renders a themed terminal-style block cursor', async () => {
+  const { stackEditorTheme } = await importEditorAdapter();
+  assert.ok(stackEditorTheme, 'Stack editor theme must be inspectable');
+  const rules = stackEditorTheme.flatMap((part) => part?.value?.rules ?? []);
+  const cursorRule = rules.find((rule) => /\.cm-cursor\s*\{/.test(rule));
+
+  assert.ok(cursorRule, `expected actual CodeMirror theme rule for .cm-cursor; got ${JSON.stringify(rules)}`);
+  assert.match(cursorRule, /border-left:\s*0;/);
+  assert.match(cursorRule, /background-color:\s*color-mix\(in srgb, var\(--js-color-text-strong\) 84%, var\(--js-bg-surface\)\);/);
+  assert.match(cursorRule, /width:\s*0\.62em;/);
+});
+
+test('editor derives calm local foregrounds for content, caret, and syntax without adding capabilities', () => {
+  assert.match(adapter, /const calmEditorForeground = 'color-mix\(in srgb, var\(--js-color-text\) \d+%, var\(--js-bg-surface\)\)'/);
+  assert.match(adapter, /const calmEditorCaret = 'color-mix\(in srgb, var\(--js-color-text-strong\) \d+%, var\(--js-bg-surface\)\)'/);
+  assert.match(adapter, /const calmEditorAccent = 'color-mix\(in srgb, var\(--js-color-accent\) \d+%, var\(--js-color-text\)\)'/);
+  assert.match(adapter, /'&': \{[\s\S]*color: calmEditorForeground/);
+  assert.match(adapter, /'\.cm-content': \{ caretColor: calmEditorCaret/);
+  assert.match(adapter, /tags\.keyword, color: calmEditorAccent/);
+  assert.match(adapter, /tags\.name, tags\.propertyName, tags\.attributeName\], color: calmEditorForeground/);
+  assert.match(adapter, /tags\.string, tags\.inserted\], color: calmEditorAccent/);
+  assert.doesNotMatch(adapter, /foldGutter|foldKeymap|autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
+});
+
+test('language registry routes supported extensions case-insensitively and leaves plain text plain', () => {
+  for (const extension of ['json', 'js', 'ts', 'svelte', 'css', 'html', 'xml', 'yaml', 'yml', 'md']) {
+    assert.match(languageRegistry, new RegExp(`['"]${extension}['"]`), `missing ${extension} route`);
+  }
+  assert.match(languageRegistry, /toLowerCase\(\)/);
+  assert.match(languageRegistry, /[\\/]\/|split\(\/\[\\\\\/\]\//);
+  assert.doesNotMatch(languageRegistry, /['"](?:txt|csv|log)['"]\s*:/);
+});
+
+test('language registry executes normalized routes and plain fallback', async () => {
+  const { stackTextEditorExtension, installStackTextEditorLanguage } = await importLanguageRegistry();
+  assert.equal(stackTextEditorExtension('C:\\Mixed/Folder\\FILE.Ts'), 'ts');
+  assert.equal(stackTextEditorExtension('C:/Folder/README'), '');
+
+  const applied = [];
+  let loaderCalls = 0;
+  await installStackTextEditorLanguage('C:\\Mixed/Folder\\FILE.Ts', {
+    load: async (extension) => {
+      loaderCalls += 1;
+      assert.equal(extension, 'ts');
+      return 'typescript-extension';
+    },
+    apply: (extension) => applied.push(extension),
+    isDestroyed: () => false
+  });
+  await installStackTextEditorLanguage('notes.LOG', {
+    load: async () => { loaderCalls += 1; return 'unexpected'; },
+    apply: (extension) => applied.push(extension),
+    isDestroyed: () => false
+  });
+  assert.equal(loaderCalls, 1);
+  assert.deepEqual(applied, ['typescript-extension']);
+});
+
+test('language install swallows loader rejection and ignores completion after destroy', async () => {
+  const { installStackTextEditorLanguage } = await importLanguageRegistry();
+  const applied = [];
+  await assert.doesNotReject(installStackTextEditorLanguage('data.json', {
+    load: async () => { throw new Error('optional parser unavailable'); },
+    apply: (extension) => applied.push(extension),
+    isDestroyed: () => false
+  }));
+
+  let resolveLanguage;
+  let destroyed = false;
+  const deferred = new Promise((resolve) => { resolveLanguage = resolve; });
+  const installation = installStackTextEditorLanguage('view.SVELTE', {
+    load: () => deferred,
+    apply: (extension) => applied.push(extension),
+    isDestroyed: () => destroyed
+  });
+  destroyed = true;
+  resolveLanguage('svelte-extension');
+  await installation;
+  assert.deepEqual(applied, []);
+});
+
+test('adapter composes explicit token theme and installs language asynchronously with stale safety', () => {
+  assert.match(adapter, /HighlightStyle\.define/);
+  assert.match(adapter, /syntaxHighlighting\(/);
+  assert.match(adapter, /languageCompartment/);
+  assert.match(adapter, /installStackTextEditorLanguage\(path/);
+  assert.match(adapter, /isDestroyed: \(\) => destroyed/);
+  assert.match(adapter, /languageCompartment\.reconfigure/);
+  assert.doesNotMatch(adapter, /--js-color-(?:success|warning|accent-strong|danger)/);
+  assert.match(editor, /path: filePath/);
+  assert.doesNotMatch(adapter, /await\s+loadStackTextEditorLanguage/);
+});
+
+test('syntax addition excludes folds, completion, save, and persistence capabilities', () => {
+  const combined = `${editor}\n${adapter}\n${languageRegistry}`;
+  assert.doesNotMatch(combined, /foldGutter|foldKeymap|autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
 });
 
 test('editor has no persistence or test-only product dependency', () => {

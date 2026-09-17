@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   SHELL_FONT_OPTIONS,
+  STACK_EDITOR_FONT_OPTIONS,
   SHELL_PREFERENCES_CHANNEL,
   SHELL_PREFERENCES_STORAGE_KEY,
   addShellPreferencesChangeListener,
@@ -15,8 +16,10 @@ import {
   installShellPreferencesSync,
   normalizeShellPreferences,
   parseGoogleFontLink,
+  setShellPreferences,
   shellFontById,
-  shellFontOptions
+  shellFontOptions,
+  stackEditorFontById
 } from '../dist-tests/lib/shellPreferences.js';
 
 const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
@@ -92,6 +95,30 @@ test('normalizes shell preferences and applies dataset plus CSS font variables',
   assert.equal(JSON.parse(storage.get(SHELL_PREFERENCES_STORAGE_KEY)).fontId, 'aptos');
 
   assert.deepEqual(normalizeShellPreferences({ fontId: 'missing', dateFormat: '' }), defaultShellPreferences);
+});
+
+test('Stack editor font is independent, defaults safely, and persists as a stable option id', () => {
+  assert.equal(defaultShellPreferences.stackEditorFontId, 'google-sans-code');
+  assert.deepEqual(
+    STACK_EDITOR_FONT_OPTIONS.map(({ id }) => id),
+    ['google-sans-code', 'cascadia-code', 'cascadia-mono', 'consolas', 'monospace']
+  );
+  assert.equal(normalizeShellPreferences({ fontId: 'aptos' }).stackEditorFontId, 'google-sans-code');
+  assert.equal(normalizeShellPreferences({ stackEditorFontId: 'invalid' }).stackEditorFontId, 'google-sans-code');
+  assert.equal(stackEditorFontById('cascadia-code').stack, "'Cascadia Code', 'Cascadia Mono', Consolas, monospace");
+
+  const storage = new Map();
+  const preferences = applyShellPreferences(
+    { fontId: 'aptos', stackEditorFontId: 'consolas' },
+    {
+      documentElement: { dataset: {}, style: { setProperty() {} } },
+      storage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+      dispatch: false
+    }
+  );
+  assert.equal(preferences.fontId, 'aptos');
+  assert.equal(preferences.stackEditorFontId, 'consolas');
+  assert.equal(JSON.parse(storage.get(SHELL_PREFERENCES_STORAGE_KEY)).stackEditorFontId, 'consolas');
 });
 
 test('parses and installs strict https fonts.google.com links as custom CSS2 font preferences', () => {
@@ -220,6 +247,10 @@ test('preferences sync handles storage, BroadcastChannel updates, cleanup, and l
     close() {
       this.closed = true;
     }
+
+    postMessage(value) {
+      this.posted = value;
+    }
   }
 
   Object.defineProperty(globalThis, 'window', {
@@ -251,6 +282,7 @@ test('preferences sync handles storage, BroadcastChannel updates, cleanup, and l
     const cleanup = installShellPreferencesSync((preferences) => seen.push(preferences));
     assert.equal(channels[0].name, SHELL_PREFERENCES_CHANNEL);
     assert.equal(seen[0].fontId, 'open-sans');
+    assert.equal(seen[0].stackEditorFontId, 'google-sans-code');
 
     listeners.get('storage')?.({
       key: SHELL_PREFERENCES_STORAGE_KEY,
@@ -259,15 +291,22 @@ test('preferences sync handles storage, BroadcastChannel updates, cleanup, and l
     assert.equal(seen.at(-1).fontId, 'segoe-ui');
     assert.equal(seen.at(-1).showSeconds, false);
 
-    channels[0].onmessage?.({ data: { fontId: 'cascadia', compactDensity: true } });
+    channels[0].onmessage?.({ data: { fontId: 'cascadia', stackEditorFontId: 'cascadia-mono', compactDensity: true } });
     assert.equal(seen.at(-1).fontId, 'cascadia');
     assert.equal(seen.at(-1).compactDensity, true);
+    assert.equal(seen.at(-1).stackEditorFontId, 'cascadia-mono');
 
     const localChanges = [];
     const removeLocal = addShellPreferencesChangeListener((preferences) => localChanges.push(preferences));
-    listeners.get('jasonshell:ui-preferences-changed')?.({ detail: { fontId: 'aptos' } });
+    listeners.get('jasonshell:ui-preferences-changed')?.({ detail: { fontId: 'aptos', stackEditorFontId: 'consolas' } });
     assert.equal(localChanges[0].fontId, 'aptos');
+    assert.equal(localChanges[0].stackEditorFontId, 'consolas');
     removeLocal();
+
+    setShellPreferences({ fontId: 'open-sans', stackEditorFontId: 'cascadia-code' });
+    assert.equal(JSON.parse(storage.get(SHELL_PREFERENCES_STORAGE_KEY)).stackEditorFontId, 'cascadia-code');
+    assert.equal(channels[1].posted.stackEditorFontId, 'cascadia-code');
+    assert.equal(dispatched.at(-1).detail.stackEditorFontId, 'cascadia-code');
 
     cleanup();
     assert.equal(channels[0].closed, true);

@@ -5,6 +5,11 @@
     type StackTextEditorAdapter
   } from '../features/stack-browser/stackTextEditorAdapter';
   import { readStackBasicTextFile } from '../lib/stackPopup';
+  import {
+    addShellPreferencesChangeListener,
+    getInitialShellPreferences,
+    stackEditorFontById
+  } from '../lib/shellPreferences';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
 
@@ -20,6 +25,11 @@
   let draft = '';
   let requestSequence = 0;
   let disposed = false;
+  let stackEditorFontStack = stackEditorFontById(getInitialShellPreferences().stackEditorFontId).stack;
+  const removePreferencesListener = addShellPreferencesChangeListener((preferences) => {
+    stackEditorFontStack = stackEditorFontById(preferences.stackEditorFontId).stack;
+    editorAdapter?.setFont(stackEditorFontStack);
+  });
 
   $: filename = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
   $: dirty = draft !== initialContent;
@@ -51,6 +61,8 @@
       const mountedAdapter = createStackTextEditorAdapter({
         parent: editorHost,
         content: result.content,
+        path: filePath,
+        fontStack: stackEditorFontStack,
         onChange: (currentDraft, currentDirty) => {
           draft = currentDraft;
           dirty = currentDirty;
@@ -75,6 +87,7 @@
   onDestroy(() => {
     disposed = true;
     requestSequence += 1;
+    removePreferencesListener();
     destroyEditor();
   });
 </script>

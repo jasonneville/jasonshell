@@ -59,6 +59,16 @@ test('settings panel exposes live theme, font, date, clock, and useful UI prefer
   assert.match(settingsPanelCss, /settings-panel/);
 });
 
+test('Stack editor font selector immediately follows app font and patches only editor preference', () => {
+  const appFont = settingsPanelSource.indexOf('label="Font"');
+  const editorFont = settingsPanelSource.indexOf('label="Stack text editor font"');
+  const installer = settingsPanelSource.indexOf('class="google-font-installer"');
+  assert.ok(appFont >= 0 && editorFont > appFont && installer > editorFont);
+  assert.match(settingsPanelSource, /STACK_EDITOR_FONT_OPTIONS\.map/);
+  assert.match(settingsPanelSource, /function handleStackEditorFontChange\(value: string\)[\s\S]*updatePreferences\(\{ stackEditorFontId: value as ShellPreferences\['stackEditorFontId'\] \}\)/);
+  assert.match(settingsPanelSource, /label="Stack text editor font"[\s\S]*value=\{preferences\.stackEditorFontId\}[\s\S]*onChange=\{handleStackEditorFontChange\}/);
+});
+
 test('settings panel keeps Stack Browser terminal profile inside JSON shell settings section', () => {
   assert.match(settingsPanelSource, /STACK_TERMINAL_PROFILE_OPTIONS/);
   assert.match(settingsPanelSource, /label="Stack Browser terminal"/);

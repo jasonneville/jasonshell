@@ -4,6 +4,7 @@ export const SHELL_PREFERENCES_CHANGED_EVENT = 'jasonshell:ui-preferences-change
 
 export type BuiltInShellFontId = 'open-sans' | 'google-sans' | 'google-sans-code' | 'segoe-ui' | 'inter' | 'aptos' | 'system' | 'cascadia';
 export type ShellFontId = BuiltInShellFontId | string;
+export type StackEditorFontId = 'google-sans-code' | 'cascadia-code' | 'cascadia-mono' | 'consolas' | 'monospace';
 
 export interface ShellFontOption {
   id: ShellFontId;
@@ -20,6 +21,7 @@ export interface ShellCustomFont {
 
 export interface ShellPreferences {
   fontId: ShellFontId;
+  stackEditorFontId: StackEditorFontId;
   customFonts: ShellCustomFont[];
   dateFormat: string;
   use24HourTime: boolean;
@@ -85,10 +87,19 @@ export const SHELL_FONT_OPTIONS: readonly ShellFontOption[] = [
   }
 ] as const;
 
+export const STACK_EDITOR_FONT_OPTIONS: readonly ShellFontOption[] = [
+  { id: 'google-sans-code', label: 'Google Sans Code', stack: "'Google Sans Code', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace" },
+  { id: 'cascadia-code', label: 'Cascadia Code', stack: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace" },
+  { id: 'cascadia-mono', label: 'Cascadia Mono', stack: "'Cascadia Mono', Consolas, monospace" },
+  { id: 'consolas', label: 'Consolas', stack: "Consolas, 'Cascadia Mono', monospace" },
+  { id: 'monospace', label: 'Monospace', stack: 'monospace' }
+] as const;
+
 export const DEFAULT_DATE_FORMAT = 'EEE, MMM d';
 
 export const defaultShellPreferences: ShellPreferences = {
   fontId: 'open-sans',
+  stackEditorFontId: 'google-sans-code',
   customFonts: [],
   dateFormat: DEFAULT_DATE_FORMAT,
   use24HourTime: false,
@@ -100,6 +111,7 @@ export const defaultShellPreferences: ShellPreferences = {
 };
 
 const FONT_IDS = new Set<string>(SHELL_FONT_OPTIONS.map((font) => font.id));
+const STACK_EDITOR_FONT_IDS = new Set<string>(STACK_EDITOR_FONT_OPTIONS.map((font) => font.id));
 
 export function shellFontOptions(customFonts: unknown = []): ShellFontOption[] {
   return [
@@ -116,6 +128,13 @@ export function shellFontById(value: unknown, customFonts: unknown = []): ShellF
   }
   const builtInId = FONT_IDS.has(id) ? (id as BuiltInShellFontId) : defaultShellPreferences.fontId;
   return SHELL_FONT_OPTIONS.find((font) => font.id === builtInId) ?? SHELL_FONT_OPTIONS[0];
+}
+
+export function stackEditorFontById(value: unknown): ShellFontOption {
+  const id = typeof value === 'string' && STACK_EDITOR_FONT_IDS.has(value)
+    ? value as StackEditorFontId
+    : defaultShellPreferences.stackEditorFontId;
+  return STACK_EDITOR_FONT_OPTIONS.find((font) => font.id === id) ?? STACK_EDITOR_FONT_OPTIONS[0];
 }
 
 export interface ParsedGoogleFontLink {
@@ -255,6 +274,7 @@ export function normalizeShellPreferences(value: unknown): ShellPreferences {
   const customFonts = normalizeCustomFonts(input.customFonts);
   return {
     fontId: shellFontById(input.fontId, customFonts).id,
+    stackEditorFontId: stackEditorFontById(input.stackEditorFontId).id as StackEditorFontId,
     customFonts,
     dateFormat: normalizeDateFormat(input.dateFormat),
     use24HourTime: Boolean(input.use24HourTime),
