@@ -7,6 +7,7 @@ const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte
 const surfaceCss = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
 const editor = readFileSync(new URL('../src/components/StackTextEditor.svelte', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../src/features/stack-browser/stackTextEditorAdapter.ts', import.meta.url), 'utf8');
+const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
 const languageRegistryUrl = new URL('../src/features/stack-browser/stackTextEditorLanguages.ts', import.meta.url);
 const languageRegistry = (() => {
   try { return readFileSync(languageRegistryUrl, 'utf8'); } catch { return ''; }
@@ -31,8 +32,10 @@ async function importEditorAdapter() {
   let javascript = ts.transpileModule(adapter, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
   }).outputText;
-  const languageStub = `data:text/javascript,${encodeURIComponent('export async function installStackTextEditorLanguage() {}')}`;
+  const languageStub = `data:text/javascript,${encodeURIComponent("export async function installStackTextEditorLanguage() {}\nexport function stackTextEditorExtension() { return ''; }")}`;
+  const foldControlStub = `data:text/javascript,${encodeURIComponent('export function createStackFoldMarker() { return document.createElement("button"); }')}`;
   javascript = javascript.replace("'./stackTextEditorLanguages'", JSON.stringify(languageStub));
+  javascript = javascript.replace("'./stackFoldControl'", JSON.stringify(foldControlStub));
   javascript = javascript.replace(/from '(@[^']+)'/g, (_match, specifier) => (
     `from ${JSON.stringify(import.meta.resolve(specifier))}`
   ));
@@ -173,7 +176,7 @@ test('adapter explicitly composes CodeMirror draft features and owns dirty Escap
   assert.match(adapter, /EditorView\.updateListener\.of\([\s\S]*update\.docChanged[\s\S]*onChange\(draft, dirty\)/);
   assert.match(adapter, /EditorView\.domEventHandlers\(\{[\s\S]*keydown\(event\)[\s\S]*event\.key !== 'Escape'[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)[\s\S]*onDismiss\(dirty\)/);
   assert.match(adapter, /destroy\(\) \{[\s\S]*view\.destroy\(\)/);
-  assert.doesNotMatch(adapter, /basicSetup|foldGutter|autocompletion|linter/);
+  assert.doesNotMatch(adapter, /basicSetup|autocompletion|linter/);
 });
 
 test('Stack editor font is preference-driven and reconfigures mounted view without recreation', () => {
@@ -214,6 +217,23 @@ test('Stack editor theme renders a themed terminal-style block cursor', async ()
   assert.match(cursorRule, /width:\s*0\.62em;/);
 });
 
+test('Stack editor uses dedicated stronger focused and quieter inactive selection backplates', async () => {
+  const { stackEditorTheme } = await importEditorAdapter();
+  const rules = stackEditorTheme.flatMap((part) => part?.value?.rules ?? []);
+  const inactiveRule = rules.find((rule) => /\.cm-selectionBackground\s*\{/.test(rule) && !/cm-focused/.test(rule));
+  const focusedRule = rules.find((rule) => /cm-focused[^{}]*\.cm-selectionBackground\s*\{/.test(rule));
+
+  assert.match(inactiveRule ?? '', /background-color:\s*var\(--js-stack-editor-selection-inactive\);/);
+  assert.match(focusedRule ?? '', /background-color:\s*var\(--js-stack-editor-selection\);/);
+  assert.doesNotMatch(`${inactiveRule}\n${focusedRule}`, /--js-color-(?:accent-border|selected)/);
+  assert.match(appCss, /--js-stack-editor-selection:\s*color-mix\(in srgb, var\(--js-bg-surface\) 70%, var\(--js-color-accent\)\);/);
+  assert.match(appCss, /--js-stack-editor-selection-inactive:\s*color-mix\(in srgb, var\(--js-bg-surface\) 84%, var\(--js-color-accent\)\);/);
+  assert.doesNotMatch(appCss, /--js-stack-editor-selection(?:-inactive)?:\s*[^;]*transparent/);
+  assert.match(appCss, /@media \(prefers-contrast: more\), \(forced-colors: active\)[\s\S]*--js-stack-editor-selection:\s*Highlight;[\s\S]*--js-stack-editor-selection-inactive:\s*[^;]+;/);
+  assert.doesNotMatch(adapter, /(?:\.cm-selectionBackground[^}]*color:|::selection)/s);
+  assert.match(adapter, /drawSelection\(\)/);
+});
+
 test('editor derives calm local foregrounds for content, caret, and syntax without adding capabilities', () => {
   assert.match(adapter, /const calmEditorForeground = 'color-mix\(in srgb, var\(--js-color-text\) \d+%, var\(--js-bg-surface\)\)'/);
   assert.match(adapter, /const calmEditorCaret = 'color-mix\(in srgb, var\(--js-color-text-strong\) \d+%, var\(--js-bg-surface\)\)'/);
@@ -223,7 +243,7 @@ test('editor derives calm local foregrounds for content, caret, and syntax witho
   assert.match(adapter, /tags\.keyword, color: calmEditorAccent/);
   assert.match(adapter, /tags\.name, tags\.propertyName, tags\.attributeName\], color: calmEditorForeground/);
   assert.match(adapter, /tags\.string, tags\.inserted\], color: calmEditorAccent/);
-  assert.doesNotMatch(adapter, /foldGutter|foldKeymap|autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
+  assert.doesNotMatch(adapter, /autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
 });
 
 test('language registry routes supported extensions case-insensitively and leaves plain text plain', () => {
@@ -295,9 +315,9 @@ test('adapter composes explicit token theme and installs language asynchronously
   assert.doesNotMatch(adapter, /await\s+loadStackTextEditorLanguage/);
 });
 
-test('syntax addition excludes folds, completion, save, and persistence capabilities', () => {
+test('structured editing excludes completion, save, and persistence capabilities', () => {
   const combined = `${editor}\n${adapter}\n${languageRegistry}`;
-  assert.doesNotMatch(combined, /foldGutter|foldKeymap|autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
+  assert.doesNotMatch(combined, /autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
 });
 
 test('editor has no persistence or test-only product dependency', () => {

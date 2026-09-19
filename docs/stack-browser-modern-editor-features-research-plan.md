@@ -1,10 +1,10 @@
 # Stack Browser Modern Editor Features — Status and Deferred Plan
 
 **Date:** 2026-09-16  
-**Status:** Partial implementation complete: M01 resident adapter and M02 scoped syntax highlighting are implemented for the draft-only route. Later features remain deferred.
+**Status:** M03 automated feasibility and M04b/M05b source integration implemented; required packaged WebView2/AT/IME acceptance remains BLOCKED and M06 is unaccepted.
 **Owner:** Documentation owner.  
-**Decision state:** CodeMirror 6 is implemented with async extension-keyed syntax for Markdown, JSON, JS/TS, Svelte, CSS, HTML, XML, and YAML/YML. Folds, projection, save/recovery, accessibility proof, performance proof, and production-readiness gates are not passed.
-**Boundary:** This document records truthful status only. It changes no product behavior, source route, save/recovery status, package manifest, test suite, Rust command, config, P03/P04 status, or master spec.
+**Decision state:** CodeMirror 6 integration includes async syntax plus parser-derived JSON/XML folding, keyboard/stateful gutter controls, and XML package tag editing. Projection, save/recovery, packaged accessibility/IME proof, performance proof, and production-readiness gates are not passed.
+**Boundary:** This latest evidence/status correction adds no product behavior. Broader M03–M05 work did change the adapter and focused tests to integrate JSON/XML folds, controls, focus restoration, and XML auto-close. Neither that implementation nor this correction changes save/recovery, Rust/capabilities, persistence, projection, P03/P04, or product-readiness status.
 
 ## 1. Status summary
 
@@ -14,7 +14,7 @@
 | Explicit CM extension composition | **Implemented (2026-09-16)** | Adapter uses explicit history, default/history/search keymaps, search, line numbers, active line, draw selection, bracket matching, update listener, and theme bridge. It does not use blind `basicSetup`. |
 | Lifecycle/focus/Escape split | **Implemented (2026-09-16)** | Adapter owns `EditorView` lifecycle, local resident draft, local history, cleanup, destroy/remount, Escape-to-parent dismiss, and focus-at-start after Svelte tick plus browser animation frame. |
 | Svelte/Rust ownership split | **Implemented to current small-file scope** | Svelte owns load/path staleness, chrome/status, and parent dirty guard. Rust remains unchanged: `read_stack_basic_text_file` is read-only 1 MiB UTF-8 authority. |
-| Language registry / syntax packages | **Implemented to M02 syntax scope (2026-09-16)** | Async explicit registry covers JSON, JS/TS, Svelte, CSS, HTML, XML, YAML/YML, and Markdown. TXT/CSV/LOG stay plain. XML is syntax-only; folds/tags remain deferred. |
+| Language registry / structured editing | **Integrated through M05 source/automated scope (2026-09-16)** | Successful JSON/XML loads add parser-derived folds and controls; XML retains package tag editing. TXT/CSV/LOG stay plain. M06 qualification remains blocked. |
 | Autocomplete/lint/format/LSP/minimap/semantic diagnostics | **Deferred** | No capability added or validated. |
 | Accessibility/manual runtime proof | **Deferred** | No packaged WebView2/IME/AT/high-contrast/DPI manual proof claimed. |
 | Performance/bundle/memory proof | **Deferred** | No measurement claim. Existing build chunk-size warning remains non-failing. |
@@ -35,20 +35,20 @@ FACTS:
 
 NON-GOALS / EXCLUSIONS:
 
-- No claim beyond scoped syntax highlighting: folds, XML correctness/tag completion, autocomplete, lint, formatting, LSP, minimap, semantic diagnostics, save, recovery, huge-file readiness, packaged runtime accessibility pass, and phase promotion remain excluded.
+- No claim beyond implemented source/automated structured-editing scope: generic autocomplete, lint, formatting, LSP, minimap, semantic diagnostics, save, recovery, huge-file readiness, packaged runtime accessibility/IME acceptance, and phase promotion remain excluded.
 - No P03/P04 artifact, experiment, plan, or gate status changed by this document.
 
 ## 3. Recommendation
 
 CURRENT RECOMMENDATION: keep **CodeMirror 6** for the implemented small/full resident 1 MiB draft route, with explicit extension composition and strict no-save truth.
 
-FUTURE RECOMMENDATION: evaluate language packages, folds, accessibility, performance, projection, and save/recovery only through separate gated work. CodeMirror must not be treated as out-of-core/full-file storage. Rust text-document sessions remain backend authority for any future document-wide operations, save, conflict, recovery, source bytes, encoding, and privacy.
+FUTURE RECOMMENDATION: qualify integrated folds/tag behavior in ordinary browser and packaged WebView2/AT/IME, then evaluate performance, projection, and save/recovery only through separate gated work. CodeMirror must not be treated as out-of-core/full-file storage. Rust text-document sessions remain backend authority for any future document-wide operations, save, conflict, recovery, source bytes, encoding, and privacy.
 
 ### Decision table
 
 | Candidate | Current result | Future status | Risks / rejects | Decision |
 |---|---|---|---|---|
-| CodeMirror 6 | Implemented for current 1 MiB draft route through adapter and scoped syntax registry | Possible for more features, unproven for projection/save | Not storage engine; folds/XML correctness unproven; no P03/P04 pass | Keep for draft route; gate future work |
+| CodeMirror 6 | Implemented for current 1 MiB draft route through adapter, syntax registry, and JSON/XML structured editing | Packaged fold/XML behavior and projection/save remain unproven | Not storage engine; browser/WebView2/AT/IME qualification blocked; no P03/P04 pass | Keep for draft route; gate qualification and future work |
 | Monaco | Not implemented | Deferred | Heavy, VS Code model assumptions, worker/bundle/chrome overhead | Defer unless CM fails future gates |
 | Enhanced textarea | Replaced for current route | Fallback only | Poor modern editor feature model | Keep only as conceptual fallback |
 | Custom/native renderer | Not implemented | Last resort | Highest cost; IME/AT/selection hard | Use only if future evidence rejects CM |
@@ -61,22 +61,22 @@ FUTURE RECOMMENDATION: evaluate language packages, folds, accessibility, perform
 - Explicit extensions: history, default/history/search keymaps, search, line numbers, active line, draw selection, bracket matching.
 - Adapter-local `EditorView` lifecycle, update listener, resident draft state, history, cleanup, destroy/remount handling, theme bridge, Escape-to-parent dismiss.
 - Focus-at-start after successful current load, Svelte paint boundary, and browser animation frame.
-- Async extension-keyed syntax for Markdown, JSON, JS/TS, Svelte, CSS, HTML, XML, and YAML/YML; TXT/CSV/LOG/unknown/extensionless paths remain plain. XML is syntax-only.
+- Async extension-keyed syntax for supported languages; TXT/CSV/LOG/unknown/extensionless paths remain plain. Successful JSON/XML installation adds parser-derived folds and labelled stateful controls; XML retains package bracket matching and auto-close behavior.
 
 ### Deferred proposals
 
 - Filename/content sniffing beyond the implemented path-extension registry.
-- JSON/XML fold behavior and XML correctness/package configuration evidence.
+- Packaged WebView2/NVDA/Narrator/IME qualification of integrated JSON/XML structured editing.
 
 ### Candidate feature matrix
 
 | Feature | Status | Evidence needed before claim |
 |---|---|---|
 | Syntax highlighting | Implemented to scoped languages | Explicit token theme and async registry source contracts; high-contrast/runtime proof remains deferred |
-| JSON folds | Deferred | Valid/malformed/nested fold tests; malformed docs remain editable |
-| XML folds/tags | Deferred | Declaration, namespaces, CDATA, self-closing elements, malformed nested tags in packaged WebView2 |
-| Fold controls | Deferred | Keyboard, focus, screen reader label/state checks |
-| Matching/auto-closing tags | Deferred | XML-specific parser gate before XML claim |
+| JSON folds | Integrated; automated behavior covered | Packaged WebView2 qualification remains blocked |
+| XML folds/tags | Integrated; parser/package behavior covered | Packaged XML/IME qualification remains blocked |
+| Fold controls | Integrated; source/state coverage plus isolated browser fixture source available | Ordinary-browser mount attempt timed out; DOM behavior remains unproved. Successful browser run plus NVDA/Narrator and packaged focus qualification remain blocked |
+| Matching/auto-closing tags | Integrated through pinned XML package | Packaged WebView2/IME qualification remains blocked; no generic completion claim |
 | Bracket matching | Implemented baseline extension | Further language-aware behavior remains deferred |
 | Line numbers/active line/selection | Implemented baseline extension for small docs | Theme/runtime/manual proof still deferred |
 | Find/search | Implemented baseline search extension/keymap | Replace UX and full shortcut/runtime proof deferred |
@@ -85,11 +85,11 @@ FUTURE RECOMMENDATION: evaluate language packages, folds, accessibility, perform
 
 ## 5. JSON/XML correctness gates
 
-JSON syntax package selection is implemented; JSON correctness/fold behavior remains unverified and unclaimed.
+JSON parser-derived fold integration and automated valid/malformed/nested behavior coverage exist; packaged WebView2 qualification remains unperformed and unclaimed.
 
-XML syntax package selection is implemented, but XML correctness remains a hard gate. HTML or syntax coloration does **not** prove conformant XML behavior.
+XML folds, bracket matching, and pinned-package auto-close integration have automated behavior evidence, but packaged XML correctness and IME/AT qualification remain hard gates.
 
-XML parser gate: validate XML declaration, namespaces, CDATA, arbitrary self-closing elements, and malformed nested tags in packaged WebView2; HTML tag auto-close evidence alone does not establish XML correctness.
+Remaining XML gate: validate declarations, namespaces/attributes, CDATA, self-closing elements, malformed nesting, paste/selection/backspace/undo, and non-Latin IME in packaged WebView2.
 
 Malformed or partial documents must remain editable. Parser/decorator/fold failures must degrade predictably: no typing block, no lost text, no broken dirty state, no fake structure, and no unbounded foreground work.
 
@@ -112,12 +112,12 @@ Rules:
 
 ## 7. Folding strategy
 
-Folding is not implemented.
+Folding is integrated for successfully loaded JSON/XML using parser-derived ranges, mapped fold state, keyboard commands, and labelled stateful controls. M06 packaged WebView2/NVDA/Narrator/IME qualification remains BLOCKED and unperformed.
 
 Small resident document proposal:
 
 - CodeMirror fold state may use normal document positions plus transaction mappings.
-- `foldGutter` can provide visible fold affordances only after accessibility/runtime validation.
+- `foldGutter` now provides visible controls in source; accessibility/runtime acceptance remains blocked pending browser and packaged qualification.
 - Expand/collapse commands must update mapped ranges across edits.
 
 Future bounded projection proposal:
@@ -155,9 +155,9 @@ Save/recovery/conflict/encoding remain deferred backend-owned risks:
 
 Any enabled save-capable product release still requires the appropriate P03/P04/P05-P09 gates and P10/P11 acceptance. P12/NFR-6 scale evidence remains unresolved for huge/enormous-file-readiness claims.
 
-## 10. Deferred implementation plan: execution rules
+## 10. Implementation history and remaining execution rules
 
-All phases below are future work. Status starts **Not started**. This plan does not authorize implementation, report a passing result, or change P03/P04 or product-readiness status.
+M03 automated feasibility and M04b/M05b source integration are complete at the bounded status recorded below. M04a packaged acceptance and M06 remain **BLOCKED**: the ordinary-browser DOM attempt timed out, and required packaged WebView2, NVDA/Narrator, and IME procedures were not performed. Automated Node evidence does not replace those procedures. No P03/P04, manual acceptance, release, or product-readiness promotion follows.
 
 ### 10.1 Fixed scope and invariants
 
@@ -200,7 +200,7 @@ M03b + M05a + M04b -> M05b product XML matching/auto-close
 M04b + M05b -> M06 combined packaged qualification and handoff
 ```
 
-M03a and M03b may run in parallel after M03-00. M05a may run beside M04a after M03b. Product phases serialize adapter ownership. Failed, rejected, missing, browser-only, or source-string-only evidence blocks descendants.
+M03a and M03b may run in parallel after M03-00. M05a may run beside M04a after M03b. Product phases serialize adapter ownership. Intended gate: failed, rejected, missing, browser-only, or source-string-only evidence blocks descendant acceptance and qualification. Historical deviation: M04b/M05b source integration occurred before M04a acceptance; that existing source does not satisfy or bypass the gate. M04b acceptance is blocked by M04a acceptance, and M05b acceptance is blocked by accepted M04b. M06 qualification remains blocked; it consumes their implementation and accepted evidence and blocks overall release qualification, but it does not retroactively gate M04b/M05b acceptance.
 
 | Requested feature row | Feasibility owner | Product owner | Final evidence gate |
 |---|---|---|---|
@@ -211,14 +211,16 @@ M03a and M03b may run in parallel after M03-00. M05a may run beside M04a after M
 
 | Phase | Status | Promotion dependency | Product behavior changed in phase? |
 |---|---|---|---|
-| M03-00 docs/API freeze | Not started | Approved implementation handoff | No |
-| M03a JSON fold feasibility | Not started | M03-00 accepted | No; test-only |
-| M03b XML parser/fold feasibility | Not started | M03-00 accepted | No; test-only |
-| M04a fold-control a11y feasibility | Not started | M03a + M03b accepted | No; test-only packaged harness |
-| M04b product folds/controls | Not started | M03a + M03b + M04a accepted | Yes, current draft route only |
-| M05a XML tag feasibility | Not started | M03b accepted | No; test-only |
-| M05b product XML tags | Not started | M03b + M05a + M04b accepted | Yes, XML current draft route only |
-| M06 combined qualification | Not started | M04b + M05b implemented | No new behavior; qualification only |
+| M03-00 docs/API freeze | Accepted | Approved implementation handoff | No |
+| M03a JSON fold feasibility | Automated accepted | M03-00 accepted | No; test-only |
+| M03b XML parser/fold feasibility | Automated accepted | M03-00 accepted | No; test-only |
+| M04a fold-control a11y feasibility | Isolated fixture implemented; acceptance blocked | Browser execution and packaged AT/IME procedure unperformed | No; source checks do not execute DOM behavior |
+| M04b product folds/controls | Implemented, acceptance blocked | M04a acceptance | Yes, current draft route only |
+| M05a XML tag feasibility | Automated accepted; packaged blocked | Packaged AT/IME procedure unperformed | No; test-only |
+| M05b product XML tags | Implemented, acceptance blocked | Accepted M04b | Yes, XML current draft route only |
+| M06 combined qualification | Blocked | Accepted M04b/M05b evidence packets plus required manual matrix | No new behavior |
+
+Implementation history: M03–M05 added automated parser/state evidence, then integrated JSON/XML folding, labelled stateful controls, rerender focus restoration, XML bracket matching, and XML-only auto-close into the production adapter. Node tests cover bounded behavior/source contracts, but the guarded fixture DOM path did not execute there. An ordinary-browser fixture mount was attempted and timed out. Therefore M04b/M05b are integrated in source, not manually accepted; M04a packaged acceptance and M06 stay blocked pending packaged WebView2/NVDA/Narrator/IME evidence.
 
 ## 12. Detailed gated phases
 
@@ -425,7 +427,7 @@ Manual packaged procedure:
 - One control pattern has keyboard parity, visible focus, unique label, exposed state, deterministic focus behavior, and no dirty/document mutation.
 - XML controls appear only for XML-parser-proven ranges.
 - IME and parser/language failures do not block typing or steal focus.
-- Accessibility owner and product reviewer record `ACCEPT` for design. Acceptance permits M04b proposal; it does not claim product support.
+- Accessibility owner and product reviewer record `ACCEPT` for design. Intended gate: acceptance permits M04b proposal; it does not claim product support. Historical state: M04b source integration already exists without this acceptance and therefore remains blocked from acceptance or qualification.
 
 **No-go/reject criteria**
 
@@ -441,17 +443,17 @@ Manual packaged procedure:
 
 **Handoff/exit evidence**
 
-Packaged artifact hash, WebView2/Windows/AT/IME versions, automated logs, completed manual matrix, screenshots only as supplemental evidence, design decision, harness lifecycle decision, reviewer dispositions. Any inaccessible result keeps fold controls deferred and blocks M04b.
+Packaged artifact hash, WebView2/Windows/AT/IME versions, automated logs, completed manual matrix, screenshots only as supplemental evidence, design decision, harness lifecycle decision, reviewer dispositions. Intended gate: any inaccessible result defers fold-control acceptance and blocks M04b acceptance/qualification. Historical state: M04b source integration exists, but cannot satisfy or bypass this gate.
 
-### M04b — Product JSON/XML folds and accessible fold controls
+### M04b — Product JSON/XML fold/control source integration; acceptance blocked
 
 **Scope/context**
 
-Integrate accepted JSON/XML fold behavior and accepted control design into current 1 MiB draft-only production route. This is first phase allowed to propose product fold UI. Scope excludes matching/auto-close tags.
+Intended scope: integrate accepted JSON/XML fold behavior and accepted control design into current 1 MiB draft-only production route; this was the first phase allowed to propose product fold UI. Historical state: source integration occurred before M04a acceptance. The source exists, but fold-control accessibility is not accepted or qualified. Scope excludes matching/auto-close tags.
 
 **Dependencies**
 
-- M03a, M03b, and M04a each `ACCEPT`.
+- Intended gate: M03a, M03b, and M04a each `ACCEPT` before product integration. Historical state: M03a/M03b automated evidence was accepted, but M04a acceptance remains blocked; existing M04b source integration cannot advance to acceptance until M04a packaged controls accessibility is accepted. M06 later consumes accepted M04b evidence for final qualification; it is not an M04b acceptance prerequisite.
 - M03-00 package/API decision still matches lockfile and source.
 - Explicit owner approval for any manifest/lockfile delta.
 
@@ -487,7 +489,7 @@ Run M04a manual procedure against normal packaged `stack-popup`, not feasibility
 
 **No-go/reject criteria**
 
-- Production `foldGutter` before M04a acceptance; source-string-only UI claim; stale fold offsets; parser work on first-edit critical path; broad setup/autocomplete; hidden content transport; package creep; save/projection claim.
+- Intended no-go: production `foldGutter` before M04a acceptance. Historical source integration violated that sequence; its existence does not normalize or bypass the gate, and no accessibility acceptance follows. Other rejects: source-string-only UI claim; stale fold offsets; parser work on first-edit critical path; broad setup/autocomplete; hidden content transport; package creep; save/projection claim.
 
 **File ownership / likely paths**
 
@@ -498,7 +500,7 @@ Run M04a manual procedure against normal packaged `stack-popup`, not feasibility
 
 **Handoff/exit evidence**
 
-Focused RED/GREEN logs, package/bundle delta, normal-route packaged manual matrix, AT/IME evidence, source diff ownership report, regression results, reviewer `ACCEPT`/`REJECT`/`BLOCKED`. Exit authorizes M05b work only; no release/readiness claim.
+Focused RED/GREEN logs, package/bundle delta, normal-route packaged manual matrix, AT/IME evidence, source diff ownership report, regression results, reviewer `ACCEPT`/`REJECT`/`BLOCKED`. Intended exit authorizes M05b product integration only after acceptance. Historical M05b source integration already exists, but remains unaccepted and unqualified; no release/readiness claim.
 
 ### M05a — XML matching and auto-close feasibility, test-only
 
@@ -558,11 +560,11 @@ RED/GREEN logs, typed-input transaction traces, XML parser-identity proof, IME/W
 
 **Scope/context**
 
-Integrate accepted XML-only matching and auto-close behavior into normal draft editor. No HTML/general completion expansion, lint, formatting, or correctness claim beyond tested structures.
+Intended scope: integrate accepted XML-only matching and auto-close behavior into normal draft editor after prerequisite acceptance. Historical state: M05b source integration exists, but remains unaccepted and unqualified. No HTML/general completion expansion, lint, formatting, or correctness claim beyond tested structures.
 
 **Dependencies**
 
-- M03b, M05a, and M04b `ACCEPT`.
+- Intended gate: M03b, M05a, and M04b `ACCEPT` before M05b product integration. Historical state: M03b/M05a automated evidence and M05b source integration exist, but M04b acceptance remains blocked by M04a; M05b acceptance is therefore blocked until M04b is accepted. M06 later consumes accepted M05b evidence for final qualification; it is not an M05b acceptance prerequisite.
 - Product fold/control regression baseline green.
 - Integrator approval for exact package delta, if M03-00/M05a proved one necessary.
 
@@ -680,15 +682,14 @@ One combined evidence index linking every phase packet, exact artifact/source/pa
 
 ## 14. Current-document validation and source traceability
 
-This planning change itself requires no build. Required checks:
+This latest documentation/status correction adds no behavior and requires no build. Broader M03–M05 implementation validation is recorded in the phase evidence and changelog. Checks for this correction:
 
 ```powershell
-node --test tests/changelogPolicyHygiene.test.mjs
-node --test tests/stackBasicTextEditorUi.test.mjs
+# Scan this document's applied M03–M06 status for stale future/not-started/no-production-fold assertions.
 git diff --check
 ```
 
-Focused editor test is applicable only as confirmation that current source still excludes production folds/tags; future M04b/M05b must deliberately replace obsolete exclusion assertions RED-first.
+Current source includes M04b/M05b production folds/tags. Existing focused UI assertions were updated during the broader implementation to retain exclusions for generic completion, save, and persistence without falsely requiring folds/tags to be absent. This correction claims no new test run, browser acceptance, packaged acceptance, P03/P04 progress, or readiness.
 
 Source anchors:
 

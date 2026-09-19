@@ -75,6 +75,8 @@
   --js-color-accent-soft: rgba(91, 130, 255, 0.18);
   --js-color-accent-border: rgba(0, 0, 0, 0.44);
   --js-color-selected: rgba(45, 45, 45, 0.2);
+  --js-stack-editor-selection: color-mix(in srgb, var(--js-bg-surface) 70%, var(--js-color-accent));
+  --js-stack-editor-selection-inactive: color-mix(in srgb, var(--js-bg-surface) 84%, var(--js-color-accent));
   --js-color-success: rgba(92, 214, 149, 0.18);
   --js-color-success-border: rgba(92, 214, 149, 0.42);
   --js-color-info: rgba(91, 130, 255, 0.16);
@@ -1264,6 +1266,8 @@ select:not(:disabled) {
     --js-color-accent-soft: Highlight;
     --js-color-accent-border: Highlight;
     --js-color-selected: Highlight;
+    --js-stack-editor-selection: Highlight;
+    --js-stack-editor-selection-inactive: color-mix(in srgb, Highlight 55%, Canvas);
     --js-focus-ring: 0 0 0 2px Highlight;
     --js-shadow-raised: none;
     --js-shadow-panel: none;
