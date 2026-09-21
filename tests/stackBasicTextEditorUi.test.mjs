@@ -330,7 +330,8 @@ test('every editor exit routes through one parent-owned dirty-draft guard', () =
   assert.match(editor, /export let onDirtyChange: \(dirty: boolean\) => void;/);
   assert.match(editor, /export let onDismiss: \(dirty: boolean\) => void;/);
   assert.match(editor, /onClick=\{\(\) => onDismiss\(dirty\)\}/);
-  assert.match(editor, /onDismiss: \(currentDirty\) => onDismiss\(currentDirty\)/);
+  assert.match(editor, /onDismiss: \(\) => onDismiss\(dirty\)/);
+  assert.doesNotMatch(editor, /onDismiss: \(currentDirty\) => onDismiss\(currentDirty\)/);
 
   assert.match(surface, /function requestEditorExit\(action: \(\) => void \| Promise<void>\)/);
   assert.match(surface, /function dismissEditor\(\)[\s\S]*detailsBodyScrollTop = viewport\.scrollTop;[\s\S]*detailsBodyHeight = viewport\.height;[\s\S]*editorPath = null;/);
