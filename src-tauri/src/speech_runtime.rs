@@ -6,13 +6,18 @@ use crate::speech::{
     SpeechStatusEvent, SpeechStatusKind, StartSpeechCaptureResponse, StopSpeechCaptureRequest,
     MAX_RECORDING_DURATION, MAX_SPEECH_HISTORY_ENTRIES, MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
 };
+use crate::speech_streaming::{
+    merge_tdt_text, BoundedIntake, InputCloseReason, IntakeResult, WorkerMessage,
+    FINALIZATION_TIMEOUT, OVERLAP_SEGMENTS, SEGMENT_SAMPLES, WINDOW_SEGMENTS,
+};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use parakeet_rs::Transcriber;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -63,7 +68,8 @@ struct CaptureHealth {
 
 struct Capture {
     stream: Stream,
-    samples: Arc<Mutex<Vec<f32>>>,
+    intake: Arc<BoundedIntake>,
+    tail: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
     channels: u16,
     health: Arc<CaptureHealth>,
@@ -180,12 +186,15 @@ fn copy_retained_history_transcript<F>(
 where
     F: FnOnce(&str) -> Result<(), crate::speech_clipboard::ClipboardFailure>,
 {
-    let history = state.history.lock().map_err(|_| GENERIC_ERROR.to_owned())?;
-    let entry = history
-        .iter()
-        .find(|entry| entry.nonce == request.nonce)
-        .ok_or_else(|| GENERIC_ERROR.to_owned())?;
-    publish(&entry.transcript).map_err(|_| GENERIC_ERROR.to_owned())
+    let transcript = {
+        let history = state.history.lock().map_err(|_| GENERIC_ERROR.to_owned())?;
+        let entry = history
+            .iter()
+            .find(|entry| entry.nonce == request.nonce)
+            .ok_or_else(|| GENERIC_ERROR.to_owned())?;
+        entry.transcript.clone()
+    };
+    publish(&transcript).map_err(|_| GENERIC_ERROR.to_owned())
 }
 
 #[tauri::command]
@@ -219,27 +228,58 @@ pub(crate) fn start_speech_capture(
             return Err("Speech is busy".into());
         }
     }
-    let capture = match create_capture() {
+    let model_path = resolve_model_resource(&app)?;
+    // Readiness is established synchronously before Recording or microphone activation.
+    // One owned model per accepted session also serializes model use with that session.
+    let model = preload_parakeet_tdt(&model_path)?;
+    let event = {
+        let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
+        inner.controller.start(state.now()).map_err(str::to_owned)?
+    };
+    let nonce = event.nonce.ok_or_else(|| GENERIC_ERROR.to_string())?;
+    let (stream, intake_slot, tail, sample_rate, channels, health) = match create_capture_stream() {
         Ok(capture) => capture,
         Err(_) => {
+            recover_failed_stop_with(&app, &state, nonce, SpeechFailure::CaptureStreamError);
             report_capture_start_failure();
             return Err(capture_start_error_code());
         }
     };
-    if capture.stream.play().is_err() {
+    let (intake, receiver) = BoundedIntake::prepared(nonce, nonce.0);
+    let intake = Arc::new(intake);
+    if intake_slot.set(Arc::clone(&intake)).is_err() {
+        recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
+        return Err(GENERIC_ERROR.into());
+    }
+    if stream.play().is_err() {
+        recover_failed_stop_with(&app, &state, nonce, SpeechFailure::CaptureStreamError);
         report_capture_start_failure();
         return Err(capture_start_error_code());
     }
-    let event = {
+    let activated_at = Instant::now();
+    if intake.activate(activated_at).is_err() {
+        recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
+        return Err(GENERIC_ERROR.into());
+    }
+    {
         let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
-        let event = inner.controller.start(state.now()).map_err(str::to_owned)?;
-        inner.capture = Some(capture);
-        event
-    };
-    let nonce = event.nonce.ok_or_else(|| GENERIC_ERROR.to_string())?;
+        inner.capture = Some(Capture {
+            stream,
+            intake: Arc::clone(&intake),
+            tail,
+            sample_rate,
+            channels,
+            health,
+        });
+    }
     state.generation.store(nonce.0, Ordering::Release);
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_streaming_worker(worker_app, nonce, nonce.0, intake, receiver, model)
+    });
+    schedule_capture_health(app.clone(), nonce);
     emit(&app, &event)?;
-    schedule_recording_limit(app, nonce);
+    schedule_recording_limit(app, nonce, activated_at);
     Ok(StartSpeechCaptureResponse {
         nonce,
         status: SpeechStatusKind::Recording,
@@ -281,30 +321,15 @@ pub(crate) fn stop_speech_capture(
     }
     let Capture {
         stream,
-        samples,
+        intake,
         sample_rate,
         channels,
         health,
+        tail,
     } = capture;
     drop(stream);
-    let samples = match samples.lock() {
-        Ok(samples) => samples.clone(),
-        Err(_) => {
-            debug_diagnostic(
-                request.nonce,
-                SpeechFailure::StateRace,
-                Duration::ZERO,
-                sample_rate,
-                channels,
-                0,
-                true,
-                0.0,
-            );
-            recover_failed_stop(&app, &state, request.nonce);
-            return Err(GENERIC_ERROR.into());
-        }
-    };
-    let (sample_count, finite, peak) = sample_metrics(&samples);
+    handoff_tail(&intake, &tail, &health);
+    intake.first_close(InputCloseReason::Finish);
     if let Some(failure) = capture_failure(&health) {
         debug_diagnostic(
             request.nonce,
@@ -312,51 +337,14 @@ pub(crate) fn stop_speech_capture(
             Duration::ZERO,
             sample_rate,
             channels,
-            sample_count,
-            finite,
-            peak,
+            0,
+            true,
+            0.0,
         );
         recover_failed_stop_with(&app, &state, request.nonce, failure);
         return Err(GENERIC_ERROR.into());
     }
-    let audio = resample_to_mono_16k(&samples, sample_rate, channels);
-    if let Err(failure) = validate_audio(&audio) {
-        let (sample_count, finite, peak) = sample_metrics(&audio);
-        debug_diagnostic(
-            request.nonce,
-            failure,
-            Duration::ZERO,
-            TARGET_RATE,
-            1,
-            sample_count,
-            finite,
-            peak,
-        );
-        recover_failed_stop_with(&app, &state, request.nonce, failure);
-        return Err(GENERIC_ERROR.into());
-    }
-    let model_path = match resolve_model_resource(&app) {
-        Ok(path) => path,
-        Err(error) => {
-            let (sample_count, finite, peak) = sample_metrics(&audio);
-            debug_diagnostic(
-                request.nonce,
-                SpeechFailure::ModelLoadFailed,
-                Duration::ZERO,
-                TARGET_RATE,
-                1,
-                sample_count,
-                finite,
-                peak,
-            );
-            recover_failed_stop_with(&app, &state, request.nonce, SpeechFailure::ModelLoadFailed);
-            return Err(error);
-        }
-    };
-    let worker_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        run_worker(worker_app, request.nonce, audio, model_path)
-    });
+    drop(intake);
     schedule_transcription_limit(app, request.nonce);
     Ok(crate::speech::SpeechStatusResponse {
         status: SpeechStatusKind::Transcribing,
@@ -364,21 +352,62 @@ pub(crate) fn stop_speech_capture(
     })
 }
 
-fn run_worker(app: AppHandle, nonce: SpeechSessionNonce, audio: Vec<f32>, model_path: PathBuf) {
+fn run_streaming_worker(
+    app: AppHandle,
+    nonce: SpeechSessionNonce,
+    generation: u64,
+    intake: Arc<BoundedIntake>,
+    receiver: Receiver<WorkerMessage>,
+    mut model: parakeet_rs::ParakeetTDT,
+) {
     let started = Instant::now();
-    let (sample_count, finite, peak) = sample_metrics(&audio);
+    let mut sample_count = 0;
     let result: Result<_, SpeechFailure> = (|| {
-        validate_audio(&audio)?;
-        let mut model = crate::speech_model::load_parakeet_tdt(&model_path)
-            .map_err(|_| SpeechFailure::ModelLoadFailed)?;
-        let result = model
-            .transcribe_samples(audio, TARGET_RATE, 1, None)
-            .map_err(|_| SpeechFailure::AsrFailed)?;
-        let text = result.text.trim();
+        let mut pending = VecDeque::<Box<[f32]>>::with_capacity(WINDOW_SEGMENTS);
+        let mut transcript = String::new();
+        let mut new_segments = 0usize;
+        while let Some(message) = intake.recv_until_closed(&receiver) {
+            match message {
+                WorkerMessage::Segment(segment) => {
+                    sample_count += segment.len();
+                    pending.push_back(segment);
+                    new_segments += 1;
+                    if pending.len() == WINDOW_SEGMENTS {
+                        transcribe_window(&mut model, &pending, &mut transcript)?;
+                        for _ in 0..WINDOW_SEGMENTS - OVERLAP_SEGMENTS {
+                            pending.pop_front();
+                        }
+                        new_segments = 0;
+                    }
+                }
+                WorkerMessage::Close(_) => break,
+            }
+        }
+        while let Ok(WorkerMessage::Segment(segment)) = receiver.try_recv() {
+            sample_count += segment.len();
+            pending.push_back(segment);
+            new_segments += 1;
+        }
+        if sample_count < MIN_CAPTURE_SAMPLES {
+            return Err(if sample_count == 0 {
+                SpeechFailure::CaptureEmpty
+            } else {
+                SpeechFailure::CaptureShort
+            });
+        }
+        if new_segments > 0 {
+            transcribe_window(&mut model, &pending, &mut transcript)?;
+        }
+        wait_for_finalizing(&app, nonce)?;
+        let state = app.state::<SpeechRuntimeState>();
+        let current_generation = state.generation.load(Ordering::Acquire);
+        if generation != current_generation || !intake.can_commit(nonce, current_generation) {
+            return Err(SpeechFailure::StateRace);
+        }
+        let text = transcript.trim();
         if text.is_empty() {
             return Err(SpeechFailure::TranscriptEmpty);
         }
-        let state = app.state::<SpeechRuntimeState>();
         publish_recorded_if_current(
             &state,
             nonce,
@@ -399,8 +428,8 @@ fn run_worker(app: AppHandle, nonce: SpeechSessionNonce, audio: Vec<f32>, model_
                     TARGET_RATE,
                     1,
                     sample_count,
-                    finite,
-                    peak,
+                    true,
+                    0.0,
                 );
             }
             let _commit = match state.commit.lock() {
@@ -423,6 +452,44 @@ fn run_worker(app: AppHandle, nonce: SpeechSessionNonce, audio: Vec<f32>, model_
         let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
         schedule_terminal_reset(app, nonce);
     }
+}
+
+fn transcribe_window(
+    model: &mut parakeet_rs::ParakeetTDT,
+    segments: &VecDeque<Box<[f32]>>,
+    transcript: &mut String,
+) -> Result<(), SpeechFailure> {
+    let audio: Vec<f32> = segments
+        .iter()
+        .flat_map(|segment| segment.iter().copied())
+        .collect();
+    validate_audio(&audio)?;
+    let result = model
+        .transcribe_samples(audio, TARGET_RATE, 1, None)
+        .map_err(|_| SpeechFailure::AsrFailed)?;
+    merge_tdt_text(transcript, &result.text);
+    Ok(())
+}
+
+fn wait_for_finalizing(app: &AppHandle, nonce: SpeechSessionNonce) -> Result<(), SpeechFailure> {
+    let deadline = Instant::now() + FINALIZATION_TIMEOUT;
+    while Instant::now() < deadline {
+        let state = app.state::<SpeechRuntimeState>();
+        let status = state
+            .inner
+            .lock()
+            .map_err(|_| SpeechFailure::StateRace)?
+            .controller
+            .status();
+        if status.nonce != Some(nonce) {
+            return Err(SpeechFailure::StateRace);
+        }
+        if status.status == SpeechStatusKind::Transcribing {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    Err(SpeechFailure::Timeout)
 }
 
 fn complete_authorized_publish(
@@ -463,8 +530,6 @@ where
     N: FnMut() -> Duration,
     P: FnOnce() -> Result<(), crate::speech_clipboard::ClipboardFailure>,
 {
-    insert_history_attempt(state, nonce, transcript).map_err(|_| SpeechFailure::StateRace)?;
-
     let commit = state.commit.lock().map_err(|_| SpeechFailure::StateRace)?;
     let publish_at = now();
     if state.shutting_down.load(Ordering::Acquire)
@@ -479,9 +544,6 @@ where
         .controller
         .can_complete(nonce, publish_at)
     {
-        drop(commit);
-        update_history_outcome(state, nonce, SpeechFailure::Timeout.code())
-            .map_err(|_| SpeechFailure::StateRace)?;
         return state
             .inner
             .lock()
@@ -491,6 +553,7 @@ where
             .ok_or(SpeechFailure::StateRace);
     }
 
+    insert_history_attempt(state, nonce, transcript).map_err(|_| SpeechFailure::StateRace)?;
     if let Err(failure) = publish() {
         drop(commit);
         update_history_outcome(state, nonce, failure.code())
@@ -529,6 +592,9 @@ fn recover_failed_stop_with(
 ) {
     state.invalidate();
     let event = state.inner.lock().ok().and_then(|mut inner| {
+        if inner.controller.status().status == SpeechStatusKind::Recording {
+            let _ = inner.controller.stop(nonce, state.now());
+        }
         inner
             .controller
             .complete_error_code(nonce, state.now(), failure.code())
@@ -590,34 +656,72 @@ fn schedule_terminal_reset(app: AppHandle, nonce: SpeechSessionNonce) {
     });
 }
 
-fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce) {
+fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated_at: Instant) {
     std::thread::spawn(move || {
-        std::thread::sleep(MAX_RECORDING_DURATION);
+        std::thread::sleep(
+            (activated_at + MAX_RECORDING_DURATION).saturating_duration_since(Instant::now()),
+        );
         let state = app.state::<SpeechRuntimeState>();
-        let Some((event, capture)) = expire_recording_and_invalidate(&state, nonce, state.now())
-        else {
+        let Some((event, capture)) = state.inner.lock().ok().and_then(|mut inner| {
+            let event = inner
+                .controller
+                .stop_for_recording_cap(nonce, state.now())
+                .ok()?;
+            Some((event, inner.capture.take()?))
+        }) else {
             return;
         };
-        let (source_rate, channels, samples, finite, peak) = capture
-            .as_ref()
-            .map(capture_metrics)
-            .unwrap_or((0, 0, 0, true, 0.0));
-        debug_diagnostic(
-            nonce,
-            SpeechFailure::Timeout,
-            Duration::ZERO,
-            source_rate,
-            channels,
-            samples,
-            finite,
-            peak,
-        );
-        drop(capture);
-        let event_nonce = event.nonce;
+        drop(capture.stream);
+        handoff_tail(&capture.intake, &capture.tail, &capture.health);
+        capture.intake.first_close(InputCloseReason::RecordingCap);
+        drop(capture.intake);
         let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
-        if let Some(event_nonce) = event_nonce {
-            schedule_terminal_reset(app, event_nonce);
+        schedule_transcription_limit(app, nonce);
+    });
+}
+
+fn schedule_capture_health(app: AppHandle, nonce: SpeechSessionNonce) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(10));
+        let state = app.state::<SpeechRuntimeState>();
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return;
         }
+        let failure = state.inner.lock().ok().and_then(|inner| {
+            inner
+                .capture
+                .as_ref()
+                .and_then(|capture| capture_failure(&capture.health))
+        });
+        let Some(failure) = failure else {
+            let recording = state.inner.lock().ok().is_some_and(|inner| {
+                inner.controller.status().status == SpeechStatusKind::Recording
+            });
+            if !recording {
+                return;
+            }
+            continue;
+        };
+        let capture = state.inner.lock().ok().and_then(|mut inner| {
+            let _ = inner.controller.stop(nonce, state.now());
+            let event = inner
+                .controller
+                .complete_error_code(nonce, state.now(), failure.code())?;
+            Some((event, inner.capture.take()))
+        });
+        let Some((event, capture)) = capture else {
+            return;
+        };
+        state.invalidate();
+        if let Some(capture) = capture {
+            capture.intake.first_close(InputCloseReason::SafeFailure);
+            drop(capture);
+        }
+        let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
+        schedule_terminal_reset(app, nonce);
+        return;
     });
 }
 
@@ -702,39 +806,40 @@ fn resolve_model_resource(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|_| GENERIC_ERROR.to_string())
 }
 
-fn create_capture() -> Result<Capture, ()> {
+fn preload_parakeet_tdt(model_path: &PathBuf) -> Result<parakeet_rs::ParakeetTDT, String> {
+    crate::speech_model::load_parakeet_tdt(model_path)
+        .map_err(|_| SpeechFailure::ModelLoadFailed.code().to_owned())
+}
+
+type CaptureStreamParts = (
+    Stream,
+    Arc<OnceLock<Arc<BoundedIntake>>>,
+    Arc<Mutex<Vec<f32>>>,
+    u32,
+    u16,
+    Arc<CaptureHealth>,
+);
+
+fn create_capture_stream() -> Result<CaptureStreamParts, ()> {
     let device = cpal::default_host().default_input_device().ok_or(())?;
     let supported = device.default_input_config().map_err(|_| ())?;
     let config: StreamConfig = supported.config();
     let sample_rate = config.sample_rate;
     let channels = config.channels;
-    let max_samples =
-        sample_rate as usize * channels as usize * MAX_RECORDING_DURATION.as_secs() as usize;
-    let samples = Arc::new(Mutex::new(Vec::with_capacity(max_samples)));
+    let intake = Arc::new(OnceLock::new());
+    let tail = Arc::new(Mutex::new(Vec::with_capacity(SEGMENT_SAMPLES)));
     let health = Arc::new(CaptureHealth::default());
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => {
-            build_stream::<f32>(&device, &config, &samples, &health, max_samples, |v| v)
-        }
-        SampleFormat::I16 => {
-            build_stream::<i16>(&device, &config, &samples, &health, max_samples, |v| {
-                v as f32 / i16::MAX as f32
-            })
-        }
-        SampleFormat::U16 => {
-            build_stream::<u16>(&device, &config, &samples, &health, max_samples, |v| {
-                (v as f32 / u16::MAX as f32) * 2.0 - 1.0
-            })
-        }
+        SampleFormat::F32 => build_stream::<f32>(&device, &config, &intake, &tail, &health, |v| v),
+        SampleFormat::I16 => build_stream::<i16>(&device, &config, &intake, &tail, &health, |v| {
+            v as f32 / i16::MAX as f32
+        }),
+        SampleFormat::U16 => build_stream::<u16>(&device, &config, &intake, &tail, &health, |v| {
+            (v as f32 / u16::MAX as f32) * 2.0 - 1.0
+        }),
         _ => return Err(()),
     }?;
-    Ok(Capture {
-        stream,
-        samples,
-        sample_rate,
-        channels,
-        health,
-    })
+    Ok((stream, intake, tail, sample_rate, channels, health))
 }
 
 fn capture_start_error_code() -> String {
@@ -757,31 +862,96 @@ fn report_capture_start_failure() {
 fn build_stream<T: cpal::SizedSample + 'static>(
     device: &cpal::Device,
     config: &StreamConfig,
-    samples: &Arc<Mutex<Vec<f32>>>,
+    intake: &Arc<OnceLock<Arc<BoundedIntake>>>,
+    tail: &Arc<Mutex<Vec<f32>>>,
     health: &Arc<CaptureHealth>,
-    max: usize,
     convert: fn(T) -> f32,
 ) -> Result<Stream, ()> {
-    let target = Arc::clone(samples);
+    let target = Arc::clone(intake);
     let callback_health = Arc::clone(health);
     let error_health = Arc::clone(health);
+    let channels = config.channels as usize;
+    let source_rate = config.sample_rate as u64;
+    let mut phase = 0_u64;
+    let callback_tail = Arc::clone(tail);
     device
         .build_input_stream(
             config,
             move |data: &[T], _| {
-                if let Ok(mut output) = target.try_lock() {
-                    let remaining = max.saturating_sub(output.len());
-                    output.extend(data.iter().copied().take(remaining).map(convert));
-                } else {
+                let Some(intake) = target.get() else {
                     callback_health
                         .callback_drops
                         .fetch_add(1, Ordering::Relaxed);
+                    return;
+                };
+                let Ok(mut segment) = callback_tail.try_lock() else {
+                    callback_health
+                        .callback_drops
+                        .fetch_add(1, Ordering::Release);
+                    return;
+                };
+                for frame in data.chunks_exact(channels) {
+                    let mono = frame.iter().copied().map(convert).sum::<f32>() / channels as f32;
+                    phase += TARGET_RATE as u64;
+                    while phase >= source_rate {
+                        phase -= source_rate;
+                        segment.push(mono);
+                        if segment.len() == SEGMENT_SAMPLES {
+                            let ready = std::mem::replace(
+                                &mut *segment,
+                                Vec::with_capacity(SEGMENT_SAMPLES),
+                            );
+                            match intake.try_send_now(ready.into_boxed_slice()) {
+                                IntakeResult::Accepted => {}
+                                IntakeResult::Rejected(InputCloseReason::RecordingCap) => return,
+                                IntakeResult::Rejected(_) | IntakeResult::QueueFull => {
+                                    callback_health
+                                        .callback_drops
+                                        .fetch_add(1, Ordering::Release);
+                                    return;
+                                }
+                            }
+                        }
+                    }
                 }
             },
             move |_| error_health.stream_error.store(true, Ordering::Release),
             None,
         )
         .map_err(|_| ())
+}
+
+fn handoff_tail(intake: &BoundedIntake, tail: &Mutex<Vec<f32>>, health: &CaptureHealth) {
+    let Ok(mut tail) = tail.lock() else {
+        health.callback_drops.fetch_add(1, Ordering::Release);
+        return;
+    };
+    if tail.is_empty() {
+        return;
+    }
+    let mut samples = std::mem::replace(&mut *tail, Vec::with_capacity(SEGMENT_SAMPLES));
+    if let Some(deadline) = intake.activation_deadline() {
+        let now = Instant::now();
+        if now >= deadline {
+            let tail_duration = Duration::from_secs_f64(samples.len() as f64 / TARGET_RATE as f64);
+            let started_at = now.checked_sub(tail_duration).unwrap_or(now);
+            let samples_before_deadline = deadline
+                .saturating_duration_since(started_at)
+                .as_secs_f64()
+                .mul_add(TARGET_RATE as f64, 0.0)
+                as usize;
+            samples.truncate(samples_before_deadline.min(samples.len()));
+        }
+    }
+    if samples.is_empty() {
+        return;
+    }
+    if !matches!(
+        intake.try_send_tail(samples.into_boxed_slice()),
+        IntakeResult::Accepted
+    ) {
+        health.callback_drops.fetch_add(1, Ordering::Release);
+    }
 }
 
 fn capture_failure(health: &CaptureHealth) -> Option<SpeechFailure> {
@@ -792,15 +962,6 @@ fn capture_failure(health: &CaptureHealth) -> Option<SpeechFailure> {
     } else {
         None
     }
-}
-
-fn capture_metrics(capture: &Capture) -> (u32, u16, usize, bool, f32) {
-    let (samples, finite, peak) = capture
-        .samples
-        .lock()
-        .map(|samples| sample_metrics(&samples))
-        .unwrap_or((0, true, 0.0));
-    (capture.sample_rate, capture.channels, samples, finite, peak)
 }
 
 fn validate_audio(audio: &[f32]) -> Result<(), SpeechFailure> {
@@ -1163,7 +1324,8 @@ mod tests {
         controller
             .stop(nonce, Duration::from_secs(2))
             .expect("stop should succeed");
-        let authorized_at = Duration::from_secs(120);
+        let authorized_at =
+            Duration::from_secs(2) + MAX_SPEECH_OPERATION_DURATION - Duration::from_nanos(1);
 
         let event = complete_authorized_publish(&mut controller, nonce, authorized_at)
             .expect("authorized publish should complete as copied");
@@ -1182,9 +1344,11 @@ mod tests {
         controller
             .stop(nonce, Duration::from_secs(30))
             .expect("stop should succeed");
+        let finalization_started_at = Duration::from_secs(30);
+        let finalization_deadline = finalization_started_at + MAX_SPEECH_OPERATION_DURATION;
         let mut times = [
-            MAX_SPEECH_OPERATION_DURATION - Duration::from_nanos(1),
-            MAX_SPEECH_OPERATION_DURATION,
+            finalization_deadline - Duration::from_nanos(1),
+            finalization_deadline,
         ]
         .into_iter();
 
@@ -1198,7 +1362,7 @@ mod tests {
 
         assert_eq!(event.status, SpeechStatusKind::Copied);
         assert_eq!(event.error, None);
-        assert_eq!(times.next(), Some(MAX_SPEECH_OPERATION_DURATION));
+        assert_eq!(times.next(), Some(finalization_deadline));
     }
 
     #[test]
@@ -1212,11 +1376,12 @@ mod tests {
             .stop(nonce, Duration::from_secs(30))
             .expect("stop should succeed");
         let published = AtomicBool::new(false);
+        let finalization_deadline = Duration::from_secs(30) + MAX_SPEECH_OPERATION_DURATION;
 
         let result = publish_if_current(
             &mut controller,
             nonce,
-            || MAX_SPEECH_OPERATION_DURATION,
+            || finalization_deadline,
             || {
                 published.store(true, Ordering::Release);
                 Ok(())
@@ -1231,7 +1396,7 @@ mod tests {
     }
 
     #[test]
-    fn history_delay_crossing_deadline_blocks_publisher_and_records_timeout() {
+    fn history_delay_crossing_deadline_blocks_publisher_and_leaves_history_unchanged() {
         let state = SpeechRuntimeState::default();
         let nonce = SpeechSessionNonce(1);
         {
@@ -1247,12 +1412,13 @@ mod tests {
         }
         state.generation.store(nonce.0, Ordering::Release);
         let published = AtomicBool::new(false);
+        let finalization_deadline = Duration::from_secs(30) + MAX_SPEECH_OPERATION_DURATION;
 
         let result = publish_recorded_if_current(
             &state,
             nonce,
             "synthetic",
-            || MAX_SPEECH_OPERATION_DURATION,
+            || finalization_deadline,
             || {
                 published.store(true, Ordering::Release);
                 Ok(())
@@ -1264,7 +1430,7 @@ mod tests {
             SpeechStatusKind::Error
         );
         assert!(!published.load(Ordering::Acquire));
-        assert_eq!(state.history.lock().expect("history")[0].outcome, "timeout");
+        assert!(state.history.lock().expect("history").is_empty());
     }
 
     #[test]
@@ -1284,6 +1450,7 @@ mod tests {
         }
         state.generation.store(nonce.0, Ordering::Release);
         let publisher_calls = AtomicU64::new(0);
+        let finalization_deadline = Duration::from_secs(30) + MAX_SPEECH_OPERATION_DURATION;
 
         let result = publish_recorded_if_current(
             &state,
@@ -1292,7 +1459,7 @@ mod tests {
             || {
                 state.invalidate();
                 state.shutting_down.store(true, Ordering::Release);
-                MAX_SPEECH_OPERATION_DURATION - Duration::from_nanos(1)
+                finalization_deadline - Duration::from_nanos(1)
             },
             || {
                 publisher_calls.fetch_add(1, Ordering::AcqRel);
@@ -1302,7 +1469,7 @@ mod tests {
 
         assert_eq!(result, Err(SpeechFailure::StateRace));
         assert_eq!(publisher_calls.load(Ordering::Acquire), 0);
-        assert!(state.history.lock().expect("history")[0].outcome.is_empty());
+        assert!(state.history.lock().expect("history").is_empty());
         assert_eq!(
             state
                 .inner
@@ -1332,12 +1499,13 @@ mod tests {
         }
         state.generation.store(nonce.0, Ordering::Release);
         let published = AtomicBool::new(false);
+        let finalization_deadline = Duration::from_secs(30) + MAX_SPEECH_OPERATION_DURATION;
 
         let event = publish_recorded_if_current(
             &state,
             nonce,
             "synthetic",
-            || MAX_SPEECH_OPERATION_DURATION - Duration::from_nanos(1),
+            || finalization_deadline - Duration::from_nanos(1),
             || {
                 published.store(true, Ordering::Release);
                 Ok(())

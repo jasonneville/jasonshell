@@ -165,7 +165,14 @@ export function reduceSpeechEvent(model: MicControlModel, event: SpeechStatusEve
     return { ...model, state: 'recording', announcement: 'Recording speech', errorCode: null };
   }
   if (event.status === 'transcribing') {
-    return { ...model, state: 'transcribing', announcement: 'Transcribing speech', errorCode: null };
+    return {
+      ...model,
+      state: 'transcribing',
+      announcement: event.finalizationReason === 'recording_cap'
+        ? 'Recording limit reached; finishing dictation.'
+        : 'Transcribing speech',
+      errorCode: null
+    };
   }
   if (event.status === 'copied') {
     return { ...model, state: 'copied', announcement: 'Speech copied to clipboard', errorCode: null };

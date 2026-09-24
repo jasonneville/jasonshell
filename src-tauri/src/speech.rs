@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-pub const MAX_RECORDING_DURATION: Duration = Duration::from_secs(90);
-pub const MAX_SPEECH_OPERATION_DURATION: Duration = Duration::from_secs(120);
+pub const MAX_RECORDING_DURATION: Duration = Duration::from_secs(300);
+pub const MAX_SPEECH_OPERATION_DURATION: Duration = Duration::from_secs(45);
 pub const SPEECH_BUSY_ERROR: &str = "Speech is busy";
 pub const SPEECH_STATE_ERROR: &str = "Speech request is no longer active";
 pub const SPEECH_LIMIT_ERROR: &str = "Speech recording limit reached";
@@ -25,6 +25,12 @@ pub enum SpeechStatusKind {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FinalizationReason {
+    RecordingCap,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechStatusEvent {
@@ -32,6 +38,8 @@ pub struct SpeechStatusEvent {
     pub nonce: Option<SpeechSessionNonce>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finalization_reason: Option<FinalizationReason>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -128,23 +136,28 @@ impl SpeechController {
         if !matches!(self.phase, Phase::Recording { nonce: current, .. } if current == nonce) {
             return Err(SPEECH_STATE_ERROR);
         }
-        let Phase::Recording {
-            started_at: session_started_at,
-            ..
-        } = self.phase
-        else {
+        let Phase::Recording { .. } = self.phase else {
             return Err(SPEECH_STATE_ERROR);
         };
-        let _ = now;
         self.phase = Phase::Transcribing {
             nonce,
-            session_started_at,
+            session_started_at: now,
         };
         Ok(Self::event(
             SpeechStatusKind::Transcribing,
             Some(nonce),
             None,
         ))
+    }
+
+    pub fn stop_for_recording_cap(
+        &mut self,
+        nonce: SpeechSessionNonce,
+        now: Duration,
+    ) -> Result<SpeechStatusEvent, &'static str> {
+        let mut event = self.stop(nonce, now)?;
+        event.finalization_reason = Some(FinalizationReason::RecordingCap);
+        Ok(event)
     }
 
     pub fn expire_recording(
@@ -322,6 +335,7 @@ impl SpeechController {
             status,
             nonce,
             error: error.map(str::to_owned),
+            finalization_reason: None,
         }
     }
 }
@@ -392,19 +406,19 @@ mod tests {
     }
 
     #[test]
-    fn recording_expires_at_ninety_seconds_for_matching_session() {
+    fn recording_expires_at_three_hundred_seconds_for_matching_session() {
         let mut controller = SpeechController::default();
         let nonce = SpeechSessionNonce(1);
         controller.start(at(5)).expect("start should succeed");
         assert_eq!(
             controller.expire_recording(
                 nonce,
-                Duration::from_secs(5) + Duration::from_millis(89_999)
+                Duration::from_secs(5) + MAX_RECORDING_DURATION - Duration::from_millis(1)
             ),
             None
         );
         let expired = controller
-            .expire_recording(nonce, at(95))
+            .expire_recording(nonce, at(305))
             .expect("recording should expire at cap");
         assert_eq!(expired.status, SpeechStatusKind::Error);
         assert_eq!(expired.error.as_deref(), Some(SPEECH_TIMEOUT_CODE));
@@ -417,15 +431,15 @@ mod tests {
         controller.start(at(1)).expect("start should succeed");
         controller.stop(nonce, at(2)).expect("stop should succeed");
 
-        assert_eq!(controller.expire_transcription(nonce, at(120)), None);
+        assert_eq!(controller.expire_transcription(nonce, at(46)), None);
         let expired = controller
-            .expire_transcription(nonce, at(121))
+            .expire_transcription(nonce, at(47))
             .expect("transcription should expire at cap");
         assert_eq!(expired.status, SpeechStatusKind::Error);
         assert_eq!(expired.nonce, Some(nonce));
         assert_eq!(expired.error.as_deref(), Some(SPEECH_TIMEOUT_CODE));
-        assert_eq!(controller.complete_copied(nonce, at(121)), None);
-        assert_eq!(controller.complete_error(nonce, at(121)), None);
+        assert_eq!(controller.complete_copied(nonce, at(47)), None);
+        assert_eq!(controller.complete_error(nonce, at(47)), None);
     }
 
     #[test]
@@ -437,7 +451,7 @@ mod tests {
             .expect("stop should succeed");
 
         assert_eq!(
-            controller.expire_transcription(SpeechSessionNonce(2), at(121)),
+            controller.expire_transcription(SpeechSessionNonce(2), at(47)),
             None
         );
         assert_eq!(controller.status().status, SpeechStatusKind::Transcribing);
@@ -451,11 +465,11 @@ mod tests {
         controller.stop(nonce, at(2)).expect("stop should succeed");
 
         let completed = controller
-            .complete_copied(nonce, at(121))
+            .complete_copied(nonce, at(47))
             .expect("matched completion should terminate with error");
         assert_eq!(completed.status, SpeechStatusKind::Error);
         assert_eq!(completed.error.as_deref(), Some(SPEECH_TIMEOUT_CODE));
-        assert_eq!(controller.expire_transcription(nonce, at(121)), None);
+        assert_eq!(controller.expire_transcription(nonce, at(47)), None);
     }
 
     #[test]
@@ -466,24 +480,26 @@ mod tests {
         controller.stop(nonce, at(2)).expect("stop should succeed");
 
         let completed = controller
-            .complete_copied(nonce, at(120))
+            .complete_copied(nonce, at(46))
             .expect("completion before cap should succeed");
         assert_eq!(completed.status, SpeechStatusKind::Copied);
         assert_eq!(completed.error, None);
     }
 
     #[test]
-    fn operation_limit_is_measured_from_recording_start() {
+    fn finalization_limit_is_measured_from_input_close() {
         let mut controller = SpeechController::default();
         let nonce = SpeechSessionNonce(1);
         controller.start(at(1)).expect("start should succeed");
-        controller.stop(nonce, at(31)).expect("stop should succeed");
+        controller
+            .stop(nonce, at(300))
+            .expect("stop should succeed");
 
-        assert!(controller.can_complete(nonce, at(120)));
-        assert!(!controller.can_complete(nonce, at(121)));
+        assert!(controller.can_complete(nonce, at(344)));
+        assert!(!controller.can_complete(nonce, at(345)));
         let expired = controller
-            .expire_transcription(nonce, at(121))
-            .expect("session should expire 120 seconds after recording start");
+            .expire_transcription(nonce, at(345))
+            .expect("session should expire 45 seconds after input close");
         assert_eq!(expired.status, SpeechStatusKind::Error);
     }
 
@@ -494,9 +510,9 @@ mod tests {
         controller
             .stop(SpeechSessionNonce(1), at(2))
             .expect("stop should succeed");
-        assert!(controller.can_complete(SpeechSessionNonce(1), at(120)));
-        assert!(!controller.can_complete(SpeechSessionNonce(2), at(120)));
-        assert!(!controller.can_complete(SpeechSessionNonce(1), at(121)));
+        assert!(controller.can_complete(SpeechSessionNonce(1), at(46)));
+        assert!(!controller.can_complete(SpeechSessionNonce(2), at(46)));
+        assert!(!controller.can_complete(SpeechSessionNonce(1), at(47)));
     }
 
     #[test]
@@ -507,7 +523,7 @@ mod tests {
             .stop(SpeechSessionNonce(1), at(2))
             .expect("stop should succeed");
         let copied = controller
-            .complete_copied(SpeechSessionNonce(1), at(120))
+            .complete_copied(SpeechSessionNonce(1), at(46))
             .expect("completion should succeed");
         assert_eq!(copied.status, SpeechStatusKind::Copied);
         let idle = controller

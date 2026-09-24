@@ -11,6 +11,7 @@ const shellWindows = readFileSync(new URL('../src-tauri/src/shell_windows.rs', i
 const surfaces = readFileSync(new URL('../src/ipc/surfaces.ts', import.meta.url), 'utf8');
 const surfaceLoader = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.url), 'utf8');
 const speechApi = readFileSync(new URL('../src/lib/speech.ts', import.meta.url), 'utf8');
+const rustSpeech = readFileSync(new URL('../src-tauri/src/speech.rs', import.meta.url), 'utf8');
 
 test('speech command and event names match Rust and TypeScript contracts', () => {
   for (const command of [
@@ -55,4 +56,25 @@ test('speech commands and managed runtime are registered in Tauri main', () => {
 
 test('speech model directory is included in Tauri bundle resources', () => {
   assert.deepEqual(tauriConfig.bundle?.resources, ['resources/speech-models/parakeet-tdt-0.6b-v2-int8/**/*']);
+});
+
+test('planned speech cap finalization reason remains optional and cap-only', (t) => {
+  if (!tsEvents.includes('finalizationReason') && !rustSpeech.includes('finalization_reason')) {
+    t.skip('RED-ready acceptance: enable when local TDT fallback IPC field is implemented');
+    return;
+  }
+
+  assert.match(tsEvents, /finalizationReason\?: 'recording_cap'/);
+  assert.match(rustSpeech, /FinalizationReason/);
+  assert.match(rustSpeech, /RecordingCap/);
+  assert.match(rustSpeech, /#\[serde\(skip_serializing_if = "Option::is_none"\)\][\s\S]*finalization_reason/);
+  assert.doesNotMatch(tsEvents, /finalizationReason\?:\s*'user_finish'/);
+});
+
+test('planned speech fallback keeps current IPC names and does not expose streaming claims', () => {
+  assert.match(tsCommands, /startSpeechCapture: 'start_speech_capture'/);
+  assert.match(tsCommands, /stopSpeechCapture: 'stop_speech_capture'/);
+  assert.match(tsEvents, /speechStatusChanged: 'speech:status-changed'/);
+  assert.match(tsEvents, /nonce: SpeechSessionNonce \| null/);
+  assert.doesNotMatch(speechApi, /true stateful streaming|stateful streaming/i);
 });
