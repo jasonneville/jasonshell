@@ -7,7 +7,7 @@ use crate::speech::{
     MAX_RECORDING_DURATION, MAX_SPEECH_HISTORY_ENTRIES, MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
 };
 use crate::speech_streaming::{
-    merge_tdt_text, BoundedIntake, InputCloseReason, IntakeResult, WorkerMessage,
+    merge_tdt_window, BoundedIntake, InputCloseReason, IntakeResult, WorkerMessage,
     FINALIZATION_TIMEOUT, OVERLAP_SEGMENTS, SEGMENT_SAMPLES, WINDOW_SEGMENTS,
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -82,6 +82,15 @@ pub(crate) struct SpeechRuntimeState {
     shutting_down: AtomicBool,
     epoch: Instant,
     history: Mutex<VecDeque<SpeechHistoryEntry>>,
+    model_pool: Mutex<WarmModelState>,
+}
+
+enum WarmModelState {
+    NotStarted,
+    Loading,
+    Ready(parakeet_rs::ParakeetTDT),
+    InUse,
+    Failed,
 }
 
 struct RuntimeInner {
@@ -101,6 +110,7 @@ impl Default for SpeechRuntimeState {
             shutting_down: AtomicBool::new(false),
             epoch: Instant::now(),
             history: Mutex::new(VecDeque::with_capacity(MAX_SPEECH_HISTORY_ENTRIES)),
+            model_pool: Mutex::new(WarmModelState::NotStarted),
         }
     }
 }
@@ -215,6 +225,55 @@ impl SpeechRuntimeState {
     fn invalidate(&self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
+
+    fn take_model(&self) -> Result<parakeet_rs::ParakeetTDT, String> {
+        let mut slot = self
+            .model_pool
+            .lock()
+            .map_err(|_| GENERIC_ERROR.to_owned())?;
+        match std::mem::replace(&mut *slot, WarmModelState::InUse) {
+            WarmModelState::Ready(model) => Ok(model),
+            WarmModelState::Failed => {
+                *slot = WarmModelState::Failed;
+                Err(SpeechFailure::ModelLoadFailed.code().to_owned())
+            }
+            state => {
+                *slot = state;
+                Err(SpeechFailure::ModelLoadFailed.code().to_owned())
+            }
+        }
+    }
+
+    fn return_model(&self, model: parakeet_rs::ParakeetTDT) {
+        if let Ok(mut slot) = self.model_pool.lock() {
+            *slot = WarmModelState::Ready(model);
+        }
+    }
+}
+
+pub(crate) fn spawn_warm_model_async(app: AppHandle) {
+    let state = app.state::<SpeechRuntimeState>();
+    let should_load = state.model_pool.lock().ok().is_some_and(|mut slot| {
+        if matches!(*slot, WarmModelState::NotStarted) {
+            *slot = WarmModelState::Loading;
+            true
+        } else {
+            false
+        }
+    });
+    if !should_load {
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let loaded = resolve_model_resource(&app).and_then(|path| preload_parakeet_tdt(&path));
+        let state = app.state::<SpeechRuntimeState>();
+        if let Ok(mut slot) = state.model_pool.lock() {
+            *slot = match loaded {
+                Ok(model) => WarmModelState::Ready(model),
+                Err(_) => WarmModelState::Failed,
+            };
+        };
+    });
 }
 
 #[tauri::command]
@@ -222,24 +281,30 @@ pub(crate) fn start_speech_capture(
     app: AppHandle,
     state: State<'_, SpeechRuntimeState>,
 ) -> Result<StartSpeechCaptureResponse, String> {
-    {
-        let inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
+    let commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
+    if state.shutting_down.load(Ordering::Acquire) {
+        return Err(GENERIC_ERROR.into());
+    }
+    let event = {
+        let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
         if inner.capture.is_some() {
             return Err("Speech is busy".into());
         }
-    }
-    let model_path = resolve_model_resource(&app)?;
-    // Readiness is established synchronously before Recording or microphone activation.
-    // One owned model per accepted session also serializes model use with that session.
-    let model = preload_parakeet_tdt(&model_path)?;
-    let event = {
-        let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
         inner.controller.start(state.now()).map_err(str::to_owned)?
     };
     let nonce = event.nonce.ok_or_else(|| GENERIC_ERROR.to_string())?;
+    // Reserve the controller session before exclusively taking the process-warmed model.
+    let model = match state.take_model() {
+        Ok(model) => model,
+        Err(error) => {
+            recover_failed_stop_with(&app, &state, nonce, SpeechFailure::ModelLoadFailed);
+            return Err(error);
+        }
+    };
     let (stream, intake_slot, tail, sample_rate, channels, health) = match create_capture_stream() {
         Ok(capture) => capture,
         Err(_) => {
+            state.return_model(model);
             recover_failed_stop_with(&app, &state, nonce, SpeechFailure::CaptureStreamError);
             report_capture_start_failure();
             return Err(capture_start_error_code());
@@ -248,37 +313,65 @@ pub(crate) fn start_speech_capture(
     let (intake, receiver) = BoundedIntake::prepared(nonce, nonce.0);
     let intake = Arc::new(intake);
     if intake_slot.set(Arc::clone(&intake)).is_err() {
+        state.return_model(model);
         recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
         return Err(GENERIC_ERROR.into());
     }
     if stream.play().is_err() {
+        state.return_model(model);
         recover_failed_stop_with(&app, &state, nonce, SpeechFailure::CaptureStreamError);
         report_capture_start_failure();
         return Err(capture_start_error_code());
     }
     let activated_at = Instant::now();
     if intake.activate(activated_at).is_err() {
+        state.return_model(model);
         recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
         return Err(GENERIC_ERROR.into());
     }
-    {
-        let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
-        inner.capture = Some(Capture {
-            stream,
-            intake: Arc::clone(&intake),
-            tail,
-            sample_rate,
-            channels,
-            health,
-        });
+    if state.shutting_down.load(Ordering::Acquire) {
+        intake.first_close(InputCloseReason::Shutdown);
+        state.return_model(model);
+        recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
+        return Err(GENERIC_ERROR.into());
     }
+    let mut inner = match state.inner.lock() {
+        Ok(inner) => inner,
+        Err(_) => {
+            state.return_model(model);
+            recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
+            return Err(GENERIC_ERROR.into());
+        }
+    };
+    inner.capture = Some(Capture {
+        stream,
+        intake: Arc::clone(&intake),
+        tail,
+        sample_rate,
+        channels,
+        health,
+    });
+    drop(inner);
     state.generation.store(nonce.0, Ordering::Release);
     let worker_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         run_streaming_worker(worker_app, nonce, nonce.0, intake, receiver, model)
     });
+    if let Err(error) = emit(&app, &event) {
+        let rollback_capture = state
+            .inner
+            .lock()
+            .ok()
+            .and_then(|mut inner| inner.capture.take());
+        if let Some(capture) = rollback_capture {
+            capture.intake.first_close(InputCloseReason::SafeFailure);
+            drop(capture);
+        }
+        recover_failed_stop_with(&app, &state, nonce, SpeechFailure::StateRace);
+        return Err(error);
+    }
+    drop(commit);
     schedule_capture_health(app.clone(), nonce);
-    emit(&app, &event)?;
     schedule_recording_limit(app, nonce, activated_at);
     Ok(StartSpeechCaptureResponse {
         nonce,
@@ -292,6 +385,7 @@ pub(crate) fn stop_speech_capture(
     state: State<'_, SpeechRuntimeState>,
     request: StopSpeechCaptureRequest,
 ) -> Result<crate::speech::SpeechStatusResponse, String> {
+    let _commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
     let (event, capture) = {
         let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
         let event = inner
@@ -306,6 +400,8 @@ pub(crate) fn stop_speech_capture(
         (event, capture)
     };
     if let Err(error) = emit(&app, &event) {
+        capture.intake.first_close(InputCloseReason::SafeFailure);
+        drop(capture);
         debug_diagnostic(
             request.nonce,
             SpeechFailure::StateRace,
@@ -358,8 +454,9 @@ fn run_streaming_worker(
     generation: u64,
     intake: Arc<BoundedIntake>,
     receiver: Receiver<WorkerMessage>,
-    mut model: parakeet_rs::ParakeetTDT,
+    model: parakeet_rs::ParakeetTDT,
 ) {
+    let mut model = WorkerModel::new(app.clone(), model);
     let started = Instant::now();
     let mut sample_count = 0;
     let result: Result<_, SpeechFailure> = (|| {
@@ -373,7 +470,7 @@ fn run_streaming_worker(
                     pending.push_back(segment);
                     new_segments += 1;
                     if pending.len() == WINDOW_SEGMENTS {
-                        transcribe_window(&mut model, &pending, &mut transcript)?;
+                        transcribe_window(&mut model, &pending, &mut transcript, false)?;
                         for _ in 0..WINDOW_SEGMENTS - OVERLAP_SEGMENTS {
                             pending.pop_front();
                         }
@@ -396,7 +493,9 @@ fn run_streaming_worker(
             });
         }
         if new_segments > 0 {
-            transcribe_window(&mut model, &pending, &mut transcript)?;
+            transcribe_window(&mut model, &pending, &mut transcript, true)?;
+        } else if !pending.is_empty() {
+            transcribe_window(&mut model, &pending, &mut transcript, true)?;
         }
         wait_for_finalizing(&app, nonce)?;
         let state = app.state::<SpeechRuntimeState>();
@@ -416,6 +515,7 @@ fn run_streaming_worker(
             || crate::speech_clipboard::write_unicode_text(text),
         )
     })();
+    drop(model);
     let state = app.state::<SpeechRuntimeState>();
     let event = match result {
         Ok(event) => Some(event),
@@ -449,8 +549,17 @@ fn run_streaming_worker(
         }
     };
     if let Some(event) = event {
+        let _commit = match state.commit.lock() {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return;
+        }
         let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
-        schedule_terminal_reset(app, nonce);
+        schedule_terminal_reset(app.clone(), nonce);
     }
 }
 
@@ -458,6 +567,7 @@ fn transcribe_window(
     model: &mut parakeet_rs::ParakeetTDT,
     segments: &VecDeque<Box<[f32]>>,
     transcript: &mut String,
+    final_window: bool,
 ) -> Result<(), SpeechFailure> {
     let audio: Vec<f32> = segments
         .iter()
@@ -467,8 +577,44 @@ fn transcribe_window(
     let result = model
         .transcribe_samples(audio, TARGET_RATE, 1, None)
         .map_err(|_| SpeechFailure::AsrFailed)?;
-    merge_tdt_text(transcript, &result.text);
+    merge_tdt_window(transcript, &result.text, final_window);
     Ok(())
+}
+
+struct WorkerModel {
+    app: AppHandle,
+    model: Option<parakeet_rs::ParakeetTDT>,
+}
+
+impl WorkerModel {
+    fn new(app: AppHandle, model: parakeet_rs::ParakeetTDT) -> Self {
+        Self {
+            app,
+            model: Some(model),
+        }
+    }
+}
+
+impl std::ops::Deref for WorkerModel {
+    type Target = parakeet_rs::ParakeetTDT;
+
+    fn deref(&self) -> &Self::Target {
+        self.model.as_ref().expect("worker model remains owned")
+    }
+}
+
+impl std::ops::DerefMut for WorkerModel {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.model.as_mut().expect("worker model remains owned")
+    }
+}
+
+impl Drop for WorkerModel {
+    fn drop(&mut self) {
+        if let Some(model) = self.model.take() {
+            self.app.state::<SpeechRuntimeState>().return_model(model);
+        }
+    }
 }
 
 fn wait_for_finalizing(app: &AppHandle, nonce: SpeechSessionNonce) -> Result<(), SpeechFailure> {
@@ -651,6 +797,15 @@ fn schedule_terminal_reset(app: AppHandle, nonce: SpeechSessionNonce) {
         std::thread::sleep(TERMINAL_RESET_DELAY);
         let state = app.state::<SpeechRuntimeState>();
         if let Some(event) = reset_terminal_if_current(&state, nonce, generation) {
+            let _commit = match state.commit.lock() {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            if state.shutting_down.load(Ordering::Acquire)
+                || state.generation.load(Ordering::Acquire) != generation
+            {
+                return;
+            }
             let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
         }
     });
@@ -662,6 +817,15 @@ fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated
             (activated_at + MAX_RECORDING_DURATION).saturating_duration_since(Instant::now()),
         );
         let state = app.state::<SpeechRuntimeState>();
+        let _commit = match state.commit.lock() {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return;
+        }
         let Some((event, capture)) = state.inner.lock().ok().and_then(|mut inner| {
             let event = inner
                 .controller
@@ -676,7 +840,7 @@ fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated
         capture.intake.first_close(InputCloseReason::RecordingCap);
         drop(capture.intake);
         let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
-        schedule_transcription_limit(app, nonce);
+        schedule_transcription_limit(app.clone(), nonce);
     });
 }
 
@@ -684,35 +848,38 @@ fn schedule_capture_health(app: AppHandle, nonce: SpeechSessionNonce) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(10));
         let state = app.state::<SpeechRuntimeState>();
+        let _commit = match state.commit.lock() {
+            Ok(value) => value,
+            Err(_) => return,
+        };
         if state.shutting_down.load(Ordering::Acquire)
             || state.generation.load(Ordering::Acquire) != nonce.0
         {
             return;
         }
-        let failure = state.inner.lock().ok().and_then(|inner| {
-            inner
+        let capture = state.inner.lock().ok().and_then(|mut inner| {
+            let failure = match inner
                 .capture
                 .as_ref()
                 .and_then(|capture| capture_failure(&capture.health))
-        });
-        let Some(failure) = failure else {
-            let recording = state.inner.lock().ok().is_some_and(|inner| {
-                inner.controller.status().status == SpeechStatusKind::Recording
-            });
-            if !recording {
-                return;
-            }
-            continue;
-        };
-        let capture = state.inner.lock().ok().and_then(|mut inner| {
+            {
+                Some(failure) => failure,
+                None if inner.controller.status().status == SpeechStatusKind::Recording => {
+                    return Some(None);
+                }
+                None => return None,
+            };
             let _ = inner.controller.stop(nonce, state.now());
             let event = inner
                 .controller
                 .complete_error_code(nonce, state.now(), failure.code())?;
-            Some((event, inner.capture.take()))
+            Some(Some((event, inner.capture.take())))
         });
-        let Some((event, capture)) = capture else {
+        let Some(capture) = capture else {
             return;
+        };
+        let Some((event, capture)) = capture else {
+            continue;
         };
         state.invalidate();
         if let Some(capture) = capture {
@@ -720,7 +887,7 @@ fn schedule_capture_health(app: AppHandle, nonce: SpeechSessionNonce) {
             drop(capture);
         }
         let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
-        schedule_terminal_reset(app, nonce);
+        schedule_terminal_reset(app.clone(), nonce);
         return;
     });
 }
@@ -741,15 +908,26 @@ fn schedule_transcription_limit(app: AppHandle, nonce: SpeechSessionNonce) {
     };
     std::thread::spawn(move || {
         std::thread::sleep(delay);
-        let event = {
+        let (event, generation) = {
             let state = app.state::<SpeechRuntimeState>();
             let _commit = match state.commit.lock() {
                 Ok(value) => value,
                 Err(_) => return,
             };
-            expire_transcription_and_invalidate(&state, nonce, state.now())
+            let event = expire_transcription_and_invalidate(&state, nonce, state.now());
+            (event, state.generation.load(Ordering::Acquire))
         };
         if let Some(event) = event {
+            let state = app.state::<SpeechRuntimeState>();
+            let _commit = match state.commit.lock() {
+                Ok(value) => value,
+                Err(_) => return,
+            };
+            if state.shutting_down.load(Ordering::Acquire)
+                || state.generation.load(Ordering::Acquire) != generation
+            {
+                return;
+            }
             debug_diagnostic(
                 nonce,
                 SpeechFailure::Timeout,
@@ -761,7 +939,7 @@ fn schedule_transcription_limit(app: AppHandle, nonce: SpeechSessionNonce) {
                 0.0,
             );
             let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
-            schedule_terminal_reset(app, nonce);
+            schedule_terminal_reset(app.clone(), nonce);
         }
     });
 }
@@ -789,7 +967,10 @@ fn shutdown_after_commit(state: &SpeechRuntimeState) {
         .lock()
         .ok()
         .and_then(|mut inner| inner.capture.take());
-    drop(capture);
+    if let Some(capture) = capture {
+        capture.intake.first_close(InputCloseReason::Shutdown);
+        drop(capture);
+    }
     if let Ok(mut history) = state.history.lock() {
         history.clear();
     }
