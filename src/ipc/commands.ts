@@ -1,3 +1,5 @@
+import type { SpeechSessionNonce, SpeechStatusKind } from './events';
+
 export const IPC_COMMANDS = {
   listPinnedTaskbarApps: 'list_pinned_taskbar_apps',
   launchPinnedTaskbarApp: 'launch_pinned_taskbar_app',
@@ -51,6 +53,8 @@ export const IPC_COMMANDS = {
   saveCommandPanelSize: 'save_command_panel_size',
   showAudioPanel: 'show_audio_panel',
   hideAudioPanel: 'hide_audio_panel',
+  showSpeechHistoryPanel: 'show_speech_history_panel',
+  hideSpeechHistoryPanel: 'hide_speech_history_panel',
   showCalendarPanel: 'show_calendar_panel',
   hideCalendarPanel: 'hide_calendar_panel',
   getAudioState: 'get_audio_state',
@@ -87,6 +91,7 @@ export const IPC_COMMANDS = {
   resizeStackPopup: 'resize_stack_popup',
   readStackFolder: 'read_stack_folder',
   readStackBasicTextFile: 'read_stack_basic_text_file',
+  saveStackBasicTextFile: 'save_stack_basic_text_file',
   getStackGitStatus: 'get_stack_git_status',
   openStackGitRemoteUrl: 'open_stack_git_remote_url',
   stackGitAddPaths: 'stack_git_add_paths',
@@ -167,7 +172,24 @@ export const IPC_COMMANDS = {
   validateAutomationRequest: 'validate_automation_request',
   getSingleInstanceForwardingContract: 'get_single_instance_forwarding_contract',
   resolveProviderRegistry: 'resolve_provider_registry',
+  startSpeechCapture: 'start_speech_capture',
+  stopSpeechCapture: 'stop_speech_capture',
+  getSpeechHistory: 'get_speech_history',
+  copySpeechHistoryTranscript: 'copy_speech_history_transcript',
   invokeSystemTrayIcon: 'invoke_system_tray_icon'
 } as const;
 
 export type IpcCommandName = (typeof IPC_COMMANDS)[keyof typeof IPC_COMMANDS];
+
+export interface StopSpeechCaptureRequest {
+  nonce: SpeechSessionNonce;
+}
+
+export interface CopySpeechHistoryTranscriptRequest {
+  nonce: SpeechSessionNonce;
+}
+
+export interface StartSpeechCaptureResponse {
+  nonce: SpeechSessionNonce;
+  status: SpeechStatusKind;
+}

@@ -4,6 +4,8 @@ export const IPC_EVENTS = {
   // exist for events not consumed across generic wrappers.
   audioPanelOpen: 'audio-panel:open',
   audioPanelClosed: 'audio-panel:closed',
+  speechHistoryPanelOpen: 'speech-history-panel:open',
+  speechHistoryPanelClosed: 'speech-history-panel:closed',
   processManagerOpen: 'process-manager:open',
   processManagerClosed: 'process-manager:closed',
   trayPanelOpen: 'tray-panel:open',
@@ -36,7 +38,36 @@ export const IPC_EVENTS = {
   taskPreviewHoverEnter: 'task-preview:hover-enter',
   taskPreviewUpdate: 'task-preview:update',
   taskPreviewHide: 'task-preview:hide',
+  speechStatusChanged: 'speech:status-changed',
   topBarPinMenuAction: 'top-bar:pin-menu-action'
 } as const;
 
 export type IpcEventName = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS];
+
+export type SpeechSessionNonce = number;
+export type SpeechStatusKind = 'idle' | 'recording' | 'transcribing' | 'copied' | 'error';
+
+export interface SpeechStatusEvent {
+  status: SpeechStatusKind;
+  nonce: SpeechSessionNonce | null;
+  error?: string;
+}
+
+export interface SpeechStatusResponse {
+  status: SpeechStatusKind;
+  nonce: SpeechSessionNonce | null;
+}
+
+export type SpeechHistoryOutcome =
+  | 'copied'
+  | 'clipboard-sta-unavailable'
+  | 'clipboard-queue-full'
+  | 'clipboard-invalid-text'
+  | 'clipboard-timeout'
+  | 'clipboard-publish-rejected';
+
+export interface SpeechHistoryEntry {
+  nonce: SpeechSessionNonce;
+  transcript: string;
+  outcome: SpeechHistoryOutcome;
+}

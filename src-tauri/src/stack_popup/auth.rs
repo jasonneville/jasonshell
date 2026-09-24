@@ -219,6 +219,14 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
         ],
     },
     StackCommandAuth::AllowedCallers {
+        command: contracts::commands::READ_STACK_BASIC_TEXT_FILE,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::SAVE_STACK_BASIC_TEXT_FILE,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
         command: contracts::commands::GET_STACK_GIT_STATUS,
         callers: &[contracts::surfaces::STACK_POPUP],
     },

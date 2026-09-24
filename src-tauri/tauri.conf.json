@@ -9,6 +9,11 @@
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
+  "bundle": {
+    "resources": [
+      "resources/speech-models/parakeet-tdt-0.6b-v2-int8/**/*"
+    ]
+  },
   "app": {
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data: asset:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'",

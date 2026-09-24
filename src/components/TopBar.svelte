@@ -125,6 +125,18 @@
   } from '../lib/taskbarGroups';
   import { reorderPinnedFolders, stackPinRevealPath, topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
+    DEFAULT_TOP_BAR_CONTROL_ORDER,
+    TOP_BAR_CONTROL_DRAG_THRESHOLD_PX,
+    TOP_BAR_CONTROL_ORDER_STORAGE_KEY,
+    normalizeTopBarControlOrder,
+    resolveTopBarControlPointerCaptureTarget,
+    resolveTopBarControlPointerRelease,
+    shouldSuppressTopBarControlClick,
+    topBarControlOrderFromDisplacement,
+    type TopBarControlId,
+    type TopBarControlRect
+  } from '../lib/topBarControls';
+  import {
     searchPanelAnchorState,
     searchPanelPayloadSignature,
     shouldPublishSearchPanelPayload,
@@ -152,6 +164,7 @@
   } from '../features/search/searchUxState';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import TopBarMicControl from './TopBarMicControl.svelte';
 
   let now = new Date();
   let shellPreferences: ShellPreferences = getInitialShellPreferences();
@@ -184,6 +197,7 @@
   let commandControl: HTMLDivElement | null = null;
   let trayControl: HTMLDivElement | null = null;
   let soundControl: HTMLDivElement | null = null;
+  let topBarControlsEl: HTMLDivElement | null = null;
   let timeControl: HTMLDivElement | null = null;
   let showRailScrollLeft = false;
   let showRailScrollRight = false;
@@ -221,6 +235,16 @@
   let stackPinFocusHoldActive = false;
   let stackPinFocusHoldPromise: Promise<void> | null = null;
   let suppressNextPinClickPath: string | null = null;
+  let topBarControlOrder: TopBarControlId[] = [...DEFAULT_TOP_BAR_CONTROL_ORDER];
+  let topBarControlDragId: TopBarControlId | null = null;
+  let topBarControlDragPointerId: number | null = null;
+  let topBarControlDragStartX = 0;
+  let topBarControlDragCurrentX = 0;
+  let topBarControlDragStarted = false;
+  let topBarControlDragOriginalOrder: TopBarControlId[] = [];
+  let topBarControlDragRects: TopBarControlRect[] = [];
+  let topBarControlDragElement: HTMLElement | null = null;
+  let suppressNextTopBarControlClickId: TopBarControlId | null = null;
   let pendingVisiblePinPath: string | null = null;
   let stackPinsLoaded = false;
   let audioOpen = false;
@@ -248,6 +272,13 @@
   const SOUND_PANEL_ID = 'audio-panel';
   const CALENDAR_PANEL_ID = 'calendar-panel';
   const STACK_POPUP_ID = 'stack-popup';
+  const TOP_BAR_CONTROL_DESCRIPTORS: Array<{ id: TopBarControlId }> = [
+    { id: 'terminal' },
+    { id: 'command' },
+    { id: 'tray' },
+    { id: 'mic' },
+    { id: 'sound' }
+  ];
   type TopBarTerminalActivityPayload = {
     sessionId?: string;
     active?: boolean;
@@ -276,6 +307,139 @@
         pinDragDeltaX
       )
     : stackPins.map((pin) => pin.path);
+  $: topBarControlDragDeltaX = topBarControlDragStarted
+    ? topBarControlDragCurrentX - topBarControlDragStartX
+    : 0;
+  $: topBarControlPreviewOrder = topBarControlDragStarted && topBarControlDragId
+    ? topBarControlOrderFromDisplacement(
+        topBarControlDragId,
+        topBarControlDragOriginalOrder,
+        topBarControlDragRects,
+        topBarControlDragDeltaX
+      )
+    : topBarControlOrder;
+  $: orderedTopBarControls = topBarControlOrder
+    .map((id) => TOP_BAR_CONTROL_DESCRIPTORS.find((control) => control.id === id))
+    .filter((control): control is { id: TopBarControlId } => Boolean(control));
+
+  function topBarControlRects() {
+    return Array.from(topBarControlsEl?.querySelectorAll<HTMLElement>('[data-top-bar-control]') ?? [])
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { key: element.dataset.topBarControl ?? '', left: rect.left, width: rect.width };
+      })
+      .filter((rect) => rect.key);
+  }
+
+  function topBarControlStyle(id: TopBarControlId) {
+    const previewOrderIndex = topBarControlPreviewOrder.indexOf(id);
+    if (topBarControlDragId !== id || !topBarControlDragStarted) {
+      return `order: ${previewOrderIndex};`;
+    }
+    const liveReorderOffset = taskbarGroupReorderOffset(
+      id,
+      [...topBarControlPreviewOrder],
+      topBarControlDragRects
+    );
+    return `order: ${previewOrderIndex}; transform: translate3d(${topBarControlDragDeltaX + liveReorderOffset}px, -1px, 0); z-index: 2;`;
+  }
+
+  function persistTopBarControlOrder() {
+    try {
+      localStorage.setItem(TOP_BAR_CONTROL_ORDER_STORAGE_KEY, JSON.stringify(topBarControlOrder));
+    } catch (error) {
+      console.error('Failed to persist top bar control order', error);
+    }
+  }
+
+  function releaseTopBarControlPointerCapture() {
+    if (!topBarControlDragElement || topBarControlDragPointerId === null) return;
+    try {
+      if (topBarControlDragElement.hasPointerCapture(topBarControlDragPointerId)) {
+        topBarControlDragElement.releasePointerCapture(topBarControlDragPointerId);
+      }
+    } catch {
+      // Pointer capture may already be released by browser cancellation.
+    }
+  }
+
+  function resetTopBarControlPointerDrag() {
+    topBarControlDragId = null;
+    topBarControlDragPointerId = null;
+    topBarControlDragStartX = 0;
+    topBarControlDragCurrentX = 0;
+    topBarControlDragStarted = false;
+    topBarControlDragOriginalOrder = [];
+    topBarControlDragRects = [];
+    topBarControlDragElement = null;
+  }
+
+  function startTopBarControlPointerDrag(id: TopBarControlId, event: PointerEvent) {
+    if (event.button !== 0) return;
+    topBarControlDragId = id;
+    topBarControlDragPointerId = event.pointerId;
+    topBarControlDragStartX = event.clientX;
+    topBarControlDragCurrentX = event.clientX;
+    topBarControlDragStarted = false;
+    topBarControlDragOriginalOrder = [...topBarControlOrder];
+    topBarControlDragRects = topBarControlRects();
+    topBarControlDragElement = resolveTopBarControlPointerCaptureTarget(
+      event.target,
+      event.currentTarget as HTMLElement
+    ) as HTMLElement;
+    try {
+      topBarControlDragElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Reorder still works while pointer remains over the controls.
+    }
+  }
+
+  function moveTopBarControlPointerDrag(event: PointerEvent) {
+    if (topBarControlDragPointerId !== event.pointerId || !topBarControlDragId) return;
+    topBarControlDragCurrentX = event.clientX;
+    if (!topBarControlDragStarted
+      && Math.abs(topBarControlDragCurrentX - topBarControlDragStartX) >= TOP_BAR_CONTROL_DRAG_THRESHOLD_PX) {
+      topBarControlDragStarted = true;
+    }
+    if (topBarControlDragStarted) event.preventDefault();
+  }
+
+  function finishTopBarControlPointerDrag(event: PointerEvent) {
+    if (topBarControlDragPointerId !== event.pointerId) return;
+    const sourceId = topBarControlDragId;
+    const didDrag = topBarControlDragStarted;
+    const nextOrder = sourceId && didDrag
+      ? topBarControlOrderFromDisplacement(
+          sourceId,
+          topBarControlDragOriginalOrder,
+          topBarControlDragRects,
+          event.clientX - topBarControlDragStartX
+        )
+      : topBarControlOrder;
+    releaseTopBarControlPointerCapture();
+    resetTopBarControlPointerDrag();
+    suppressNextTopBarControlClickId = resolveTopBarControlPointerRelease(sourceId, didDrag).suppressClickId;
+    if (didDrag && nextOrder !== topBarControlOrder) {
+      topBarControlOrder = [...nextOrder];
+      persistTopBarControlOrder();
+    }
+  }
+
+  function cancelTopBarControlPointerDrag() {
+    releaseTopBarControlPointerCapture();
+    resetTopBarControlPointerDrag();
+  }
+
+  function handleTopBarControlClickCapture(id: TopBarControlId, event: MouseEvent) {
+    if (!shouldSuppressTopBarControlClick(suppressNextTopBarControlClickId, id, event)) return;
+    suppressNextTopBarControlClickId = null;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function preventTopBarControlNativeDrag(event: DragEvent) {
+    event.preventDefault();
+  }
 
   async function loadSearchCatalog() {
     try {
@@ -1654,6 +1818,15 @@
     const unlisteners: Array<() => void> = [];
     let disposed = false;
     railScrollButtonsDisposed = false;
+    try {
+      topBarControlOrder = normalizeTopBarControlOrder(
+        localStorage.getItem(TOP_BAR_CONTROL_ORDER_STORAGE_KEY)
+      );
+      persistTopBarControlOrder();
+    } catch (error) {
+      topBarControlOrder = [...DEFAULT_TOP_BAR_CONTROL_ORDER];
+      console.error('Failed to load top bar control order', error);
+    }
     const registerAsyncUnlistener = (registration: Promise<() => void>) => {
       void registration.then((unlisten) => {
         if (disposed) {
@@ -1875,6 +2048,7 @@
         window.clearTimeout(pinDropStatusTimer);
       }
       releaseStackPinFocusHold();
+      cancelTopBarControlPointerDrag();
       cancelSearchBlurClose();
       void hideSearchPanel().catch(() => undefined);
       void hideAudioPanel().catch(() => undefined);
@@ -1965,57 +2139,54 @@
       <MeltActionButton class="rail-scroll right" ariaLabel="Scroll pinned folders right" tooltip="Scroll pinned folders right" onClick={() => scrollRailRight()}>&rsaquo;</MeltActionButton>
     {/if}
   </div>
-  <div class="terminal-control" bind:this={terminalControl}>
-    <MeltActionButton
-      class={`terminal-button${terminalCompletionPending ? ' terminal-complete' : ''}`}
-      ariaLabel="Open persistent terminal"
-      ariaHaspopup="dialog"
-      ariaExpanded={terminalOpen}
-      ariaControls={TERMINAL_PANEL_ID}
-      tooltip="Terminal"
-      onClick={(event) => void toggleTerminalPanel(event.currentTarget)}
-    >
-      <MaterialSymbolIcon name="terminal" />
-    </MeltActionButton>
-  </div>
-  <div class="command-control" bind:this={commandControl}>
-    <MeltActionButton
-      class="command-button"
-      ariaLabel="Open quick commands"
-      ariaHaspopup="dialog"
-      ariaExpanded={commandOpen}
-      ariaControls={COMMAND_PANEL_ID}
-      tooltip="Quick commands"
-      onClick={(event) => void toggleCommandPanel(event.currentTarget)}
-    >
-      <MaterialSymbolIcon name="code_blocks" />
-    </MeltActionButton>
-  </div>
-  <div class="tray-control" bind:this={trayControl}>
-    <MeltActionButton
-      class="tray-button"
-      ariaLabel="Open notification area icons"
-      ariaHaspopup="dialog"
-      ariaExpanded={trayOpen}
-      ariaControls={TRAY_PANEL_ID}
-      tooltip="Notification area icons"
-      onClick={(event) => void toggleTrayPanel(event.currentTarget)}
-    >
-      <span class="tray-arrow" aria-hidden="true">▾</span>
-    </MeltActionButton>
-  </div>
-  <div class="sound-control" bind:this={soundControl}>
-    <MeltActionButton
-      class="sound-button"
-      ariaLabel="Open sound controls"
-      ariaHaspopup="dialog"
-      ariaExpanded={audioOpen}
-      ariaControls={SOUND_PANEL_ID}
-      tooltip="Sound controls"
-      onClick={(event) => void toggleSoundPanel(event.currentTarget)}
-    >
-      <MaterialSymbolIcon name="speaker" />
-    </MeltActionButton>
+  <div class="top-bar-controls" bind:this={topBarControlsEl}>
+    {#each orderedTopBarControls as control (control.id)}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class:dragging={topBarControlDragId === control.id && topBarControlDragStarted}
+        class="top-bar-control-item"
+        data-top-bar-control={control.id}
+        style={topBarControlStyle(control.id)}
+        on:pointerdown={(event) => startTopBarControlPointerDrag(control.id, event)}
+        on:pointermove={moveTopBarControlPointerDrag}
+        on:pointerup={finishTopBarControlPointerDrag}
+        on:pointercancel={cancelTopBarControlPointerDrag}
+        on:lostpointercapture={(event) => {
+          if (topBarControlDragPointerId === event.pointerId) cancelTopBarControlPointerDrag();
+        }}
+        on:click|capture={(event) => handleTopBarControlClickCapture(control.id, event)}
+        on:dragstart={preventTopBarControlNativeDrag}
+      >
+        {#if control.id === 'terminal'}
+          <div class="terminal-control" bind:this={terminalControl}>
+            <MeltActionButton class={`terminal-button${terminalCompletionPending ? ' terminal-complete' : ''}`} ariaLabel="Open persistent terminal" ariaHaspopup="dialog" ariaExpanded={terminalOpen} ariaControls={TERMINAL_PANEL_ID} tooltip="Terminal" onClick={(event) => void toggleTerminalPanel(event.currentTarget)}>
+              <MaterialSymbolIcon name="terminal" />
+            </MeltActionButton>
+          </div>
+        {:else if control.id === 'command'}
+          <div class="command-control" bind:this={commandControl}>
+            <MeltActionButton class="command-button" ariaLabel="Open quick commands" ariaHaspopup="dialog" ariaExpanded={commandOpen} ariaControls={COMMAND_PANEL_ID} tooltip="Quick commands" onClick={(event) => void toggleCommandPanel(event.currentTarget)}>
+              <MaterialSymbolIcon name="code_blocks" />
+            </MeltActionButton>
+          </div>
+        {:else if control.id === 'tray'}
+          <div class="tray-control" bind:this={trayControl}>
+            <MeltActionButton class="tray-button" ariaLabel="Open notification area icons" ariaHaspopup="dialog" ariaExpanded={trayOpen} ariaControls={TRAY_PANEL_ID} tooltip="Notification area icons" onClick={(event) => void toggleTrayPanel(event.currentTarget)}>
+              <span class="tray-arrow" aria-hidden="true">▾</span>
+            </MeltActionButton>
+          </div>
+        {:else if control.id === 'mic'}
+          <TopBarMicControl />
+        {:else}
+          <div class="sound-control" bind:this={soundControl}>
+            <MeltActionButton class="sound-button" ariaLabel="Open sound controls" ariaHaspopup="dialog" ariaExpanded={audioOpen} ariaControls={SOUND_PANEL_ID} tooltip="Sound controls" onClick={(event) => void toggleSoundPanel(event.currentTarget)}>
+              <MaterialSymbolIcon name="speaker" />
+            </MeltActionButton>
+          </div>
+        {/if}
+      </div>
+    {/each}
   </div>
   <div class="time-control" bind:this={timeControl}>
     <MeltActionButton

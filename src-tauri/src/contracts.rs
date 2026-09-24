@@ -15,6 +15,7 @@ pub mod surfaces {
     pub const TERMINAL_PANEL: &str = "terminal-panel";
     pub const COMMAND_PANEL: &str = "command-panel";
     pub const AUDIO_PANEL: &str = "audio-panel";
+    pub const SPEECH_HISTORY_PANEL: &str = "speech-history-panel";
     pub const CALENDAR_PANEL: &str = "calendar-panel";
 
     pub const ALL: &[&str] = &[
@@ -32,6 +33,7 @@ pub mod surfaces {
         TERMINAL_PANEL,
         COMMAND_PANEL,
         AUDIO_PANEL,
+        SPEECH_HISTORY_PANEL,
         CALENDAR_PANEL,
     ];
 }
@@ -85,6 +87,8 @@ pub mod commands {
     pub const HIDE_COMMAND_PANEL: &str = "hide_command_panel";
     pub const SHOW_AUDIO_PANEL: &str = "show_audio_panel";
     pub const HIDE_AUDIO_PANEL: &str = "hide_audio_panel";
+    pub const SHOW_SPEECH_HISTORY_PANEL: &str = "show_speech_history_panel";
+    pub const HIDE_SPEECH_HISTORY_PANEL: &str = "hide_speech_history_panel";
     pub const SHOW_CALENDAR_PANEL: &str = "show_calendar_panel";
     pub const HIDE_CALENDAR_PANEL: &str = "hide_calendar_panel";
     pub const LIST_PROCESSES: &str = "list_processes";
@@ -130,6 +134,7 @@ pub mod commands {
     pub const RESIZE_STACK_POPUP: &str = "resize_stack_popup";
     pub const READ_STACK_FOLDER: &str = "read_stack_folder";
     pub const READ_STACK_BASIC_TEXT_FILE: &str = "read_stack_basic_text_file";
+    pub const SAVE_STACK_BASIC_TEXT_FILE: &str = "save_stack_basic_text_file";
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
     pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
@@ -210,6 +215,10 @@ pub mod commands {
     pub const GET_SINGLE_INSTANCE_FORWARDING_CONTRACT: &str =
         "get_single_instance_forwarding_contract";
     pub const RESOLVE_PROVIDER_REGISTRY: &str = "resolve_provider_registry";
+    pub const START_SPEECH_CAPTURE: &str = "start_speech_capture";
+    pub const STOP_SPEECH_CAPTURE: &str = "stop_speech_capture";
+    pub const GET_SPEECH_HISTORY: &str = "get_speech_history";
+    pub const COPY_SPEECH_HISTORY_TRANSCRIPT: &str = "copy_speech_history_transcript";
 
     pub const ALL: &[&str] = &[
         LIST_PINNED_TASKBAR_APPS,
@@ -260,6 +269,8 @@ pub mod commands {
         HIDE_COMMAND_PANEL,
         SHOW_AUDIO_PANEL,
         HIDE_AUDIO_PANEL,
+        SHOW_SPEECH_HISTORY_PANEL,
+        HIDE_SPEECH_HISTORY_PANEL,
         SHOW_CALENDAR_PANEL,
         HIDE_CALENDAR_PANEL,
         LIST_PROCESSES,
@@ -305,6 +316,7 @@ pub mod commands {
         RESIZE_STACK_POPUP,
         READ_STACK_FOLDER,
         READ_STACK_BASIC_TEXT_FILE,
+        SAVE_STACK_BASIC_TEXT_FILE,
         GET_STACK_GIT_STATUS,
         OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
@@ -384,12 +396,18 @@ pub mod commands {
         VALIDATE_AUTOMATION_REQUEST,
         GET_SINGLE_INSTANCE_FORWARDING_CONTRACT,
         RESOLVE_PROVIDER_REGISTRY,
+        START_SPEECH_CAPTURE,
+        STOP_SPEECH_CAPTURE,
+        GET_SPEECH_HISTORY,
+        COPY_SPEECH_HISTORY_TRANSCRIPT,
     ];
 }
 
 pub mod events {
     pub const AUDIO_PANEL_OPEN: &str = "audio-panel:open";
     pub const AUDIO_PANEL_CLOSED: &str = "audio-panel:closed";
+    pub const SPEECH_HISTORY_PANEL_OPEN: &str = "speech-history-panel:open";
+    pub const SPEECH_HISTORY_PANEL_CLOSED: &str = "speech-history-panel:closed";
     pub const CALENDAR_PANEL_OPEN: &str = "calendar-panel:open";
     pub const CALENDAR_PANEL_CLOSED: &str = "calendar-panel:closed";
     pub const COMMAND_PANEL_CLOSED: &str = "command-panel:closed";
@@ -433,10 +451,13 @@ pub mod events {
     pub const QUICK_LAUNCH_PANEL_CLOSED: &str = "quick-launch-panel:closed";
     pub const TASK_GALLERY_OPEN: &str = "task-gallery:open";
     pub const TASK_GALLERY_CLOSED: &str = "task-gallery:closed";
+    pub const SPEECH_STATUS_CHANGED: &str = "speech:status-changed";
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
         AUDIO_PANEL_CLOSED,
+        SPEECH_HISTORY_PANEL_OPEN,
+        SPEECH_HISTORY_PANEL_CLOSED,
         CALENDAR_PANEL_OPEN,
         CALENDAR_PANEL_CLOSED,
         COMMAND_PANEL_CLOSED,
@@ -478,6 +499,7 @@ pub mod events {
         QUICK_LAUNCH_PANEL_CLOSED,
         TASK_GALLERY_OPEN,
         TASK_GALLERY_CLOSED,
+        SPEECH_STATUS_CHANGED,
         TRAY_PANEL_CLOSED,
         TRAY_PANEL_OPEN,
     ];
@@ -508,6 +530,7 @@ mod tests {
                 "terminal-panel",
                 "command-panel",
                 "audio-panel",
+                "speech-history-panel",
                 "calendar-panel",
             ]
         );
@@ -546,6 +569,7 @@ mod tests {
         assert!(unique.contains("resize_stack_popup"));
         assert!(unique.contains("read_stack_folder"));
         assert!(unique.contains("read_stack_basic_text_file"));
+        assert!(unique.contains("save_stack_basic_text_file"));
         assert!(unique.contains("get_stack_git_status"));
         assert!(unique.contains("stack_git_add_paths"));
         assert!(unique.contains("stack_git_ignore_path"));
@@ -629,6 +653,8 @@ mod tests {
         assert!(unique.contains("save_quick_commands_settings"));
         assert!(unique.contains("pick_quick_command_artifact_location"));
         assert!(unique.contains("open_quick_command_artifact_location"));
+        assert!(unique.contains("get_speech_history"));
+        assert!(unique.contains("copy_speech_history_transcript"));
     }
 
     #[test]
@@ -638,6 +664,8 @@ mod tests {
             &[
                 "audio-panel:open",
                 "audio-panel:closed",
+                "speech-history-panel:open",
+                "speech-history-panel:closed",
                 "calendar-panel:open",
                 "calendar-panel:closed",
                 "command-panel:closed",
@@ -679,6 +707,7 @@ mod tests {
                 "quick-launch-panel:closed",
                 "task-gallery:open",
                 "task-gallery:closed",
+                "speech:status-changed",
                 "tray-panel:closed",
                 "tray-panel:open",
             ]

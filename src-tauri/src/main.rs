@@ -22,6 +22,11 @@ mod settings;
 mod settings_panel;
 mod shell_paths;
 mod shell_windows;
+mod speech;
+mod speech_clipboard;
+mod speech_history_panel;
+mod speech_model;
+mod speech_runtime;
 mod stack_popup;
 mod system_power;
 mod task_gallery;
@@ -93,6 +98,7 @@ fn main() {
         .manage(search_panel_state())
         .manage(stack_popup_state())
         .manage(diagnostics::diagnostics_state())
+        .manage(speech_runtime::SpeechRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
@@ -149,6 +155,8 @@ fn main() {
             command_panel::pick_quick_command_artifact_location,
             audio_panel::show_audio_panel,
             audio_panel::hide_audio_panel,
+            speech_history_panel::show_speech_history_panel,
+            speech_history_panel::hide_speech_history_panel,
             calendar_panel::show_calendar_panel,
             calendar_panel::hide_calendar_panel,
             process_manager::list_processes,
@@ -165,6 +173,10 @@ fn main() {
             audio::set_default_audio_device,
             audio::set_default_audio_input_device,
             audio::set_default_audio_output_device,
+            speech_runtime::start_speech_capture,
+            speech_runtime::stop_speech_capture,
+            speech_runtime::get_speech_history,
+            speech_runtime::copy_speech_history_transcript,
             system_tray::list_system_tray_icons,
             system_tray::invoke_system_tray_icon,
             search::search_engine,
@@ -193,6 +205,7 @@ fn main() {
             stack_popup::resize_stack_popup,
             stack_popup::read_stack_folder,
             stack_popup::read_stack_basic_text_file,
+            stack_popup::save_stack_basic_text_file,
             stack_popup::get_stack_git_status,
             stack_popup::open_stack_git_remote_url,
             stack_popup::stack_git_add_paths,
@@ -370,6 +383,14 @@ fn main() {
                 return;
             }
 
+            if window.label() == shell_windows::SPEECH_HISTORY_PANEL_LABEL
+                && matches!(event, WindowEvent::Focused(false))
+            {
+                let _ = speech_history_panel::emit_speech_history_panel_closed(window.app_handle());
+                let _ = window.hide();
+                return;
+            }
+
             if window.label() == shell_windows::TRAY_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
@@ -520,6 +541,10 @@ fn main() {
     app.run(|app_handle, event| {
         #[cfg(target_os = "windows")]
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+            if let Some(state) = app_handle.try_state::<speech_runtime::SpeechRuntimeState>() {
+                speech_runtime::shutdown(&state);
+            }
+
             windows_key_hook::uninstall_windows_key_hook();
             if let Some(state) =
                 app_handle.try_state::<Mutex<stack_popup::StackPopupRuntimeState>>()

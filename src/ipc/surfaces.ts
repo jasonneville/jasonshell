@@ -13,6 +13,7 @@ export const SHELL_SURFACES = {
   terminalPanel: 'terminal-panel',
   commandPanel: 'command-panel',
   audioPanel: 'audio-panel',
+  speechHistoryPanel: 'speech-history-panel',
   calendarPanel: 'calendar-panel'
 } as const;
 
@@ -34,6 +35,7 @@ export const SHELL_SURFACE_TITLES: Record<KnownShellSurface, string> = {
   [SHELL_SURFACES.terminalPanel]: 'Terminal Panel',
   [SHELL_SURFACES.commandPanel]: 'Command Panel',
   [SHELL_SURFACES.audioPanel]: 'Audio Panel',
+  [SHELL_SURFACES.speechHistoryPanel]: 'Speech History Panel',
   [SHELL_SURFACES.calendarPanel]: 'Calendar Panel'
 };
 

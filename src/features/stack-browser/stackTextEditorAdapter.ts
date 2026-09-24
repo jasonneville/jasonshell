@@ -19,8 +19,8 @@ export interface StackTextEditorAdapterOptions {
   content: string;
   path: string;
   fontStack: string;
-  onChange: (draft: string, dirty: boolean) => void;
-  onDismiss: (dirty: boolean) => void;
+  onChange: (draft: string) => void;
+  onDismiss: () => void;
 }
 
 export interface StackTextEditorAdapter {
@@ -105,7 +105,6 @@ export function createStackTextEditorAdapter({
   onDismiss
 }: StackTextEditorAdapterOptions): StackTextEditorAdapter {
   let draft = content;
-  let dirty = false;
   let destroyed = false;
   let view: EditorView;
   const foldPosition = (control: HTMLButtonElement) => {
@@ -156,15 +155,14 @@ export function createStackTextEditorAdapter({
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
         draft = update.state.doc.toString();
-        dirty = draft !== content;
-        onChange(draft, dirty);
+        onChange(draft);
       }),
       EditorView.domEventHandlers({
         keydown(event) {
           if (event.key !== 'Escape') return false;
           event.preventDefault();
           event.stopPropagation();
-          onDismiss(dirty);
+          onDismiss();
           return true;
         }
       }),

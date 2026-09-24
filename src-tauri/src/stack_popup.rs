@@ -23,7 +23,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, io::Read};
+use std::{
+    fs,
+    io::{Read, Seek, SeekFrom, Write},
+};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 #[derive(Debug, Clone, Serialize)]
@@ -434,7 +437,7 @@ fn read_stack_basic_text_file_with_open_hook(
     }
 
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.by_ref()
+    Read::by_ref(&mut file)
         .take(STACK_BASIC_TEXT_FILE_MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "Text file could not be read".to_string())?;
@@ -451,7 +454,237 @@ fn read_stack_basic_text_file_with_open_hook(
         path: stack_basic_text_file_final_path(&file, &candidate)?,
         content,
         byte_length,
+        identity: stack_basic_text_file_identity(&file)?,
     })
+}
+
+#[tauri::command]
+pub async fn save_stack_basic_text_file(
+    window: WebviewWindow,
+    path: String,
+    content: String,
+    expected_content: String,
+    expected_identity: String,
+) -> Result<StackBasicTextFile, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::SAVE_STACK_BASIC_TEXT_FILE,
+            callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        save_stack_basic_text_file_blocking(&path, &content, &expected_content, &expected_identity)
+    })
+    .await
+    .map_err(|_| "Text file save task failed".to_string())?
+}
+
+fn save_stack_basic_text_file_blocking(
+    path: &str,
+    content: &str,
+    expected_content: &str,
+    expected_identity: &str,
+) -> Result<StackBasicTextFile, String> {
+    save_stack_basic_text_file_with_hooks(
+        path,
+        content,
+        expected_content,
+        expected_identity,
+        |stage, contents| stage.write_all(contents),
+        || {},
+    )
+}
+
+/// Stages replacement bytes before opening the target for publication. The hooks keep the
+/// production path and failure tests on the same staging/revalidation sequence.
+fn save_stack_basic_text_file_with_hooks<W, P>(
+    path: &str,
+    content: &str,
+    expected_content: &str,
+    expected_identity: &str,
+    write_stage: W,
+    before_revalidate: P,
+) -> Result<StackBasicTextFile, String>
+where
+    W: FnOnce(&mut fs::File, &[u8]) -> std::io::Result<()>,
+    P: FnOnce(),
+{
+    validate_stack_basic_text_content(content)?;
+    validate_stack_basic_text_content(expected_content)?;
+    if expected_identity.is_empty() {
+        return Err("Text file identity is unavailable; reload before saving".to_string());
+    }
+
+    let candidate = paths::resolve_stack_path_candidate(path);
+    let parent = candidate
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| "Text file parent is unavailable".to_string())?;
+    let (mut staging, mut stage_file) = create_stack_basic_text_staging(parent)?;
+    write_stage(&mut stage_file, content.as_bytes())
+        .map_err(|_| "Text file could not be saved".to_string())?;
+    stage_file
+        .sync_all()
+        .map_err(|_| "Text file could not be saved".to_string())?;
+    drop(stage_file);
+
+    // On Windows this handle excludes new write sharing while still allowing our atomic
+    // replacement; on other platforms the immediate named-target revalidation below bounds
+    // the basic-save check-to-publish window without claiming a conditional OS publish.
+    let mut target_guard = open_stack_basic_text_file_for_save(&candidate)?;
+    stack_basic_text_file_matches(&mut target_guard, expected_identity, expected_content)?;
+
+    before_revalidate();
+    let mut current_target = open_stack_basic_text_file(&candidate)?;
+    stack_basic_text_file_matches(&mut current_target, expected_identity, expected_content)?;
+
+    publish_stack_basic_text_staging(&staging.path, &candidate)?;
+    staging.disarm();
+    let mut published_target = open_stack_basic_text_file(&candidate)?;
+    let published_identity = stack_basic_text_file_identity(&published_target)?;
+    if read_stack_basic_text_file_content(&mut published_target)? != content {
+        return Err("Text file changed during save; reload before saving".to_string());
+    }
+    Ok(StackBasicTextFile {
+        path: stack_basic_text_file_final_path(&published_target, &candidate)?,
+        content: content.to_string(),
+        byte_length: content.len() as u64,
+        identity: published_identity,
+    })
+}
+
+struct StackBasicTextStaging {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl StackBasicTextStaging {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StackBasicTextStaging {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn create_stack_basic_text_staging(
+    parent: &Path,
+) -> Result<(StackBasicTextStaging, fs::File), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    for attempt in 0..32_u8 {
+        let path = parent.join(format!(
+            ".jasonshell-stack-save-{}-{nonce:x}-{attempt:x}",
+            std::process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                return Ok((StackBasicTextStaging { path, armed: true }, file));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("Text file could not be saved".to_string()),
+        }
+    }
+    Err("Text file could not be saved".to_string())
+}
+
+fn stack_basic_text_file_matches(
+    file: &mut fs::File,
+    expected_identity: &str,
+    expected_content: &str,
+) -> Result<(), String> {
+    let identity = stack_basic_text_file_identity(file)?;
+    if identity != expected_identity
+        || read_stack_basic_text_file_content(file)? != expected_content
+    {
+        return Err("Text file changed on disk; reload before saving".to_string());
+    }
+    Ok(())
+}
+
+fn read_stack_basic_text_file_content(file: &mut fs::File) -> Result<String, String> {
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Text file metadata is unavailable".to_string())?;
+    if !metadata.file_type().is_file() || is_reparse_point(&metadata) {
+        return Err("Text file target is not a regular file".to_string());
+    }
+    if metadata.len() > STACK_BASIC_TEXT_FILE_MAX_BYTES {
+        return Err("Text file exceeds the 1 MiB limit".to_string());
+    }
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| "Text file could not be read".to_string())?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    Read::by_ref(file)
+        .take(STACK_BASIC_TEXT_FILE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Text file could not be read".to_string())?;
+    if bytes.len() as u64 > STACK_BASIC_TEXT_FILE_MAX_BYTES {
+        return Err("Text file exceeds the 1 MiB limit".to_string());
+    }
+    if bytes.contains(&0) {
+        return Err("Text file contains embedded NUL data".to_string());
+    }
+    String::from_utf8(bytes).map_err(|_| "Text file is not valid UTF-8".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn publish_stack_basic_text_staging(staging: &Path, target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH};
+
+    let staging = staging
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let target = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both same-parent paths are NUL-terminated and remain live for the replacement.
+    unsafe {
+        ReplaceFileW(
+            PCWSTR(target.as_ptr()),
+            PCWSTR(staging.as_ptr()),
+            None,
+            REPLACEFILE_WRITE_THROUGH,
+            None,
+            None,
+        )
+    }
+    .map_err(|_| "Text file could not be saved".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn publish_stack_basic_text_staging(staging: &Path, target: &Path) -> Result<(), String> {
+    fs::rename(staging, target).map_err(|_| "Text file could not be saved".to_string())
+}
+
+fn validate_stack_basic_text_content(content: &str) -> Result<(), String> {
+    if content.len() as u64 > STACK_BASIC_TEXT_FILE_MAX_BYTES {
+        return Err("Text file exceeds the 1 MiB limit".to_string());
+    }
+    if content.as_bytes().contains(&0) {
+        return Err("Text file contains embedded NUL data".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -469,6 +702,27 @@ fn open_stack_basic_text_file(path: &Path) -> Result<fs::File, String> {
         .map_err(|_| "Text file could not be opened".to_string())
 }
 
+#[cfg(target_os = "windows")]
+fn open_stack_basic_text_file_for_save(path: &Path) -> Result<fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        // Keep delete sharing for ReplaceFileW, but exclude new write sharing during the
+        // check/revalidate/publish interval so normal Windows writers fail rather than race.
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    options
+        .open(path)
+        .map_err(|_| "Text file could not be opened".to_string())
+}
+
 #[cfg(not(target_os = "windows"))]
 fn open_stack_basic_text_file(path: &Path) -> Result<fs::File, String> {
     let before = fs::symlink_metadata(path).map_err(|_| "Text file is unavailable".to_string())?;
@@ -476,6 +730,24 @@ fn open_stack_basic_text_file(path: &Path) -> Result<fs::File, String> {
         return Err("Text file target is not a regular file".to_string());
     }
     let file = fs::File::open(path).map_err(|_| "Text file could not be opened".to_string())?;
+    let after = fs::symlink_metadata(path).map_err(|_| "Text file is unavailable".to_string())?;
+    if after.file_type().is_symlink() || !same_file_identity(&before, &after, &file)? {
+        return Err("Text file target changed while opening".to_string());
+    }
+    Ok(file)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_stack_basic_text_file_for_save(path: &Path) -> Result<fs::File, String> {
+    let before = fs::symlink_metadata(path).map_err(|_| "Text file is unavailable".to_string())?;
+    if before.file_type().is_symlink() || !before.file_type().is_file() {
+        return Err("Text file target is not a regular file".to_string());
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| "Text file could not be opened".to_string())?;
     let after = fs::symlink_metadata(path).map_err(|_| "Text file is unavailable".to_string())?;
     if after.file_type().is_symlink() || !same_file_identity(&before, &after, &file)? {
         return Err("Text file target changed while opening".to_string());
@@ -560,6 +832,39 @@ fn stack_basic_text_file_final_path(file: &fs::File, candidate: &Path) -> Result
             .map(|path| path.to_string_lossy().into_owned())
             .map_err(|_| "Text file identity is unavailable".to_string())
     }
+}
+
+#[cfg(target_os = "windows")]
+fn stack_basic_text_file_identity(file: &fs::File) -> Result<String, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION},
+    };
+
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: file owns a live handle and info is a correctly sized writable structure.
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+        .map_err(|_| "Text file identity is unavailable".to_string())?;
+    Ok(format!(
+        "windows:{:08x}:{:08x}{:08x}",
+        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+    ))
+}
+
+#[cfg(unix)]
+fn stack_basic_text_file_identity(file: &fs::File) -> Result<String, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Text file identity is unavailable".to_string())?;
+    Ok(format!("unix:{:x}:{:x}", metadata.dev(), metadata.ino()))
+}
+
+#[cfg(all(not(target_os = "windows"), not(unix)))]
+fn stack_basic_text_file_identity(_file: &fs::File) -> Result<String, String> {
+    Err("Text file identity is unavailable".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -1935,6 +2240,7 @@ mod tests {
         read_stack_folder_page_with_session, reorder_pins_by_paths,
         resolve_stack_alias_with_profile, resolve_stack_item_icons_batch,
         resolve_stack_item_icons_for_paths, resolve_stack_item_icons_for_paths_async,
+        save_stack_basic_text_file_blocking, save_stack_basic_text_file_with_hooks,
         stack_file_attributes_from_bits, stack_folder_warning, stack_item_from_path,
         validate_child_name, validate_stack_git_remote_url, windows_explorer_reveal_launch_plan,
         windows_explorer_reveal_select_arg, windows_explorer_reveal_show_mode, ClipboardMode,
@@ -1942,7 +2248,7 @@ mod tests {
         WindowsExplorerRevealShowMode, STACK_BASIC_TEXT_FILE_MAX_BYTES,
     };
     use std::fs;
-    use std::io;
+    use std::io::{self, Write};
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -1994,6 +2300,182 @@ mod tests {
         assert_eq!(
             result.content.len(),
             STACK_BASIC_TEXT_FILE_MAX_BYTES as usize
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_save_updates_matching_loaded_file() {
+        let root = temp_test_dir("basic-text-save");
+        let path = root.join("draft.txt");
+        fs::write(&path, "before").expect("write fixture");
+        let loaded =
+            read_stack_basic_text_file_blocking(&path.to_string_lossy()).expect("read fixture");
+
+        let saved = save_stack_basic_text_file_blocking(
+            &path.to_string_lossy(),
+            "after",
+            &loaded.content,
+            &loaded.identity,
+        )
+        .expect("save matching file");
+
+        assert_eq!(saved.content, "after");
+        assert_eq!(
+            fs::read_to_string(&path).expect("read saved fixture"),
+            "after"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_save_rejects_changed_content_or_identity() {
+        let root = temp_test_dir("basic-text-save-conflict");
+        let path = root.join("draft.txt");
+        fs::write(&path, "before").expect("write fixture");
+        let loaded =
+            read_stack_basic_text_file_blocking(&path.to_string_lossy()).expect("read fixture");
+
+        fs::write(&path, "external update").expect("mutate fixture");
+        assert_eq!(
+            save_stack_basic_text_file_blocking(
+                &path.to_string_lossy(),
+                "editor update",
+                &loaded.content,
+                &loaded.identity,
+            )
+            .unwrap_err(),
+            "Text file changed on disk; reload before saving"
+        );
+
+        let replacement = root.join("replacement.txt");
+        fs::write(&replacement, "before").expect("write replacement fixture");
+        fs::remove_file(&path).expect("remove original fixture");
+        fs::rename(&replacement, &path).expect("replace fixture");
+        assert_eq!(
+            save_stack_basic_text_file_blocking(
+                &path.to_string_lossy(),
+                "editor update",
+                &loaded.content,
+                &loaded.identity,
+            )
+            .unwrap_err(),
+            "Text file changed on disk; reload before saving"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).expect("read unchanged fixture"),
+            "before"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_save_preserves_target_when_staging_fails_and_cleans_up() {
+        let root = temp_test_dir("basic-text-save-stage-failure");
+        let path = root.join("draft.txt");
+        fs::write(&path, "before").expect("write fixture");
+        let loaded =
+            read_stack_basic_text_file_blocking(&path.to_string_lossy()).expect("read fixture");
+
+        let error = save_stack_basic_text_file_with_hooks(
+            &path.to_string_lossy(),
+            "after",
+            &loaded.content,
+            &loaded.identity,
+            |_stage, _contents| Err(io::Error::other("injected stage write failure")),
+            || {},
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "Text file could not be saved");
+        assert_eq!(
+            fs::read_to_string(&path).expect("read original fixture"),
+            "before"
+        );
+        assert!(
+            fs::read_dir(&root)
+                .expect("read fixture directory")
+                .all(|entry| !entry
+                    .expect("read fixture entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".jasonshell-stack-save-")),
+            "failed staging leaves no temporary file"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_save_rejects_replacement_before_publish_and_cleans_up() {
+        let root = temp_test_dir("basic-text-save-prepublish-conflict");
+        let path = root.join("draft.txt");
+        let replacement = root.join("replacement.txt");
+        fs::write(&path, "before").expect("write fixture");
+        let loaded =
+            read_stack_basic_text_file_blocking(&path.to_string_lossy()).expect("read fixture");
+
+        let error = save_stack_basic_text_file_with_hooks(
+            &path.to_string_lossy(),
+            "editor update",
+            &loaded.content,
+            &loaded.identity,
+            |stage, contents| stage.write_all(contents),
+            || {
+                fs::write(&replacement, "before").expect("write replacement");
+                fs::rename(&replacement, &path).expect("replace target before publish");
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "Text file changed on disk; reload before saving");
+        assert_eq!(
+            fs::read_to_string(&path).expect("read replacement fixture"),
+            "before"
+        );
+        assert!(
+            fs::read_dir(&root)
+                .expect("read fixture directory")
+                .all(|entry| !entry
+                    .expect("read fixture entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".jasonshell-stack-save-")),
+            "conflicted staging leaves no temporary file"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn basic_text_file_save_rejects_oversize_or_embedded_nul_content() {
+        let root = temp_test_dir("basic-text-save-validation");
+        let path = root.join("draft.txt");
+        fs::write(&path, "before").expect("write fixture");
+        let loaded =
+            read_stack_basic_text_file_blocking(&path.to_string_lossy()).expect("read fixture");
+
+        assert_eq!(
+            save_stack_basic_text_file_blocking(
+                &path.to_string_lossy(),
+                &"a".repeat(STACK_BASIC_TEXT_FILE_MAX_BYTES as usize + 1),
+                &loaded.content,
+                &loaded.identity,
+            )
+            .unwrap_err(),
+            "Text file exceeds the 1 MiB limit"
+        );
+        assert_eq!(
+            save_stack_basic_text_file_blocking(
+                &path.to_string_lossy(),
+                "after\0bad",
+                &loaded.content,
+                &loaded.identity,
+            )
+            .unwrap_err(),
+            "Text file contains embedded NUL data"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).expect("read unchanged fixture"),
+            "before"
         );
         let _ = fs::remove_dir_all(root);
     }

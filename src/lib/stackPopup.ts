@@ -47,6 +47,7 @@ export type StackBasicTextFile = {
   path: string;
   content: string;
   byteLength: number;
+  identity: string;
 };
 
 export type StackGitStatus = {
@@ -565,6 +566,20 @@ export function openStackItem(path: string): Promise<void> {
 
 export function readStackBasicTextFile(path: string): Promise<StackBasicTextFile> {
   return invoke<StackBasicTextFile>(IPC_COMMANDS.readStackBasicTextFile, { path });
+}
+
+export function saveStackBasicTextFile(
+  path: string,
+  content: string,
+  expectedContent: string,
+  expectedIdentity: string
+): Promise<StackBasicTextFile> {
+  return invoke<StackBasicTextFile>(IPC_COMMANDS.saveStackBasicTextFile, {
+    path,
+    content,
+    expectedContent,
+    expectedIdentity
+  });
 }
 
 export function openStackItemWithPicker(path: string): Promise<void> {

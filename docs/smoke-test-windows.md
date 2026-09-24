@@ -42,6 +42,21 @@ Continue only after explicit maintainer consent for each applicable action class
 - Keyboard selection and Enter activation work for a result.
 - Pinning a folder from search updates the top-bar pin rail immediately.
 
+## Top Bar Speech Capture
+
+Prereqs: Windows desktop session, working default microphone, packaged JasonShell build with WebView2, and bundled model directory `src-tauri/resources/speech-models/parakeet-tdt-0.6b-v2-int8/` included by `src-tauri/tauri.conf.json`. These checks require physical hardware and manual observation; browser automation timeout means this E2E is not yet proven.
+
+- Before launch, verify the model directory contains `encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, and `vocab.txt`. Record that this checkout lacks model source artifact license/revision/redistribution metadata; do not claim third-party model legal clearance.
+- Build/package or run with bundled resources, then start JasonShell. Verify no runtime network request is needed for speech transcription and no Handy process/dependency appears.
+- Put sentinel text on clipboard, for example `speech-smoke-sentinel`. Click the top-bar microphone. Expected: button enters `recording`, exposes pressed state, red/non-color recording cue, and status announcement; recording starts only if native capture succeeds.
+- Speak a short harmless phrase without secrets or personal data. Click microphone again before 90s. Expected: status changes to `transcribing`; recording cue stops; control is disabled while local CPU transcription runs.
+- On nonblank successful recognition, wait up to 120s. Expected: status reaches `copied`; Windows clipboard now contains only the transcript text; no audio file, transcript file, telemetry, cloud call, browser clipboard write, or transcript/audio log is produced.
+- Speech history panel: after one or more nonblank session transcripts, right-click the mic or focus it and press Context Menu/Shift+F10. Expected: an anchored dedicated native speech-history panel opens; left click still records. Rows are newest-first, capped to five entries, show copied/opaque clipboard result only (`clipboard-sta-unavailable`, `clipboard-queue-full`, `clipboard-invalid-text`, `clipboard-timeout`, or `clipboard-publish-rejected`), never raw HRESULT, and have a labelled copy action that republishes the exact retained row through native clipboard. Escape or focus loss hides the panel. Restart JasonShell and verify prior rows are gone.
+- Blank/failure preservation: set clipboard to sentinel again, then run one failure case such as silence/blank audio, microphone unavailable, missing model file in a disposable test package, or induced clipboard failure. Expected: status reaches `error` or operation refuses safely; prior clipboard text remains unchanged.
+- Timeout/limit preservation: leave recording active past 90s or force transcription beyond the 120s cap in a controlled build. Expected: operation ends with `error`; prior clipboard text remains unchanged; later stale completion must not overwrite clipboard.
+- Nonce/race preservation: start one recording, stop it, then quickly start another if UI allows after terminal state reset. Expected: only the current same-nonce successful completion can update UI/clipboard; stale events do not change the active UI state or clipboard.
+- Privacy reporting: do not include spoken content in logs, screenshots, artifacts, or bug reports. On a transcription failure, verify prior clipboard text remains unchanged; do not include spoken content in logs or bug reports.
+
 ## Tray Panel
 
 - Clicking the tray down-arrow opens `tray-panel` anchored under the top bar.

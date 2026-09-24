@@ -13,12 +13,20 @@ const languageRegistry = (() => {
   try { return readFileSync(languageRegistryUrl, 'utf8'); } catch { return ''; }
 })();
 
-async function importExitState() {
-  const source = readFileSync(new URL('../src/features/stack-browser/basicTextEditorExit.ts', import.meta.url), 'utf8');
+async function importTranspiledModule(relativePath) {
+  const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
   const javascript = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
   }).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`);
+}
+
+async function importExitState() {
+  return importTranspiledModule('../src/features/stack-browser/basicTextEditorExit.ts');
+}
+
+async function importDirtyState() {
+  return importTranspiledModule('../src/features/stack-browser/basicTextEditorDirtyState.ts');
 }
 
 async function importLanguageRegistry() {
@@ -70,6 +78,31 @@ test('dirty editor exit keeps first request until discard and resets after cance
   assert.equal(later.accepted, true);
   later.state?.action();
   assert.deepEqual(calls, ['A', 'C']);
+});
+
+test('save rebases Escape dismissal against the persisted content while pre-save content remains dirty', async () => {
+  const { isStackBasicTextEditorDirty } = await importDirtyState();
+  const { beginBasicTextEditorExit } = await importExitState();
+  const original = 'before save';
+  const saved = 'persisted after save';
+  let draft = saved;
+  let persistedContent = original;
+  let dismissCount = 0;
+
+  assert.equal(isStackBasicTextEditorDirty(draft, persistedContent), true, 'edited draft starts dirty');
+  persistedContent = saved;
+  assert.equal(isStackBasicTextEditorDirty(draft, persistedContent), false, 'successful save rebases Escape to the persisted content');
+  const cleanExit = beginBasicTextEditorExit(null, true, isStackBasicTextEditorDirty(draft, persistedContent), () => { dismissCount += 1; }, () => { dismissCount += 1; });
+  await cleanExit.completion;
+  assert.equal(cleanExit.state, null, 'save-then-Escape has no pending discard confirmation');
+  assert.equal(dismissCount, 2, 'clean exit dismisses the editor and completes its action');
+
+  draft = original;
+  assert.equal(isStackBasicTextEditorDirty(draft, persistedContent), true, 'editing back to the pre-save original is dirty against the new baseline');
+  const dirtyExit = beginBasicTextEditorExit(null, true, isStackBasicTextEditorDirty(draft, persistedContent), () => { dismissCount += 1; }, () => { dismissCount += 1; });
+  assert.equal(dirtyExit.completion, null, 'save-then-edit-back requires the existing discard confirmation');
+  assert.ok(dirtyExit.state, 'dirty exit retains the parent-owned pending discard action');
+  assert.equal(dismissCount, 2, 'dirty exit does not dismiss or run the action before confirmation');
 });
 
 test('clean and explicit-discard editor exits reset stale virtual scroll before grid remount', async () => {
@@ -141,14 +174,66 @@ test('editor replaces the file or Git content row and owns internal scrolling', 
   assert.match(editor, /\.stack-text-editor-host\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
 });
 
-test('editor exposes loading, errors, file context, labelled CodeMirror host, and explicit close', () => {
+test('editor exposes loading, errors, file context, save controls, labelled CodeMirror host, and explicit close', () => {
   assert.match(editor, /readStackBasicTextFile\(filePath\)/);
-  assert.match(editor, /Draft only — saving is not available yet/);
+  assert.match(editor, /saveStackBasicTextFile\(path, contentToSave, expectedContent, expectedIdentity\)/);
+  assert.match(editor, /const expectedContent = initialContent;[\s\S]*const expectedIdentity = fileIdentity;[\s\S]*const contentToSave = draft;/);
+  assert.match(editor, /initialContent = result\.content;[\s\S]*fileIdentity = result\.identity;/);
+  assert.match(editor, /<MeltActionButton[\s\S]*ariaLabel="Save file"[\s\S]*disabled=\{!dirty \|\| saving \|\| loading \|\| Boolean\(errorMessage\) \|\| saveConflict\}[\s\S]*<MaterialSymbolIcon name="save" \/>/);
+  assert.match(editor, /<svelte:window on:keydown=\{handleSaveShortcut\} \/>/);
+  assert.match(editor, /event\.key\.toLowerCase\(\) !== 's'[\s\S]*event\.ctrlKey \|\| event\.metaKey[\s\S]*event\.preventDefault\(\)[\s\S]*void saveDraft\(\)/);
   assert.match(editor, /<div[\s\S]*bind:this=\{editorHost\}[\s\S]*class="stack-text-editor-host"[\s\S]*role="group"[\s\S]*aria-label="File contents"/);
   assert.match(editor, /\{#if loading\}[\s\S]*Loading file…/);
   assert.match(editor, /role="alert"/);
+  assert.match(editor, /isStackBasicTextEditorDirty\(draft, initialContent\)/);
   assert.match(editor, /onDismiss/);
   assert.doesNotMatch(editor, />\s*Save\s*</);
+});
+
+test('save shortcuts leave an active parent-owned confirmation authoritative while staying available otherwise', () => {
+  const saveShortcut = editor.match(/function handleSaveShortcut\(event: KeyboardEvent\) \{([\s\S]*?)\n  \}/)?.[1] ?? '';
+
+  assert.match(editor, /function isSaveShortcutBlockedByActiveModal\(event: KeyboardEvent\) \{/);
+  assert.match(editor, /const target = event\.target;[\s\S]*target instanceof Element[\s\S]*target\.closest\('\[role="alertdialog"\]\[aria-modal="true"\], \[role="dialog"\]\[aria-modal="true"\]'\)/);
+  assert.match(saveShortcut, /event\.key\.toLowerCase\(\) !== 's'[\s\S]*event\.ctrlKey \|\| event\.metaKey/);
+  assert.match(saveShortcut, /event\.preventDefault\(\);[\s\S]*if \(isSaveShortcutBlockedByActiveModal\(event\)\) return;[\s\S]*void saveDraft\(\);/);
+  assert.match(surface, /\{#if pendingEditorExit\}[\s\S]*<StackConfirmDialog title="Discard unsaved draft\?"/);
+});
+
+test('save conflicts block stale retries and require a deliberate draft-discarding reload', async () => {
+  const source = readFileSync(new URL('../src/features/stack-browser/basicTextEditorSaveConflict.ts', import.meta.url), 'utf8');
+  const javascript = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  const { isStackBasicTextSaveConflict } = await import(`data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`);
+
+  assert.equal(isStackBasicTextSaveConflict('Text file changed on disk; reload before saving'), true);
+  assert.equal(isStackBasicTextSaveConflict('Text file changed during save; reload before saving'), true);
+  assert.equal(isStackBasicTextSaveConflict('Text file target changed while opening'), true);
+  assert.equal(isStackBasicTextSaveConflict('Text file could not be saved'), false);
+
+  assert.match(editor, /let saveConflict = false;/);
+  assert.match(editor, /saveConflict = isStackBasicTextSaveConflict\(message\);/);
+  assert.match(editor, /if \(!dirty \|\| saving \|\| loading \|\| errorMessage \|\| !fileIdentity \|\| saveConflict\) return;/);
+  assert.match(editor, /disabled=\{!dirty \|\| saving \|\| loading \|\| Boolean\(errorMessage\) \|\| saveConflict\}/);
+  assert.match(editor, /\{#if saveConflict\}[\s\S]*ariaLabel="Reload disk version and discard draft"[\s\S]*onClick=\{requestConflictReload\}/);
+  assert.match(editor, /\{#if reloadConfirmation\}[\s\S]*title="Discard draft and reload\?"[\s\S]*confirmLabel="Discard and reload"[\s\S]*onCancel=\{cancelConflictReload\}[\s\S]*onConfirm=\{\(\) => void confirmConflictReload\(\)\}/);
+  assert.match(editor, /async function confirmConflictReload\(\) \{[\s\S]*reloadConfirmation = false;[\s\S]*await reloadDiskVersion\(path\);/);
+  assert.match(editor, /function cancelConflictReload\(\) \{[\s\S]*reloadConfirmation = false;/);
+  const cancelReload = editor.match(/function cancelConflictReload\(\) \{[^}]*\}/)?.[0] ?? '';
+  assert.doesNotMatch(cancelReload, /loadFile\(/, 'cancel keeps the in-memory draft instead of reloading');
+  assert.match(editor, /Your draft is preserved; reload the disk version only if you want to discard it\./);
+});
+
+test('confirmed conflict reload keeps the mounted draft until a disk read succeeds', () => {
+  const reload = editor.match(/async function reloadDiskVersion\(filePath: string\) \{([\s\S]*?)\n  \}\n\n  async function loadFile/)?.[1] ?? '';
+  const commit = editor.match(/async function commitLoadedFile\(filePath: string, sequence: number, result: \{ content: string; identity: string \}\) \{([\s\S]*?)\n  \}\n\n  async function reloadDiskVersion/)?.[1] ?? '';
+
+  assert.match(reload, /const result = await readStackBasicTextFile\(filePath\);[\s\S]*await commitLoadedFile\(filePath, sequence, result\);/, 'reload reads a valid disk version before committing replacement state');
+  assert.doesNotMatch(reload, /destroyEditor\(\)|initialContent\s*=|fileIdentity\s*=|draft\s*=|errorMessage\s*=|loading\s*=/, 'failed reads leave the mounted editor, draft, baseline, identity, and editor screen untouched');
+  assert.match(reload, /catch \(error\) \{[\s\S]*reloadErrorMessage = error instanceof Error/, 'failed reads are surfaced without changing editor state');
+  assert.match(commit, /destroyEditor\(\);[\s\S]*initialContent = result\.content;[\s\S]*fileIdentity = result\.identity;[\s\S]*draft = result\.content;/, 'the successful read commits replacement state only after teardown');
+  assert.match(editor, /role=\{saveErrorMessage \|\| reloadErrorMessage \? 'alert' : undefined\}[\s\S]*\{#if reloadErrorMessage\}<span>\{reloadErrorMessage\}<\/span>\{\/if\}/, 'reload failures remain visible while the conflict UI stays mounted');
 });
 
 test('each successful file load focuses editor at document and viewport start after paint', () => {
@@ -166,15 +251,16 @@ test('component creates adapter only for current successful load and destroys ev
   assert.match(editor, /onDestroy\(\(\) => \{[\s\S]*disposed = true;[\s\S]*requestSequence \+= 1;[\s\S]*destroyEditor\(\);/);
 });
 
-test('adapter explicitly composes CodeMirror draft features and owns dirty Escape routing', () => {
+test('adapter explicitly composes CodeMirror draft features and routes Escape to the parent baseline', () => {
   assert.match(adapter, /EditorState\.create/);
   assert.match(adapter, /new EditorView/);
   for (const extension of ['history()', 'lineNumbers()', 'highlightActiveLine()', 'drawSelection()', 'bracketMatching()']) {
     assert.ok(adapter.includes(extension), `missing explicit ${extension}`);
   }
   assert.match(adapter, /keymap\.of\(\[[\s\S]*\.\.\.defaultKeymap[\s\S]*\.\.\.historyKeymap[\s\S]*\.\.\.searchKeymap/);
-  assert.match(adapter, /EditorView\.updateListener\.of\([\s\S]*update\.docChanged[\s\S]*onChange\(draft, dirty\)/);
-  assert.match(adapter, /EditorView\.domEventHandlers\(\{[\s\S]*keydown\(event\)[\s\S]*event\.key !== 'Escape'[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)[\s\S]*onDismiss\(dirty\)/);
+  assert.match(adapter, /EditorView\.updateListener\.of\([\s\S]*update\.docChanged[\s\S]*onChange\(draft\)/);
+  assert.match(adapter, /EditorView\.domEventHandlers\(\{[\s\S]*keydown\(event\)[\s\S]*event\.key !== 'Escape'[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)[\s\S]*onDismiss\(\)/);
+  assert.doesNotMatch(adapter, /draft !== content|onDismiss\(dirty\)/);
   assert.match(adapter, /destroy\(\) \{[\s\S]*view\.destroy\(\)/);
   assert.doesNotMatch(adapter, /basicSetup|autocompletion|linter/);
 });
@@ -315,22 +401,24 @@ test('adapter composes explicit token theme and installs language asynchronously
   assert.doesNotMatch(adapter, /await\s+loadStackTextEditorLanguage/);
 });
 
-test('structured editing excludes completion, save, and persistence capabilities', () => {
+test('structured editing excludes completion and renderer-local persistence capabilities', () => {
   const combined = `${editor}\n${adapter}\n${languageRegistry}`;
-  assert.doesNotMatch(combined, /autocompletion|linter|localStorage|writeStack|saveStack|invoke\(/);
+  assert.doesNotMatch(combined, /autocompletion|linter|localStorage|invoke\(/);
 });
 
-test('editor has no persistence or test-only product dependency', () => {
+test('editor save remains a backend-owned capability with no test-only product dependency', () => {
   const combined = `${surface}\n${editor}\n${adapter}`;
   assert.doesNotMatch(combined, /TextEditorProjectionExperiment|P03|P04|modern-editor-features-research-plan/);
-  assert.doesNotMatch(combined, /localStorage|writeStack|saveStack|invoke\(/);
+  assert.doesNotMatch(combined, /localStorage|invoke\(/);
 });
 
 test('every editor exit routes through one parent-owned dirty-draft guard', () => {
   assert.match(editor, /export let onDirtyChange: \(dirty: boolean\) => void;/);
   assert.match(editor, /export let onDismiss: \(dirty: boolean\) => void;/);
+  assert.match(editor, /\$: dirty = isStackBasicTextEditorDirty\(draft, initialContent\);/);
   assert.match(editor, /onClick=\{\(\) => onDismiss\(dirty\)\}/);
   assert.match(editor, /onDismiss: \(\) => onDismiss\(dirty\)/);
+  assert.doesNotMatch(editor, /onChange: \(currentDraft, currentDirty\)/);
   assert.doesNotMatch(editor, /onDismiss: \(currentDirty\) => onDismiss\(currentDirty\)/);
 
   assert.match(surface, /function requestEditorExit\(action: \(\) => void \| Promise<void>\)/);

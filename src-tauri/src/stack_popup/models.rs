@@ -136,6 +136,7 @@ pub struct StackBasicTextFile {
     pub path: String,
     pub content: String,
     pub byte_length: u64,
+    pub identity: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

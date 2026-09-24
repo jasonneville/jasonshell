@@ -1,0 +1,11 @@
+{
+  "identifier": "speech-history-panel",
+  "description": "Speech history panel capability: session-history fetch, panel hide, event, and window-label access.",
+  "windows": [
+    "speech-history-panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

@@ -216,8 +216,10 @@ npm run preview
 npm run check
 npm run test:node
 npm run test:search
+npm run p03:experiment
 npm run cargo:check
 npm run cargo:test
+npm run smoke:runtime
 npm run smoke:fullscreen
 npm run validate
 npm run tauri
