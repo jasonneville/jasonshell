@@ -48,6 +48,7 @@ export function hideSpeechHistoryPanel(): Promise<void> {
   return invoke(IPC_COMMANDS.hideSpeechHistoryPanel);
 }
 
+// SpeechStatusEvent preserves legacy payloads while typing optional finalizationReason metadata.
 export function listenSpeechStatus(
   handler: (event: SpeechStatusEvent) => void
 ): Promise<UnlistenFn> {

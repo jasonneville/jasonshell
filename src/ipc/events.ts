@@ -51,6 +51,7 @@ export interface SpeechStatusEvent {
   status: SpeechStatusKind;
   nonce: SpeechSessionNonce | null;
   error?: string;
+  finalizationReason?: 'recording_cap';
 }
 
 export interface SpeechStatusResponse {

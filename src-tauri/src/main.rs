@@ -27,6 +27,7 @@ mod speech_clipboard;
 mod speech_history_panel;
 mod speech_model;
 mod speech_runtime;
+mod speech_streaming;
 mod stack_popup;
 mod system_power;
 mod task_gallery;
@@ -486,6 +487,7 @@ fn main() {
             }
         })
         .setup(|app| {
+            speech_runtime::spawn_warm_model_async(app.handle().clone());
             #[cfg(all(target_os = "windows", debug_assertions))]
             if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
                 use tauri::{WebviewUrl, WebviewWindowBuilder};

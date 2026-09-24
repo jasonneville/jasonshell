@@ -187,3 +187,27 @@ test('accepted visual cues remain non-color, reduced-motion, and forced-color sa
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.mic-progress-spinner[\s\S]*animation: none/);
   assert.match(css, /@media \(forced-colors: active\)[\s\S]*\.mic-progress-spinner[\s\S]*\.mic-copy-check/);
 });
+
+test('planned cap finalization event announces finishing without countdown or cancellation copy', (t) => {
+  if (!speechSource.includes('finalizationReason') && !micSource.includes('finalizationReason')) {
+    t.skip('RED-ready acceptance: enable when cap finalization UI contract is implemented');
+    return;
+  }
+
+  const recording = { state: 'recording', nonce: 5, announcement: 'Recording speech', errorCode: null };
+  const capped = reduceSpeechEvent(recording, {
+    nonce: 5,
+    status: 'transcribing',
+    finalizationReason: 'recording_cap'
+  });
+  assert.equal(capped.state, 'transcribing');
+  assert.equal(capped.announcement, 'Recording limit reached; finishing dictation.');
+
+  const manual = reduceSpeechEvent(recording, { nonce: 5, status: 'transcribing' });
+  assert.equal(manual.announcement, 'Transcribing speech');
+  assert.strictEqual(
+    reduceSpeechEvent(recording, { nonce: 4, status: 'transcribing', finalizationReason: 'recording_cap' }),
+    recording
+  );
+  assert.doesNotMatch(micSource, /countdown|seconds remaining|cancelled|discarded/i);
+});
