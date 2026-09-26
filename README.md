@@ -144,6 +144,8 @@ npm run tauri dev
 
 - browse folders
 - file operations
+- On Windows, drag a file or folder row to Explorer or another Shell drop target with the primary mouse button; dragging multiple selected rows from the current folder requests a copy-only native Shell/OLE drag. Dragging rows from different parent folders reports an unsupported operation rather than sending an invalid payload. Released gestures cancel silently; native errors appear in the popup. Incoming drops remain supported.
+- Native outbound drag has only static/compile validation so far. Explorer/Teams transfer, cancellation, focus behavior, and symlink identity still require consent-gated live Windows smoke; a returned `copied` effect indicates the Shell accepted a copy effect, not that the destination contents were independently verified.
 - Changes, History, Stashes, and Branches views
 - fetch / pull / push / checkout / create branch actions
 

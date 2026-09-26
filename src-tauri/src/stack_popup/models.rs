@@ -9,6 +9,7 @@ pub struct StackPopupRuntimeState {
     pub(crate) focus_loss_suppression_expires_at_ms: Option<u64>,
     pub(crate) topmost_restore_suppression_expires_at_ms: Option<u64>,
     pub(crate) restore_focus_after_hold: bool,
+    pub(crate) native_drag_active: bool,
     pub(crate) terminal_sessions: super::terminal::StackTerminalRegistry,
 }
 
@@ -477,10 +478,15 @@ pub struct StackOpenWithCandidate {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StackNativeDragPreparation {
-    pub paths: Vec<String>,
-    pub effect: String,
+pub struct StackNativeDragOutcome {
+    pub request_id: String,
+    pub item_count: usize,
+    pub status: &'static str,
+    pub effect: &'static str,
+    pub duration_ms: u64,
     pub mechanism: String,
+    pub stage: Option<&'static str>,
+    pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -1,26 +1,27 @@
-use crate::stack_popup::models::StackNativeDragPreparation;
-use crate::stack_popup::paths::normalize_existing_path;
+use crate::stack_popup::paths::resolve_stack_path_candidate;
 use std::path::PathBuf;
 
-pub(crate) fn start_stack_file_drag(
-    paths: Vec<String>,
-) -> Result<StackNativeDragPreparation, String> {
-    let resolved = normalize_drag_paths(paths)?;
+pub(crate) struct NativeDragResult {
+    pub(crate) status: &'static str,
+    pub(crate) effect: &'static str,
+    pub(crate) stage: Option<&'static str>,
+    pub(crate) message: Option<String>,
+}
 
-    #[cfg(target_os = "windows")]
-    start_native_file_drag(&resolved)?;
-
-    #[cfg(not(target_os = "windows"))]
-    return Err("Native Explorer file drag is only available on Windows".to_string());
-
-    Ok(StackNativeDragPreparation {
-        paths: resolved
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect(),
-        effect: "copy".to_string(),
-        mechanism: native_drag_mechanism().to_string(),
-    })
+impl NativeDragResult {
+    pub(crate) fn new(
+        status: &'static str,
+        effect: &'static str,
+        stage: Option<&'static str>,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            status,
+            effect,
+            stage,
+            message,
+        }
+    }
 }
 
 pub(crate) fn normalize_drag_paths(paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
@@ -29,9 +30,18 @@ pub(crate) fn normalize_drag_paths(paths: Vec<String>) -> Result<Vec<PathBuf>, S
     }
 
     paths
-        .iter()
-        .map(|path| normalize_existing_path(path).map(PathBuf::from))
-        .collect::<Result<Vec<_>, _>>()
+        .into_iter()
+        .map(|path| {
+            if path.trim().is_empty() || path.contains('\0') {
+                return Err("Invalid drag item path".to_string());
+            }
+            let candidate = resolve_stack_path_candidate(&path);
+            if !candidate.is_absolute() || !candidate.exists() {
+                return Err("Drag item unavailable".to_string());
+            }
+            Ok(candidate)
+        })
+        .collect()
 }
 
 pub(crate) fn native_drag_mechanism() -> &'static str {
@@ -47,45 +57,101 @@ pub(crate) fn native_drag_mechanism() -> &'static str {
 }
 
 #[cfg(target_os = "windows")]
-fn start_native_file_drag(paths: &[PathBuf]) -> Result<(), String> {
+pub(crate) fn start_native_file_drag(
+    paths: &[PathBuf],
+    hwnd: windows::Win32::Foundation::HWND,
+) -> NativeDragResult {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::System::Com::IDataObject;
     use windows::Win32::System::Ole::{IDropSource, DROPEFFECT_COPY};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
     use windows::Win32::UI::Shell::Common::ITEMIDLIST;
-    use windows::Win32::UI::Shell::{ILCreateFromPathW, SHCreateDataObject, SHDoDragDrop};
+    use windows::Win32::UI::Shell::{
+        ILCreateFromPathW, ILFindLastID, SHCreateDataObject, SHDoDragDrop,
+    };
 
-    let _ole = OleApartment::initialize()?;
-    let mut pidls = Vec::<*const ITEMIDLIST>::with_capacity(paths.len());
-
-    for path in paths {
-        let encoded = path
+    let failed = |stage, message: &str| {
+        NativeDragResult::new("failed", "none", Some(stage), Some(message.into()))
+    };
+    let parent = match paths.first().and_then(|path| path.parent()) {
+        Some(parent) => parent,
+        None => return failed("parent", "Drag item parent unavailable"),
+    };
+    if paths.iter().any(|path| path.parent() != Some(parent)) {
+        return NativeDragResult::new(
+            "unsupported",
+            "none",
+            Some("mixed-parent"),
+            Some("Dragging items from different folders is not yet supported".into()),
+        );
+    }
+    let _ole = match OleApartment::initialize() {
+        Ok(ole) => ole,
+        Err(_) => return failed("ole-init", "Failed to initialize native drag"),
+    };
+    let make_pidl = |path: &std::path::Path| {
+        let wide: Vec<u16> = path
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
-            .collect::<Vec<_>>();
-        let pidl = unsafe { ILCreateFromPathW(PCWSTR(encoded.as_ptr())) };
-        if pidl.is_null() {
-            free_pidls(&pidls);
-            return Err(format!(
-                "Failed to create a shell drag item for {}",
-                path.to_string_lossy()
-            ));
+            .collect();
+        // SAFETY: the NUL-terminated buffer remains valid during the call; ILFree owns the result.
+        let pointer = unsafe { ILCreateFromPathW(PCWSTR(wide.as_ptr())) };
+        (!pointer.is_null()).then_some(OwnedPidl(pointer))
+    };
+    let parent_pidl = match make_pidl(parent) {
+        Some(value) => value,
+        None => return failed("parent-pidl", "Failed to resolve drag parent in Shell"),
+    };
+    let mut items = Vec::with_capacity(paths.len());
+    for path in paths {
+        match make_pidl(path) {
+            Some(value) => items.push(value),
+            None => return failed("child-pidl", "Failed to resolve drag item in Shell"),
         }
-        pidls.push(pidl.cast_const());
     }
+    // ILFindLastID points into each owned absolute PIDL. All owners outlive SHCreateDataObject.
+    let children: Vec<*const ITEMIDLIST> = items
+        .iter()
+        .map(|item| unsafe { ILFindLastID(item.0) as *const ITEMIDLIST })
+        .collect();
+    let data_object: IDataObject = match unsafe {
+        SHCreateDataObject(Some(parent_pidl.0), Some(&children), None::<&IDataObject>)
+    } {
+        Ok(value) => value,
+        Err(_) => return failed("data-object", "Failed to create Shell drag data"),
+    };
+    // SAFETY: the UI thread reads the current physical primary button state directly before OLE.
+    if unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000 == 0 {
+        return NativeDragResult::new("cancelled", "none", Some("gesture-expired"), None);
+    }
+    // SAFETY: owner HWND belongs to popup on the UI thread; OLE and PIDLs stay alive through drag.
+    match unsafe {
+        SHDoDragDrop(
+            Some(hwnd),
+            &data_object,
+            None::<&IDropSource>,
+            DROPEFFECT_COPY,
+        )
+    } {
+        Ok(effect) if effect == DROPEFFECT_COPY => {
+            NativeDragResult::new("copied", "copy", None, None)
+        }
+        Ok(_) => NativeDragResult::new("cancelled", "none", None, None),
+        Err(_) => failed("shell-drop", "Native Shell drag failed"),
+    }
+}
 
-    let drag_result = (|| unsafe {
-        let data_object: IDataObject = SHCreateDataObject(None, Some(&pidls), None::<&IDataObject>)
-            .map_err(|error| format!("Failed to create shell drag data: {error}"))?;
+#[cfg(target_os = "windows")]
+struct OwnedPidl(*mut windows::Win32::UI::Shell::Common::ITEMIDLIST);
 
-        SHDoDragDrop(None, &data_object, None::<&IDropSource>, DROPEFFECT_COPY)
-            .map_err(|error| format!("Native Explorer drag failed: {error}"))?;
-        Ok(())
-    })();
-
-    free_pidls(&pidls);
-    drag_result
+#[cfg(target_os = "windows")]
+impl Drop for OwnedPidl {
+    fn drop(&mut self) {
+        // SAFETY: ILCreateFromPathW allocated this PIDL; it is freed exactly once.
+        unsafe { windows::Win32::UI::Shell::ILFree(Some(self.0)) }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -111,17 +177,6 @@ impl Drop for OleApartment {
 
         unsafe {
             OleUninitialize();
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn free_pidls(pidls: &[*const windows::Win32::UI::Shell::Common::ITEMIDLIST]) {
-    use windows::Win32::UI::Shell::ILFree;
-
-    for pidl in pidls {
-        unsafe {
-            ILFree(Some(*pidl));
         }
     }
 }

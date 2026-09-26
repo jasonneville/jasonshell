@@ -114,6 +114,8 @@ Docs-only changes can use focused docs-policy tests plus link/size checks. Imple
 
 ## Active known validation gaps
 
+- Stack Browser outbound drag is exclusively native Shell/OLE via `start_stack_file_drag`: pointer motion on the same held primary pointer crosses a 6px threshold, then a UI-thread Win32 button check gates `SHDoDragDrop` with the popup HWND and copy-only effect. Same-parent selections use an owned absolute parent PIDL and borrowed child-relative PIDLs; mixed-parent selections return typed `unsupported` (`mixed-parent`) until a standards-compliant `CF_HDROP` data object is implemented. Typed outcomes contain request ID, item count, status/effect, duration, mechanism, and failure stage, without paths. During drag, popup focus loss is held and topmost demoted; cleanup never steals focus. `tests/stackPopupNativeDrag.test.mjs` tests the pointer intent and absence of HTML outbound wiring, not external transfer.
+- Stack native drag still needs consent-gated real Windows Explorer/Teams smoke, especially folder/multi-select, Unicode/space paths, cancellation, linked entries, window z-order and successful external copy. Static and compile checks cannot establish the external OLE transfer.
 - Native Windows behavior still needs manual smoke for high-risk shell changes.
 - Multi-monitor behavior remains planning-only.
 - Plans and audits may describe desired fixes or stale failures. Confirm against current source/tests before using them as a claim.

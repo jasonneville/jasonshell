@@ -48,7 +48,7 @@ pub use models::{
     StackGitOperationResult, StackGitRevertRequest, StackGitStageRequest, StackGitStashFileDiff,
     StackGitStashFileDiffRequest, StackGitStashFiles, StackGitStashFilesRequest,
     StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
-    StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragPreparation,
+    StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragOutcome,
     StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 
@@ -1520,19 +1520,121 @@ pub fn copy_stack_items(
 }
 
 #[tauri::command]
-pub fn prepare_stack_file_drag(
+pub async fn start_stack_file_drag(
     window: WebviewWindow,
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
     paths: Vec<String>,
-) -> Result<StackNativeDragPreparation, String> {
+) -> Result<StackNativeDragOutcome, String> {
     authorize_stack_command(
         &window,
         StackCommandAuth::AllowedCallers {
-            command: crate::contracts::commands::PREPARE_STACK_FILE_DRAG,
+            command: crate::contracts::commands::START_STACK_FILE_DRAG,
             callers: &[crate::shell_windows::STACK_POPUP_LABEL],
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    native_drag::start_stack_file_drag(paths)
+    let started = std::time::Instant::now();
+    let request_id = format!(
+        "stack-drag-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let item_count = paths.len();
+    let outcome = |result: native_drag::NativeDragResult| StackNativeDragOutcome {
+        request_id: request_id.clone(),
+        item_count,
+        status: result.status,
+        effect: result.effect,
+        duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        mechanism: native_drag::native_drag_mechanism().to_string(),
+        stage: result.stage,
+        message: result.message,
+    };
+    let paths = match native_drag::normalize_drag_paths(paths) {
+        Ok(paths) => paths,
+        Err(_) => {
+            return Ok(outcome(native_drag::NativeDragResult::new(
+                "failed",
+                "none",
+                Some("paths"),
+                Some("Drag items unavailable".into()),
+            )))
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app_handle, state, window, paths);
+        return Ok(outcome(native_drag::NativeDragResult::new(
+            "unsupported",
+            "none",
+            Some("platform"),
+            Some("Native drag requires Windows".into()),
+        )));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        {
+            let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
+            if guard.native_drag_active {
+                return Ok(outcome(native_drag::NativeDragResult::new(
+                    "cancelled",
+                    "none",
+                    Some("already-active"),
+                    None,
+                )));
+            }
+            guard.native_drag_active = true;
+        }
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let ui_app = app_handle.clone();
+        let dispatch = app_handle.run_on_main_thread(move || {
+            let hold = popup_window::NativeDragHold::new(ui_app.clone());
+            let result = match stack_popup_owner_hwnd(&ui_app) {
+                Ok(hwnd) => match set_stack_popup_topmost(hwnd, false) {
+                    Ok(()) => native_drag::start_native_file_drag(&paths, hwnd),
+                    Err(_) => native_drag::NativeDragResult::new(
+                        "failed",
+                        "none",
+                        Some("demote"),
+                        Some("Failed to lower Stack popup during drag".into()),
+                    ),
+                },
+                Err(_) => native_drag::NativeDragResult::new(
+                    "failed",
+                    "none",
+                    Some("owner-hwnd"),
+                    Some("Stack popup drag owner unavailable".into()),
+                ),
+            };
+            drop(hold);
+            let _ = sender.send(result);
+        });
+        if dispatch.is_err() {
+            if let Ok(mut guard) = state.lock() {
+                guard.native_drag_active = false;
+            }
+            return Ok(outcome(native_drag::NativeDragResult::new(
+                "failed",
+                "none",
+                Some("ui-dispatch"),
+                Some("Failed to schedule native drag on UI thread".into()),
+            )));
+        }
+        let result = tauri::async_runtime::spawn_blocking(move || receiver.recv()).await;
+        match result {
+            Ok(Ok(result)) => Ok(outcome(result)),
+            _ => Ok(outcome(native_drag::NativeDragResult::new(
+                "failed",
+                "none",
+                Some("ui-result"),
+                Some("Native drag result unavailable".into()),
+            ))),
+        }
+    }
 }
 
 #[tauri::command]

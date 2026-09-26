@@ -32,7 +32,7 @@
     openStackTerminalHere,
     pinStackFolder,
     pasteStackItems,
-    prepareStackFileDrag,
+    startStackFileDrag,
     renameStackItem,
     resolveStackItemIcons,
     resizeStackPopup,
@@ -54,7 +54,8 @@
   } from '../lib/stackPopup';
   import { loadShellSettings } from '../lib/settings';
   import { normalizeStackTerminalProfile } from '../lib/stackPopup';
-  import { folderPathToUri, folderPathsFromTransfer, normalizeDroppedPath, setFolderDragPayload } from '../lib/folderDrag';
+  import { folderPathsFromTransfer, normalizeDroppedPath } from '../lib/folderDrag';
+  import { beginStackRowDrag, moveStackRowDrag, releaseStackRowDrag, type StackRowDragIntent } from '../features/stack-browser/nativeDragIntent';
   import {
     applyStackEntryIconUpdates,
     applyStackFolderListing,
@@ -157,6 +158,10 @@
   let typeToSelectBuffer = '';
   let typeToSelectTimer: number | null = null;
   let lastHtmlDropAt = 0;
+  let rowDragIntent: StackRowDragIntent = null;
+  let rowDragPath: string | null = null;
+  let nativeDragPending = false;
+  let suppressRowClick = false;
   let detailsGrid: HTMLDivElement | null = null;
   let detailsBody: HTMLDivElement | null = null;
   let detailsBodyScrollTop = 0;
@@ -1851,6 +1856,11 @@
   }
 
   function selectEntryFromMouse(event: MouseEvent, entry: StackEntry) {
+    if (suppressRowClick) {
+      suppressRowClick = false;
+      event.preventDefault();
+      return;
+    }
     if (hasRetainedRows) {
       return;
     }
@@ -2169,29 +2179,42 @@
     return stackState.selectedPaths.includes(entry.path) ? selectedPaths : [entry.path];
   }
 
-  function handleRowDragStart(event: DragEvent, entry: StackEntry) {
-    if (hasRetainedRows) {
-      event.preventDefault();
-      return;
-    }
+  function beginRowDrag(event: PointerEvent, entry: StackEntry) {
+    if (hasRetainedRows || nativeDragPending) return;
+    // A fresh press is a real new gesture, not the click synthesized after the prior drag.
+    suppressRowClick = false;
+    rowDragIntent = beginStackRowDrag({ pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY });
+    rowDragPath = rowDragIntent ? entry.path : null;
+    if (rowDragIntent) (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function endRowDrag(event: PointerEvent) {
+    rowDragIntent = releaseStackRowDrag(rowDragIntent, event.pointerId);
+    if (!rowDragIntent) rowDragPath = null;
+  }
+
+  function moveRowDrag(event: PointerEvent, entry: StackEntry) {
+    if (nativeDragPending || rowDragPath !== entry.path || !moveStackRowDrag(rowDragIntent, {
+      pointerId: event.pointerId, buttons: event.buttons, x: event.clientX, y: event.clientY
+    }).startNativeDrag) return;
+    rowDragIntent = null;
+    rowDragPath = null;
+    const target = event.currentTarget as HTMLElement;
+    if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
     const paths = selectedDragPaths(entry);
-    if (!stackState.selectedPaths.includes(entry.path)) {
-      stackState = selectStackEntry(stackState, entry.path);
-    }
-    void prepareStackFileDrag(paths).catch((error) => {
-      console.error('Failed to prepare native Stack Browser file drag', error);
-    });
-    event.dataTransfer?.setData(STACK_PATHS_DRAG_TYPE, JSON.stringify(paths));
-    event.dataTransfer?.setData('text/plain', paths.join('\n'));
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'copy';
-      event.dataTransfer.setData('text/uri-list', paths.map((path) => folderPathToUri(path)).join('\r\n'));
-      event.dataTransfer.setData('DownloadURL', paths.map((path) => `application/octet-stream:${path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'file'}:${folderPathToUri(path)}`).join('\n'));
-      const folderPaths = paths.filter((path) => entries.some((item) => item.path === path && item.entryType === 'Folder'));
-      if (folderPaths.length) {
-        setFolderDragPayload(event.dataTransfer, folderPaths, 'copy');
+    if (!stackState.selectedPaths.includes(entry.path)) stackState = selectStackEntry(stackState, entry.path);
+    suppressRowClick = true;
+    nativeDragPending = true;
+    void startStackFileDrag(paths).then((outcome) => {
+      if (outcome.status === 'failed' || outcome.status === 'unsupported') {
+        errorMessage = outcome.message || `Native file drag unavailable (${outcome.stage ?? 'unknown'})`;
       }
-    }
+    }).catch((error) => {
+      errorMessage = operationErrorMessage(error, 'Native file drag unavailable');
+    }).finally(() => {
+      nativeDragPending = false;
+      window.setTimeout(() => { suppressRowClick = false; }, 500);
+    });
   }
 
   function pathsFromDrop(event: DragEvent) {
@@ -2747,12 +2770,14 @@
             aria-selected={stackState.selectedPaths.includes(entry.path)}
             aria-disabled={hasRetainedRows}
             disabled={hasRetainedRows}
-            draggable={!hasRetainedRows}
             data-stack-entry-path={entry.path}
             on:click={(event) => selectEntryFromMouse(event, entry)}
             on:dblclick={() => void activateEntry(entry)}
             on:contextmenu={(event) => handleRowContextMenu(event, entry)}
-            on:dragstart={(event) => handleRowDragStart(event, entry)}
+            on:pointerdown={(event) => beginRowDrag(event, entry)}
+            on:pointermove={(event) => moveRowDrag(event, entry)}
+            on:pointerup={endRowDrag}
+            on:pointercancel={endRowDrag}
             on:dragover={(event) => handleDropOver(event, entry)}
             on:drop={(event) => entry.entryType === 'Folder' && void handleDrop(event, entry.path)}
           >

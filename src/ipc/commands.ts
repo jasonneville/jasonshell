@@ -132,7 +132,7 @@ export const IPC_COMMANDS = {
   openStackItemWithApp: 'open_stack_item_with_app',
   renameStackItem: 'rename_stack_item',
   copyStackItems: 'copy_stack_items',
-  prepareStackFileDrag: 'prepare_stack_file_drag',
+  startStackFileDrag: 'start_stack_file_drag',
   cutStackItems: 'cut_stack_items',
   pasteStackItems: 'paste_stack_items',
   deleteStackItem: 'delete_stack_item',

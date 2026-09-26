@@ -219,10 +219,15 @@ export type StackOpenWithCandidate = {
   source: string;
 };
 
-export type StackNativeDragPreparation = {
-  paths: string[];
-  effect: 'copy';
+export type StackNativeDragOutcome = {
+  requestId: string;
+  itemCount: number;
+  status: 'copied' | 'cancelled' | 'failed' | 'unsupported';
+  effect: 'copy' | 'none';
+  durationMs: number;
   mechanism: string;
+  stage: string | null;
+  message: string | null;
 };
 
 export type StackItemIconResolution = {
@@ -745,8 +750,8 @@ export function openStackItemWithApp(path: string, appId: string): Promise<void>
   return invoke(IPC_COMMANDS.openStackItemWithApp, { path, appId });
 }
 
-export function prepareStackFileDrag(paths: string[]): Promise<StackNativeDragPreparation> {
-  return invoke<StackNativeDragPreparation>(IPC_COMMANDS.prepareStackFileDrag, { paths });
+export function startStackFileDrag(paths: string[]): Promise<StackNativeDragOutcome> {
+  return invoke<StackNativeDragOutcome>(IPC_COMMANDS.startStackFileDrag, { paths });
 }
 
 export function openStackTerminalHere(path: string): Promise<void> {

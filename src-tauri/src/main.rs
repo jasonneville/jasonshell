@@ -241,7 +241,7 @@ fn main() {
             stack_popup::open_stack_item_with_app,
             stack_popup::rename_stack_item,
             stack_popup::copy_stack_items,
-            stack_popup::prepare_stack_file_drag,
+            stack_popup::start_stack_file_drag,
             stack_popup::cut_stack_items,
             stack_popup::paste_stack_items,
             stack_popup::delete_stack_item,

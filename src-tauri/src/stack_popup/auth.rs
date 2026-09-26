@@ -172,7 +172,7 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
         callers: &[contracts::surfaces::STACK_POPUP],
     },
     StackCommandAuth::AllowedCallers {
-        command: contracts::commands::PREPARE_STACK_FILE_DRAG,
+        command: contracts::commands::START_STACK_FILE_DRAG,
         callers: &[contracts::surfaces::STACK_POPUP],
     },
     StackCommandAuth::AllowedCallers {

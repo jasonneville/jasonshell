@@ -68,10 +68,11 @@ test('background context menu is available off rows and keeps selection actions'
   assert.match(stackPopupApi, /openStackTerminalHere\(path: string\): Promise<void>/);
 });
 
-test('stack browser publishes native-friendly file drag payloads as copy operations', () => {
-  assert.match(surface, /folderPathToUri/);
-  assert.match(surface, /prepareStackFileDrag\(paths\)/);
-  assert.match(surface, /event\.dataTransfer\.effectAllowed = 'copy'/);
-  assert.match(surface, /setData\('text\/uri-list'/);
-  assert.match(surface, /setData\('DownloadURL'/);
+test('stack browser starts outbound native drag via row pointer handlers, not HTML dragstart', () => {
+  const row = surface.slice(surface.indexOf('{#each virtualEntries.rows'));
+  const rowButton = row.slice(row.indexOf('<button'), row.indexOf('on:drop=', row.indexOf('<button')));
+  assert.match(rowButton, /on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}/);
+  assert.match(rowButton, /on:pointermove=\{\(event\) => moveRowDrag\(event, entry\)\}/);
+  assert.doesNotMatch(rowButton, /on:dragstart=|\bdraggable=/);
+  assert.match(stackPopupApi, /invoke<StackNativeDragOutcome>\(IPC_COMMANDS\.startStackFileDrag, \{ paths \}\)/);
 });

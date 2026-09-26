@@ -169,7 +169,7 @@ pub mod commands {
     pub const OPEN_STACK_ITEM_WITH_APP: &str = "open_stack_item_with_app";
     pub const RENAME_STACK_ITEM: &str = "rename_stack_item";
     pub const COPY_STACK_ITEMS: &str = "copy_stack_items";
-    pub const PREPARE_STACK_FILE_DRAG: &str = "prepare_stack_file_drag";
+    pub const START_STACK_FILE_DRAG: &str = "start_stack_file_drag";
     pub const CUT_STACK_ITEMS: &str = "cut_stack_items";
     pub const PASTE_STACK_ITEMS: &str = "paste_stack_items";
     pub const DELETE_STACK_ITEM: &str = "delete_stack_item";
@@ -351,7 +351,7 @@ pub mod commands {
         OPEN_STACK_ITEM_WITH_APP,
         RENAME_STACK_ITEM,
         COPY_STACK_ITEMS,
-        PREPARE_STACK_FILE_DRAG,
+        START_STACK_FILE_DRAG,
         CUT_STACK_ITEMS,
         PASTE_STACK_ITEMS,
         DELETE_STACK_ITEM,

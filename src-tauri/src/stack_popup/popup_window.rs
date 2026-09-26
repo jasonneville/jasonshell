@@ -127,6 +127,9 @@ pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), Strin
     let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
     {
         let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+        if guard.native_drag_active {
+            return Ok(());
+        }
         guard.focus_loss_hold_count = 0;
         guard.focus_loss_suppression_expires_at_ms = None;
         guard.topmost_restore_suppression_expires_at_ms = None;
@@ -162,6 +165,9 @@ fn suppress_stack_popup_focus_loss_for_runtime_state(
     state: &Mutex<StackPopupRuntimeState>,
 ) -> bool {
     let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    if guard.native_drag_active {
+        return true;
+    }
     if let Some(expires_at) = guard.focus_loss_suppression_expires_at_ms.take() {
         if current_time_millis() <= expires_at {
             return true;
@@ -237,6 +243,9 @@ fn suppress_stack_popup_topmost_restore_for_runtime_state(
     state: &Mutex<StackPopupRuntimeState>,
 ) -> bool {
     let mut guard = state.lock().expect("stack popup runtime state is poisoned");
+    if guard.native_drag_active {
+        return true;
+    }
     match guard.topmost_restore_suppression_expires_at_ms {
         Some(expires_at) if current_time_millis() <= expires_at => true,
         Some(_) => {
@@ -244,6 +253,37 @@ fn suppress_stack_popup_topmost_restore_for_runtime_state(
             false
         }
         None => false,
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) struct NativeDragHold {
+    app: AppHandle,
+}
+
+#[cfg(target_os = "windows")]
+impl NativeDragHold {
+    pub(crate) fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for NativeDragHold {
+    fn drop(&mut self) {
+        let state = self.app.state::<Mutex<StackPopupRuntimeState>>();
+        if let Ok(mut guard) = state.lock() {
+            guard.native_drag_active = false;
+        }
+        // A focus event can arrive after OLE returns; suppress that event without refocusing.
+        suppress_next_stack_popup_focus_loss_for_runtime_state(&state);
+        if let Some(popup) = self.app.get_webview_window(STACK_POPUP_LABEL) {
+            if popup.is_visible().unwrap_or(false) && popup.is_focused().unwrap_or(false) {
+                if let Ok(hwnd) = super::stack_popup_owner_hwnd(&self.app) {
+                    let _ = super::set_stack_popup_topmost(hwnd, true);
+                }
+            }
+        }
     }
 }
 
