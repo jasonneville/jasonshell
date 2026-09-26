@@ -88,6 +88,34 @@ test('stack browser icon buttons have no background or border', () => {
   assert.doesNotMatch(hoverStyles, /background:|border(?:-color)?:/);
 });
 
+test('stack browser toolbar styling never depends on generated child order', () => {
+  assert.doesNotMatch(
+    stackPopupStyles,
+    /\.stack-actions\s+button:nth-child\(/,
+    'Melt tooltip siblings make positional toolbar selectors unstable'
+  );
+});
+
+test('stack browser status is anchored at the bottom with reserved content space', () => {
+  const popupStyles = sourceBetween(stackPopupStyles, '.stack-popup {', '.stack-popup.resizing');
+  const statusStyles = sourceBetween(stackPopupStyles, '.stack-status {', '.inline-editor');
+  const statusSource = sourceBetween(stackPopupSource, '<div class="stack-status surface-state"', '{#if createFolderDraft');
+
+  assert.match(popupStyles, /padding-bottom:\s*calc\(/, 'popup reserves space for bottom status');
+  assert.match(statusStyles, /position:\s*absolute/, 'status leaves the content grid');
+  assert.match(statusStyles, /height:\s*var\(--stack-status-height\)/, 'status height cannot grow beyond reserved space');
+  assert.match(statusStyles, /overflow:\s*hidden/, 'long status stays inside its reserved line');
+  assert.match(statusStyles, /white-space:\s*nowrap/, 'narrow status does not wrap over file controls');
+  assert.match(statusStyles, /text-overflow:\s*ellipsis/, 'long status has a visible truncation cue');
+  assert.match(statusStyles, /bottom:\s*var\(--js-space-4\)/, 'status is anchored to popup bottom inset');
+  assert.match(statusStyles, /left:\s*var\(--js-space-4\)/);
+  assert.match(statusStyles, /right:\s*var\(--js-space-4\)/);
+  assert.match(statusSource, /title=\{errorMessage \|\| stackState\.statusMessage\}/, 'full long error or status remains available on hover');
+  assert.match(statusSource, /title=\{iconHydrationStatusMessage\}/, 'full secondary status remains available on hover');
+  assert.match(stackPopupStyles, /@media \(max-width: 720px\)[\s\S]*padding-bottom:\s*calc\(var\(--js-space-3\) \+ var\(--stack-status-height\)\)/, 'mobile padding keeps status clear of content');
+  assert.match(stackPopupStyles, /\.inline-editor\s*\{[\s\S]*?grid-row:\s*2;/, 'inline editor keeps its own row above content');
+});
+
 test('stack browser toolbar text buttons are Material Symbol icon buttons with accessible labels', () => {
   assertToolbarIcon({ iconName: 'arrow_back', label: 'Back' });
   assertToolbarIcon({ iconName: 'arrow_forward', label: 'Forward' });
@@ -160,9 +188,27 @@ test('stack browser search wrapper uses icon-only chrome while context menus kee
   }
 });
 
+test('stack browser search icon sits inside the input wrapper with room to its left', () => {
+  const inputWrapperSource = sourceBetween(
+    stackPopupSource,
+    '<div class="stack-search-input-wrapper">',
+    '</div>'
+  );
+  assert.match(
+    inputWrapperSource,
+    /<MaterialSymbolIcon\s+name="search"\s*\/>[\s\S]*?<input\b[^>]*aria-label="Search current folder"/,
+    'search icon is inside the wrapper before the folder-search input'
+  );
+  const iconStyles = sourceBetween(stackPopupStyles, '.stack-search-input-wrapper .material-symbol-icon {', '.stack-search input {');
+  const inputStyles = sourceBetween(stackPopupStyles, '.stack-search input {', '.stack-search-clear-button {');
+  assert.match(iconStyles, /position:\s*absolute/, 'search icon is positioned within the input wrapper');
+  assert.match(iconStyles, /left:\s*[^;]+;/, 'search icon is inset from the left edge');
+  assert.match(inputStyles, /padding:\s*[^;]*\s(?:[1-9]\d*(?:\.\d+)?|0?\.\d*[1-9]\d*)rem\s*;/, 'input reserves nonzero left space for the icon');
+});
+
 test('stack browser search exposes a clear button only for a non-empty query', () => {
   const searchWrapperSource = sourceBetween(stackPopupSource, '<div class="stack-search">', '{#if createFolderDraft');
-  const searchInputWrapperStyles = sourceBetween(stackPopupStyles, '.stack-search-input-wrapper {', '.stack-search .material-symbol-icon');
+  const searchInputWrapperStyles = sourceBetween(stackPopupStyles, '.stack-search-input-wrapper {', '.stack-search-input-wrapper .material-symbol-icon');
   const clearButtonStyles = sourceBetween(stackPopupStyles, '.stack-search-clear-button {', '.stack-search-clear-button .material-symbol-icon');
 
   assert.match(searchWrapperSource, /<div class="stack-search-input-wrapper">/, 'input and clear button share stable wrapper');

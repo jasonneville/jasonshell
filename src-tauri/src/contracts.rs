@@ -429,6 +429,7 @@ pub mod events {
     pub const SEARCH_PANEL_SELECT: &str = "search-panel:select";
     pub const SEARCH_PANEL_UPDATE: &str = "search-panel:update";
     pub const STACK_POPUP_OPEN: &str = "stack-popup:open";
+    pub const STACK_FILE_OPERATION_PROGRESS: &str = "stack-operation:progress";
     pub const STACK_POPUP_CLOSED: &str = "stack-popup:closed";
     pub const STACK_TERMINAL_CLOSED: &str = "stack-terminal:closed";
     pub const STACK_TERMINAL_CWD: &str = "stack-terminal:cwd";
@@ -479,6 +480,7 @@ pub mod events {
         SEARCH_PANEL_SELECT,
         SEARCH_PANEL_UPDATE,
         STACK_POPUP_OPEN,
+        STACK_FILE_OPERATION_PROGRESS,
         STACK_POPUP_CLOSED,
         STACK_TERMINAL_CLOSED,
         STACK_TERMINAL_CWD,
@@ -687,6 +689,7 @@ mod tests {
                 "search-panel:select",
                 "search-panel:update",
                 "stack-popup:open",
+                "stack-operation:progress",
                 "stack-popup:closed",
                 "stack-terminal:closed",
                 "stack-terminal:cwd",

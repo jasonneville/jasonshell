@@ -89,6 +89,7 @@
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
+  import { IPC_EVENTS, type StackFileOperationProgress } from '../ipc/events';
 
   import {
     STACK_BROWSER_FRONTEND_EVENTS,
@@ -234,6 +235,9 @@
   let pendingEditorExit: PendingBasicTextEditorExit | null = null;
   let editorExitFocusOrigin: HTMLElement | null = null;
   let shellSurfaceHotkeyHandled = false;
+  let activeOperation: StackFileOperationProgress | null = null;
+  let operationClock = Date.now();
+  let operationClockTimer: number | null = null;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
   $: currentPath = stackState.currentPath;
@@ -271,9 +275,25 @@
     const latestRequestTimer = window.setInterval(() => {
       void reconcileLatestStackPopupRequest();
     }, 250);
-
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
     void loadStackTerminalProfile();
+    void getCurrentWindow().listen<StackFileOperationProgress>(IPC_EVENTS.stackFileOperationProgress, ({ payload }) => {
+      if (!activeOperation || payload.operationId !== activeOperation.operationId) return;
+      activeOperation = { ...activeOperation, ...payload };
+      if (payload.phase === 'completed') {
+        refreshFileOperation(payload.operationId);
+      }
+      if (payload.phase === 'failed') {
+        errorMessage = payload.error || payload.message || `${operationLabel(payload.operation)} failed`;
+        // Individual Recycle Bin operations may fail while the selected batch continues.
+        if (payload.operation !== 'delete') {
+          stopOperationClock();
+        }
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlisteners.push(unlisten);
+    });
     window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
     window.addEventListener('keydown', handleStackBrowserHotkeyKeydown, true);
     window.addEventListener('keyup', keyupHandler, true);
@@ -305,6 +325,7 @@
       const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
       void terminalPaneForCleanup?.stopTerminal();
       window.clearInterval(latestRequestTimer);
+      stopOperationClock();
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -980,6 +1001,7 @@
     try {
       await copyStackItems(selectedPaths, cut);
       errorMessage = '';
+      stackState = { ...stackState, statusMessage: `${cut ? 'Cut' : 'Copied'} ${selectedPaths.length} item${selectedPaths.length === 1 ? '' : 's'}` };
     } catch (error) {
       console.error('Failed to copy stack items', error);
       errorMessage = operationErrorMessage(error, cut ? 'Cut unavailable' : 'Copy unavailable');
@@ -992,13 +1014,16 @@
       return;
     }
 
+    const operationId = beginFileOperation('paste', 'planning');
     try {
-      const listing = await pasteStackItems(currentPath);
+      const listing = await invokePaste(currentPath, operationId);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
       errorMessage = pasteFailureSummary(listing.pasteFailures);
+      finishFileOperation(operationId, errorMessage || undefined);
     } catch (error) {
       console.error('Failed to paste stack items', error);
       errorMessage = operationErrorMessage(error, 'Paste unavailable');
+      failFileOperation(operationId, errorMessage);
     }
   }
 
@@ -1033,18 +1058,26 @@
     }
 
     deleteConfirmation = null;
+    const operationId = beginFileOperation('delete', 'deleting', {
+      determinate: false,
+      completedItems: 0,
+      totalItems: pendingDelete.paths.length
+    });
     let focusHoldStarted = false;
     try {
       await beginStackPopupFocusLossHold();
       focusHoldStarted = true;
       const failures: string[] = [];
-      for (const path of pendingDelete.paths) {
+      for (const [index, path] of pendingDelete.paths.entries()) {
+        updateDeleteProgress(operationId, index, pendingDelete.paths.length, path);
         try {
-          await deleteStackItem(path);
+          await invokeDelete(path, operationId);
+          updateDeleteProgress(operationId, index + 1, pendingDelete.paths.length, path);
         } catch (error) {
           failures.push(operationErrorMessage(error, `Failed to delete ${path}`));
         }
       }
+      refreshFileOperation(operationId);
       const listing = await listStackFolder(pendingDelete.folderPath);
       if (currentPath === pendingDelete.folderPath) {
         stackState = applyStackFolderListing(stackState, pendingDelete.folderPath, listing);
@@ -1055,9 +1088,11 @@
       errorMessage = failures.length
         ? `Delete completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: ${failures[0]}`
         : '';
+      finishFileOperation(operationId, failures.length ? errorMessage : undefined);
     } catch (error) {
       console.error('Failed to delete stack item', error);
       errorMessage = operationErrorMessage(error, 'Delete unavailable');
+      failFileOperation(operationId, errorMessage);
     } finally {
       if (focusHoldStarted) {
         try {
@@ -1398,14 +1433,18 @@
       return;
     }
 
+    const operationId = beginFileOperation('extract', 'extracting', { currentPath: archive.path, determinate: false });
     try {
-      await extractStackArchive(archive.path, destinationMode, extractor);
+      await invokeExtract(archive.path, destinationMode, extractor, operationId);
+      refreshFileOperation(operationId);
       const listing = await listStackFolder(currentPath);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
       errorMessage = '';
+      finishFileOperation(operationId);
     } catch (error) {
       console.error('Failed to extract stack archive', error);
       errorMessage = operationErrorMessage(error, 'Extract archive unavailable');
+      failFileOperation(operationId, errorMessage);
     }
   }
 
@@ -1556,6 +1595,131 @@
 
   function contextSubmenuMaxHeightCss(menu: StackContextMenuPlacement) {
     return `${Math.max(0, Math.round(menu.submenuMaxHeight ?? menu.maxHeight ?? availableContextMenuHeight()))}px`;
+  }
+
+  function beginFileOperation(
+    operation: StackFileOperationProgress['operation'],
+    phase: StackFileOperationProgress['phase'],
+    details: Partial<StackFileOperationProgress> = {}
+  ) {
+    const operationId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const startedAt = Date.now();
+    activeOperation = {
+      operationId,
+      operation,
+      phase,
+      determinate: false,
+      ...details,
+      startedAt,
+      updatedAt: startedAt,
+      elapsedMs: 0
+    };
+    startOperationClock();
+    errorMessage = '';
+    return operationId;
+  }
+
+  function startOperationClock() {
+    operationClock = Date.now();
+    if (operationClockTimer !== null) return;
+    operationClockTimer = window.setInterval(() => {
+      operationClock = Date.now();
+    }, 1000);
+  }
+
+  function stopOperationClock() {
+    if (operationClockTimer === null) return;
+    window.clearInterval(operationClockTimer);
+    operationClockTimer = null;
+  }
+
+  function refreshFileOperation(operationId: string) {
+    if (activeOperation?.operationId !== operationId) return;
+    activeOperation = { ...activeOperation, phase: 'refreshing', determinate: false };
+  }
+
+  function failFileOperation(operationId: string, message: string) {
+    if (activeOperation?.operationId !== operationId) return;
+    activeOperation = { ...activeOperation, phase: 'failed', error: message };
+    stopOperationClock();
+  }
+
+  function finishFileOperation(operationId: string, message?: string) {
+    if (activeOperation?.operationId !== operationId) return;
+    activeOperation = { ...activeOperation, phase: message ? 'failed' : 'completed', error: message };
+    stopOperationClock();
+  }
+
+  function updateDeleteProgress(operationId: string, completedItems: number, totalItems: number, currentPath: string) {
+    if (activeOperation?.operationId !== operationId) return;
+    activeOperation = { ...activeOperation, phase: 'deleting', determinate: false, completedItems, totalItems, currentPath };
+  }
+
+  const invokePaste = pasteStackItems as unknown as (destinationPath: string, operationId: string) => ReturnType<typeof pasteStackItems>;
+  const invokeDelete = deleteStackItem as unknown as (path: string, operationId: string) => ReturnType<typeof deleteStackItem>;
+  const invokeExtract = extractStackArchive as unknown as (
+    archivePath: string,
+    destinationMode: StackArchiveDestinationMode,
+    extractor: StackArchiveExtractor,
+    operationId: string
+  ) => ReturnType<typeof extractStackArchive>;
+
+  function operationLabel(operation: StackFileOperationProgress['operation']) {
+    return operation === 'paste' ? 'Paste' : operation === 'delete' ? 'Delete' : 'Extract';
+  }
+
+  function operationPhaseLabel(operation: StackFileOperationProgress) {
+    if (operation.phase === 'completed') return `${operationLabel(operation.operation)} complete`;
+    if (operation.phase === 'failed') return `${operationLabel(operation.operation)} failed`;
+    const labels: Record<StackFileOperationProgress['phase'], string> = {
+      planning: 'Preparing', copying: 'Copying', moving: 'Moving', deleting: 'Deleting', extracting: 'Extracting',
+      refreshing: 'Refreshing', completed: 'Complete', failed: 'Failed'
+    };
+    return labels[operation.phase];
+  }
+
+  function operationElapsed(operation: StackFileOperationProgress) {
+    const elapsed = Math.max(operation.elapsedMs, operationClock - operation.startedAt, 0);
+    const seconds = Math.floor(elapsed / 1000);
+    return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  function compactBytes(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let unit = units[0];
+    for (let index = 1; value >= 1024 && index < units.length; index += 1) {
+      value /= 1024;
+      unit = units[index];
+    }
+    return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${unit}`;
+  }
+
+  function operationPath(path?: string) {
+    return path?.split(/[\\/]/).filter(Boolean).at(-1) || path || '';
+  }
+
+  function operationStatusText(operation: StackFileOperationProgress) {
+    const parts = [operation.message || operationPhaseLabel(operation)];
+    if (operation.determinate && operation.totalFiles !== undefined) {
+      parts.push(`${operation.completedFiles ?? 0} / ${operation.totalFiles} files`);
+    } else if (operation.operation === 'delete' && operation.totalItems !== undefined) {
+      parts.push(`${operation.completedItems ?? 0} / ${operation.totalItems} items`);
+    }
+    if (operation.determinate && operation.totalBytes !== undefined) {
+      parts.push(`${compactBytes(operation.completedBytes ?? 0)} / ${compactBytes(operation.totalBytes)}`);
+    }
+    const path = operationPath(operation.currentPath);
+    if (path) parts.push(path);
+    parts.push(operationElapsed(operation));
+    return parts.join(' · ');
+  }
+
+  function operationProgressValue(operation: StackFileOperationProgress) {
+    if (operation.totalBytes) return Math.min(1, (operation.completedBytes ?? 0) / operation.totalBytes);
+    if (operation.totalFiles) return Math.min(1, (operation.completedFiles ?? 0) / operation.totalFiles);
+    return 0;
   }
 
   function contextSubmenuTopCss(menu: StackContextMenuPlacement) {
@@ -2072,18 +2236,21 @@
     if (!paths.length || !destinationPath) {
       return;
     }
+    const operationId = beginFileOperation('paste', move ? 'moving' : 'copying');
     try {
       await copyStackItems(paths, move);
-      const listing = await pasteStackItems(destinationPath);
+      const listing = await invokePaste(destinationPath, operationId);
       if (destinationPath === currentPath) {
         stackState = applyStackFolderListing(stackState, currentPath, listing);
       } else {
         await loadFolder(currentPath);
       }
       errorMessage = pasteFailureSummary(listing.pasteFailures);
+      finishFileOperation(operationId, errorMessage || undefined);
     } catch (error) {
       console.error('Failed to drop stack items', error);
       errorMessage = operationErrorMessage(error, 'Drop unavailable');
+      failFileOperation(operationId, errorMessage);
       await loadFolder(currentPath);
     }
   }
@@ -2443,8 +2610,8 @@
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Reveal selected item" tooltip="Reveal selected item" disabled={!selectedEntry} onClick={() => void revealSelected()}><MaterialSymbolIcon name="preview" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Pin to quick bar" tooltip="Pin to quick bar" disabled={!currentPath} onClick={() => void pinCurrentFolderToQuickBar()}><MaterialSymbolIcon name="add_location" /></MeltActionButton>
       <div class="stack-search">
-        <MaterialSymbolIcon name="search" />
         <div class="stack-search-input-wrapper">
+          <MaterialSymbolIcon name="search" />
           <input
             bind:this={stackSearchInput}
             aria-label="Search current folder"
@@ -2465,12 +2632,27 @@
     </div>
   </header>
 
-  <div class="stack-status surface-state" class:error={!!errorMessage} class:info={!errorMessage} role="status" aria-live="polite">
-    <span>{errorMessage || stackState.statusMessage}</span>
-    {#if loadingPath}
-      <span>Loading...</span>
-    {:else if iconHydrationStatusMessage}
-      <span>{iconHydrationStatusMessage}</span>
+  <div class="stack-status surface-state" class:error={!!errorMessage || activeOperation?.phase === 'failed'} class:info={!errorMessage} role="status" aria-live="polite">
+    {#if activeOperation}
+      <div class="stack-operation-status" title={operationStatusText(activeOperation)}>
+        {#if activeOperation.determinate}
+          <progress
+            max="1"
+            value={operationProgressValue(activeOperation)}
+            aria-label={operationStatusText(activeOperation)}
+          ></progress>
+        {:else if activeOperation.phase !== 'completed' && activeOperation.phase !== 'failed'}
+          <span class="stack-operation-spinner" aria-hidden="true"></span>
+        {/if}
+        <span>{operationStatusText(activeOperation)}</span>
+      </div>
+    {:else}
+      <span title={errorMessage || stackState.statusMessage}>{errorMessage || stackState.statusMessage}</span>
+    {/if}
+    {#if !activeOperation && loadingPath}
+      <span title="Loading...">Loading...</span>
+    {:else if !activeOperation && iconHydrationStatusMessage}
+      <span title={iconHydrationStatusMessage}>{iconHydrationStatusMessage}</span>
     {/if}
   </div>
 

@@ -169,7 +169,7 @@ test('normal text files route to the directly mounted editor while unsupported f
 });
 
 test('editor replaces the file or Git content row and owns internal scrolling', () => {
-  assert.match(surfaceCss, /\.details-table,\s*\.stack-popup > \.stack-git-panel,\s*\.stack-popup > \.stack-text-editor\s*\{\s*grid-row: 4;/);
+  assert.match(surfaceCss, /\.details-table,\s*\.stack-popup > \.stack-git-panel,\s*\.stack-popup > \.stack-text-editor\s*\{\s*grid-row: 3;/);
   assert.match(editor, /\.stack-text-editor-field\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
   assert.match(editor, /\.stack-text-editor-host\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
 });
@@ -188,6 +188,14 @@ test('editor exposes loading, errors, file context, save controls, labelled Code
   assert.match(editor, /isStackBasicTextEditorDirty\(draft, initialContent\)/);
   assert.match(editor, /onDismiss/);
   assert.doesNotMatch(editor, />\s*Save\s*</);
+});
+
+test('editor omits permanent save guidance and only mounts conflict or error feedback', () => {
+  assert.doesNotMatch(editor, /Saving checks the loaded file before writing; reload after an external change\./);
+  assert.doesNotMatch(editor, /stack-text-editor-notice/);
+  assert.match(editor, /\{#if saveConflict \|\| saveErrorMessage \|\| reloadErrorMessage\}/);
+  assert.match(editor, /role="alert"/);
+  assert.match(editor, /\.stack-text-editor\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/s);
 });
 
 test('save shortcuts leave an active parent-owned confirmation authoritative while staying available otherwise', () => {
@@ -233,7 +241,7 @@ test('confirmed conflict reload keeps the mounted draft until a disk read succee
   assert.doesNotMatch(reload, /destroyEditor\(\)|initialContent\s*=|fileIdentity\s*=|draft\s*=|errorMessage\s*=|loading\s*=/, 'failed reads leave the mounted editor, draft, baseline, identity, and editor screen untouched');
   assert.match(reload, /catch \(error\) \{[\s\S]*reloadErrorMessage = error instanceof Error/, 'failed reads are surfaced without changing editor state');
   assert.match(commit, /destroyEditor\(\);[\s\S]*initialContent = result\.content;[\s\S]*fileIdentity = result\.identity;[\s\S]*draft = result\.content;/, 'the successful read commits replacement state only after teardown');
-  assert.match(editor, /role=\{saveErrorMessage \|\| reloadErrorMessage \? 'alert' : undefined\}[\s\S]*\{#if reloadErrorMessage\}<span>\{reloadErrorMessage\}<\/span>\{\/if\}/, 'reload failures remain visible while the conflict UI stays mounted');
+  assert.match(editor, /\{#if saveConflict \|\| saveErrorMessage \|\| reloadErrorMessage\}[\s\S]*role="alert"[\s\S]*\{#if reloadErrorMessage\}<span>\{reloadErrorMessage\}<\/span>\{\/if\}/, 'reload failures remain visible while the conflict UI stays mounted');
 });
 
 test('each successful file load focuses editor at document and viewport start after paint', () => {

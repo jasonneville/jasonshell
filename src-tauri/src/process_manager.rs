@@ -9,7 +9,7 @@ use crate::shell_windows::{
     PROCESS_MANAGER_WIDTH_LOGICAL,
 };
 
-const PROCESS_MANAGER_MARGIN_PHYSICAL: i32 = 8;
+const PROCESS_MANAGER_MARGIN_PHYSICAL: i32 = 0;
 const PROCESS_MANAGER_EDGE_PADDING_PHYSICAL: i32 = 8;
 const PROCESS_MANAGER_OPEN_EVENT: &str = "process-manager:open";
 pub const PROCESS_MANAGER_CLOSED_EVENT: &str = "process-manager:closed";

@@ -7,6 +7,12 @@ const parserUrl = new URL('../src/features/stack-browser/stackMarkdownPreview.ts
 const componentUrl = new URL('../src/components/StackMarkdownPreview.svelte', import.meta.url);
 const editor = readFileSync(new URL('../src/components/StackTextEditor.svelte', import.meta.url), 'utf8');
 
+function markdownPreviewRule(source) {
+  const match = source.match(/\.markdown-preview\{(?<body>[^}]*)\}/);
+  assert.ok(match?.groups?.body, 'StackMarkdownPreview must define a .markdown-preview style rule');
+  return match.groups.body;
+}
+
 async function importParser() {
   const source = readFileSync(parserUrl, 'utf8');
   const javascript = ts.transpileModule(source, {
@@ -48,6 +54,20 @@ test('Markdown editor defaults to safe Preview and preserves draft across explic
   assert.doesNotMatch(`${editor}\n${component}`, /\{@html\}|innerHTML|DOMParser|fetch\(/);
   assert.match(component, /<article[^>]*aria-label="Markdown preview"/);
   for (const element of ['<h1>', '<h2>', '<h3>', '<table>', '<pre><code>']) assert.ok(component.includes(element));
+});
+
+test('Markdown preview uses the scroll pane width without cramped centered columns', () => {
+  const component = readFileSync(componentUrl, 'utf8');
+  const previewCss = markdownPreviewRule(component);
+  const maxWidth = previewCss.match(/max-width:(?<value>[\d.]+)rem/);
+  const horizontalPaddingCeiling = previewCss.match(/padding:[^;]*clamp\([^,]+,[^,]+,(?<value>[\d.]+)rem\)/);
+
+  assert.match(previewCss, /(?:^|;)\s*(?:width|inline-size):100%(?:;|$|\s)/, 'preview article should fill the available scroll-pane width');
+  assert.ok(maxWidth, 'preview article should keep a practical readable max-width ceiling');
+  assert.ok(Number(maxWidth.groups.value) > 54, 'preview readable width ceiling should be wider than the old cramped 54rem cap');
+  assert.doesNotMatch(previewCss, /(?:^|;)\s*margin:\s*0\s+auto\b/, 'preview article should not auto-center inside the scroll pane');
+  assert.ok(horizontalPaddingCeiling, 'preview article should use responsive horizontal padding with a finite ceiling');
+  assert.ok(Number(horizontalPaddingCeiling.groups.value) <= 3, 'preview horizontal padding ceiling should stay materially below the old 5rem padding');
 });
 
 test('dirty Markdown Preview -> Edit -> Escape uses component dirty state, not remounted adapter baseline', () => {

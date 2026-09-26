@@ -21,7 +21,7 @@ use windows::Win32::Graphics::Dwm::{
 
 const TASK_PREVIEW_UPDATE_EVENT: &str = "task-preview:update";
 const TASK_PREVIEW_HIDE_EVENT: &str = "task-preview:hide";
-const TASK_PREVIEW_MARGIN_PHYSICAL: i32 = 10;
+const TASK_PREVIEW_MARGIN_PHYSICAL: i32 = 0;
 const TASK_PREVIEW_EDGE_PADDING_PHYSICAL: i32 = 8;
 const LIVE_PREVIEW_FRAME_TOP_LOGICAL: f64 = 48.0;
 const LIVE_PREVIEW_FRAME_SIDE_LOGICAL: f64 = 4.0;

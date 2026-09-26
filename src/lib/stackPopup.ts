@@ -1,12 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, emitTo } from '@tauri-apps/api/event';
 import { IPC_COMMANDS } from '../ipc/commands.js';
+import type { StackFileOperationProgress } from '../ipc/events.js';
 import { topBarWebviewWindowEventTarget } from './topBarPins';
 
 export const STACK_POPUP_LABEL = 'stack-popup';
 export const TOP_BAR_LABEL = 'top-bar';
 export const STACK_POPUP_OPEN_EVENT = 'stack-popup:open';
 export const STACK_PINS_UPDATED_EVENT = 'stack-pins:updated';
+export type { StackFileOperationProgress };
 
 export type StackPin = {
   id: string;
@@ -519,8 +521,8 @@ export function copyStackItems(paths: string[], cut: boolean): Promise<void> {
   return invoke(cut ? IPC_COMMANDS.cutStackItems : IPC_COMMANDS.copyStackItems, { paths });
 }
 
-export async function pasteStackItems(destinationPath: string): Promise<StackPasteListing> {
-  const result = await invoke<StackPasteResult>(IPC_COMMANDS.pasteStackItems, { destination: destinationPath });
+export async function pasteStackItems(destinationPath: string, operationId = crypto.randomUUID()): Promise<StackPasteListing> {
+  const result = await invoke<StackPasteResult>(IPC_COMMANDS.pasteStackItems, { destination: destinationPath, operationId });
   const listing = await listStackFolder(destinationPath);
   return { ...listing, pasteFailures: result.failures ?? [] };
 }
@@ -529,8 +531,8 @@ export function renameStackItem(path: string, newName: string): Promise<StackEnt
   return invoke<StackItem>(IPC_COMMANDS.renameStackItem, { path, newName }).then(stackEntryFromItem);
 }
 
-export function deleteStackItem(path: string): Promise<void> {
-  return invoke(IPC_COMMANDS.deleteStackItem, { path });
+export function deleteStackItem(path: string, operationId = crypto.randomUUID()): Promise<void> {
+  return invoke(IPC_COMMANDS.deleteStackItem, { path, operationId });
 }
 
 export function newStackFolder(parent: string, name: string): Promise<StackEntry> {
@@ -551,9 +553,10 @@ export type StackArchiveExtractor = 'builtin' | 'sevenZip';
 export function extractStackArchive(
   archivePath: string,
   destinationMode: StackArchiveDestinationMode,
-  extractor: StackArchiveExtractor = 'builtin'
+  extractor: StackArchiveExtractor = 'builtin',
+  operationId = crypto.randomUUID()
 ): Promise<void> {
-  return invoke(IPC_COMMANDS.extractStackArchive, { archivePath, destinationMode, extractor });
+  return invoke(IPC_COMMANDS.extractStackArchive, { archivePath, destinationMode, extractor, operationId });
 }
 
 export function showStackItemProperties(path: string): Promise<void> {

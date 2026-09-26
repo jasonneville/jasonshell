@@ -223,6 +223,18 @@
     transform 140ms ease;
 }
 
+.bottom-bar.surface::after {
+  background: var(--preview-connector-color);
+  content: '';
+  height: 1px;
+  left: var(--preview-connector-left);
+  pointer-events: none;
+  position: absolute;
+  top: -1px;
+  width: var(--preview-connector-width);
+  z-index: 21;
+}
+
 .bottom-bar .task-group-direct {
   flex: var(--task-direct-count, 1) 1 0;
   max-width: calc(160px * var(--task-direct-count, 1));
@@ -388,6 +400,22 @@
   background: var(--js-bg-active);
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
+}
+
+.bottom-bar .task-button.task-button-preview-connected {
+  box-shadow: none;
+}
+
+.bottom-bar .task-button.task-button-active.task-button-preview-connected {
+  box-shadow: inset 0 0 0 1px var(--js-color-accent-soft);
+}
+
+.bottom-bar .task-button.task-window-attention.task-button-preview-connected {
+  box-shadow: inset 0 4px 0 #ffd54f;
+}
+
+.bottom-bar .task-button.task-button-active.task-window-attention.task-button-preview-connected {
+  box-shadow: inset 0 4px 0 #ffd54f, inset 0 0 0 1px var(--js-color-accent-soft);
 }
 
 .bottom-bar .task-button-minimized {

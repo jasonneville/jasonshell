@@ -62,6 +62,16 @@
       onCancel();
       return;
     }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      if (!confirmButton.disabled) confirmButton.focus();
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      if (!cancelButton.disabled) cancelButton.focus();
+      return;
+    }
     if (event.key !== 'Tab') return;
     const focusables = focusableDescendants();
     if (!focusables.length) {

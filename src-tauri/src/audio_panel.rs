@@ -5,7 +5,7 @@ use crate::shell_windows::{AUDIO_PANEL_LABEL, AUDIO_PANEL_WIDTH_LOGICAL, TOP_BAR
 
 pub const AUDIO_PANEL_OPEN_EVENT: &str = "audio-panel:open";
 pub const AUDIO_PANEL_CLOSED_EVENT: &str = "audio-panel:closed";
-const AUDIO_PANEL_MARGIN_PHYSICAL: i32 = 6;
+const AUDIO_PANEL_MARGIN_PHYSICAL: i32 = 0;
 const AUDIO_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 
 #[derive(Clone, Debug, Deserialize)]

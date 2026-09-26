@@ -5,7 +5,7 @@ use crate::shell_windows::{TERMINAL_PANEL_LABEL, TERMINAL_PANEL_WIDTH_LOGICAL, T
 
 pub const TERMINAL_PANEL_OPEN_EVENT: &str = "terminal-panel:open";
 pub const TERMINAL_PANEL_CLOSED_EVENT: &str = "terminal-panel:closed";
-const TERMINAL_PANEL_MARGIN_PHYSICAL: i32 = 6;
+const TERMINAL_PANEL_MARGIN_PHYSICAL: i32 = 0;
 const TERMINAL_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 
 #[derive(Clone, Debug, Deserialize)]

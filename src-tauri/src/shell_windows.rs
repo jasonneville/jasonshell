@@ -259,7 +259,7 @@ fn build_preview_window(app: &App) -> AppResult<WebviewWindow> {
     .maximizable(false)
     .minimizable(false)
     .resizable(false)
-    .shadow(true)
+    .shadow(false)
     .skip_taskbar(true)
     .theme(Some(Theme::Dark))
     .title("JasonShell Task Preview")

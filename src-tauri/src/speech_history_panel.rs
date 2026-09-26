@@ -7,7 +7,7 @@ use crate::shell_windows::{
 
 pub const SPEECH_HISTORY_PANEL_OPEN_EVENT: &str = "speech-history-panel:open";
 pub const SPEECH_HISTORY_PANEL_CLOSED_EVENT: &str = "speech-history-panel:closed";
-const PANEL_MARGIN_PHYSICAL: i32 = 6;
+const PANEL_MARGIN_PHYSICAL: i32 = 0;
 const PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 
 #[derive(Clone, Debug, Deserialize)]

@@ -27,7 +27,7 @@ use std::{
     fs,
     io::{Read, Seek, SeekFrom, Write},
 };
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1561,6 +1561,7 @@ pub async fn paste_stack_items(
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     destination: String,
+    operation_id: String,
 ) -> Result<StackPasteResult, String> {
     authorize_stack_command(
         &window,
@@ -1573,7 +1574,7 @@ pub async fn paste_stack_items(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    clipboard::paste_stack_clipboard_items_async(&app_handle, &state, destination).await
+    clipboard::paste_stack_clipboard_items_async(&app_handle, &state, destination, window, operation_id).await
 }
 
 #[tauri::command]
@@ -1582,6 +1583,7 @@ pub async fn delete_stack_item(
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
     path: String,
+    operation_id: String,
 ) -> Result<(), String> {
     authorize_stack_command(
         &window,
@@ -1594,9 +1596,19 @@ pub async fn delete_stack_item(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let mut progress = models::StackFileOperationProgress::new(operation_id, "delete", "planning", file_ops::now_ms());
+    progress.current_path = Some(path.clone());
+    let report = |progress: &models::StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, progress); };
+    report(&progress);
+    progress.phase("deleting"); report(&progress);
     popup_window::begin_stack_popup_focus_hold(&state);
     let result = file_ops::delete_stack_item_path_async(path).await;
     popup_window::end_stack_popup_focus_hold(&app_handle, &state);
+    match &result {
+        Ok(()) => { progress.phase("completed"); },
+        Err(error) => { progress.error = Some(error.clone()); progress.phase("failed"); },
+    }
+    report(&progress);
     result
 }
 
@@ -2000,6 +2012,7 @@ pub async fn extract_stack_archive(
     archive_path: String,
     destination_mode: ArchiveDestinationMode,
     extractor: ArchiveExtractor,
+    operation_id: String,
 ) -> Result<(), String> {
     authorize_stack_command(
         &window,
@@ -2009,6 +2022,11 @@ pub async fn extract_stack_archive(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let mut progress = models::StackFileOperationProgress::new(operation_id, "extract", "planning", file_ops::now_ms());
+    progress.current_path = Some(archive_path.clone());
+    let report = |progress: &models::StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, progress); };
+    report(&progress);
+    let result: Result<(), String> = async {
     let archive = PathBuf::from(paths::normalize_existing_path(&archive_path)?);
     if !archive.is_absolute() {
         return Err("Archive path must be absolute".to_string());
@@ -2024,9 +2042,17 @@ pub async fn extract_stack_archive(
         None
     };
     let plan = build_archive_extraction_plan(&archive, destination_mode, extractor, seven_zip)?;
+    progress.phase("extracting"); report(&progress);
     tauri::async_runtime::spawn_blocking(move || run_archive_extraction_plan(plan))
         .await
         .map_err(|error| format!("Failed to join archive extraction task: {error}"))?
+    }.await;
+    match &result {
+        Ok(()) => { progress.phase("completed"); },
+        Err(error) => { progress.error = Some(error.clone()); progress.phase("failed"); },
+    }
+    report(&progress);
+    result
 }
 
 fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String> {
@@ -3283,17 +3309,14 @@ mod tests {
         assert!(file_ops_source
             .contains("tauri::async_runtime::spawn_blocking(move || delete_path(&target))"));
         assert!(clipboard_source.contains("pub(crate) async fn paste_stack_clipboard_items_async("));
-        assert!(clipboard_source.contains(
-            "tauri::async_runtime::spawn_blocking(move || {\r\n        paste_clipboard_items(&clipboard, &destination, journal_dir.as_deref())\r\n    })"
-        ) || clipboard_source.contains(
-            "tauri::async_runtime::spawn_blocking(move || {\n        paste_clipboard_items(&clipboard, &destination, journal_dir.as_deref())\n    })"
-        ));
-
         let paste_body = clipboard_source
             .split("pub(crate) async fn paste_stack_clipboard_items_async(")
             .nth(1)
             .and_then(|value| value.split("fn update_cut_clipboard_after_paste").next())
             .expect("paste body present");
+        assert!(paste_body.contains("tauri::async_runtime::spawn_blocking(move || {"));
+        assert!(paste_body.contains("paste_clipboard_items_progress(&clipboard, &destination, journal_dir.as_deref(), &worker_window, &mut progress)"));
+        assert!(paste_body.contains("let worker_window = window.clone();"));
         assert!(paste_body.contains("recovery_journal_dir(app_handle)?"));
         assert!(paste_body.contains("journal_dir.as_deref()"));
     }

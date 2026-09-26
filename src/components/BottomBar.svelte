@@ -129,6 +129,11 @@
   let activatingHwnd: string | null = null;
   let previewShowTimer: number | null = null;
   let previewHideTimer: number | null = null;
+  let bottomBarEl: HTMLDivElement | null = null;
+  let previewConnector: { hwnd: string; left: number; width: number; color: string } | null = null;
+  let previewGeneration = 0;
+  let connectedPreviewRequestId = 0;
+  let latestPreviewShowRequestId = 0;
   let taskGroupOrder: string[] = [];
   let draggingGroupKey: string | null = null;
   let dropTargetGroupKey: string | null = null;
@@ -319,9 +324,15 @@
   async function hidePreview() {
     clearPreviewShowTimer();
     clearPreviewHideTimer();
+    previewGeneration += 1;
+    latestPreviewShowRequestId = 0;
+    const hideGeneration = previewGeneration;
     try {
       const requestId = await allocateTaskPreviewRequestId();
       await hideTaskWindowPreview(requestId);
+      if (hideGeneration === previewGeneration) {
+        previewConnector = null;
+      }
     } catch (error) {
       console.error('Failed to hide task preview', error);
     }
@@ -348,10 +359,13 @@
     }
     clearPreviewShowTimer();
     clearPreviewHideTimer();
+    const generation = ++previewGeneration;
     const rect = button.getBoundingClientRect();
     previewShowTimer = window.setTimeout(async () => {
       try {
         const requestId = await allocateTaskPreviewRequestId();
+        if (generation !== previewGeneration) return;
+        latestPreviewShowRequestId = requestId;
         await showTaskWindowPreview({
           requestId,
           hwnd: taskWindow.hwnd,
@@ -362,6 +376,32 @@
           anchorLeft: rect.left,
           anchorWidth: rect.width
         });
+        if (generation !== previewGeneration) {
+          // An older show may finish while the next hover is still pending. Keep its
+          // tile connected until the newer native show takes ownership; never hide
+          // here, because a newer request may already have displayed its preview.
+          if (requestId === latestPreviewShowRequestId && requestId > connectedPreviewRequestId && bottomBarEl && button.isConnected) {
+            const barRect = bottomBarEl.getBoundingClientRect();
+            connectedPreviewRequestId = requestId;
+            previewConnector = {
+              hwnd: taskWindow.hwnd,
+              left: rect.left - barRect.left,
+              width: rect.width,
+              color: getComputedStyle(button).backgroundColor
+            };
+          }
+        }
+        if (generation === previewGeneration && bottomBarEl && button.isConnected) {
+          const barRect = bottomBarEl.getBoundingClientRect();
+          previewGeneration += 1;
+          connectedPreviewRequestId = requestId;
+          previewConnector = {
+            hwnd: taskWindow.hwnd,
+            left: rect.left - barRect.left,
+            width: rect.width,
+            color: getComputedStyle(button).backgroundColor
+          };
+        }
       } catch (error) {
         console.error(`Failed to show preview for ${taskWindow.hwnd}`, error);
       }
@@ -1209,7 +1249,7 @@
 
 <svelte:window on:keydown={handleGlobalKeydown} />
 
-<div class="surface bottom-bar" style={`--bottom-bar-height-logical: ${bottomBarHeightLogical}px;`}>
+<div class="surface bottom-bar" bind:this={bottomBarEl} style={`--bottom-bar-height-logical: ${bottomBarHeightLogical}px; --preview-connector-left: ${previewConnector?.left ?? 0}px; --preview-connector-width: ${previewConnector?.width ?? 0}px; --preview-connector-color: ${previewConnector?.color ?? 'transparent'};`}>
   {#if !bottomBarHeightLocked}
     <MeltActionButton
       class="bar-resize-handle bottom-bar-resize-handle"
@@ -1261,7 +1301,7 @@
             {#if taskGroupDisplay(group) === 'direct'}
               {#each group.windows as taskWindow (taskWindow.hwnd)}
                 <MeltActionButton
-                  class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}`}
+                  class={`task-button${taskWindow.isActive ? ' task-button-active' : ''}${taskWindow.isMinimized ? ' task-button-minimized' : ''}${taskWindowHasVisibleAttention(taskWindow) ? ' task-window-attention' : ''}${previewConnector?.hwnd === taskWindow.hwnd ? ' task-button-preview-connected' : ''}`}
                   type="button"
                   disabled={activatingHwnd === taskWindow.hwnd}
                   onPointerDown={(event) => handleTaskWindowPointerDown(taskWindow, event)}

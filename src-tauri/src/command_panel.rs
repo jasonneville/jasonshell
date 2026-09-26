@@ -7,7 +7,7 @@ use crate::shell_windows::{COMMAND_PANEL_LABEL, TOP_BAR_LABEL};
 use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 pub const COMMAND_PANEL_CLOSED_EVENT: &str = "command-panel:closed";
-const COMMAND_PANEL_MARGIN_PHYSICAL: i32 = 6;
+const COMMAND_PANEL_MARGIN_PHYSICAL: i32 = 0;
 static COMMAND_PANEL_FOCUS_LOSS_NONCE: AtomicU64 = AtomicU64::new(1);
 static COMMAND_PANEL_SUPPRESS_NEXT_RESIZE_SAVE: AtomicBool = AtomicBool::new(false);
 static COMMAND_PANEL_FOCUS_LOSS_HOLD_COUNT: AtomicU32 = AtomicU32::new(0);

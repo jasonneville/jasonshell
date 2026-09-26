@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 const SEARCH_PANEL_UPDATE_EVENT: &str = "search-panel:update";
 pub const SEARCH_PANEL_INTERACTION_EVENT: &str = "search-panel:interaction";
 pub const SEARCH_PANEL_CLOSED_EVENT: &str = "search-panel:closed";
-const SEARCH_PANEL_MARGIN_PHYSICAL: i32 = 6;
+const SEARCH_PANEL_MARGIN_PHYSICAL: i32 = 0;
 const SEARCH_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 const CENTERED_SEARCH_WIDTH_LOGICAL: f64 = 720.0;
 const CENTERED_SEARCH_HEIGHT_LOGICAL: f64 = 560.0;

@@ -9,7 +9,7 @@ use crate::shell_windows::{TOP_BAR_LABEL, TRAY_PANEL_LABEL, TRAY_PANEL_WIDTH_LOG
 
 pub const TRAY_PANEL_OPEN_EVENT: &str = "tray-panel:open";
 pub const TRAY_PANEL_CLOSED_EVENT: &str = "tray-panel:closed";
-const TRAY_PANEL_MARGIN_PHYSICAL: i32 = 6;
+const TRAY_PANEL_MARGIN_PHYSICAL: i32 = 0;
 const TRAY_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 const TRAY_PANEL_FOCUS_LOSS_SUPPRESSION_TTL_MS: u64 = 1_000;
 static SUPPRESS_TRAY_PANEL_FOCUS_LOSS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);

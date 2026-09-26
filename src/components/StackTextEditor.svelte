@@ -246,35 +246,41 @@
     {/if}
   </header>
 
-  <div class="stack-text-editor-notice" role={saveErrorMessage || reloadErrorMessage ? 'alert' : undefined}>
-    <span>{saveConflict
-      ? 'The file changed on disk. Your draft is preserved; reload the disk version only if you want to discard it.'
-      : saveErrorMessage || 'Saving checks the loaded file before writing; reload after an external change.'}</span>
-    {#if reloadErrorMessage}<span>{reloadErrorMessage}</span>{/if}
-    {#if saveConflict}
-      <MeltActionButton class="stack-text-editor-reload" ariaLabel="Reload disk version and discard draft" onClick={requestConflictReload}>
-        Reload disk version
-      </MeltActionButton>
+  <div class="stack-text-editor-body">
+    {#if saveConflict || saveErrorMessage || reloadErrorMessage}
+      <div class="stack-text-editor-feedback" role="alert">
+        {#if saveConflict}
+          <span>The file changed on disk. Your draft is preserved; reload the disk version only if you want to discard it.</span>
+        {:else if saveErrorMessage}
+          <span>{saveErrorMessage}</span>
+        {/if}
+        {#if reloadErrorMessage}<span>{reloadErrorMessage}</span>{/if}
+        {#if saveConflict}
+          <MeltActionButton class="stack-text-editor-reload" ariaLabel="Reload disk version and discard draft" onClick={requestConflictReload}>
+            Reload disk version
+          </MeltActionButton>
+        {/if}
+      </div>
+    {/if}
+
+    {#if loading}
+      <div class="stack-text-editor-state surface-state info" role="status">Loading file…</div>
+    {:else if errorMessage}
+      <div class="stack-text-editor-state surface-state error" role="alert">{errorMessage}</div>
+    {:else}
+      {#if markdown && editorMode === 'preview'}
+        <div class="stack-markdown-scroll"><StackMarkdownPreview source={draft} /></div>
+      {:else}<div class="stack-text-editor-field">
+        <span class="stack-text-editor-label">File contents</span>
+        <div
+          bind:this={editorHost}
+          class="stack-text-editor-host"
+          role="group"
+          aria-label="File contents"
+        ></div>
+      </div>{/if}
     {/if}
   </div>
-
-  {#if loading}
-    <div class="stack-text-editor-state surface-state info" role="status">Loading file…</div>
-  {:else if errorMessage}
-    <div class="stack-text-editor-state surface-state error" role="alert">{errorMessage}</div>
-  {:else}
-    {#if markdown && editorMode === 'preview'}
-      <div class="stack-markdown-scroll"><StackMarkdownPreview source={draft} /></div>
-    {:else}<div class="stack-text-editor-field">
-      <span class="stack-text-editor-label">File contents</span>
-      <div
-        bind:this={editorHost}
-        class="stack-text-editor-host"
-        role="group"
-        aria-label="File contents"
-      ></div>
-    </div>{/if}
-  {/if}
 
   {#if reloadConfirmation}
     <StackConfirmDialog title="Discard draft and reload?" message="Your in-memory draft will be discarded and replaced with the current disk version." confirmLabel="Discard and reload" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} onCancel={cancelConflictReload} onConfirm={() => void confirmConflictReload()} />
@@ -287,7 +293,7 @@
     border: 1px solid var(--js-color-border);
     border-radius: var(--js-radius-md);
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
     overflow: hidden;
   }
@@ -357,7 +363,14 @@
   .stack-text-editor-mode button[aria-pressed='true'] { background: var(--js-color-accent-soft); box-shadow: inset 0 0 0 1px var(--js-color-accent-border); color: var(--js-color-text-strong); }
   .stack-text-editor-mode button:focus-visible { box-shadow: var(--js-focus-ring); outline: none; }
 
-  .stack-text-editor-notice {
+  .stack-text-editor-body {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .stack-text-editor-feedback {
     align-items: center;
     background: var(--js-color-accent-soft);
     border-bottom: 1px solid var(--js-color-accent-border);

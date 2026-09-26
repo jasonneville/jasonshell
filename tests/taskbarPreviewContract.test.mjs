@@ -15,6 +15,7 @@ const taskPreviewCssSource = readFileSync(
   new URL('../src/components/TaskPreviewSurface.css', import.meta.url),
   'utf8'
 );
+const bottomBarCssSource = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
 const shellWindowsSource = readFileSync(new URL('../src-tauri/src/shell_windows.rs', import.meta.url), 'utf8');
 const taskPreviewRustSource = readFileSync(new URL('../src-tauri/src/task_preview.rs', import.meta.url), 'utf8');
 const taskWindowsRustSource = readFileSync(new URL('../src-tauri/src/task_windows/mod.rs', import.meta.url), 'utf8');
@@ -54,6 +55,112 @@ function extractRustFunction(source, functionName) {
   }
   assert.fail(`${functionName} body should close`);
 }
+
+test('task preview native window has no rectangular shadow behind rounded surface', () => {
+  const previewBuilder = extractRustFunction(shellWindowsSource, 'build_preview_window');
+  assert.match(previewBuilder, /WebviewWindowBuilder::new\(\s*app,\s*TASK_PREVIEW_LABEL,/);
+  assert.match(previewBuilder, /\.transparent\(true\)/);
+  assert.match(previewBuilder, /\.decorations\(false\)/);
+  assert.match(previewBuilder, /\.shadow\(false\)/);
+  assert.match(taskPreviewCssSource, /\.preview-surface\s*\{[^}]*border-radius:\s*var\(--js-radius-sm\);[^}]*overflow:\s*hidden;/);
+});
+
+test('taskbar preview connector keeps only the source tile seamless', () => {
+  const queuePreview = bottomBarSource.match(/function queuePreview\([\s\S]*?(?=\n  async function refreshTaskbarWindows\()/)?.[0];
+  const hidePreview = bottomBarSource.match(/async function hidePreview\([\s\S]*?(?=\n  function schedulePreviewHide\()/)?.[0];
+  assert.ok(queuePreview, 'queuePreview should exist');
+  assert.ok(hidePreview, 'hidePreview should exist');
+  const barMarkup = bottomBarSource.slice(bottomBarSource.indexOf('<div class="surface bottom-bar"'));
+  const barRule = bottomBarCssSource.match(/\.bottom-bar\.surface\s*\{([^}]*)\}/)?.[1];
+
+  assert.match(bottomBarSource, /let\s+bottomBarEl\s*:/, 'bind the bar root for tile-relative coordinates');
+  assert.match(barMarkup, /class="surface bottom-bar"[^>]*bind:this=\{bottomBarEl\}/);
+  assert.match(queuePreview, /button\.getBoundingClientRect\(\)/);
+  assert.match(queuePreview, /bottomBarEl\.getBoundingClientRect\(\)/);
+  assert.match(queuePreview, /getComputedStyle\(button\)\.backgroundColor/, 'mask uses source tile color, including active tiles');
+  assert.match(
+    queuePreview,
+    /await showTaskWindowPreview\([\s\S]*?\);[\s\S]*?previewConnector\s*=/,
+    'only a successfully shown preview receives a connector'
+  );
+  assert.match(queuePreview, /left:\s*(?:rect|buttonRect)\.left\s*-\s*(?:barRect|bottomBarRect)\.left/);
+  assert.match(queuePreview, /width:\s*(?:rect|buttonRect)\.width/);
+  assert.match(hidePreview, /previewConnector\s*=\s*null/, 'hiding removes the connector');
+  assert.match(barMarkup, /--preview-connector-left:/);
+  assert.match(barMarkup, /--preview-connector-width:/);
+  assert.match(barMarkup, /--preview-connector-color:/);
+  assert.match(bottomBarCssSource, /\.bottom-bar\.surface::(?:before|after)\s*\{[^}]*pointer-events:\s*none;[^}]*\}/);
+  assert.match(bottomBarCssSource, /--preview-connector-left/);
+  assert.match(bottomBarCssSource, /--preview-connector-width/);
+  assert.match(bottomBarCssSource, /--preview-connector-color/);
+  assert.match(bottomBarCssSource, /(?:height:\s*1px|border-top:\s*1px)/);
+  assert.match(barRule ?? '', /border-top:\s*1px solid var\(--js-color-border-soft\)/);
+  assert.doesNotMatch(barRule ?? '', /border-top:\s*(?:0|none)|border:\s*(?:0|none)/);
+});
+
+test('stale task preview hide cannot clear a newer tile connector', () => {
+  const queuePreview = bottomBarSource.match(/function queuePreview\([\s\S]*?(?=\n  async function refreshTaskbarWindows\()/)?.[0];
+  const hidePreview = bottomBarSource.match(/async function hidePreview\([\s\S]*?(?=\n  function schedulePreviewHide\()/)?.[0];
+  assert.ok(queuePreview);
+  assert.ok(hidePreview);
+  assert.match(bottomBarSource, /let previewGeneration\s*=\s*0/);
+  assert.match(queuePreview, /await showTaskWindowPreview\([\s\S]*?\);[\s\S]*?previewConnector\s*=/);
+  assert.match(queuePreview, /(?:\+\+previewGeneration|previewGeneration\s*\+=\s*1)/, 'new preview must advance connector generation');
+  assert.match(
+    hidePreview,
+    /const hideGeneration\s*=\s*previewGeneration\s*;[\s\S]*?await allocateTaskPreviewRequestId\(\)[\s\S]*?await hideTaskWindowPreview\(requestId\)[\s\S]*?if\s*\(hideGeneration\s*===\s*previewGeneration\)\s*\{\s*previewConnector\s*=\s*null\s*;/,
+    'hide must retain the seam until its native hide completes, then clear only its own generation'
+  );
+});
+
+test('task preview source tile removes its own top edge', () => {
+  const directTile = bottomBarSource.match(/\{#each group\.windows as taskWindow \(taskWindow\.hwnd\)\}([\s\S]*?)\{\/each\}/)?.[1];
+  assert.ok(directTile, 'source task tile markup exists');
+  assert.match(directTile, /class=\{`task-button[^`]*task-button-preview-connected[^`]*`\}/,
+    'direct task tile receives a dedicated preview-connected class');
+  assert.match(directTile, /previewConnector\?\.hwnd\s*===\s*taskWindow\.hwnd|previewConnector\s*&&\s*previewConnector\.hwnd\s*===\s*taskWindow\.hwnd/,
+    'only the task that owns the shown preview gets the connected class');
+  assert.match(bottomBarSource, /await showTaskWindowPreview\([\s\S]*?previewConnector\s*=\s*\{[^}]*hwnd:\s*taskWindow\.hwnd/,
+    'connector identity is stored after native preview show');
+
+  const ordinary = bottomBarCssSource.match(/\.bottom-bar \.task-button\s*\{([^}]*)\}/)?.[1];
+  const active = bottomBarCssSource.match(/\.bottom-bar \.task-button-active\s*\{([^}]*)\}/)?.[1];
+  const connected = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-button-preview-connected\s*\{([^}]*)\}/)?.[1];
+  const connectedActive = bottomBarCssSource.match(/\.bottom-bar \.task-button(?:\.task-button-active)?\.task-button-preview-connected\.task-button-active\s*\{([^}]*)\}|\.bottom-bar \.task-button\.task-button-active\.task-button-preview-connected\s*\{([^}]*)\}/)?.slice(1).find(Boolean);
+  assert.match(ordinary ?? '', /box-shadow:\s*var\(--js-inset-highlight\)/, 'ordinary tiles retain top highlight');
+  assert.match(active ?? '', /box-shadow:[^;]*var\(--js-inset-highlight\)[^;]*var\(--js-color-accent-soft\)/,
+    'ordinary active tiles retain highlight and accent');
+  assert.ok(connected, 'connected tile overrides its own top inset highlight');
+  assert.match(connected, /box-shadow:\s*[^;]+;/);
+  assert.doesNotMatch(connected, /var\(--js-inset-highlight\)/);
+  assert.match(connectedActive ?? '', /box-shadow:[^;]*var\(--js-color-accent-soft\)/,
+    'connected active tile retains accent outline');
+  assert.doesNotMatch(connectedActive ?? '', /var\(--js-inset-highlight\)/);
+});
+
+test('preview-connected task tile preserves attention styling', () => {
+  const attention = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-window-attention\s*\{([^}]*)\}/)?.[1];
+  const connectedAttention = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-window-attention\.task-button-preview-connected\s*\{([^}]*)\}/)?.[1];
+  assert.match(attention ?? '', /box-shadow:\s*inset 0 4px 0 #ffd54f/);
+  assert.match(connectedAttention ?? '', /box-shadow:[^;]*#ffd54f/, 'connected attention tile keeps warning highlight');
+  assert.doesNotMatch(connectedAttention ?? '', /var\(--js-inset-highlight\)/, 'only top inset highlight is removed');
+  const connectedActiveAttention = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-button-active\.task-window-attention\.task-button-preview-connected\s*\{([^}]*)\}/)?.[1];
+  assert.match(connectedActiveAttention ?? '', /box-shadow:[^;]*#ffd54f[^;]*var\(--js-color-accent-soft\)|box-shadow:[^;]*var\(--js-color-accent-soft\)[^;]*#ffd54f/,
+    'active connected attention tile keeps both warning and accent');
+  assert.doesNotMatch(connectedActiveAttention ?? '', /var\(--js-inset-highlight\)/);
+});
+
+test('stale preview show cannot leave an unconnected native preview', () => {
+  const queuePreview = bottomBarSource.match(/function queuePreview\([\s\S]*?(?=\n  async function refreshTaskbarWindows\()/)?.[0];
+  assert.ok(queuePreview);
+  const afterShow = queuePreview.split(/await showTaskWindowPreview\(\{[\s\S]*?\}\);/)[1];
+  assert.ok(afterShow, 'inspect continuation after native show resolves');
+  assert.match(afterShow,
+    /if\s*\(generation\s*!==\s*previewGeneration\)\s*\{[\s\S]*?(?:await\s+(?:hideTaskWindowPreview|hidePreview)\(|previewConnector\s*=\s*\{)/,
+    'stale native show must explicitly clean up or establish connected ownership');
+  assert.match(afterShow, /if\s*\(generation\s*===\s*previewGeneration\s*&&\s*bottomBarEl\s*&&\s*button\.isConnected\)/,
+    'current preview retains its existing generation and connected-button guard');
+});
 
 test('task preview payload contract exposes native live thumbnail flag and source', () => {
   assert.deepEqual(TASK_PREVIEW_SOURCES, {

@@ -5,7 +5,7 @@ use crate::shell_windows::{CALENDAR_PANEL_LABEL, CALENDAR_PANEL_WIDTH_LOGICAL, T
 
 pub const CALENDAR_PANEL_OPEN_EVENT: &str = "calendar-panel:open";
 pub const CALENDAR_PANEL_CLOSED_EVENT: &str = "calendar-panel:closed";
-const CALENDAR_PANEL_MARGIN_PHYSICAL: i32 = 6;
+const CALENDAR_PANEL_MARGIN_PHYSICAL: i32 = 0;
 const CALENDAR_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 
 #[derive(Clone, Debug, Deserialize)]

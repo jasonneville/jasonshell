@@ -271,9 +271,16 @@ pub(crate) fn copy_path_with_journal(
     destination: &Path,
     journal_dir: Option<&Path>,
 ) -> Result<(), String> {
+    copy_path_with_journal_progress(source, destination, journal_dir, &mut |_, _| {})
+}
+
+pub(crate) fn copy_path_with_journal_progress(
+    source: &Path, destination: &Path, journal_dir: Option<&Path>,
+    progress: &mut impl FnMut(&Path, u64),
+) -> Result<(), String> {
     let operation_id = new_recovery_operation_id();
     let Some(journal_dir) = journal_dir else {
-        return copy_path(source, destination);
+        return copy_path_progress(source, destination, progress);
     };
     let mut journal = journal_entry_for(
         source,
@@ -284,7 +291,7 @@ pub(crate) fn copy_path_with_journal(
     )?;
     journal.transition_to(RecoveryJournalState::CopyStarted, now_ms());
     write_journal(Some(journal_dir), &operation_id, &journal)?;
-    let res = copy_path_with_manifest(source, destination, &mut journal);
+    let res = copy_path_with_manifest_progress(source, destination, &mut journal, progress);
     match res {
         Ok(()) => {
             journal.transition_to(RecoveryJournalState::CopiedVerified, now_ms());
@@ -311,9 +318,27 @@ pub(crate) fn move_path_with_fallback_journal(
     destination: &Path,
     journal_dir: Option<&Path>,
 ) -> Result<(), String> {
+    move_path_with_fallback_journal_progress(source, destination, journal_dir, &mut |_, _| {}, &mut || Ok(()), &mut || {})
+}
+
+pub(crate) fn move_path_with_fallback_journal_progress(
+    source: &Path, destination: &Path, journal_dir: Option<&Path>,
+    progress: &mut impl FnMut(&Path, u64),
+    fallback: &mut impl FnMut() -> Result<(), String>, deleting: &mut impl FnMut(),
+) -> Result<(), String> {
     let operation_id = new_recovery_operation_id();
     let Some(journal_dir) = journal_dir else {
-        return move_path_with_fallback(source, destination);
+        return match fs::rename(source, destination) {
+            Ok(()) => Ok(()),
+            Err(rename_error) => {
+                fallback()?;
+                copy_path_progress(source, destination, progress).map_err(|copy_error|
+                    format!("Failed to move stack item: {rename_error}; fallback copy failed: {copy_error}"))?;
+                deleting();
+                remove_after_move_copy(source).map_err(|error|
+                    format!("Failed to move stack item after fallback copy: {error}"))
+            }
+        };
     };
     let mut journal = journal_entry_for(
         source,
@@ -331,7 +356,8 @@ pub(crate) fn move_path_with_fallback_journal(
             Ok(())
         }
         Err(rename_error) => {
-            let copy_res = copy_path_with_manifest(source, destination, &mut journal);
+            fallback()?;
+            let copy_res = copy_path_with_manifest_progress(source, destination, &mut journal, progress);
             if let Err(message) = copy_res {
                 journal.mark_failed(format!("Failed to move stack item: {rename_error}; fallback copy failed: {message}"), now_ms());
                 write_journal(Some(journal_dir), &operation_id, &journal).ok();
@@ -341,6 +367,7 @@ pub(crate) fn move_path_with_fallback_journal(
             }
             journal.transition_to(RecoveryJournalState::DeleteStarted, now_ms());
             write_journal(Some(journal_dir), &operation_id, &journal)?;
+            deleting();
             let delete_res = remove_after_move_copy(source);
             match delete_res {
                 Ok(()) => {
@@ -404,9 +431,16 @@ fn copy_path_with_manifest(
     destination: &Path,
     journal: &mut RecoveryJournalEntry,
 ) -> Result<(), String> {
+    copy_path_with_manifest_progress(source, destination, journal, &mut |_, _| {})
+}
+
+fn copy_path_with_manifest_progress(
+    source: &Path, destination: &Path, journal: &mut RecoveryJournalEntry,
+    progress: &mut impl FnMut(&Path, u64),
+) -> Result<(), String> {
     let manifest = build_manifest(source)?;
     journal.source_manifest = Some(manifest.clone());
-    copy_path(source, destination)?;
+    copy_path_progress(source, destination, progress)?;
     journal.copied_manifest = Some(build_manifest(destination)?);
     if journal.source_manifest != journal.copied_manifest {
         return Err("Failed to copy stack item: manifest mismatch".to_string());
@@ -463,7 +497,7 @@ fn build_manifest(path: &Path) -> Result<RecoveryJournalManifest, String> {
     }
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -512,6 +546,18 @@ fn copy_path_inner(
     destination: &Path,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
+    copy_path_inner_progress(source, destination, visited, &mut |_, _| {})
+}
+
+fn copy_path_progress(source: &Path, destination: &Path, progress: &mut impl FnMut(&Path, u64)) -> Result<(), String> {
+    let mut visited = HashSet::new();
+    copy_path_inner_progress(source, destination, &mut visited, progress)
+}
+
+fn copy_path_inner_progress(
+    source: &Path, destination: &Path, visited: &mut HashSet<PathBuf>,
+    progress: &mut impl FnMut(&Path, u64),
+) -> Result<(), String> {
     ensure_paste_destination_allowed(source, destination)?;
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("Failed to inspect stack item before copy: {error}"))?;
@@ -522,7 +568,7 @@ fn copy_path_inner(
         );
     }
     if metadata.is_dir() {
-        copy_dir_inner(source, destination, visited)
+        copy_dir_inner_progress(source, destination, visited, progress)
     } else {
         let expected = metadata.len();
         let copied = fs::copy(source, destination)
@@ -530,6 +576,7 @@ fn copy_path_inner(
         if copied != expected {
             return Err("Failed to copy stack item: byte count mismatch".to_string());
         }
+        progress(source, copied);
         Ok(())
     }
 }
@@ -538,6 +585,13 @@ fn copy_dir_inner(
     source: &Path,
     destination: &Path,
     visited: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
+    copy_dir_inner_progress(source, destination, visited, &mut |_, _| {})
+}
+
+fn copy_dir_inner_progress(
+    source: &Path, destination: &Path, visited: &mut HashSet<PathBuf>,
+    progress: &mut impl FnMut(&Path, u64),
 ) -> Result<(), String> {
     ensure_paste_destination_allowed(source, destination)?;
     let canonical_source = fs::canonicalize(source)
@@ -549,9 +603,33 @@ fn copy_dir_inner(
         .map_err(|error| format!("Failed to create pasted folder: {error}"))?;
     for entry in fs::read_dir(source).map_err(|error| format!("Failed to copy folder: {error}"))? {
         let entry = entry.map_err(|error| format!("Failed to copy folder entry: {error}"))?;
-        copy_path_inner(&entry.path(), &destination.join(entry.file_name()), visited)?;
+        copy_path_inner_progress(&entry.path(), &destination.join(entry.file_name()), visited, progress)?;
     }
     Ok(())
+}
+
+// Pre-scan uses the same reparse, symlink and canonical-directory cycle checks as the copy walk.
+pub(crate) fn scan_copy_totals(source: &Path) -> Result<(u64, u64), String> {
+    fn walk(source: &Path, visited: &mut HashSet<PathBuf>) -> Result<(u64, u64), String> {
+        let metadata = fs::symlink_metadata(source)
+            .map_err(|error| format!("Failed to inspect stack item before copy: {error}"))?;
+        if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+            return Err("Copying symbolic links or reparse points is not supported by Stack Browser yet".to_string());
+        }
+        if !metadata.is_dir() { return Ok((1, metadata.len())); }
+        let canonical = fs::canonicalize(source)
+            .map_err(|error| format!("Failed to resolve source folder before copy: {error}"))?;
+        if !visited.insert(canonical) { return Err("Cannot copy a folder cycle from Stack Browser".to_string()); }
+        let mut totals = (0u64, 0u64);
+        for entry in fs::read_dir(source).map_err(|error| format!("Failed to copy folder: {error}"))? {
+            let entry = entry.map_err(|error| format!("Failed to copy folder entry: {error}"))?;
+            let (files, bytes) = walk(&entry.path(), visited)?;
+            totals.0 = totals.0.saturating_add(files);
+            totals.1 = totals.1.saturating_add(bytes);
+        }
+        Ok(totals)
+    }
+    walk(source, &mut HashSet::new())
 }
 
 pub(crate) fn ensure_paste_destination_allowed(

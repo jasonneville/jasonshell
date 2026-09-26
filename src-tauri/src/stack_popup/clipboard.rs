@@ -1,6 +1,6 @@
 use crate::stack_popup::file_ops::{
     available_destination_path, copy_path_with_journal, ensure_paste_destination_allowed,
-    move_path_with_fallback_journal,
+    move_path_with_fallback_journal, copy_path_with_journal_progress, move_path_with_fallback_journal_progress,
 };
 use crate::stack_popup::items::stack_item_from_path;
 use crate::stack_popup::models::{
@@ -10,6 +10,8 @@ use crate::stack_popup::paths::{normalize_existing_dir, normalize_existing_path}
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
+use tauri::{Emitter, WebviewWindow};
+use crate::stack_popup::models::StackFileOperationProgress;
 
 #[cfg(target_os = "windows")]
 struct ClipboardSession;
@@ -151,7 +153,14 @@ pub(crate) async fn paste_stack_clipboard_items_async(
     app_handle: &AppHandle,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     destination: String,
+    window: WebviewWindow,
+    operation_id: String,
 ) -> Result<StackPasteResult, String> {
+    let mut progress = StackFileOperationProgress::new(operation_id, "paste", "planning", super::file_ops::now_ms());
+    let started = progress.clone();
+    let report = |progress: &StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, progress); };
+    report(&progress);
+    let result: Result<StackPasteResult, String> = async {
     let destination = PathBuf::from(normalize_existing_dir(&destination)?);
     let emergency_disable =
         crate::stack_popup::recovery_journal::emergency_recovery_journal_disable();
@@ -167,8 +176,9 @@ pub(crate) async fn paste_stack_clipboard_items_async(
         .is_some();
     let clipboard = clipboard_for_paste(state)?;
     let mode = clipboard.mode;
+    let worker_window = window.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        paste_clipboard_items(&clipboard, &destination, journal_dir.as_deref())
+        paste_clipboard_items_progress(&clipboard, &destination, journal_dir.as_deref(), &worker_window, &mut progress)
     })
     .await
     .map_err(|error| format!("Failed to join stack paste task: {error}"))?;
@@ -178,6 +188,14 @@ pub(crate) async fn paste_stack_clipboard_items_async(
     }
 
     Ok(result)
+    }.await;
+    if let Err(error) = &result {
+        let mut failed = started;
+        failed.error = Some(error.clone());
+        failed.phase("failed");
+        report(&failed);
+    }
+    result
 }
 
 fn update_cut_clipboard_after_paste(
@@ -237,6 +255,77 @@ pub(crate) fn paste_clipboard_items(
         }
     }
 
+    StackPasteResult { pasted, failures }
+}
+
+fn paste_clipboard_items_progress(
+    clipboard: &StackClipboard, destination: &Path, journal_dir: Option<&Path>,
+    window: &WebviewWindow, progress: &mut StackFileOperationProgress,
+) -> StackPasteResult {
+    let report = |p: &StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, p); };
+    let mut pasted = Vec::new();
+    let mut failures = Vec::new();
+    for source in &clipboard.paths {
+        progress.current_path = Some(source.to_string_lossy().into_owned());
+        progress.determinate = false;
+        progress.total_files = None; progress.completed_files = None;
+        progress.total_bytes = None; progress.completed_bytes = None;
+        progress.phase("planning"); report(progress);
+        let item = (|| {
+            ensure_paste_destination_allowed(source, destination)?;
+            let target = available_destination_path(destination, source)?;
+            if clipboard.mode == ClipboardMode::Copy {
+                let (files, bytes) = super::file_ops::scan_copy_totals(source)?;
+                progress.total_files = Some(files); progress.completed_files = Some(0);
+                progress.total_bytes = Some(bytes); progress.completed_bytes = Some(0);
+                progress.determinate = true; progress.phase("copying"); report(progress);
+                copy_path_with_journal_progress(source, &target, journal_dir, &mut |path, bytes| {
+                    progress.completed_files = Some(progress.completed_files.unwrap_or(0) + 1);
+                    progress.completed_bytes = Some(progress.completed_bytes.unwrap_or(0).saturating_add(bytes));
+                    progress.current_path = Some(path.to_string_lossy().into_owned());
+                    progress.phase("copying"); report(progress);
+                })?;
+            } else {
+                progress.phase("moving"); report(progress);
+                // The rename path is phase-only; only fallback copy has scanned totals.
+                let progress_cell = std::cell::RefCell::new(&mut *progress);
+                move_path_with_fallback_journal_progress(source, &target, journal_dir,
+                    &mut |path, bytes| {
+                        let mut progress = progress_cell.borrow_mut();
+                        progress.completed_files = Some(progress.completed_files.unwrap_or(0) + 1);
+                        progress.completed_bytes = Some(progress.completed_bytes.unwrap_or(0).saturating_add(bytes));
+                        progress.current_path = Some(path.to_string_lossy().into_owned());
+                        progress.phase("copying"); report(&progress);
+                    },
+                    &mut || {
+                        let mut progress = progress_cell.borrow_mut();
+                        let (files, bytes) = super::file_ops::scan_copy_totals(source)?;
+                        progress.total_files = Some(files); progress.completed_files = Some(0);
+                        progress.total_bytes = Some(bytes); progress.completed_bytes = Some(0);
+                        progress.determinate = true;
+                        progress.phase("copying"); report(&progress);
+                        Ok(())
+                    }, &mut || {
+                        let mut progress = progress_cell.borrow_mut();
+                        progress.determinate = false;
+                        progress.total_files = None; progress.completed_files = None;
+                        progress.total_bytes = None; progress.completed_bytes = None;
+                        progress.phase("deleting"); report(&progress);
+                    })?;
+            }
+            stack_item_from_path(target)
+        })();
+        match item {
+            Ok(item) => pasted.push(item),
+            Err(message) => failures.push(StackPasteFailure { path: source.to_string_lossy().into_owned(), message }),
+        }
+    }
+    progress.determinate = false;
+    progress.total_files = None; progress.completed_files = None;
+    progress.total_bytes = None; progress.completed_bytes = None;
+    if failures.is_empty() { progress.phase("completed"); }
+    else { progress.error = Some(format!("{} item(s) could not be pasted", failures.len())); progress.phase("failed"); }
+    report(progress);
     StackPasteResult { pasted, failures }
 }
 

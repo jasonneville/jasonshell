@@ -20,7 +20,7 @@
 </article>
 
 <style>
-  .markdown-preview{box-sizing:border-box;color:var(--js-color-text);font-family:Georgia,'Times New Roman',serif;line-height:1.72;margin:0 auto;max-width:54rem;min-height:100%;padding:clamp(1.5rem,5vw,4rem) clamp(1.25rem,6vw,5rem)}
+  .markdown-preview{box-sizing:border-box;color:var(--js-color-text);font-family:Georgia,'Times New Roman',serif;line-height:1.72;max-width:80rem;min-height:100%;padding:clamp(1.5rem,5vw,4rem) clamp(1rem,4vw,2.5rem);width:100%}
   h1,h2,h3{color:var(--js-color-text-strong);font-family:'Trebuchet MS','Segoe UI',sans-serif;letter-spacing:-.025em;line-height:1.15} h1{border-bottom:1px solid var(--js-color-accent-border);font-size:clamp(2rem,6vw,3.5rem);margin:0 0 2rem;padding-bottom:1rem} h2{font-size:1.65rem;margin:2.5rem 0 .75rem} h3{font-size:1.15rem;margin:2rem 0 .6rem}
   p,ul,ol{margin:0 0 1.2rem} li{margin-block:.28rem;padding-left:.25rem} li::marker{color:var(--js-color-accent);font-weight:700}
   code{background:var(--js-color-accent-soft);border:1px solid var(--js-color-accent-border);border-radius:var(--js-radius-xs);font-family:'Cascadia Code',Consolas,monospace;font-size:.88em;padding:.12em .34em}.code-frame{background:var(--js-bg-surface);border:1px solid var(--js-color-border);border-radius:var(--js-radius-md);box-shadow:0 .8rem 2rem color-mix(in srgb,var(--js-color-text) 10%,transparent);margin:1.5rem 0;overflow:hidden}.code-frame>span{border-bottom:1px solid var(--js-color-border);color:var(--js-color-text-muted);display:block;font:600 .65rem/1 sans-serif;letter-spacing:.1em;padding:.65rem 1rem;text-transform:uppercase}pre{margin:0;max-width:100%;overflow:auto;padding:1rem}pre code{background:transparent;border:0;padding:0}

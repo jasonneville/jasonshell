@@ -430,6 +430,44 @@ pub struct StackPasteResult {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StackFileOperationProgress {
+    pub operation_id: String,
+    pub operation: &'static str,
+    pub phase: &'static str,
+    pub determinate: bool,
+    pub started_at: u64,
+    pub updated_at: u64,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_files: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_files: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl StackFileOperationProgress {
+    pub fn new(operation_id: String, operation: &'static str, phase: &'static str, started_at: u64) -> Self {
+        let updated_at = super::file_ops::now_ms();
+        Self { operation_id, operation, phase, determinate: false, started_at,
+            updated_at, elapsed_ms: updated_at.saturating_sub(started_at), current_path: None,
+            total_files: None, completed_files: None, total_bytes: None, completed_bytes: None, error: None }
+    }
+    pub fn phase(&mut self, phase: &'static str) {
+        self.phase = phase;
+        self.updated_at = super::file_ops::now_ms();
+        self.elapsed_ms = self.updated_at.saturating_sub(self.started_at);
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackOpenWithCandidate {
     pub id: String,
     pub label: String,

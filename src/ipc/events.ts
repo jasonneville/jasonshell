@@ -26,6 +26,7 @@ export const IPC_EVENTS = {
   quickLaunchPanelOpen: 'quick-launch-panel:open',
   quickLaunchPanelClosed: 'quick-launch-panel:closed',
   stackPopupOpen: 'stack-popup:open',
+  stackFileOperationProgress: 'stack-operation:progress',
   stackTerminalClosed: 'stack-terminal:closed',
   stackTerminalCwd: 'stack-terminal:cwd',
   stackTerminalOutput: 'stack-terminal:output',
@@ -43,6 +44,25 @@ export const IPC_EVENTS = {
 } as const;
 
 export type IpcEventName = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS];
+
+export interface StackFileOperationProgress {
+  operationId: string;
+  operation: 'paste' | 'delete' | 'extract';
+  phase: 'planning' | 'copying' | 'moving' | 'deleting' | 'extracting' | 'refreshing' | 'completed' | 'failed';
+  determinate: boolean;
+  startedAt: number;
+  updatedAt: number;
+  elapsedMs: number;
+  currentPath?: string;
+  totalFiles?: number;
+  completedFiles?: number;
+  totalBytes?: number;
+  completedBytes?: number;
+  totalItems?: number;
+  completedItems?: number;
+  message?: string;
+  error?: string;
+}
 
 export type SpeechSessionNonce = number;
 export type SpeechStatusKind = 'idle' | 'recording' | 'transcribing' | 'copied' | 'error';
