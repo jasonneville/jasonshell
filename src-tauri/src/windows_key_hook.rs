@@ -1,824 +1,583 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::settings::StandardHotkeySettings;
 
 #[cfg(windows)]
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::thread::{self, JoinHandle};
 #[cfg(windows)]
 use tauri::{AppHandle, Emitter};
 #[cfg(windows)]
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_1, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_MENU, VK_OEM_3, VK_RCONTROL,
-    VK_RMENU, VK_SPACE,
+    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_1,
+    VK_OEM_3, VK_SPACE,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
-    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY,
 };
 
-pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str = "search:toggle-centered";
-pub const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = "terminal:toggle-panel";
-pub const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT: &str = "stack-browser:toggle";
+pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str =
+    crate::contracts::events::SEARCH_TOGGLE_CENTERED;
+#[rustfmt::skip]
+pub const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = crate::contracts::events::TERMINAL_TOGGLE_PANEL;
+pub const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT: &str =
+    crate::contracts::events::STACK_BROWSER_TOGGLE;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SearchHotkeyCode {
-    LeftControl,
-    RightControl,
-    Space,
-    Backquote,
-    LeftAlt,
-    RightAlt,
-    Other(u32),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SearchHotkeyEventKind {
-    KeyDown,
-    KeyUp,
+pub enum ConfiguredHotkeyAction {
+    Search,
+    Terminal,
+    StackBrowser,
+    Speech,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SearchHotkeyEvent {
-    pub key: SearchHotkeyCode,
-    pub kind: SearchHotkeyEventKind,
-    pub repeat: bool,
+enum HotkeyModifier {
+    Ctrl,
+    Alt,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SearchHotkeyDecision {
-    ToggleSearch,
-    ToggleTerminal,
-    ToggleStackBrowser,
-    Suppress,
-    PassThrough,
+struct RegistryBinding {
+    modifier: HotkeyModifier,
+    key: u32,
+    action: ConfiguredHotkeyAction,
 }
 
-pub fn unavailable_hook_state_decision(_event: SearchHotkeyEvent) -> SearchHotkeyDecision {
-    SearchHotkeyDecision::PassThrough
+#[cfg(windows)]
+type ActiveBindings = [Option<RegistryBinding>; 4];
+
+#[derive(Clone, Debug)]
+pub struct StandardHotkeyRegistry {
+    bindings: [RegistryBinding; 4],
 }
 
-#[derive(Default)]
-pub struct SearchHotkeyClassifier {
-    left_control_down: bool,
-    right_control_down: bool,
-    emitted_for_chord: bool,
-    space_down: bool,
-    left_alt_down: bool,
-    right_alt_down: bool,
-    backquote_down: bool,
-    one_down: bool,
-}
-
-impl SearchHotkeyClassifier {
-    fn any_control_down(&self) -> bool {
-        self.left_control_down || self.right_control_down
+impl StandardHotkeyRegistry {
+    fn from_settings(settings: &StandardHotkeySettings) -> Result<Self, String> {
+        let settings = crate::settings::validate_standard_hotkey_settings(settings.clone())?;
+        Ok(Self {
+            bindings: [
+                registry_binding(&settings.search.0, ConfiguredHotkeyAction::Search)?,
+                registry_binding(&settings.terminal.0, ConfiguredHotkeyAction::Terminal)?,
+                registry_binding(
+                    &settings.stack_browser.0,
+                    ConfiguredHotkeyAction::StackBrowser,
+                )?,
+                registry_binding(
+                    &settings.speech_transcription.0,
+                    ConfiguredHotkeyAction::Speech,
+                )?,
+            ],
+        })
     }
+}
 
-    fn set_control_down(&mut self, key: SearchHotkeyCode, is_down: bool) {
-        match key {
-            SearchHotkeyCode::LeftControl => self.left_control_down = is_down,
-            SearchHotkeyCode::RightControl => self.right_control_down = is_down,
-            SearchHotkeyCode::Space
-            | SearchHotkeyCode::Backquote
-            | SearchHotkeyCode::LeftAlt
-            | SearchHotkeyCode::RightAlt
-            | SearchHotkeyCode::Other(_) => {}
+fn registry_binding(
+    value: &str,
+    action: ConfiguredHotkeyAction,
+) -> Result<RegistryBinding, String> {
+    let canonical = crate::settings::canonicalize_hotkey_binding(value)?.0;
+    let (modifier, key) = canonical
+        .split_once('+')
+        .ok_or_else(|| "invalid canonical hotkey".to_string())?;
+    let modifier = match modifier {
+        "Ctrl" => HotkeyModifier::Ctrl,
+        "Alt" => HotkeyModifier::Alt,
+        _ => return Err("unsupported hotkey modifier".to_string()),
+    };
+    // VK_OEM_3 is layout-sensitive: Backquote means this physical Windows virtual key.
+    let key = match key {
+        "Space" => space_virtual_key(),
+        "Backquote" => backquote_virtual_key(),
+        "1" => one_virtual_key(),
+        _ if key.len() == 1 && key.as_bytes()[0].is_ascii_alphanumeric() => {
+            key.as_bytes()[0] as u32
+        }
+        _ => return Err("unsupported canonical hotkey key".to_string()),
+    };
+    Ok(RegistryBinding {
+        modifier,
+        key,
+        action,
+    })
+}
+
+#[cfg(windows)]
+fn space_virtual_key() -> u32 {
+    VK_SPACE.0 as u32
+}
+#[cfg(not(windows))]
+fn space_virtual_key() -> u32 {
+    0x20
+}
+#[cfg(windows)]
+fn backquote_virtual_key() -> u32 {
+    VK_OEM_3.0 as u32
+}
+#[cfg(not(windows))]
+fn backquote_virtual_key() -> u32 {
+    0xc0
+}
+#[cfg(windows)]
+fn one_virtual_key() -> u32 {
+    VK_1.0 as u32
+}
+#[cfg(not(windows))]
+fn one_virtual_key() -> u32 {
+    b'1' as u32
+}
+
+#[cfg(windows)]
+const HOTKEY_IDS: [i32; 4] = [1, 2, 3, 4];
+#[cfg(windows)]
+const WM_REPLACE_HOTKEYS: u32 = WM_APP + 41;
+#[cfg(windows)]
+const WM_STOP_HOTKEYS: u32 = WM_APP + 42;
+
+#[cfg(windows)]
+struct HotkeyThread {
+    id: u32,
+    sender: mpsc::Sender<ReplaceRequest>,
+    worker: JoinHandle<()>,
+    stopping: bool,
+}
+
+#[cfg(windows)]
+struct ReplaceRequest {
+    registry: StandardHotkeyRegistry,
+    result: mpsc::SyncSender<Result<(), String>>,
+}
+
+#[cfg(windows)]
+static HOTKEY_THREAD: OnceLock<Mutex<Option<HotkeyThread>>> = OnceLock::new();
+
+#[cfg(windows)]
+fn hotkey_thread() -> &'static Mutex<Option<HotkeyThread>> {
+    HOTKEY_THREAD.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(windows)]
+fn modifiers(binding: RegistryBinding) -> HOT_KEY_MODIFIERS {
+    MOD_NOREPEAT
+        | match binding.modifier {
+            HotkeyModifier::Ctrl => MOD_CONTROL,
+            HotkeyModifier::Alt => MOD_ALT,
+        }
+}
+
+#[cfg(windows)]
+fn register_binding(index: usize, binding: RegistryBinding) -> Result<(), String> {
+    unsafe { RegisterHotKey(None, HOTKEY_IDS[index], modifiers(binding), binding.key) }
+        .map_err(|error| format!("failed to register {:?} hotkey: {error}", binding.action))
+}
+
+#[cfg(windows)]
+fn unregister_binding(index: usize) {
+    let _ = unsafe { UnregisterHotKey(None, HOTKEY_IDS[index]) };
+}
+
+// All OS registrations and their rollback live on the owning message thread.
+// Unchanged chords stay registered, avoiding needless conflicts with other apps.
+fn replace_registrations(
+    current: &mut ActiveBindings,
+    next: StandardHotkeyRegistry,
+    mut register: impl FnMut(usize, RegistryBinding) -> Result<(), String>,
+    mut unregister: impl FnMut(usize),
+) -> Result<(), String> {
+    let changed: Vec<usize> = (0..HOTKEY_IDS.len())
+        .filter(|&index| {
+            current[index].is_none_or(|old| {
+                old.key != next.bindings[index].key || old.modifier != next.bindings[index].modifier
+            })
+        })
+        .collect();
+    let previous = *current;
+    for &index in &changed {
+        if current[index].is_some() {
+            unregister(index);
+            current[index] = None;
         }
     }
-
-    fn any_alt_down(&self) -> bool {
-        self.left_alt_down || self.right_alt_down
-    }
-
-    fn set_alt_down(&mut self, key: SearchHotkeyCode, is_down: bool) {
-        match key {
-            SearchHotkeyCode::LeftAlt => self.left_alt_down = is_down,
-            SearchHotkeyCode::RightAlt => self.right_alt_down = is_down,
-            SearchHotkeyCode::LeftControl
-            | SearchHotkeyCode::RightControl
-            | SearchHotkeyCode::Space
-            | SearchHotkeyCode::Backquote
-            | SearchHotkeyCode::Other(_) => {}
+    for &index in &changed {
+        if let Err(error) = register(index, next.bindings[index]) {
+            for &registered_index in &changed {
+                if current[registered_index].is_some() {
+                    unregister(registered_index);
+                    current[registered_index] = None;
+                }
+            }
+            let mut restore_errors = Vec::new();
+            for &old_index in &changed {
+                if let Some(binding) = previous[old_index] {
+                    if let Err(restore_error) = register(old_index, binding) {
+                        restore_errors.push(restore_error);
+                    } else {
+                        current[old_index] = Some(binding);
+                    }
+                }
+            }
+            if !restore_errors.is_empty() {
+                return Err(format!(
+                    "{error}; rollback failed; remaining hotkeys retained: {}",
+                    restore_errors.join("; ")
+                ));
+            }
+            return Err(error);
         }
+        current[index] = Some(next.bindings[index]);
     }
+    Ok(())
+}
 
-    #[cfg(test)]
-    pub fn handle_event(&mut self, event: SearchHotkeyEvent) -> SearchHotkeyDecision {
-        self.handle_event_with_modifier_overrides(event, None, None)
-    }
+#[cfg(windows)]
+use crate::speech_runtime::SpeechRuntimeState;
+#[cfg(windows)]
+use tauri::Manager;
 
-    pub fn handle_event_with_control_override(
-        &mut self,
-        event: SearchHotkeyEvent,
-        control_down_override: Option<bool>,
-    ) -> SearchHotkeyDecision {
-        self.handle_event_with_modifier_overrides(event, control_down_override, None)
-    }
-
-    pub fn handle_event_with_modifier_overrides(
-        &mut self,
-        event: SearchHotkeyEvent,
-        control_down_override: Option<bool>,
-        alt_down_override: Option<bool>,
-    ) -> SearchHotkeyDecision {
-        match (event.key, event.kind) {
-            (
-                SearchHotkeyCode::LeftControl | SearchHotkeyCode::RightControl,
-                SearchHotkeyEventKind::KeyDown,
-            ) => {
-                self.set_control_down(event.key, true);
-                SearchHotkeyDecision::PassThrough
-            }
-            (
-                SearchHotkeyCode::LeftControl | SearchHotkeyCode::RightControl,
-                SearchHotkeyEventKind::KeyUp,
-            ) => {
-                self.set_control_down(event.key, false);
-                if !self.any_control_down() {
-                    self.emitted_for_chord = false;
+#[cfg(windows)]
+#[rustfmt::skip]
+fn dispatch_hotkey(app_handle: &AppHandle, id: i32, registry: &ActiveBindings) {
+    let Some(index) = HOTKEY_IDS
+        .iter()
+        .position(|registered_id| *registered_id == id)
+    else {
+        return;
+    };
+    let Some(binding) = registry[index] else { return; };
+    match binding.action {
+        ConfiguredHotkeyAction::Search => {
+            let _ = app_handle.emit_to(
+                crate::shell_windows::TOP_BAR_LABEL,
+                crate::contracts::events::SEARCH_TOGGLE_CENTERED,
+                (),
+            );
+        }
+        ConfiguredHotkeyAction::Terminal => {
+            let _ = app_handle.emit_to(crate::shell_windows::TOP_BAR_LABEL, crate::contracts::events::TERMINAL_TOGGLE_PANEL, ());
+        }
+        ConfiguredHotkeyAction::StackBrowser => {
+            let _ = app_handle.emit_to(
+                crate::shell_windows::TOP_BAR_LABEL,
+                crate::contracts::events::STACK_BROWSER_TOGGLE,
+                (),
+            );
+        }
+        ConfiguredHotkeyAction::Speech => {
+            // Capture on the hotkey message thread, before UI delivery can change focus.
+            let Some(reservation) = app_handle
+                .state::<SpeechRuntimeState>()
+                .prepare_speech_paste_target() else { return; };
+            if app_handle.emit_to(
+                crate::shell_windows::TOP_BAR_LABEL,
+                crate::contracts::events::SPEECH_TOGGLE,
+                reservation,
+            ).is_err() {
+                if let crate::speech::SpeechHotkeyActivation::Start { reservation_id } = reservation {
+                    app_handle.state::<SpeechRuntimeState>().cancel_speech_preparation(reservation_id);
                 }
-                SearchHotkeyDecision::PassThrough
-            }
-            (
-                SearchHotkeyCode::LeftAlt | SearchHotkeyCode::RightAlt,
-                SearchHotkeyEventKind::KeyDown,
-            ) => {
-                self.set_alt_down(event.key, true);
-                SearchHotkeyDecision::PassThrough
-            }
-            (
-                SearchHotkeyCode::LeftAlt | SearchHotkeyCode::RightAlt,
-                SearchHotkeyEventKind::KeyUp,
-            ) => {
-                self.set_alt_down(event.key, false);
-                if !self.any_alt_down() {
-                    self.backquote_down = false;
-                    self.one_down = false;
-                }
-                SearchHotkeyDecision::PassThrough
-            }
-            (SearchHotkeyCode::Backquote, SearchHotkeyEventKind::KeyDown) => {
-                let repeated = event.repeat || self.backquote_down;
-                self.backquote_down = true;
-                if alt_down_override.unwrap_or_else(|| self.any_alt_down()) {
-                    if !repeated {
-                        SearchHotkeyDecision::ToggleTerminal
-                    } else {
-                        SearchHotkeyDecision::Suppress
-                    }
-                } else {
-                    SearchHotkeyDecision::PassThrough
-                }
-            }
-            (SearchHotkeyCode::Backquote, SearchHotkeyEventKind::KeyUp) => {
-                self.backquote_down = false;
-                if alt_down_override.unwrap_or_else(|| self.any_alt_down()) {
-                    SearchHotkeyDecision::Suppress
-                } else {
-                    SearchHotkeyDecision::PassThrough
-                }
-            }
-            (SearchHotkeyCode::Other(code), SearchHotkeyEventKind::KeyDown)
-                if code == VK_1.0 as u32 =>
-            {
-                let repeated = event.repeat || self.one_down;
-                self.one_down = true;
-                let alt_down = alt_down_override.unwrap_or_else(|| self.any_alt_down());
-                let control_down = control_down_override.unwrap_or_else(|| self.any_control_down());
-                if alt_down && !control_down {
-                    if !repeated {
-                        SearchHotkeyDecision::ToggleStackBrowser
-                    } else {
-                        SearchHotkeyDecision::Suppress
-                    }
-                } else {
-                    SearchHotkeyDecision::PassThrough
-                }
-            }
-            (SearchHotkeyCode::Other(code), SearchHotkeyEventKind::KeyUp)
-                if code == VK_1.0 as u32 =>
-            {
-                self.one_down = false;
-                let alt_down = alt_down_override.unwrap_or_else(|| self.any_alt_down());
-                let control_down = control_down_override.unwrap_or_else(|| self.any_control_down());
-                if alt_down && !control_down {
-                    SearchHotkeyDecision::Suppress
-                } else {
-                    SearchHotkeyDecision::PassThrough
-                }
-            }
-            (SearchHotkeyCode::Space, SearchHotkeyEventKind::KeyDown) => {
-                self.space_down = true;
-                let control_down = control_down_override.unwrap_or_else(|| self.any_control_down());
-                if control_down {
-                    if !self.emitted_for_chord && !event.repeat {
-                        self.emitted_for_chord = true;
-                        SearchHotkeyDecision::ToggleSearch
-                    } else {
-                        SearchHotkeyDecision::Suppress
-                    }
-                } else {
-                    self.emitted_for_chord = false;
-                    SearchHotkeyDecision::PassThrough
-                }
-            }
-            (SearchHotkeyCode::Space, SearchHotkeyEventKind::KeyUp) => {
-                self.space_down = false;
-                if self.emitted_for_chord {
-                    if !self.any_control_down() {
-                        self.emitted_for_chord = false;
-                    }
-                    SearchHotkeyDecision::Suppress
-                } else {
-                    SearchHotkeyDecision::PassThrough
-                }
-            }
-            (SearchHotkeyCode::Other(_), SearchHotkeyEventKind::KeyDown) => {
-                if !self.space_down {
-                    self.emitted_for_chord = false;
-                }
-                if !self.backquote_down {
-                    self.backquote_down = false;
-                }
-                SearchHotkeyDecision::PassThrough
-            }
-            (SearchHotkeyCode::Other(_), SearchHotkeyEventKind::KeyUp) => {
-                SearchHotkeyDecision::PassThrough
             }
         }
     }
 }
 
-#[derive(Default)]
-#[cfg(test)]
-pub struct SearchHotkeyHookLifecycle {
-    installed: AtomicBool,
-}
-
-#[cfg(test)]
-impl SearchHotkeyHookLifecycle {
-    pub fn install_once(&self) -> bool {
-        self.installed
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
+#[cfg(windows)]
+fn run_hotkey_thread(
+    app_handle: AppHandle,
+    requests: mpsc::Receiver<ReplaceRequest>,
+    ready: mpsc::SyncSender<u32>,
+) {
+    let mut message = MSG::default();
+    // Force creation of this thread's message queue before publishing its ID.
+    unsafe {
+        PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
     }
-
-    pub fn uninstall(&self) -> bool {
-        self.installed
-            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
+    if ready.send(unsafe { GetCurrentThreadId() }).is_err() {
+        return;
     }
-
-    pub fn is_installed(&self) -> bool {
-        self.installed.load(Ordering::SeqCst)
+    let mut current: ActiveBindings = [None; 4];
+    while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
+        match message.message {
+            WM_REPLACE_HOTKEYS => {
+                while let Ok(request) = requests.try_recv() {
+                    let result = replace_registrations(
+                        &mut current,
+                        request.registry,
+                        register_binding,
+                        unregister_binding,
+                    );
+                    let _ = request.result.send(result);
+                }
+            }
+            WM_HOTKEY => {
+                dispatch_hotkey(&app_handle, message.wParam.0 as i32, &current);
+            }
+            WM_STOP_HOTKEYS => break,
+            _ => {}
+        }
+    }
+    for (index, binding) in current.iter().enumerate() {
+        if binding.is_some() {
+            unregister_binding(index);
+        }
     }
 }
 
-#[cfg(test)]
-pub fn toggle_search_event_target_label() -> &'static str {
-    crate::shell_windows::TOP_BAR_LABEL
+#[cfg(windows)]
+fn request_replacement(
+    thread: &HotkeyThread,
+    registry: StandardHotkeyRegistry,
+) -> Result<(), String> {
+    let (result_tx, result_rx) = mpsc::sync_channel(1);
+    thread
+        .sender
+        .send(ReplaceRequest {
+            registry,
+            result: result_tx,
+        })
+        .map_err(|_| "hotkey message thread stopped".to_string())?;
+    unsafe {
+        PostThreadMessageW(
+            thread.id,
+            WM_REPLACE_HOTKEYS,
+            Default::default(),
+            Default::default(),
+        )
+    }
+    .map_err(|error| format!("failed to notify hotkey message thread: {error}"))?;
+    result_rx
+        .recv()
+        .map_err(|_| "hotkey message thread stopped".to_string())?
 }
 
 #[cfg(windows)]
-struct NativeHookState {
-    classifier: SearchHotkeyClassifier,
-    hook: isize,
-    action_tx: mpsc::SyncSender<SearchHotkeyDecision>,
-    worker_stop: Arc<AtomicBool>,
-    worker: Option<std::thread::JoinHandle<()>>,
-}
-
-#[cfg(windows)]
-static NATIVE_HOOK_STATE: OnceLock<Mutex<Option<NativeHookState>>> = OnceLock::new();
-
-#[cfg(windows)]
-fn native_hook_state() -> &'static Mutex<Option<NativeHookState>> {
-    NATIVE_HOOK_STATE.get_or_init(|| Mutex::new(None))
-}
-
-#[cfg(windows)]
-pub fn install_windows_key_hook(app_handle: AppHandle) -> Result<(), String> {
-    let mut guard = native_hook_state()
+pub fn install_windows_key_hook(
+    app_handle: AppHandle,
+    hotkeys: StandardHotkeySettings,
+) -> Result<(), String> {
+    let registry = StandardHotkeyRegistry::from_settings(&hotkeys)?;
+    let mut guard = hotkey_thread()
         .lock()
-        .map_err(|_| "search hotkey hook state is poisoned".to_string())?;
-    if guard.is_some() {
-        return Ok(());
+        .map_err(|_| "hotkey thread lock is poisoned".to_string())?;
+    reap_finished_thread(&mut guard)?;
+    if let Some(state) = guard.as_ref() {
+        return if state.stopping {
+            Err("hotkey message thread is still stopping; cannot install".into())
+        } else {
+            Ok(())
+        };
     }
-
-    let (action_tx, action_rx) = mpsc::sync_channel(8);
-    let worker_stop = Arc::new(AtomicBool::new(false));
-    let worker_stop_signal = Arc::clone(&worker_stop);
-    let worker_app_handle = app_handle.clone();
-    let worker = std::thread::spawn(move || {
-        while !worker_stop_signal.load(Ordering::Relaxed) {
-            match action_rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(SearchHotkeyDecision::ToggleSearch) => {
-                    let _ = worker_app_handle.emit_to(
-                        crate::shell_windows::TOP_BAR_LABEL,
-                        SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT,
-                        (),
-                    );
-                }
-                Ok(SearchHotkeyDecision::ToggleTerminal) => {
-                    let _ = worker_app_handle.emit_to(
-                        crate::shell_windows::TOP_BAR_LABEL,
-                        TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
-                        (),
-                    );
-                }
-                Ok(SearchHotkeyDecision::ToggleStackBrowser) => {
-                    let _ = worker_app_handle.emit_to(
-                        crate::shell_windows::TOP_BAR_LABEL,
-                        STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT,
-                        (),
-                    );
-                }
-                Ok(SearchHotkeyDecision::PassThrough | SearchHotkeyDecision::Suppress) => {}
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-        while let Ok(action) = action_rx.try_recv() {
-            match action {
-                SearchHotkeyDecision::ToggleSearch => {
-                    let _ = worker_app_handle.emit_to(
-                        crate::shell_windows::TOP_BAR_LABEL,
-                        SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT,
-                        (),
-                    );
-                }
-                SearchHotkeyDecision::ToggleTerminal => {
-                    let _ = worker_app_handle.emit_to(
-                        crate::shell_windows::TOP_BAR_LABEL,
-                        TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
-                        (),
-                    );
-                }
-                SearchHotkeyDecision::ToggleStackBrowser => {
-                    let _ = worker_app_handle.emit_to(
-                        crate::shell_windows::TOP_BAR_LABEL,
-                        STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT,
-                        (),
-                    );
-                }
-                SearchHotkeyDecision::PassThrough | SearchHotkeyDecision::Suppress => {}
-            }
-        }
-    });
-
-    let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(windows_key_hook_proc), None, 0) }
-        .map_err(|error| format!("failed to install search hotkey hook: {error}"))?;
-    *guard = Some(NativeHookState {
-        classifier: SearchHotkeyClassifier::default(),
-        hook: hook.0 as isize,
-        action_tx,
-        worker_stop,
-        worker: Some(worker),
-    });
+    let (sender, requests) = mpsc::channel();
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let worker = thread::Builder::new()
+        .name("jasonshell-hotkeys".into())
+        .spawn(move || run_hotkey_thread(app_handle, requests, ready_tx))
+        .map_err(|error| format!("failed to start hotkey thread: {error}"))?;
+    let id = ready_rx
+        .recv()
+        .map_err(|_| "hotkey message thread failed to start".to_string())?;
+    let state = HotkeyThread {
+        id,
+        sender,
+        worker,
+        stopping: false,
+    };
+    if let Err(error) = request_replacement(&state, registry) {
+        *guard = Some(state);
+        let cleanup = stop_hotkey_thread(&mut guard);
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) => format!("{error}; {cleanup_error}"),
+        });
+    }
+    *guard = Some(state);
     Ok(())
 }
 
 #[cfg(not(windows))]
-pub fn install_windows_key_hook(_app_handle: ()) -> Result<(), String> {
+pub fn install_windows_key_hook(
+    _app_handle: (),
+    hotkeys: StandardHotkeySettings,
+) -> Result<(), String> {
+    StandardHotkeyRegistry::from_settings(&hotkeys).map(|_| ())
+}
+
+#[cfg(windows)]
+pub fn configure_standard_hotkeys(
+    _app_handle: &AppHandle,
+    hotkeys: &StandardHotkeySettings,
+) -> Result<(), String> {
+    let registry = StandardHotkeyRegistry::from_settings(hotkeys)?;
+    let mut guard = hotkey_thread()
+        .lock()
+        .map_err(|_| "hotkey thread lock is poisoned".to_string())?;
+    reap_finished_thread(&mut guard)?;
+    let thread = guard
+        .as_ref()
+        .ok_or_else(|| "hotkey message thread is not running".to_string())?;
+    if thread.stopping {
+        return Err("hotkey message thread is stopping".into());
+    }
+    request_replacement(thread, registry)
+}
+
+#[cfg(not(windows))]
+pub fn configure_standard_hotkeys(
+    _app_handle: &tauri::AppHandle,
+    hotkeys: &StandardHotkeySettings,
+) -> Result<(), String> {
+    StandardHotkeyRegistry::from_settings(hotkeys).map(|_| ())
+}
+
+#[cfg(windows)]
+fn reap_finished_thread(guard: &mut Option<HotkeyThread>) -> Result<(), String> {
+    if guard
+        .as_ref()
+        .is_some_and(|state| state.worker.is_finished())
+    {
+        let state = guard.take().expect("finished worker was present");
+        state
+            .worker
+            .join()
+            .map_err(|_| "hotkey message thread panicked".to_string())?;
+    }
     Ok(())
 }
 
 #[cfg(windows)]
+fn stop_hotkey_thread(guard: &mut Option<HotkeyThread>) -> Result<(), String> {
+    reap_finished_thread(guard)?;
+    let Some(state) = guard.as_mut() else {
+        return Ok(());
+    };
+    // On post failure or timeout, retain ownership for another attempt. Joining an
+    // unnotified GetMessageW thread would hang shutdown indefinitely.
+    unsafe {
+        PostThreadMessageW(
+            state.id,
+            WM_STOP_HOTKEYS,
+            Default::default(),
+            Default::default(),
+        )
+    }
+    .map_err(|error| format!("failed to stop hotkey message thread: {error}"))?;
+    state.stopping = true;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !state.worker.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if !state.worker.is_finished() {
+        return Err(
+            "hotkey message thread did not stop within two seconds; retaining handle for retry"
+                .into(),
+        );
+    }
+    reap_finished_thread(guard)
+}
+
+#[cfg(windows)]
 pub fn uninstall_windows_key_hook() {
-    let Ok(mut guard) = native_hook_state().lock() else {
-        return;
-    };
-    let Some(state) = guard.take() else {
-        return;
-    };
-    state.worker_stop.store(true, Ordering::Relaxed);
-    let _ = unsafe { UnhookWindowsHookEx(HHOOK(state.hook as *mut _)) };
-    drop(state.action_tx);
-    if let Some(worker) = state.worker {
-        let _ = worker.join();
+    match hotkey_thread().lock() {
+        Ok(mut guard) => {
+            if let Err(error) = stop_hotkey_thread(&mut guard) {
+                eprintln!("{error}");
+            }
+        }
+        Err(_) => eprintln!("hotkey thread lock is poisoned; cannot stop hotkey message thread"),
     }
 }
 
 #[cfg(not(windows))]
 pub fn uninstall_windows_key_hook() {}
 
-#[cfg(windows)]
-unsafe extern "system" fn windows_key_hook_proc(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    if code == HC_ACTION as i32 {
-        let event = keyboard_hook_event(wparam, lparam);
-        if let Some(event) = event {
-            let decision = if let Ok(mut guard) = native_hook_state().lock() {
-                if let Some(state) = guard.as_mut() {
-                    let decision = state.classifier.handle_event_with_modifier_overrides(
-                        event,
-                        control_key_is_down(),
-                        alt_key_is_down(),
-                    );
-                    if matches!(
-                        decision,
-                        SearchHotkeyDecision::ToggleSearch
-                            | SearchHotkeyDecision::ToggleTerminal
-                            | SearchHotkeyDecision::ToggleStackBrowser
-                    ) {
-                        let _ = state.action_tx.try_send(decision);
-                    }
-                    decision
-                } else {
-                    unavailable_hook_state_decision(event)
-                }
-            } else {
-                unavailable_hook_state_decision(event)
-            };
-
-            match decision {
-                SearchHotkeyDecision::ToggleSearch => {
-                    return LRESULT(1);
-                }
-                SearchHotkeyDecision::ToggleTerminal => {
-                    return LRESULT(1);
-                }
-                SearchHotkeyDecision::ToggleStackBrowser => return LRESULT(1),
-                SearchHotkeyDecision::Suppress => return LRESULT(1),
-                SearchHotkeyDecision::PassThrough => {}
-            }
-        }
-    }
-    CallNextHookEx(None, code, wparam, lparam)
-}
-
-#[cfg(windows)]
-fn control_key_is_down() -> Option<bool> {
-    Some(
-        unsafe { GetAsyncKeyState(VK_CONTROL.0.into()) } < 0
-            || unsafe { GetAsyncKeyState(VK_LCONTROL.0.into()) } < 0
-            || unsafe { GetAsyncKeyState(VK_RCONTROL.0.into()) } < 0,
-    )
-}
-
-#[cfg(windows)]
-fn alt_key_is_down() -> Option<bool> {
-    Some(
-        unsafe { GetAsyncKeyState(VK_MENU.0.into()) } < 0
-            || unsafe { GetAsyncKeyState(VK_LMENU.0.into()) } < 0
-            || unsafe { GetAsyncKeyState(VK_RMENU.0.into()) } < 0,
-    )
-}
-
-#[cfg(windows)]
-fn keyboard_hook_event(wparam: WPARAM, lparam: LPARAM) -> Option<SearchHotkeyEvent> {
-    let kind = match wparam.0 as u32 {
-        WM_KEYDOWN | WM_SYSKEYDOWN => SearchHotkeyEventKind::KeyDown,
-        WM_KEYUP | WM_SYSKEYUP => SearchHotkeyEventKind::KeyUp,
-        _ => return None,
-    };
-    let info = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
-    let key = if info.vkCode == VK_LCONTROL.0 as u32 || info.vkCode == VK_CONTROL.0 as u32 {
-        SearchHotkeyCode::LeftControl
-    } else if info.vkCode == VK_RCONTROL.0 as u32 {
-        SearchHotkeyCode::RightControl
-    } else if info.vkCode == VK_SPACE.0 as u32 {
-        SearchHotkeyCode::Space
-    } else if info.vkCode == VK_OEM_3.0 as u32 {
-        SearchHotkeyCode::Backquote
-    } else if info.vkCode == VK_MENU.0 as u32 || info.vkCode == VK_LMENU.0 as u32 {
-        SearchHotkeyCode::LeftAlt
-    } else if info.vkCode == VK_RMENU.0 as u32 {
-        SearchHotkeyCode::RightAlt
-    } else {
-        SearchHotkeyCode::Other(info.vkCode)
-    };
-    Some(SearchHotkeyEvent {
-        key,
-        kind,
-        repeat: false,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::CanonicalHotkeyBinding;
 
-    fn down(key: SearchHotkeyCode) -> SearchHotkeyEvent {
-        SearchHotkeyEvent {
-            key,
-            kind: SearchHotkeyEventKind::KeyDown,
-            repeat: false,
+    #[test]
+    fn defaults_map_all_four_distinct_actions_and_virtual_keys() {
+        let registry =
+            StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).unwrap();
+        assert_eq!(registry.bindings[0].key, space_virtual_key());
+        assert_eq!(registry.bindings[1].key, backquote_virtual_key());
+        assert_eq!(registry.bindings[2].key, one_virtual_key());
+        assert_eq!(registry.bindings[3].key, b'D' as u32);
+        assert_eq!(registry.bindings[3].action, ConfiguredHotkeyAction::Speech);
+    }
+
+    #[test]
+    fn remaps_ascii_keys_and_rejects_duplicate_chords() {
+        let mut settings = StandardHotkeySettings::default();
+        settings.search = CanonicalHotkeyBinding("ctrl+k".into());
+        assert_eq!(
+            StandardHotkeyRegistry::from_settings(&settings)
+                .unwrap()
+                .bindings[0]
+                .key,
+            b'K' as u32
+        );
+        settings.speech_transcription = CanonicalHotkeyBinding("CONTROL+K".into());
+        assert!(StandardHotkeyRegistry::from_settings(&settings).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_replacement_preserves_verified_restored_bindings_and_reports_missing_one() {
+        let old =
+            StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).unwrap();
+        let mut next_settings = StandardHotkeySettings::default();
+        next_settings.search = CanonicalHotkeyBinding("Ctrl+K".into());
+        next_settings.terminal = CanonicalHotkeyBinding("Alt+9".into());
+        let next = StandardHotkeyRegistry::from_settings(&next_settings).unwrap();
+        let mut active = old.bindings.map(Some);
+        let mut attempts = 0;
+        let error = replace_registrations(
+            &mut active,
+            next,
+            |_, _| {
+                attempts += 1;
+                match attempts {
+                    2 => Err("new chord occupied".into()),
+                    3 => Err("old chord claimed during rollback".into()),
+                    _ => Ok(()),
+                }
+            },
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.contains("new chord occupied"));
+        assert!(error.contains("old chord claimed during rollback"));
+        assert_eq!(active[0], None);
+        assert_eq!(active[1], Some(old.bindings[1]));
+        assert_eq!(active[2], Some(old.bindings[2]));
+        assert_eq!(active[3], Some(old.bindings[3]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn timed_out_stop_followed_by_late_finish_is_reaped_before_reinstall() {
+        let (release, wait) = mpsc::sync_channel::<()>(0);
+        let (sender, _) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = wait.recv();
+        });
+        let mut state = Some(HotkeyThread {
+            id: 0,
+            sender,
+            worker,
+            stopping: true,
+        });
+        assert!(reap_finished_thread(&mut state).is_ok());
+        assert!(state.as_ref().is_some_and(|thread| thread.stopping));
+        release.send(()).unwrap();
+        // Synchronize without a sleep: join availability is observed by the same
+        // predicate used in production before accepting a retained worker.
+        while !state.as_ref().unwrap().worker.is_finished() {
+            thread::yield_now();
         }
-    }
-
-    fn up(key: SearchHotkeyCode) -> SearchHotkeyEvent {
-        SearchHotkeyEvent {
-            key,
-            kind: SearchHotkeyEventKind::KeyUp,
-            repeat: false,
-        }
-    }
-
-    #[test]
-    fn ctrl_space_toggles_search_and_suppresses_space() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::ToggleSearch
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::Suppress
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn right_ctrl_space_toggles_search() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::RightControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::ToggleSearch
-        );
-    }
-
-    #[test]
-    fn alt_backquote_toggles_terminal_and_suppresses_backquote() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Backquote)),
-            SearchHotkeyDecision::ToggleTerminal
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::Backquote)),
-            SearchHotkeyDecision::Suppress
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::LeftAlt)),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn repeated_alt_backquote_does_not_duplicate_terminal_toggle() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Backquote)),
-            SearchHotkeyDecision::ToggleTerminal
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Backquote)),
-            SearchHotkeyDecision::Suppress
-        );
-    }
-
-    #[test]
-    fn alt_1_toggles_stack_browser_and_suppresses_repeat() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
-            SearchHotkeyDecision::ToggleStackBrowser
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
-            SearchHotkeyDecision::Suppress
-        );
-
-        let mut classifier = SearchHotkeyClassifier::default();
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn ctrl_alt_1_passes_through() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::RightAlt)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Other(VK_1.0 as u32))),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn async_alt_state_toggles_when_alt_down_was_not_observed() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event_with_modifier_overrides(
-                down(SearchHotkeyCode::Other(VK_1.0 as u32)),
-                Some(false),
-                Some(true),
-            ),
-            SearchHotkeyDecision::ToggleStackBrowser
-        );
-    }
-
-    #[test]
-    fn released_alt_state_passes_through_stale_classifier_alt() {
-        let mut classifier = SearchHotkeyClassifier::default();
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftAlt)),
-            SearchHotkeyDecision::PassThrough
-        );
-
-        assert_eq!(
-            classifier.handle_event_with_modifier_overrides(
-                down(SearchHotkeyCode::Other(VK_1.0 as u32)),
-                Some(false),
-                Some(false),
-            ),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn bare_space_and_other_ctrl_chords_pass_through() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Other(u32::from(b'R')))),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn repeated_space_down_does_not_duplicate_open_search() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::ToggleSearch
-        );
-        assert_eq!(
-            classifier.handle_event(SearchHotkeyEvent {
-                key: SearchHotkeyCode::Space,
-                kind: SearchHotkeyEventKind::KeyDown,
-                repeat: true
-            }),
-            SearchHotkeyDecision::Suppress
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::Suppress
-        );
-    }
-
-    #[test]
-    fn ctrl_release_resets_chord() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::ToggleSearch
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::Suppress
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::ToggleSearch
-        );
-    }
-
-    #[test]
-    fn async_control_state_opens_when_control_down_was_not_observed() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier
-                .handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(true)),
-            SearchHotkeyDecision::ToggleSearch
-        );
-        assert_eq!(
-            classifier.handle_event(up(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::Suppress
-        );
-    }
-
-    #[test]
-    fn released_control_state_passes_through_stale_classifier_control() {
-        let mut classifier = SearchHotkeyClassifier::default();
-
-        assert_eq!(
-            classifier.handle_event(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            classifier
-                .handle_event_with_control_override(down(SearchHotkeyCode::Space), Some(false)),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn unavailable_hook_state_passes_through() {
-        assert_eq!(
-            unavailable_hook_state_decision(down(SearchHotkeyCode::LeftControl)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            unavailable_hook_state_decision(down(SearchHotkeyCode::Space)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            unavailable_hook_state_decision(down(SearchHotkeyCode::Backquote)),
-            SearchHotkeyDecision::PassThrough
-        );
-        assert_eq!(
-            unavailable_hook_state_decision(down(SearchHotkeyCode::Other(u32::from(b'R')))),
-            SearchHotkeyDecision::PassThrough
-        );
-    }
-
-    #[test]
-    fn lifecycle_install_once_and_uninstall_are_idempotent() {
-        let lifecycle = SearchHotkeyHookLifecycle::default();
-
-        assert!(lifecycle.install_once());
-        assert!(!lifecycle.install_once());
-        assert!(lifecycle.is_installed());
-        assert!(lifecycle.uninstall());
-        assert!(!lifecycle.uninstall());
-        assert!(!lifecycle.is_installed());
-    }
-
-    #[test]
-    fn emitted_event_targets_top_bar_existing_open_path() {
-        assert_eq!(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, "search:toggle-centered");
-        assert_eq!(
-            TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT,
-            "terminal:toggle-panel"
-        );
-        assert_eq!(
-            toggle_search_event_target_label(),
-            crate::shell_windows::TOP_BAR_LABEL
-        );
+        reap_finished_thread(&mut state).unwrap();
+        assert!(state.is_none(), "a new install must now spawn a worker");
     }
 }

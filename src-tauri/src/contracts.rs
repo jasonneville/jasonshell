@@ -17,6 +17,7 @@ pub mod surfaces {
     pub const AUDIO_PANEL: &str = "audio-panel";
     pub const SPEECH_HISTORY_PANEL: &str = "speech-history-panel";
     pub const CALENDAR_PANEL: &str = "calendar-panel";
+    pub const CONTEXT_MENU_OVERLAY: &str = "context-menu-overlay";
 
     pub const ALL: &[&str] = &[
         TOP_BAR,
@@ -35,6 +36,7 @@ pub mod surfaces {
         AUDIO_PANEL,
         SPEECH_HISTORY_PANEL,
         CALENDAR_PANEL,
+        CONTEXT_MENU_OVERLAY,
     ];
 }
 
@@ -63,6 +65,8 @@ pub mod commands {
     pub const HIDE_TASK_GALLERY_WINDOW_PREVIEW: &str = "hide_task_gallery_window_preview";
     pub const CLOSE_TASK_GALLERY_PREVIEWED_WINDOW: &str = "close_task_gallery_previewed_window";
     pub const SHOW_TOP_BAR_PIN_CONTEXT_MENU: &str = "show_top_bar_pin_context_menu";
+    pub const SHOW_CONTEXT_MENU_OVERLAY: &str = "show_context_menu_overlay";
+    pub const HIDE_CONTEXT_MENU_OVERLAY: &str = "hide_context_menu_overlay";
     pub const SHOW_SEARCH_PANEL: &str = "show_search_panel";
     pub const SEARCH_ENGINE: &str = "search_engine";
     pub const HIDE_SEARCH_PANEL: &str = "hide_search_panel";
@@ -416,7 +420,9 @@ pub mod events {
     pub const PROCESS_MANAGER_OPEN: &str = "process-manager:open";
     pub const PROCESS_MANAGER_CLOSED: &str = "process-manager:closed";
     pub const SEARCH_TOGGLE_CENTERED: &str = "search:toggle-centered";
+    pub const TERMINAL_TOGGLE_PANEL: &str = "terminal:toggle-panel";
     pub const STACK_BROWSER_TOGGLE: &str = "stack-browser:toggle";
+    pub const SPEECH_TOGGLE: &str = "speech:toggle";
     pub const SEARCH_ENGINE_PROGRESS: &str = "search-engine:progress";
     pub const SEARCH_INDEX_REFRESHED: &str = "search-index:refreshed";
     pub const SEARCH_PANEL_ACTIVATE: &str = "search-panel:activate";
@@ -467,7 +473,9 @@ pub mod events {
         PROCESS_MANAGER_OPEN,
         PROCESS_MANAGER_CLOSED,
         SEARCH_TOGGLE_CENTERED,
+        TERMINAL_TOGGLE_PANEL,
         STACK_BROWSER_TOGGLE,
+        SPEECH_TOGGLE,
         SEARCH_ENGINE_PROGRESS,
         SEARCH_INDEX_REFRESHED,
         SEARCH_PANEL_ACTIVATE,
@@ -676,7 +684,9 @@ mod tests {
                 "process-manager:open",
                 "process-manager:closed",
                 "search:toggle-centered",
+                "terminal:toggle-panel",
                 "stack-browser:toggle",
+                "speech:toggle",
                 "search-engine:progress",
                 "search-index:refreshed",
                 "search-panel:activate",

@@ -6,122 +6,78 @@ function readSource(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('native hook callback only classifies and hands off to bounded queue', () => {
+test('global shortcuts use OS registration and never suppress raw keyboard events', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
-  const procStart = rust.indexOf('unsafe extern "system" fn windows_key_hook_proc');
-  const procEnd = rust.indexOf('#[cfg(windows)]\nfn control_key_is_down()', procStart);
-  const proc = rust.slice(procStart, procEnd);
-
-  assert.match(rust, /mpsc::sync_channel\(8\)/);
-  assert.match(proc, /try_send\(decision\)/);
-  assert.doesNotMatch(proc, /AppHandle/);
-  assert.doesNotMatch(proc, /emit_to\(/);
+  assert.match(rust, /RegisterHotKey/);
+  assert.match(rust, /UnregisterHotKey/);
+  assert.match(rust, /MOD_NOREPEAT/);
+  assert.doesNotMatch(rust, /WH_KEYBOARD_LL|SetWindowsHookExW|GetAsyncKeyState|CallNextHookEx|KBDLLHOOKSTRUCT|SearchHotkeyDecision::Suppress/);
 });
 
-test('worker owns AppHandle and emit_to for hook events', () => {
+test('native dedicated thread receives WM_HOTKEY in a message loop', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
-  const procStart = rust.indexOf('unsafe extern "system" fn windows_key_hook_proc');
-  const procEnd = rust.indexOf('#[cfg(windows)]\nfn control_key_is_down()', procStart);
-  const proc = rust.slice(procStart, procEnd);
-
-  assert.match(rust, /let worker_app_handle = app_handle\.clone\(\);/);
-  assert.match(rust, /worker_app_handle\.emit_to\(/);
-  assert.doesNotMatch(proc, /emit_to\(/);
+  assert.match(rust, /(?:thread::spawn|thread::Builder[\s\S]*?\.spawn)\s*\(/);
+  assert.match(rust, /GetMessageW|PeekMessageW/);
+  assert.match(rust, /WM_HOTKEY/);
+  assert.match(rust, /PostThreadMessageW|PostMessageW/);
 });
 
-test('TopBar listens for native Ctrl+Space search toggle through existing centered paths', () => {
+test('TopBar listens for native-only standard hotkey events through existing panel paths', () => {
   const source = readSource('../src/components/TopBar.svelte');
 
   assert.match(source, /const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';/);
+  assert.match(source, /const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';/);
+  assert.match(source, /const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';/);
   assert.match(source, /listen\(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT, \(\) => \{/);
   assert.match(source, /function toggleCenteredSearchFromHotkey\(\)/);
   assert.match(source, /if \(searchOpen\) \{\s*void closePanel\(\);/);
   assert.match(source, /void openCenteredPanel\(\{ publishCurrentPayload: true \}\)/);
+  assert.match(source, /listen\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, \(\) => \{\s*void toggleTerminalPanel\(terminalControl\);/);
+  assert.match(source, /listen\(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT, \(\) => \{\s*void toggleStackBrowserFromHotkey\(\);/);
   assert.doesNotMatch(source, /let searchInput:|bind:this=\{searchInput\}/);
 });
 
-test('top and bottom shell surfaces catch Ctrl+Space when their webviews have focus', () => {
-  const topBar = readSource('../src/components/TopBar.svelte');
-  const bottomBar = readSource('../src/components/BottomBar.svelte');
-  const searchPanel = readSource('../src/components/SearchPanelSurface.svelte');
-  const quickLaunchPanel = readSource('../src/components/QuickLaunchPanelSurface.svelte');
-  const stackPopup = readSource('../src/components/StackPopupSurface.svelte');
-  const terminalPanel = readSource('../src/components/TerminalPanelSurface.svelte');
-  const commandPanel = readSource('../src/components/CommandPanelSurface.svelte');
+test('legacy frontend standard hotkey classifiers are intentionally absent from shell surfaces', () => {
+  const surfaces = [
+    '../src/components/TopBar.svelte',
+    '../src/components/BottomBar.svelte',
+    '../src/components/QuickLaunchPanelSurface.svelte',
+    '../src/components/SearchPanelSurface.svelte',
+    '../src/components/StackPopupSurface.svelte',
+    '../src/components/CommandPanelSurface.svelte',
+    '../src/components/TerminalPanelSurface.svelte'
+  ];
 
-  assert.match(topBar, /window\.addEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(topBar, /function isSpaceKey\(event: KeyboardEvent\)/);
-  assert.match(topBar, /!event\.ctrlKey && !shellSurfaceHotkeyHandled/);
-  assert.match(topBar, /window\.removeEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(bottomBar, /import \{ emit, listen \} from '@tauri-apps\/api\/event';/);
-  assert.match(bottomBar, /void emit\(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT\)/);
-  assert.match(bottomBar, /function isSpaceKey\(event: KeyboardEvent\)/);
-  assert.match(bottomBar, /!event\.ctrlKey && !shellSurfaceHotkeyHandled/);
-  assert.match(bottomBar, /window\.addEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(bottomBar, /window\.removeEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(searchPanel, /function closeCenteredPanelFromHotkey\(\)/);
-  assert.match(searchPanel, /hideCenteredPanelImmediately\(\);/);
-  assert.match(searchPanel, /if \(isCtrlSpaceHotkey\(event\)\) \{/);
-  assert.doesNotMatch(searchPanel, /emitTo\(topBarTarget, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
-  assert.match(quickLaunchPanel, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
-  assert.match(quickLaunchPanel, /function handleSearchHotkeyKeydown\(event: KeyboardEvent\)/);
-  assert.match(quickLaunchPanel, /window\.addEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
-  assert.match(quickLaunchPanel, /window\.removeEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
-  assert.doesNotMatch(quickLaunchPanel, /window\.addEventListener\('keydown', handleKeydown, true\)/);
-  assert.match(quickLaunchPanel, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
-  assert.match(quickLaunchPanel, /event\.code !== 'Space' \|\| !shellSurfaceHotkeyHandled/);
-  assert.match(stackPopup, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
-  assert.match(stackPopup, /function handleSearchHotkeyKeydown\(event: KeyboardEvent\)/);
-  assert.match(stackPopup, /window\.addEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
-  assert.match(stackPopup, /window\.removeEventListener\('keydown', handleSearchHotkeyKeydown, true\)/);
-  assert.doesNotMatch(stackPopup, /window\.addEventListener\('keydown', handleKeydown, true\)/);
-  assert.match(stackPopup, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
-  assert.match(stackPopup, /event\.code !== 'Space' \|\| !shellSurfaceHotkeyHandled/);
-  assert.match(terminalPanel, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
-  assert.match(terminalPanel, /window\.addEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(terminalPanel, /window\.removeEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(terminalPanel, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
-  assert.match(terminalPanel, /event\.code === 'Space' && shellSurfaceHotkeyHandled/);
-  assert.match(commandPanel, /function isCtrlSpaceHotkey\(event: KeyboardEvent\)/);
-  assert.match(commandPanel, /window\.addEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(commandPanel, /window\.removeEventListener\('keydown', keydownHandler, true\)/);
-  assert.match(commandPanel, /void emitTo\(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
-  assert.match(commandPanel, /event\.code === 'Space' && shellSurfaceHotkeyHandled/);
+  for (const path of surfaces) {
+    const source = readSource(path);
+    assert.doesNotMatch(source, /isCtrlSpaceHotkey|isAltBackquoteHotkey|isAltOneHotkey|shellSurfaceHotkeyHandled/);
+    assert.doesNotMatch(source, /emit(?:To)?\([^)]*SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT/);
+    assert.doesNotMatch(source, /emit(?:To)?\([^)]*TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT/);
+    assert.doesNotMatch(source, /emit(?:To)?\([^)]*STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT/);
+  }
 });
 
-test('Alt+Backquote terminal hotkey emits and shell surfaces toggle terminal panel', () => {
+test('Alt+Backquote uses explicit layout-sensitive virtual key and existing terminal event', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
   const topBar = readSource('../src/components/TopBar.svelte');
-  const bottomBar = readSource('../src/components/BottomBar.svelte');
 
-  assert.match(rust, /TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = "terminal:toggle-panel"/);
-  assert.match(rust, /SearchHotkeyDecision::ToggleTerminal/);
+  assert.match(rust, /TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = crate::contracts::events::TERMINAL_TOGGLE_PANEL/);
   assert.match(rust, /VK_OEM_3/);
-  assert.match(rust, /VK_LMENU/);
-  assert.match(rust, /VK_RMENU/);
-  assert.match(rust, /emit_to\(\s*crate::shell_windows::TOP_BAR_LABEL,\s*TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT/);
-  assert.match(rust, /alt_backquote_toggles_terminal_and_suppresses_backquote/);
+  assert.match(rust, /MOD_ALT/);
+  assert.match(rust, /emit_to\(\s*crate::shell_windows::TOP_BAR_LABEL,\s*crate::contracts::events::TERMINAL_TOGGLE_PANEL/);
   assert.match(topBar, /const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';/);
   assert.match(topBar, /listen\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, \(\) => \{\s*void toggleTerminalPanel\(terminalControl\);/);
-  assert.match(topBar, /function isAltBackquoteHotkey\(event: KeyboardEvent\)/);
-  assert.match(bottomBar, /void emit\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT\)/);
+  assert.doesNotMatch(topBar, /isAltBackquoteHotkey/);
 });
 
-test('Alt+1 toggles Stack Browser from native hook and top bar wiring', () => {
+test('Alt+1 toggles Stack Browser from native hotkey and top bar wiring', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
   const main = readSource('../src-tauri/src/main.rs');
   const contracts = readSource('../src-tauri/src/contracts.rs');
   const topBar = readSource('../src/components/TopBar.svelte');
-  const bottomBar = readSource('../src/components/BottomBar.svelte');
-  const stackSurface = readSource('../src/components/StackPopupSurface.svelte');
 
   assert.match(rust, /STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT/);
-  assert.match(rust, /ToggleStackBrowser/);
   assert.match(rust, /VK_1/);
-  assert.match(rust, /alt_1_toggles_stack_browser_and_suppresses_repeat/);
-  assert.match(rust, /alt_down_override\.unwrap_or_else\(\|\| self\.any_alt_down\(\)\)/);
-  assert.match(rust, /fn alt_key_is_down\(\) -> Option<bool>/);
-  assert.match(rust, /handle_event_with_modifier_overrides\([\s\S]*?event,[\s\S]*?control_key_is_down\(\),[\s\S]*?alt_key_is_down\(\),[\s\S]*?\)/);
   assert.match(main, /stack_popup::toggle_stack_popup,/);
   assert.match(contracts, /TOGGLE_STACK_POPUP: &str = "toggle_stack_popup"/);
   assert.match(contracts, /STACK_BROWSER_TOGGLE: &str = "stack-browser:toggle"/);
@@ -129,19 +85,10 @@ test('Alt+1 toggles Stack Browser from native hook and top bar wiring', () => {
   assert.match(topBar, /listen\(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT, \(\) => \{/);
   assert.match(topBar, /toggleStackBrowserFromHotkey/);
   assert.match(topBar, /toggleStackBrowserPanel\(/);
-  assert.match(topBar, /function isAltOneHotkey\(event: KeyboardEvent\)/);
-  assert.match(topBar, /if \(isAltOneHotkey\(event\)\) \{[\s\S]*toggleStackBrowserFromHotkey\(\)/);
   assert.match(topBar, /closest\('\.stack-browser-button'\)/);
   assert.match(topBar, /if \(stackBrowserOpen\) \{[\s\S]*await hideStackPopup\(\)/);
   assert.ok(topBar.indexOf('if (stackBrowserOpen)') < topBar.indexOf('const isOpen = await toggleStackPopup()'));
-  assert.match(stackSurface, /function isAltOneHotkey\(event: KeyboardEvent\)/);
-  assert.match(stackSurface, /handleStackBrowserHotkeyKeydown[\s\S]*hideStackPopup\(\)/);
-  assert.match(stackSurface, /handleStackBrowserHotkeyKeydown[\s\S]*if \(event\.repeat\) return;/);
-  assert.doesNotMatch(stackSurface, /stackBrowserHotkeyHandled/);
-  assert.match(stackSurface, /addEventListener\('keydown', handleStackBrowserHotkeyKeydown, true\)/);
-  assert.match(bottomBar, /const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';/);
-  assert.match(bottomBar, /function isAltOneHotkey\(event: KeyboardEvent\)/);
-  assert.match(bottomBar, /if \(isAltOneHotkey\(event\)\) \{[\s\S]*emit\(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT\)/);
+  assert.doesNotMatch(topBar, /isAltOneHotkey/);
 });
 
 test('top bar places Stack Browser toggle button between settings and pinned folders', () => {
@@ -172,8 +119,41 @@ test('Stack Browser toggle reopens latest request without emitting open event', 
 test('native hook installs during setup and cleans up on exit', () => {
   const main = readSource('../src-tauri/src/main.rs');
 
-  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\)\)/);
+  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys\)/);
   assert.match(main, /windows_key_hook::uninstall_windows_key_hook\(\)/);
+});
+
+test('Settings hotkey controls stay disabled until settings load succeeds', () => {
+  const source = readSource('../src/components/SettingsPanelSurface.svelte');
+
+  assert.match(source, /let shellSettingsLoaded = false;/);
+  assert.match(source, /const settings = await loadShellSettings\(\);[\s\S]*shellSettings = settings;[\s\S]*shellSettingsLoaded = true;/);
+  assert.match(source, /catch \(error\) \{[\s\S]*shellSettingsLoaded = false;/);
+  assert.match(source, /async function saveHotkeys[\s\S]*if \(!shellSettingsLoaded \|\| hotkeyBusy\) return;/);
+  assert.match(source, /function captureHotkeyBinding[\s\S]*if \(!action \|\| !shellSettingsLoaded \|\| hotkeyBusy \|\| event\.repeat\) return;/);
+  assert.match(source, /data-hotkey-action="search"[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
+  assert.match(source, /data-hotkey-action="terminal"[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
+  assert.match(source, /data-hotkey-action="stackBrowser"[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
+  assert.match(source, /class="hotkey-reset" disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
+});
+
+test('Settings Stack Browser terminal selector cannot persist before authoritative settings load', () => {
+  const source = readSource('../src/components/SettingsPanelSurface.svelte');
+  const handlerStart = source.indexOf('async function handleStackTerminalProfileChange');
+  const handlerEnd = source.indexOf('const hotkeyActionNames', handlerStart);
+  const handler = source.slice(handlerStart, handlerEnd);
+  const selectorStart = source.indexOf('<section class="settings-section" aria-labelledby="json-shell-heading">');
+  const selectorEnd = source.indexOf('{#if settingsError}', selectorStart);
+  const selector = source.slice(selectorStart, selectorEnd);
+
+  assert.ok(handlerStart !== -1 && handlerEnd !== -1);
+  assert.ok(selectorStart !== -1 && selectorEnd !== -1);
+  assert.match(source, /let shellSettingsLoaded = false;/);
+  assert.match(source, /selectedStackTerminalProfile = normalizeStackTerminalProfile\(settings\.stackBrowser\?\.terminalProfile\);[\s\S]*shellSettingsLoaded = true;/);
+  assert.match(handler, /if \(!shellSettingsLoaded\) return;[\s\S]*selectedStackTerminalProfile = normalizeStackTerminalProfile\(value\);[\s\S]*saveShellSettings\(/);
+  assert.ok(handler.indexOf('if (!shellSettingsLoaded) return;') < handler.indexOf('selectedStackTerminalProfile = normalizeStackTerminalProfile(value);'));
+  assert.ok(handler.indexOf('if (!shellSettingsLoaded) return;') < handler.indexOf('saveShellSettings('));
+  assert.match(selector, /<fieldset class="settings-select-guard" disabled=\{!shellSettingsLoaded\}>[\s\S]*label="Stack Browser terminal"[\s\S]*onChange=\{handleStackTerminalProfileChange\}/);
 });
 
 test('startup fails when required search hotkey hook cannot install', () => {
@@ -181,31 +161,12 @@ test('startup fails when required search hotkey hook cannot install', () => {
 
   assert.doesNotMatch(main, /search hotkey hook disabled/);
   assert.match(main, /search hotkey hook is required: \{error\}/);
-  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\)\)\s*\.map_err\(/);
+  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys\)\s*\.map_err\(/);
 });
 
-test('native hook passes through when hook state is unavailable', () => {
+test('native hotkeys do not install a low-level keyboard hook or consume Alt release', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
-
-  assert.match(rust, /left_control_down: bool/);
-  assert.match(rust, /right_control_down: bool/);
-  assert.doesNotMatch(rust, /\bwin_down: bool/);
-  assert.match(rust, /pub fn unavailable_hook_state_decision\(_event: SearchHotkeyEvent\) -> SearchHotkeyDecision/);
-  assert.match(rust, /SearchHotkeyDecision::PassThrough/);
-  assert.match(rust, /unavailable_hook_state_decision\(event\)/);
-});
-
-test('native Ctrl+Space hotkey toggles once and does not capture Windows key', () => {
-  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
-
-  assert.match(rust, /ctrl_space_toggles_search_and_suppresses_space/);
-  assert.match(rust, /repeated_space_down_does_not_duplicate_open_search/);
-  assert.match(rust, /async_control_state_opens_when_control_down_was_not_observed/);
-  assert.match(rust, /released_control_state_passes_through_stale_classifier_control/);
-  assert.match(rust, /GetAsyncKeyState/);
-  assert.match(rust, /VK_SPACE/);
-  assert.match(rust, /VK_LCONTROL/);
-  assert.match(rust, /VK_RCONTROL/);
+  assert.doesNotMatch(rust, /WM_KEYUP|WM_SYSKEYUP|UnhookWindowsHookEx|SearchHotkeyEventKind::KeyUp/);
   assert.doesNotMatch(rust, /VK_LWIN|VK_RWIN|LeftWin|RightWin/);
 });
 

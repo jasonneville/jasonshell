@@ -167,9 +167,9 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
   assert.match(stackPopupSource, /<MeltActionButton type="submit">OK<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton onClick=\{cancelInlineEditor\}>Cancel<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton class=\{sortHeader\('name'\)\.className\} role="columnheader" ariaColindex=\{1\} ariaSort=\{sortHeader\('name'\)\.ariaSort\} onClick=\{\(\) => sortBy\('name'\)\}/);
-  assert.match(stackPopupSource, /<MeltActionButton role="menuitem" disabled=\{!selectedEntry\} onClick=\{\(\) => selectedEntry && void activateEntry\(selectedEntry\)\}>Open<\/MeltActionButton>/);
-  assert.match(stackPopupSource, /<MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled=\{selectedEntry\?\.entryType !== 'File'\}>/);
-  assert.match(stackPopupSource, /<MeltActionButton role="menuitem" disabled=\{!currentPath\} onClick=\{beginCreateFolder\}>New Folder<\/MeltActionButton>/);
+  assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!selectedEntry\}[^>]*onClick=\{\(\) => selectedEntry && void activateEntry\(selectedEntry\)\}>Open<\/ContextMenuItem>/);
+  assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{selectedEntry\?\.entryType !== 'File'\}>Open with ▸<\/ContextMenuItem>/);
+  assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!currentPath\}[^>]*onClick=\{beginCreateFolder\}>New Folder<\/ContextMenuItem>/);
   assert.match(stackPopupSource, /<MeltActionButton class="danger" onClick=\{\(\) => void confirmDeleteSelection\(\)\}>Delete<\/MeltActionButton>/);
 
   assert.match(stackPopupSource, /<button[\s\S]*type="button"[\s\S]*role="row"[\s\S]*aria-selected=\{stackState\.selectedPaths\.includes\(entry\.path\)\}[\s\S]*on:dblclick=\{\(\) => void activateEntry\(entry\)\}[\s\S]*on:dragstart=\{\(event\) => handleRowDragStart\(event, entry\)\}/);
@@ -190,7 +190,7 @@ test('top-bar action and pinned-folder controls use Melt-backed buttons without 
   assert.match(topBarSource, /onClick=\{\(event\) => handlePinClick\(event, pin, index\)\}/);
   assert.match(topBarSource, /onContextMenu=\{\(event\) => handlePinContextMenu\(event, pin\)\}/);
   assert.match(topBarSource, /querySelectorAll<HTMLElement>\('button\[data-path\]'\)/);
-  assert.match(topBarSource, /showTopBarPinContextMenu\(\{/);
+  assert.match(topBarSource, /\{#if pinContextMenu\}\s*<ContextMenu\b/);
   assert.match(topBarSource, /showStackPopup\(\{/);
   assert.doesNotMatch(topBarSource, /<button[\s\S]*data-path=\{pin\.path\}/);
 });

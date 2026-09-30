@@ -7,6 +7,8 @@
   import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import ContextMenu from './ContextMenu.svelte';
+  import ContextMenuItem from './ContextMenuItem.svelte';
   import {
     listStackTerminals,
     readStackTerminal,
@@ -113,8 +115,6 @@
   const TERMINAL_PANEL_MIN_FONT_SIZE = 9;
   const TERMINAL_PANEL_MAX_FONT_SIZE = 28;
   const TERMINAL_IDLE_PREWARM_DELAY_MS = 5_000;
-  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
-  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
 
   let host: HTMLDivElement | null = null;
   let terminal: Terminal | null = null;
@@ -164,7 +164,6 @@
   let idlePrewarmTimer: number | null = null;
   let terminalStartPromise: Promise<void> | null = null;
   let terminalSessionCreationInFlight = false;
-  let shellSurfaceHotkeyHandled = false;
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -204,20 +203,6 @@
   function nextTerminalRuntimeId() {
     terminalRuntimeCounter += 1;
     return `terminal-runtime-${terminalRuntimeCounter.toString(36)}`;
-  }
-
-  function isCtrlSpaceHotkey(event: KeyboardEvent) {
-    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
-  }
-
-  function handleCtrlSpaceHotkey(event: KeyboardEvent) {
-    if (!isCtrlSpaceHotkey(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!shellSurfaceHotkeyHandled && !event.repeat) {
-      shellSurfaceHotkeyHandled = true;
-      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
-    }
   }
 
   function paneDomKey(pane: TerminalPaneModel) {
@@ -460,26 +445,14 @@
 
   onMount(() => {
     listenersDisposed = false;
-    const keydownHandler = (event: KeyboardEvent) => handleCtrlSpaceHotkey(event);
-    const keyupHandler = (event: KeyboardEvent) => {
-      if (event.code === 'Space' && shellSurfaceHotkeyHandled) {
-        event.preventDefault();
-        event.stopPropagation();
-        shellSurfaceHotkeyHandled = false;
-      }
-    };
     document.addEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
     window.addEventListener('focus', handlePanelOpen);
-    window.addEventListener('keydown', keydownHandler, true);
-    window.addEventListener('keyup', keyupHandler, true);
     void initializeTerminalListeners();
     scheduleIdlePrewarm();
     return () => {
       listenersDisposed = true;
       document.removeEventListener('pointerdown', closeTerminalMenusOnOutsidePointer, true);
       window.removeEventListener('focus', handlePanelOpen);
-      window.removeEventListener('keydown', keydownHandler, true);
-      window.removeEventListener('keyup', keyupHandler, true);
       cancelIdlePrewarm();
       terminalStartPromise = null;
       for (const runtime of paneRuntimes.values()) {
@@ -949,18 +922,6 @@
     }
   }
 
-  function isAltBackquoteHotkey(event: KeyboardEvent) {
-    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
-  }
-
-  function closeFromTerminalHotkey(event: KeyboardEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    void hideTerminalPanel().catch((error) => {
-      console.error('Failed to hide terminal panel from hotkey', error);
-    });
-  }
-
   function createPaneRuntime(nextSession: StackTerminalSession, paneId: string): TerminalPaneRuntime {
     return {
       paneId,
@@ -1032,19 +993,6 @@
     });
     registerShellIntegrationParser(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type === 'keydown' && isCtrlSpaceHotkey(event)) {
-        handleCtrlSpaceHotkey(event);
-        return false;
-      }
-      if (event.type === 'keydown' && isAltBackquoteHotkey(event)) {
-        closeFromTerminalHotkey(event);
-        return false;
-      }
-      if (event.type === 'keyup' && (event.key === '`' || event.code === 'Backquote')) {
-        event.preventDefault();
-        event.stopPropagation();
-        return false;
-      }
       if (event.type === 'keydown' && quickSelectOpen) {
         if (event.key === 'Escape') {
           quickSelectOpen = false;
@@ -1154,13 +1102,6 @@
 
   function handleTerminalKeyForRuntime(runtime: TerminalPaneRuntime, event: KeyboardEvent) {
     if (!isRuntimeCurrent(runtime)) return false;
-    if (event.type === 'keydown' && isAltBackquoteHotkey(event)) {
-      closeFromTerminalHotkey(event);
-      return false;
-    }
-    if (event.type === 'keyup' && (event.key === '`' || event.code === 'Backquote')) {
-      event.preventDefault(); event.stopPropagation(); return false;
-    }
     if (event.type === 'keydown' && event.altKey && event.key === 'ArrowRight') { focusNextPane(1); return false; }
     if (event.type === 'keydown' && event.altKey && event.key === 'ArrowLeft') { focusNextPane(-1); return false; }
     if (runtime.paneId !== activePaneId) {
@@ -2536,13 +2477,6 @@
   }
 </script>
 
-<svelte:window on:keydown|capture={(event) => isAltBackquoteHotkey(event) && closeFromTerminalHotkey(event)} on:keyup|capture={(event) => {
-  if (event.key === '`' || event.code === 'Backquote') {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-}} />
-
 {#snippet renderPaneTree(node: TerminalPaneTreeNode)}
   {#if node.kind === 'split'}
     {#key node.splitId}
@@ -2681,23 +2615,22 @@
       </div>
     {/if}
     {#if contextMenu}
-      <div
-        class="terminal-panel-context-menu"
-        role="menu"
-        tabindex="-1"
+      <ContextMenu
+        className="terminal-panel-context-menu"
+        tabindex={-1}
         style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`}
-        on:pointerdown|stopPropagation
+        on:pointerdown={(event) => event.stopPropagation()}
       >
-        <button type="button" role="menuitem" disabled={!actionEnabled('copySelection')} on:click={() => void copySelectionFromContextMenu()}>Copy</button>
-        <button type="button" role="menuitem" disabled={!actionEnabled('copyCommand')} on:click={() => void runTerminalAction('copyCommand')}>Copy command</button>
-        <button type="button" role="menuitem" disabled={!actionEnabled('copyCommandOutput')} on:click={() => void copySelectedCommandOutput()}>Copy command output</button>
-        <button type="button" role="menuitem" disabled={!actionEnabled('rerunCommand')} on:click={() => void runTerminalAction('rerunCommand')}>Rerun command</button>
-        <button type="button" role="menuitem" on:click={() => { updateQuickSelectTargets(); quickSelectOpen = true; closeTerminalContextMenu(); }}>Quick Select target</button>
-        <button type="button" role="menuitem" on:click={() => void pasteClipboardFromContextMenu()}>Paste</button>
-        <button type="button" role="menuitem" disabled={!actionEnabled('openCwdInFiles')} on:click={() => void runTerminalAction('openCwdInFiles')}>Reveal cwd in Files</button>
-        <button type="button" role="menuitem" disabled={!actionEnabled('openExternalTerminalHere')} on:click={() => void runTerminalAction('openExternalTerminalHere')}>Open external terminal</button>
-        <button type="button" role="menuitem" disabled={!actionEnabled('openInVscode')} on:click={() => void runTerminalAction('openInVscode')}>Open cwd in VS Code</button>
-      </div>
+        <ContextMenuItem icon="file_copy" disabled={!actionEnabled('copySelection')} onClick={() => void copySelectionFromContextMenu()}>Copy</ContextMenuItem>
+        <ContextMenuItem icon="file_copy" disabled={!actionEnabled('copyCommand')} onClick={() => void runTerminalAction('copyCommand')}>Copy command</ContextMenuItem>
+        <ContextMenuItem icon="file_copy" disabled={!actionEnabled('copyCommandOutput')} onClick={() => void copySelectedCommandOutput()}>Copy command output</ContextMenuItem>
+        <ContextMenuItem icon="refresh" disabled={!actionEnabled('rerunCommand')} onClick={() => void runTerminalAction('rerunCommand')}>Rerun command</ContextMenuItem>
+        <ContextMenuItem onClick={() => { updateQuickSelectTargets(); quickSelectOpen = true; closeTerminalContextMenu(); }}>Quick Select target</ContextMenuItem>
+        <ContextMenuItem icon="content_paste" onClick={() => void pasteClipboardFromContextMenu()}>Paste</ContextMenuItem>
+        <ContextMenuItem icon="folder" disabled={!actionEnabled('openCwdInFiles')} onClick={() => void runTerminalAction('openCwdInFiles')}>Reveal cwd in Files</ContextMenuItem>
+        <ContextMenuItem icon="terminal" disabled={!actionEnabled('openExternalTerminalHere')} onClick={() => void runTerminalAction('openExternalTerminalHere')}>Open external terminal</ContextMenuItem>
+        <ContextMenuItem icon="code_blocks" disabled={!actionEnabled('openInVscode')} onClick={() => void runTerminalAction('openInVscode')}>Open cwd in VS Code</ContextMenuItem>
+      </ContextMenu>
     {/if}
   </section>
 </div>

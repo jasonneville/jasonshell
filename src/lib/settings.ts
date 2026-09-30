@@ -10,6 +10,25 @@ export const CURRENT_SETTINGS_VERSION = 1;
 export const SHELL_SETTINGS_CHANNEL = 'jasonshell.settings.changed';
 export const SHELL_SETTINGS_CHANGED_EVENT = 'jasonshell:settings-changed';
 
+export type StandardHotkeyAction = 'search' | 'terminal' | 'stackBrowser' | 'speechTranscription';
+export type CanonicalHotkeyBinding = string;
+
+export interface StandardHotkeySettings {
+  search: CanonicalHotkeyBinding;
+  terminal: CanonicalHotkeyBinding;
+  stackBrowser: CanonicalHotkeyBinding;
+  speechTranscription: CanonicalHotkeyBinding;
+}
+
+export function defaultStandardHotkeySettings(): StandardHotkeySettings {
+  return {
+    search: 'Ctrl+Space',
+    terminal: 'Alt+Backquote',
+    stackBrowser: 'Alt+1',
+    speechTranscription: 'Ctrl+D'
+  };
+}
+
 export interface ShellUiSettings {
   activeWorkspaceId: string | null;
   enableDiagnosticsExport: boolean;
@@ -35,6 +54,7 @@ export interface ShellSettings {
   taskHistory: ShellTaskHistoryEntry[];
   quickCommands: QuickCommandsSettings;
   stackBrowser: StackBrowserSettings;
+  hotkeys: StandardHotkeySettings;
 }
 
 export const SETTINGS_COMMANDS = {
@@ -62,7 +82,8 @@ export function defaultShellSettings(): ShellSettings {
     workspaces: [],
     taskHistory: [],
     quickCommands: defaultQuickCommandsSettings(),
-    stackBrowser: defaultStackBrowserSettings()
+    stackBrowser: defaultStackBrowserSettings(),
+    hotkeys: defaultStandardHotkeySettings()
   };
 }
 
@@ -76,6 +97,16 @@ export function hasSecretLikeSettingKey(key: string): boolean {
   return /(token|secret|password|credential|api[_-]?key|authorization|cookie)/iu.test(key);
 }
 
+function isQuickCommandTranscriptSecretPath(path: string[]): boolean {
+  return path.length === 6
+    && path[0] === 'quickCommands'
+    && path[1] === 'history'
+    && /^\d+$/u.test(path[2])
+    && path[3] === 'transcript'
+    && /^\d+$/u.test(path[4])
+    && path[5] === 'secret';
+}
+
 export function assertNoSecretSettingKeys(value: unknown, path: string[] = []): void {
   if (!value || typeof value !== 'object') {
     return;
@@ -83,7 +114,7 @@ export function assertNoSecretSettingKeys(value: unknown, path: string[] = []): 
 
   for (const [key, child] of Object.entries(value)) {
     const nextPath = [...path, key];
-    if (hasSecretLikeSettingKey(key)) {
+    if (hasSecretLikeSettingKey(key) && !isQuickCommandTranscriptSecretPath(nextPath)) {
       throw new Error(`Settings must not store secret-like key: ${nextPath.join('.')}`);
     }
     assertNoSecretSettingKeys(child, nextPath);

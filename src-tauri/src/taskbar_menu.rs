@@ -36,6 +36,21 @@ pub struct ShowLauncherContextMenuRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RunTaskbarLauncherActionRequest {
+    pub shortcut_path: String,
+    pub action: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTaskWindowActionRequest {
+    pub hwnd: String,
+    pub action: String,
+    pub process_id: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShowQuickLaunchPanelContextMenuRequest {
     pub nonce: String,
     pub shortcut_path: String,
@@ -238,6 +253,65 @@ pub fn show_launcher_context_menu(
     .map_err(|error| format!("Failed to build launcher context menu: {error}"))?;
 
     popup_menu_at_owner(&bottom_bar, &menu, request.x, request.y)
+}
+
+#[tauri::command]
+pub fn run_taskbar_launcher_action(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    request: RunTaskbarLauncherActionRequest,
+) -> Result<(), String> {
+    if window.label() != BOTTOM_BAR_LABEL {
+        return Err("Unauthorized caller for command run_taskbar_launcher_action".to_string());
+    }
+    let result = match request.action.as_str() {
+        "launch" => launchers::launch_pinned_taskbar_app_internal(request.shortcut_path),
+        "runas" => launchers::run_pinned_taskbar_app_as_admin(request.shortcut_path),
+        "properties" => launchers::open_pinned_shortcut_properties(request.shortcut_path),
+        "reveal" => launchers::reveal_pinned_shortcut(request.shortcut_path),
+        "revealTarget" => launchers::reveal_pinned_shortcut_target(request.shortcut_path),
+        "copyPath" => launchers::copy_pinned_shortcut_path(request.shortcut_path),
+        "unpin" => launchers::unpin_pinned_taskbar_app(request.shortcut_path),
+        _ => return Err("Unknown taskbar launcher action".to_string()),
+    };
+    result?;
+    let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
+    let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn run_task_window_action(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    request: RunTaskWindowActionRequest,
+) -> Result<(), String> {
+    if window.label() != BOTTOM_BAR_LABEL {
+        return Err("Unauthorized caller for command run_task_window_action".to_string());
+    }
+    let result = match request.action.as_str() {
+        "focus" => task_windows::perform_task_window_action(request.hwnd, TaskWindowAction::Focus),
+        "minimize" => task_windows::perform_task_window_action(request.hwnd, TaskWindowAction::Minimize),
+        "close" => task_windows::perform_task_window_action(request.hwnd, TaskWindowAction::Close),
+        "pin" => launchers::pin_task_window_to_taskbar(request.hwnd),
+        "process" => {
+            let focus_pid = request.process_id.filter(|pid| *pid != 0)
+                .ok_or_else(|| "A process id is required to open Process Manager".to_string())?;
+            process_manager::show_process_manager(
+                app_handle.clone(),
+                process_manager::ShowProcessManagerRequest {
+                    anchor_left: 0.0,
+                    anchor_width: 0.0,
+                    focus_pid: Some(focus_pid),
+                },
+            )
+        }
+        _ => return Err("Unknown task window action".to_string()),
+    };
+    result?;
+    let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_LAUNCHERS_EVENT, ());
+    let _ = app_handle.emit_to(BOTTOM_BAR_LABEL, TASKBAR_REFRESH_WINDOWS_EVENT, ());
+    Ok(())
 }
 
 pub fn show_quick_launch_panel_context_menu(

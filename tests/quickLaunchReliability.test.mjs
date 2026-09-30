@@ -55,11 +55,12 @@ test('quick launch close handler leaves suppression for trailing click consumpti
 });
 
 test('quick launch panel exposes only admin right-click action', () => {
-  assert.match(quickLaunchPanelSource, /showQuickLaunchPanelContextMenu/);
+  assert.match(quickLaunchPanelSource, /<ContextMenu\b/);
+  assert.match(quickLaunchPanelSource, /<ContextMenuItem\b[^>]*ariaLabel="Run as administrator"[^>]*onClick=\{\(\) => void runContextLauncherAsAdmin\(\)\}/);
   assert.match(quickLaunchPanelSource, /on:contextmenu\|preventDefault=/);
   assert.doesNotMatch(quickLaunchPanelSource, /suppressNextNativeMenuBlurClose/);
   assert.match(quickLaunchPanelSource, /invoke\('hide_quick_launch_panel_on_focus_loss'\)/);
-  assert.match(quickLaunchLibSource, /showQuickLaunchPanelContextMenu/);
+  assert.match(quickLaunchPanelSource, /runQuickLaunchPanelAsAdmin\(\{ nonce: quickLaunchNonce, shortcutPath: menu\.launcher\.shortcutPath \}\)/);
 });
 
 test('quick launch selected row keeps visible focus indicator distinct from hover selection', () => {
@@ -85,14 +86,15 @@ test('quick launch selected row keeps visible focus indicator distinct from hove
 
 test('quick launch opens admin context menu from keyboard menu keys', () => {
   const keydownFn = quickLaunchPanelSource.match(/function handleKeydown\(event: KeyboardEvent\) \{[\s\S]*?^  \}/m)?.[0] ?? '';
-  const menuOpenFn = quickLaunchPanelSource.match(/async function openQuickLaunchNativeMenu\([\s\S]*?^  \}/m)?.[0] ?? '';
+  const menuOpenFn = quickLaunchPanelSource.match(/function openQuickLaunchMenu\([\s\S]*?^  \}/m)?.[0] ?? '';
   assert.match(keydownFn, /event\.key === 'ContextMenu'/);
   assert.match(keydownFn, /event\.shiftKey\s*&&\s*event\.key === 'F10'/);
   assert.match(keydownFn, /event\.preventDefault\(\)/);
-  assert.match(keydownFn, /showQuickLaunchPanelContextMenu|openQuickLaunchNativeMenu|openQuickLaunchKeyboardMenu/);
+  assert.match(keydownFn, /openQuickLaunchMenu\(/);
   assert.match(keydownFn, /quickLaunchNonce/);
-  assert.match(keydownFn, /sortedLaunchers\[focusedIndex\]\.shortcutPath|sortedLaunchers\[focusedIndex\]|launcher\.shortcutPath/);
-  assert.match(menuOpenFn + keydownFn, /showQuickLaunchPanelContextMenu\(\{\s*nonce:\s*quickLaunchNonce,\s*shortcutPath:/);
+  assert.match(keydownFn, /sortedLaunchers\[focusedIndex\]/);
+  assert.match(menuOpenFn, /contextLauncher = \{ launcher, x, y \}/);
+  assert.match(quickLaunchPanelSource, /runQuickLaunchPanelAsAdmin\(\{ nonce: quickLaunchNonce, shortcutPath: menu\.launcher\.shortcutPath \}\)/);
   assert.doesNotMatch(keydownFn, /ContextMenu[\s\S]*chooseLauncher|F10[\s\S]*chooseLauncher/);
 });
 

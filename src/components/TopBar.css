@@ -290,7 +290,7 @@
 }
 
 .top-bar .mic-control {
-  --mic-idle-color: var(--js-color-text-muted);
+  --mic-idle-color: var(--js-color-text);
   --mic-recording-color: #ff3b4f;
   --mic-transcribing-color: var(--js-color-accent);
   align-items: center;
@@ -415,8 +415,6 @@
 
 .top-bar .mic-button--recording {
   background: color-mix(in srgb, var(--mic-recording-color) 16%, transparent);
-  border-color: var(--mic-recording-color);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mic-recording-color) 55%, transparent), 0 0 0.65rem color-mix(in srgb, var(--mic-recording-color) 50%, transparent);
   color: var(--mic-recording-color);
 }
 
@@ -468,27 +466,18 @@
 }
 
 .top-bar .mic-button--copied {
-  border-color: var(--mic-transcribing-color);
-  border-style: double;
-  color: var(--mic-transcribing-color);
+  color: var(--mic-idle-color);
 }
 
 .top-bar .mic-copy-check {
-  align-items: center;
-  background: var(--js-bg-bar);
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  bottom: -0.08rem;
-  display: inline-flex;
-  font-size: 0.6rem;
+  color: #22c55e;
+  bottom: 0.26rem;
+  font-size: 0.52rem;
   font-weight: 900;
-  height: 0.72rem;
-  justify-content: center;
   line-height: 1;
   pointer-events: none;
   position: absolute;
-  right: -0.08rem;
-  width: 0.72rem;
+  right: 0.25rem;
 }
 
 .top-bar .mic-button--error {
@@ -564,13 +553,10 @@
 
   .top-bar .mic-button--copied {
     background: Canvas;
-    border-color: Highlight;
-    color: Highlight;
+    color: ButtonText;
   }
 
   .top-bar .mic-copy-check {
-    background: Canvas;
-    border-color: Highlight;
     color: Highlight;
   }
 

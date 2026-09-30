@@ -21,6 +21,8 @@
     type StackTerminalSession
   } from '../lib/stackPopup';
   import { detectStackTerminalLinks, isSafeStackTerminalOpenTarget } from '../features/stack-browser/terminalViewModel';
+  import ContextMenu from './ContextMenu.svelte';
+  import ContextMenuItem from './ContextMenuItem.svelte';
 
   type TerminalLifecycleState = 'idle' | 'starting' | 'runningWaitingForFirstByte' | 'running' | 'exited' | 'failed';
   type StackTerminalClosedPayload = { sessionId: string; running?: boolean };
@@ -686,15 +688,14 @@
   {/if}
   <div class="stack-terminal-output" role="log" bind:this={host} on:contextmenu={openTerminalContextMenu}></div>
   {#if contextMenu}
-    <div
-      class="stack-terminal-context-menu"
-      role="menu"
-      tabindex="-1"
+    <ContextMenu
+      className="stack-terminal-context-menu"
+      tabindex={-1}
       style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`}
     >
-      <button type="button" role="menuitem" on:click={() => void copySelectionFromContextMenu()}>Copy</button>
-      <button type="button" role="menuitem" on:click={() => void pasteClipboardFromContextMenu()}>Paste</button>
-    </div>
+      <ContextMenuItem icon="file_copy" onClick={() => void copySelectionFromContextMenu()}>Copy</ContextMenuItem>
+      <ContextMenuItem icon="content_paste" onClick={() => void pasteClipboardFromContextMenu()}>Paste</ContextMenuItem>
+    </ContextMenu>
   {/if}
   {#if !firstOutputReceived && lifecycleState !== 'idle'}
     <div class="stack-terminal-startup" role="status">

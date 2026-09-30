@@ -29,10 +29,13 @@
     type StackTerminalProfile
   } from '../lib/stackPopup';
   import {
+    defaultStandardHotkeySettings,
     defaultShellSettings,
     loadShellSettings,
     saveShellBarLock,
     saveShellSettings,
+    type CanonicalHotkeyBinding,
+    type StandardHotkeyAction,
     type ShellSettings
   } from '../lib/settings';
   import {
@@ -66,6 +69,9 @@
   let powerBusy = false;
   let selectedStackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
   let settingsError = '';
+  let hotkeyError = '';
+  let hotkeyBusy = false;
+  let shellSettingsLoaded = false;
   let googleFontLink = '';
   let googleFontStatus = '';
   let googleFontError = '';
@@ -83,13 +89,6 @@
   onMount(() => {
     void loadJsonShellSettings();
   });
-  loadShellSettings()
-    .then((settings) => {
-      shellSettings = settings;
-    })
-    .catch((error) => {
-      console.error('Failed to load shell settings', error);
-    });
 
   function updatePreferences(patch: Partial<ShellPreferences>) {
     preferences = patchShellPreferences(patch);
@@ -152,22 +151,25 @@
       const settings = await loadShellSettings();
       shellSettings = settings;
       selectedStackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
+      shellSettingsLoaded = true;
       settingsError = '';
     } catch (error) {
       console.error('Failed to load shell settings', error);
       selectedStackTerminalProfile = 'windowsTerminal';
+      shellSettingsLoaded = false;
       settingsError = error instanceof Error ? error.message : 'Shell settings unavailable.';
     }
   }
 
   async function handleStackTerminalProfileChange(value: string) {
+    if (!shellSettingsLoaded) return;
+
     selectedStackTerminalProfile = normalizeStackTerminalProfile(value);
     try {
-      const settings = shellSettings ?? await loadShellSettings();
       shellSettings = await saveShellSettings({
-        ...settings,
+        ...shellSettings,
         stackBrowser: {
-          ...(settings.stackBrowser ?? { terminalProfile: 'windowsTerminal' }),
+          ...(shellSettings.stackBrowser ?? { terminalProfile: 'windowsTerminal' }),
           terminalProfile: selectedStackTerminalProfile
         }
       });
@@ -176,6 +178,81 @@
       console.error('Failed to save Stack Browser terminal profile', error);
       settingsError = error instanceof Error ? error.message : 'Terminal profile unavailable.';
     }
+  }
+
+  const hotkeyActionNames: Record<StandardHotkeyAction, string> = {
+    search: 'Search',
+    terminal: 'Terminal',
+    stackBrowser: 'Stack Browser',
+    speechTranscription: 'Speech transcription'
+  };
+
+  function canonicalKey(event: KeyboardEvent): string | null {
+    if (event.code === 'Space') return 'Space';
+    if (event.code === 'Backquote') return 'Backquote';
+    if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3);
+    if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
+    return null;
+  }
+
+  async function saveHotkeys(hotkeys: ShellSettings['hotkeys'], failureMessage: string) {
+    if (!shellSettingsLoaded || hotkeyBusy) return;
+    hotkeyBusy = true;
+    hotkeyError = '';
+    try {
+      const currentSettings = shellSettings;
+      shellSettings = await saveShellSettings({ ...currentSettings, hotkeys: { ...hotkeys } });
+    } catch (error) {
+      console.error(failureMessage, error);
+      hotkeyError = error instanceof Error ? error.message : 'Shortcut could not be saved.';
+    } finally {
+      hotkeyBusy = false;
+    }
+  }
+
+  function captureHotkeyBinding(event: KeyboardEvent) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const target = event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
+    const action = target?.dataset.hotkeyAction as StandardHotkeyAction | undefined;
+    if (!action || !shellSettingsLoaded || hotkeyBusy || event.repeat) return;
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
+
+    const key = canonicalKey(event);
+    if (event.metaKey) {
+      hotkeyError = 'Windows key shortcuts are not supported. Use Ctrl or Alt.';
+      return;
+    }
+    if (event.ctrlKey && event.altKey) {
+      hotkeyError = 'Ctrl+Alt shortcuts conflict with AltGr. Use Ctrl or Alt.';
+      return;
+    }
+    if (event.shiftKey || (!event.ctrlKey && !event.altKey)) {
+      hotkeyError = 'Invalid shortcut. Use Ctrl or Alt with a letter, number, Space, or Backquote.';
+      return;
+    }
+    if (!key) {
+      hotkeyError = 'Invalid shortcut key. Use a letter, number, Space, or Backquote.';
+      return;
+    }
+
+    const binding: CanonicalHotkeyBinding = `${event.ctrlKey ? 'Ctrl' : 'Alt'}+${key}`;
+    const duplicate = (Object.keys(shellSettings.hotkeys) as StandardHotkeyAction[])
+      .find((candidate) => candidate !== action && shellSettings.hotkeys[candidate] === binding);
+    if (duplicate) {
+      hotkeyError = `Duplicate shortcut: ${binding} is already assigned to ${hotkeyActionNames[duplicate]}.`;
+      return;
+    }
+
+    void saveHotkeys(
+      { ...shellSettings.hotkeys, [action]: binding },
+      `Failed to save ${hotkeyActionNames[action]} shortcut`
+    );
+  }
+
+  function resetHotkeys() {
+    void saveHotkeys(defaultStandardHotkeySettings(), 'Failed to reset shortcuts');
   }
 
   function handleDateFormatInput(event: Event) {
@@ -367,15 +444,52 @@
 
   <section class="settings-section" aria-labelledby="json-shell-heading">
     <h2 id="json-shell-heading">JSON shell settings</h2>
-    <MeltSelect
-      label="Stack Browser terminal"
-      value={selectedStackTerminalProfile}
-      options={stackTerminalProfileOptions}
-      onChange={handleStackTerminalProfileChange}
-    />
+    <fieldset class="settings-select-guard" disabled={!shellSettingsLoaded}>
+      <MeltSelect
+        label="Stack Browser terminal"
+        value={selectedStackTerminalProfile}
+        options={stackTerminalProfileOptions}
+        onChange={handleStackTerminalProfileChange}
+      />
+    </fieldset>
     {#if settingsError}
       <p class="settings-error" role="alert">{settingsError}</p>
     {/if}
+  </section>
+
+  <section class="settings-section hotkey-settings" aria-labelledby="hotkeys-heading">
+    <h2 id="hotkeys-heading">Keyboard shortcuts</h2>
+    <p id="hotkey-help" class="settings-help">Focus a shortcut, then press Ctrl or Alt with a letter, number, Space, or Backquote.</p>
+    <div class="hotkey-list">
+      <div class="hotkey-row">
+        <span>Search</span>
+        <button type="button" class="hotkey-capture" data-hotkey-action="search" aria-label="Capture Search shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
+          <kbd>{shellSettings.hotkeys.search}</kbd>
+        </button>
+      </div>
+      <div class="hotkey-row">
+        <span>Terminal</span>
+        <button type="button" class="hotkey-capture" data-hotkey-action="terminal" aria-label="Capture Terminal shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
+          <kbd>{shellSettings.hotkeys.terminal}</kbd>
+        </button>
+      </div>
+      <div class="hotkey-row">
+        <span>Stack Browser</span>
+        <button type="button" class="hotkey-capture" data-hotkey-action="stackBrowser" aria-label="Capture Stack Browser shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
+          <kbd>{shellSettings.hotkeys.stackBrowser}</kbd>
+        </button>
+      </div>
+      <div class="hotkey-row">
+        <span>Speech transcription</span>
+        <button type="button" class="hotkey-capture" data-hotkey-action="speechTranscription" aria-label="Capture Speech transcription shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
+          <kbd>{shellSettings.hotkeys.speechTranscription}</kbd>
+        </button>
+      </div>
+    </div>
+    {#if hotkeyError}
+      <p id="hotkey-error" class="settings-error" role="alert">{hotkeyError}</p>
+    {/if}
+    <button type="button" class="hotkey-reset" disabled={!shellSettingsLoaded || hotkeyBusy} on:click={resetHotkeys}>Reset shortcuts to defaults</button>
   </section>
 
   <section class="settings-section" aria-labelledby="shell-bars-heading">

@@ -4,6 +4,7 @@ import {
   IPC_COMMANDS,
   type CopySpeechHistoryTranscriptRequest,
   type StartSpeechCaptureResponse,
+  type StartSpeechCaptureRequest,
   type StopSpeechCaptureRequest
 } from '../ipc/commands.js';
 import {
@@ -22,8 +23,13 @@ export interface ShowSpeechHistoryPanelRequest {
   anchorWidth: number;
 }
 
-export function startSpeechCapture(): Promise<StartSpeechCaptureResponse> {
-  return invoke<StartSpeechCaptureResponse>(IPC_COMMANDS.startSpeechCapture);
+export function startSpeechCapture(reservation: StartSpeechCaptureRequest): Promise<StartSpeechCaptureResponse> {
+  const request = reservation;
+  return invoke<StartSpeechCaptureResponse>(IPC_COMMANDS.startSpeechCapture, { request });
+}
+
+export function captureSpeechPasteTarget(capture = true): Promise<number> {
+  return invoke<number>(IPC_COMMANDS.captureSpeechPasteTarget, { capture });
 }
 
 export function stopSpeechCapture(request: StopSpeechCaptureRequest): Promise<SpeechStatusResponse> {

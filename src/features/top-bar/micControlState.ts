@@ -24,6 +24,10 @@ export const SPEECH_ERROR_CODES = [
   'clipboard-invalid-text',
   'clipboard-timeout',
   'clipboard-publish-rejected',
+  'paste-target-unavailable',
+  'paste-target-changed',
+  'paste-focus-denied',
+  'paste-input-rejected',
   'timeout',
   'state-race'
 ] as const;
@@ -50,7 +54,7 @@ export const MIC_CONTROL_PRESENTATION = {
   recording: { label: 'Stop recording and transcribe', pressed: true, disabled: false },
   stopping: { label: 'Transcribing speech', pressed: false, disabled: true },
   transcribing: { label: 'Transcribing speech', pressed: false, disabled: true },
-  copied: { label: 'Speech copied to clipboard', pressed: false, disabled: true },
+  copied: { label: 'Speech pasted into original target', pressed: false, disabled: true },
   error: { label: 'Speech transcription failed; retry recording', pressed: false, disabled: false }
 } as const satisfies Record<MicControlState, {
   label: string;
@@ -175,7 +179,7 @@ export function reduceSpeechEvent(model: MicControlModel, event: SpeechStatusEve
     };
   }
   if (event.status === 'copied') {
-    return { ...model, state: 'copied', announcement: 'Speech copied to clipboard', errorCode: null };
+    return { ...model, state: 'copied', announcement: 'Speech pasted into original target', errorCode: null };
   }
   return speechFailureModel(model.nonce, normalizeSpeechErrorCode(event.error));
 }

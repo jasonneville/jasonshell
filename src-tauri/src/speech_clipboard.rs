@@ -7,6 +7,10 @@ pub(crate) enum ClipboardFailure {
     InvalidText,
     Timeout,
     PublishRejected,
+    PasteTargetUnavailable,
+    PasteTargetChanged,
+    PasteFocusDenied,
+    PasteInputRejected,
 }
 
 impl ClipboardFailure {
@@ -17,6 +21,10 @@ impl ClipboardFailure {
             Self::InvalidText => "clipboard-invalid-text",
             Self::Timeout => "clipboard-timeout",
             Self::PublishRejected => "clipboard-publish-rejected",
+            Self::PasteTargetUnavailable => "paste-target-unavailable",
+            Self::PasteTargetChanged => "paste-target-changed",
+            Self::PasteFocusDenied => "paste-focus-denied",
+            Self::PasteInputRejected => "paste-input-rejected",
         }
     }
 }

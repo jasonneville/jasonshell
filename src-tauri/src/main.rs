@@ -5,6 +5,7 @@ mod audio_panel;
 mod automation;
 mod calendar_panel;
 mod command_panel;
+mod context_menu_overlay;
 mod contracts;
 mod control_plane;
 mod dev_tools;
@@ -24,6 +25,7 @@ mod shell_paths;
 mod shell_windows;
 mod speech;
 mod speech_clipboard;
+mod speech_target;
 mod speech_history_panel;
 mod speech_model;
 mod speech_runtime;
@@ -116,6 +118,10 @@ fn main() {
             taskbar_menu::show_task_window_context_menu,
             taskbar_menu::show_launcher_context_menu,
             taskbar_menu::show_top_bar_pin_context_menu,
+            taskbar_menu::run_taskbar_launcher_action,
+            taskbar_menu::run_task_window_action,
+            context_menu_overlay::show_context_menu_overlay,
+            context_menu_overlay::hide_context_menu_overlay,
             search_panel::show_search_panel,
             search_panel::show_centered_search_panel,
             search_panel::resize_search_panel,
@@ -175,6 +181,7 @@ fn main() {
             audio::set_default_audio_input_device,
             audio::set_default_audio_output_device,
             speech_runtime::start_speech_capture,
+            speech_runtime::capture_speech_paste_target,
             speech_runtime::stop_speech_capture,
             speech_runtime::get_speech_history,
             speech_runtime::copy_speech_history_transcript,
@@ -512,9 +519,10 @@ fn main() {
                 return Ok(());
             }
             let windows = shell_windows::create_shell_windows(app)?;
+            let shell_settings = settings::load_shell_settings_for_app(app.handle())?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
-            windows_key_hook::install_windows_key_hook(app.handle().clone())
+            windows_key_hook::install_windows_key_hook(app.handle().clone(), shell_settings.hotkeys)
                 .map_err(|error| format!("search hotkey hook is required: {error}"))?;
 
             #[cfg(target_os = "windows")]

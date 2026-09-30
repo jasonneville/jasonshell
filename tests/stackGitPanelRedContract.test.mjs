@@ -58,7 +58,7 @@ test('stack git API exposes no-AI diff, unstage, and destructive revert command 
   assert.match(api, /export type StackGitFileStats = \{ additions: number; deletions: number \};/);
   assert.match(api, /export type StackGitCommitFileDiff = \{/);
   assert.match(api, /export type StackGitRevertRequest = \{/);
-  assert.match(api, /paths: string\[\];/);
+  assert.match(api, /export type StackGitRevertRequest = \{[^}]*folderPath: string;[^}]*paths: string\[\]/);
 });
 
 test('stack git commit history exposes commit file list and per-file diff contracts', () => {
@@ -394,7 +394,7 @@ test('Stack Browser navigation shortcuts never capture Backspace from editable c
   assert.match(surface, /function isEditableKeyTarget\(target: EventTarget \| null\)/);
   assert.match(surface, /HTMLInputElement|HTMLTextAreaElement/);
   assert.match(surface, /isContentEditable/);
-  assert.match(surface, /if \(gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;\s*\}/);
+  assert.match(surface, /if \(editorPath \|\| gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;\s*\}/);
   assert.match(panel, /id="stack-git-commit-message"[\s\S]*on:keydown\|stopPropagation/);
 });
 
@@ -422,11 +422,11 @@ test('StackGitPanel uses OpenChamber Git display geometry instead of card tabs a
 });
 
 test('StackGitPanel replaces the file grid instead of overlaying it', () => {
-  assert.match(surface, /\{#if gitStatusPopupOpen\}[\s\S]*<StackGitPanel\b[\s\S]*\{:else\}[\s\S]*class="details-table"/);
+  assert.match(surface, /\{#if editorPath\}[\s\S]*<StackTextEditor\b[\s\S]*\{:else if gitStatusPopupOpen\}[\s\S]*<StackGitPanel\b[\s\S]*\{:else\}[\s\S]*class="details-table"/);
   assert.match(panel, /\.stack-git-panel\s*\{[^}]*background:\s*var\(--js-bg-surface\)/);
   assert.doesNotMatch(panel, /\.stack-git-panel\s*\{[^}]*position:\s*absolute/);
   assert.match(surface, /function handleBackgroundContextMenu\(event: MouseEvent\) \{\s*if \(gitStatusPopupOpen \|\|/);
-  assert.match(surface, /function handleKeydown\(event: KeyboardEvent\) \{\s*if \(gitStatusPopupOpen \|\|/);
+  assert.match(surface, /function handleKeydown\(event: KeyboardEvent\) \{\s*if \(editorPath \|\| gitStatusPopupOpen \|\|/);
 });
 
 test('StackGitPanel branch button opens a grouped branch dropdown, not the Branches view', () => {
@@ -467,7 +467,7 @@ test('StackGitPanel branch dropdown rows checkout and create branch from selecte
 
 test('StackGitPanel branch dropdown measures available space and cleans resize listener lifecycle', () => {
   assert.match(surfaceCss, /\.inline-editor\s*\{[\s\S]*?grid-row:\s*3;/);
-  assert.match(surfaceCss, /\.details-table,\s*\.stack-popup\s*>\s*\.stack-git-panel\s*\{[\s\S]*?grid-row:\s*4;/);
+  assert.match(surfaceCss, /\.details-table,\s*\.stack-popup\s*>\s*\.stack-git-panel,\s*\.stack-popup\s*>\s*\.stack-text-editor\s*\{\s*grid-row:\s*3;/);
   assert.match(panel, /let branchDropdownOpen = false;/);
   assert.match(panel, /let branchPickerElement: HTMLDivElement \| null = null;/);
   assert.match(panel, /let branchPickerButton: HTMLButtonElement \| null = null;/);
@@ -653,7 +653,8 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.match(bareActionStyles, /:focus-visible[\s\S]*box-shadow:\s*var\(--js-focus-ring\);/);
   assert.match(changeRowStyles, /background:\s*color-mix\(in srgb, var\(--js-color-surface-overlay\) 68%, transparent\);/);
   assert.match(changeRowStyles, /\.stack-git-change-row:hover,[\s\S]*\.stack-git-change-row:focus-within[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-control-hover\) 84%, var\(--js-color-accent-border\)\);/);
-  assert.match(changeRowStyles, /\.stack-git-panel button\.stack-git-change-row__content,[\s\S]*background:\s*transparent;/);
+  assert.match(panel, /class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0"[^>]*on:click=\{\(\) => openChangeDiff\(entry, true\)\}[^>]*on:keydown=\{\(event\) => handleChangeRowKeydown\(event, entry, 'staged'\)\}/);
+  assert.match(panel, /class="stack-git-change-row__action stack-git-change-group-file__action"[^>]*disabled=\{operationBusy \|\| pendingChangeRowPaths\.has\(entry\.path\)\}[^>]*on:click=\{\(\) => handleChangeRowAction\(entry, 'staged'\)\}/);
   assert.match(changeHeaderStyles, /padding:\s*8px;/);
   assert.match(changeRowStyles, /padding:\s*0 8px;/);
   assert.doesNotMatch(panel, /stack-git-diff-line__prefix" aria-hidden="true"/);

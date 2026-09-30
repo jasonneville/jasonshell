@@ -1,16 +1,14 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { emitTo } from '@tauri-apps/api/event';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, tick } from 'svelte';
-  import { hideQuickLaunchPanel, showQuickLaunchPanelContextMenu } from '../lib/quickLaunchPanel';
-  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
+  import { hideQuickLaunchPanel, runQuickLaunchPanelAsAdmin } from '../lib/quickLaunchPanel';
+  import ContextMenu from './ContextMenu.svelte';
+  import ContextMenuItem from './ContextMenuItem.svelte';
   import { type PinnedTaskbarLauncher } from '../lib/taskbarLaunchers';
 
   const QUICK_LAUNCH_OPEN_EVENT = 'quick-launch-panel:open';
   const QUICK_LAUNCH_CLOSED_EVENT = 'quick-launch-panel:closed';
-  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
-  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
 
   let launchers: PinnedTaskbarLauncher[] = [];
   let sortedLaunchers: PinnedTaskbarLauncher[] = [];
@@ -20,7 +18,7 @@
   let quickLaunchNonce: string | null = null;
   let quickLaunchSelectionInFlight = false;
   let suppressNextRowClick = false;
-  let shellSurfaceHotkeyHandled = false;
+  let contextLauncher: { launcher: PinnedTaskbarLauncher; x: number; y: number } | null = null;
 
   $: sortedLaunchers = [...launchers].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -64,32 +62,24 @@
   function handlePanelPointerDown(_event: PointerEvent) {
   }
 
-  function isCtrlSpaceHotkey(event: KeyboardEvent) {
-    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
+  function openQuickLaunchMenu(launcher: PinnedTaskbarLauncher, x: number, y: number) {
+    contextLauncher = { launcher, x, y };
   }
 
-  async function openQuickLaunchNativeMenu(launcher: PinnedTaskbarLauncher, x: number, y: number) {
-    if (!quickLaunchNonce) return;
+  async function runContextLauncherAsAdmin() {
+    const menu = contextLauncher;
+    if (!menu || !quickLaunchNonce) return;
+    contextLauncher = null;
     try {
-      await showQuickLaunchPanelContextMenu({ nonce: quickLaunchNonce, shortcutPath: launcher.shortcutPath, x, y });
+      await runQuickLaunchPanelAsAdmin({ nonce: quickLaunchNonce, shortcutPath: menu.launcher.shortcutPath });
     } catch (error) {
-      console.error('Failed to show quick launch native menu', error);
+      console.error('Failed to run quick launch row as administrator', error);
     }
   }
 
   function launchFocusedLauncher() {
     if (focusedIndex >= 0) {
       void chooseLauncher(sortedLaunchers[focusedIndex]);
-    }
-  }
-
-  function handleSearchHotkeyKeydown(event: KeyboardEvent) {
-    if (!isCtrlSpaceHotkey(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!shellSurfaceHotkeyHandled && !event.repeat) {
-      shellSurfaceHotkeyHandled = true;
-      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
     }
   }
 
@@ -108,7 +98,7 @@
       const button = launcherButtons[focusedIndex];
       if (!button) return;
       const rect = button.getBoundingClientRect();
-      void openQuickLaunchNativeMenu(
+      openQuickLaunchMenu(
         sortedLaunchers[focusedIndex],
         Math.round(rect.left + rect.width / 2),
         Math.round(rect.top + rect.height / 2)
@@ -135,22 +125,12 @@
   }
 
   onMount(() => {
-    const keyupHandler = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || !shellSurfaceHotkeyHandled) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      shellSurfaceHotkeyHandled = false;
-    };
     const blurHandler = () => {
       if (!quickLaunchSelectionInFlight) {
         void invoke('hide_quick_launch_panel_on_focus_loss');
       }
     };
     window.addEventListener('blur', blurHandler);
-    window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
-    window.addEventListener('keyup', keyupHandler, true);
     const unlistenOpen = listen<{ nonce: string; rows: PinnedTaskbarLauncher[] }>(QUICK_LAUNCH_OPEN_EVENT, async (event) => {
       quickLaunchNonce = event.payload.nonce;
       applyLaunchers([...event.payload.rows].sort((a, b) => a.name.localeCompare(b.name)));
@@ -169,8 +149,6 @@
     return () => {
       disposed = true;
       window.removeEventListener('blur', blurHandler);
-      window.removeEventListener('keydown', handleSearchHotkeyKeydown, true);
-      window.removeEventListener('keyup', keyupHandler, true);
       void unlistenOpen.then((fn) => fn()).catch(() => undefined);
       void unlisten.then((fn) => fn()).catch(() => undefined);
     };
@@ -209,7 +187,7 @@
             }}
             on:contextmenu|preventDefault={(event) => {
               event.stopPropagation();
-              void openQuickLaunchNativeMenu(launcher, event.clientX, event.clientY);
+              openQuickLaunchMenu(launcher, event.clientX, event.clientY);
             }}
             on:focus={() => (focusedIndex = index)}
           >
@@ -227,6 +205,17 @@
       <p class="quick-launch-empty">No pinned Explorer launchers.</p>
     {/if}
   </div>
+  {#if contextLauncher}
+    <ContextMenu
+      ariaLabel={`${contextLauncher.launcher.name} actions`}
+      style={`left: ${contextLauncher.x}px; top: ${contextLauncher.y}px;`}
+      on:click={() => (contextLauncher = null)}
+    >
+      <ContextMenuItem icon={null} ariaLabel="Run as administrator" onClick={() => void runContextLauncherAsAdmin()}>
+        Run as administrator
+      </ContextMenuItem>
+    </ContextMenu>
+  {/if}
 </div>
 
 <style>

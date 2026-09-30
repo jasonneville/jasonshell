@@ -186,20 +186,7 @@
     queryInput?.focus({ preventScroll: true });
   }
 
-  function isCtrlSpaceHotkey(event: KeyboardEvent) {
-    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
-  }
-
-  function closeCenteredPanelFromHotkey() {
-    hideCenteredPanelImmediately();
-  }
-
   function handleQueryKeydown(event: KeyboardEvent) {
-    if (isCtrlSpaceHotkey(event)) {
-      event.preventDefault();
-      closeCenteredPanelFromHotkey();
-      return;
-    }
     if (isCtrlEnterHotkey(event)) {
       event.preventDefault();
       pinSelectedFolder();

@@ -405,12 +405,12 @@ test('stack terminal supports xterm selection and copy', () => {
     'legacy Stack terminal selection copy should not also use native browser\/xterm copy'
   );
   assert.match(stackTerminalPane, /on:contextmenu=\{openTerminalContextMenu\}/);
-  assert.match(stackTerminalPane, /class="stack-terminal-context-menu"/);
+  assert.match(stackTerminalPane, /className="stack-terminal-context-menu"/);
   assert.match(stackTerminalPane, /copySelectionFromContextMenu/);
   assert.match(stackTerminalPane, /pasteClipboardFromContextMenu/);
   assert.match(terminalPanelCss, /user-select: text;/);
   assert.match(terminalPanelSurface, /on:contextmenu=\{\(event\) => \{ activatePane\(pane\.paneId\); openTerminalContextMenu\(event\); \}\}/);
-  assert.match(terminalPanelSurface, /class="terminal-panel-context-menu"/);
+  assert.match(terminalPanelSurface, /className="terminal-panel-context-menu"/);
   assert.match(terminalPanelSurface, /copySelectionFromContextMenu/);
   assert.match(terminalPanelSurface, /pasteClipboardFromContextMenu/);
   assert.match(terminalPanelCss, /\.terminal-panel-context-menu/);

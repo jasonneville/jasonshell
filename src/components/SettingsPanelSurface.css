@@ -84,6 +84,13 @@
   margin: 0;
 }
 
+.settings-select-guard {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
 .settings-section > label,
 .google-font-installer label {
   display: grid;
@@ -178,6 +185,88 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hotkey-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.hotkey-row {
+  align-items: center;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border-soft);
+  border-radius: var(--js-radius-sm);
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: minmax(0, 1fr) minmax(7.5rem, auto);
+  min-height: 2.15rem;
+  padding: 0.34rem 0.42rem 0.34rem 0.58rem;
+}
+
+.hotkey-row > span {
+  color: var(--js-color-text);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.hotkey-capture,
+.hotkey-reset {
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  min-height: 1.65rem;
+}
+
+.hotkey-capture {
+  cursor: crosshair;
+  padding: 0 0.5rem;
+  text-align: right;
+}
+
+.hotkey-capture kbd {
+  color: var(--js-color-text-strong);
+  font-family: var(--js-font-mono, monospace);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.hotkey-capture:hover,
+.hotkey-reset:hover {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
+}
+
+.hotkey-capture:focus-visible {
+  background: var(--js-bg-active);
+  border-color: var(--js-color-accent);
+  box-shadow: 0 0 0 2px var(--js-color-accent-border);
+  outline: none;
+}
+
+.hotkey-capture:disabled,
+.hotkey-reset:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.hotkey-reset {
+  align-self: flex-start;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0 0.58rem;
+}
+
+@media (max-width: 25rem) {
+  .hotkey-row {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .hotkey-capture {
+    text-align: left;
+  }
 }
 
 .settings-power-actions,

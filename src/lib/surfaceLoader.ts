@@ -26,7 +26,8 @@ export const surfaceComponentLoaders: Record<LoadableShellSurface, SurfaceCompon
   'command-panel': () => import('../components/CommandPanelSurface.svelte'),
   'audio-panel': () => import('../components/AudioPanelSurface.svelte'),
   'speech-history-panel': () => import('../components/SpeechHistoryPanelSurface.svelte'),
-  'calendar-panel': () => import('../components/CalendarPanelSurface.svelte')
+  'calendar-panel': () => import('../components/CalendarPanelSurface.svelte'),
+  'context-menu-overlay': () => import('../components/ContextMenuOverlaySurface.svelte')
 };
 
 export function loadSurfaceComponent(surface: ShellSurface): Promise<SurfaceComponentModule> | null {

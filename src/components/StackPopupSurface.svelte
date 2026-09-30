@@ -6,6 +6,9 @@
   import { onMount, tick } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import ContextMenu from './ContextMenu.svelte';
+  import ContextMenuItem from './ContextMenuItem.svelte';
+  import ContextMenuSeparator from './ContextMenuSeparator.svelte';
   import StackGitPanel from './StackGitPanel.svelte';
   import StackConfirmDialog from './StackConfirmDialog.svelte';
   import StackTerminalPane from './StackTerminalPane.svelte';
@@ -111,7 +114,6 @@
     type StackBrowserMarqueePoint,
     type StackBrowserMarqueeRect
   } from '../features/stack-browser/viewModel';
-  import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
     beginBasicTextEditorExit,
     cancelPendingEditorExit,
@@ -126,8 +128,6 @@
   const STACK_ICON_RESOLVE_BATCH_SIZE = 24;
   const STACK_ICON_RESOLVE_MAX_CONCURRENCY = 2;
   const STACK_CONTEXT_MENU_VIEWPORT_PADDING = 8;
-  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
-  const TOP_BAR_TARGET = topBarWebviewWindowEventTarget();
   const STACK_BASIC_TEXT_EXTENSIONS = new Set([
     'txt', 'md', 'json', 'js', 'ts', 'svelte', 'css', 'html', 'xml', 'yml', 'yaml', 'csv', 'log'
   ]);
@@ -239,7 +239,6 @@
   let editorDirty = false;
   let pendingEditorExit: PendingBasicTextEditorExit | null = null;
   let editorExitFocusOrigin: HTMLElement | null = null;
-  let shellSurfaceHotkeyHandled = false;
   let activeOperation: StackFileOperationProgress | null = null;
   let operationClock = Date.now();
   let operationClockTimer: number | null = null;
@@ -271,12 +270,6 @@
   onMount(() => {
     const unlisteners: Array<() => void> = [];
     let disposed = false;
-    const keyupHandler = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || !shellSurfaceHotkeyHandled) return;
-      event.preventDefault();
-      event.stopPropagation();
-      shellSurfaceHotkeyHandled = false;
-    };
     const latestRequestTimer = window.setInterval(() => {
       void reconcileLatestStackPopupRequest();
     }, 250);
@@ -299,9 +292,6 @@
       if (disposed) unlisten();
       else unlisteners.push(unlisten);
     });
-    window.addEventListener('keydown', handleSearchHotkeyKeydown, true);
-    window.addEventListener('keydown', handleStackBrowserHotkeyKeydown, true);
-    window.addEventListener('keyup', keyupHandler, true);
     void getCurrentWindow().onDragDropEvent((event: { payload: DragDropEvent }) => {
       if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
         void pasteDroppedPaths(event.payload.paths, currentPath, false);
@@ -323,9 +313,6 @@
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
-      window.removeEventListener('keydown', handleSearchHotkeyKeydown, true);
-      window.removeEventListener('keydown', handleStackBrowserHotkeyKeydown, true);
-      window.removeEventListener('keyup', keyupHandler, true);
       stopMarqueeAutoscroll();
       const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
       void terminalPaneForCleanup?.stopTerminal();
@@ -2315,32 +2302,6 @@
     }
   }
 
-  function isCtrlSpaceHotkey(event: KeyboardEvent) {
-    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
-  }
-
-  function handleSearchHotkeyKeydown(event: KeyboardEvent) {
-    if (!isCtrlSpaceHotkey(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!shellSurfaceHotkeyHandled && !event.repeat) {
-      shellSurfaceHotkeyHandled = true;
-      void emitTo(TOP_BAR_TARGET, SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
-    }
-  }
-
-  function isAltOneHotkey(event: KeyboardEvent) {
-    return event.code === 'Digit1' && event.altKey && !event.ctrlKey && !event.metaKey;
-  }
-
-  function handleStackBrowserHotkeyKeydown(event: KeyboardEvent) {
-    if (!isAltOneHotkey(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.repeat) return;
-    void closeStackPopupFromSurface();
-  }
-
   function isEditableKeyTarget(target: EventTarget | null) {
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
       return true;
@@ -2831,64 +2792,65 @@
       class="context-menu-shell"
       style={`left:${rowMenu.x}px;top:${rowMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(rowMenu)};--stack-context-menu-left:${rowMenu.x}px;--stack-context-menu-top:${rowMenu.y}px;--stack-context-menu-width:${contextMenuWidthCss(rowMenu)};--stack-context-submenu-max-height:${contextSubmenuMaxHeightCss(rowMenu)};--stack-context-submenu-top:${contextSubmenuTopCss(rowMenu)}`}
       role="none"
-      bind:this={rowMenuElement}
-      on:click|stopPropagation
-      on:contextmenu|stopPropagation
+      on:click={(event) => event.stopPropagation()}
+      on:contextmenu={(event) => event.stopPropagation()}
       on:keydown={(event) => void handleRowMenuKeydown(event)}
     >
-      <div class="context-menu context-menu-scroll" role="menu" tabindex="-1" on:scroll={() => void positionOpenMenus()}>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</MeltActionButton>
+      <ContextMenu bind:element={rowMenuElement} className="context-menu context-menu-scroll" on:scroll={() => void positionOpenMenus()}>
+        <ContextMenuItem icon="preview" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</ContextMenuItem>
         <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
-          <MeltActionButton class="submenu-trigger" role="menuitem" ariaHaspopup="menu" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</MeltActionButton>
+          <ContextMenuItem icon="preview" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</ContextMenuItem>
         </div>
-        <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('here')}>Extract here</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder')}>Extract to folder</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('here', 'sevenZip')}>Extract here with 7-Zip</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder', 'sevenZip')}>Extract to folder with 7-Zip</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
-        <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</MeltActionButton>
-      </div>
-      <div bind:this={rowSubmenuPanelElement} class="context-menu context-submenu-panel" role="menu">
+        <ContextMenuItem icon="file_copy" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</ContextMenuItem>
+        <ContextMenuItem icon="content_cut" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem icon="add_location" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void pinSelectedFolderToTopBar()}>Pin to Top Bar</ContextMenuItem>
+        <ContextMenuItem icon="code_blocks" disabled={selectedEntry?.entryType !== 'Folder'} onClick={() => void openSelectedFolderInVscode()}>Open in VS Code</ContextMenuItem>
+        <ContextMenuItem disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('here')}>Extract here</ContextMenuItem>
+        <ContextMenuItem disabled={!selectedZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder')}>Extract to folder</ContextMenuItem>
+        <ContextMenuItem disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('here', 'sevenZip')}>Extract here with 7-Zip</ContextMenuItem>
+        <ContextMenuItem disabled={!selectedSevenZipArchiveEntry()} onClick={() => void extractSelectedArchive('folder', 'sevenZip')}>Extract to folder with 7-Zip</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem icon="file_copy" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.path ?? '', 'Copy path unavailable')}>Copy Path</ContextMenuItem>
+        <ContextMenuItem icon="file_copy" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedEntry?.name ?? '', 'Copy name unavailable')}>Copy Name</ContextMenuItem>
+        <ContextMenuItem icon="folder_copy" disabled={!selectedEntry} onClick={() => void copyTextToClipboard(selectedDirectoryPath(), 'Copy containing folder unavailable')}>Copy Containing Folder</ContextMenuItem>
+        <ContextMenuItem icon="drive_file_rename" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</ContextMenuItem>
+        <ContextMenuItem icon="delete" destructive disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</ContextMenuItem>
+        <ContextMenuItem icon="folder" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</ContextMenuItem>
+        <ContextMenuItem icon="settings" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</ContextMenuItem>
+      </ContextMenu>
+      <ContextMenu bind:element={rowSubmenuPanelElement} className="context-menu context-submenu-panel">
         {#each openWithSuggestions as app (app.id)}
-          <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</MeltActionButton>
+          <ContextMenuItem disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</ContextMenuItem>
         {/each}
-        <MeltActionButton role="menuitem" disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</MeltActionButton>
-      </div>
+        <ContextMenuItem disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</ContextMenuItem>
+      </ContextMenu>
     </div>
   {/if}
 
   {#if backgroundMenu}
-    <div
-      class="context-menu"
+    <ContextMenu
+      className="context-menu"
       style={`left:${backgroundMenu.x}px;top:${backgroundMenu.y}px;--stack-context-menu-max-height:${contextMenuMaxHeightCss(backgroundMenu)}`}
-      role="menu"
-      tabindex="-1"
-      bind:this={backgroundMenuElement}
-      on:click|stopPropagation
-      on:contextmenu|stopPropagation
+      bind:element={backgroundMenuElement}
+      on:click={(event) => event.stopPropagation()}
+      on:contextmenu={(event) => event.stopPropagation()}
       on:keydown={(event) => event.key === 'Escape' && closeMenus()}
     >
-      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={beginCreateFolder}>New Folder</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void beginCreateTextFile()}>New Text File</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openCurrentFolderInVscode()}>Open in VS Code</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void openTerminalHere()}>Open Terminal Here</MeltActionButton>
-      <MeltActionButton role="menuitem" disabled={!currentPath} onClick={() => void showCurrentFolderProperties()}>Properties</MeltActionButton>
-    </div>
+      <ContextMenuItem icon="file_copy" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</ContextMenuItem>
+      <ContextMenuItem icon="content_cut" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</ContextMenuItem>
+      <ContextMenuItem icon="content_paste" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</ContextMenuItem>
+      <ContextMenuItem icon="drive_file_rename" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</ContextMenuItem>
+      <ContextMenuItem icon="delete" destructive disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</ContextMenuItem>
+      <ContextMenuItem icon="folder" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem icon="create_new_folder" disabled={!currentPath} onClick={beginCreateFolder}>New Folder</ContextMenuItem>
+      <ContextMenuItem disabled={!currentPath} onClick={() => void beginCreateTextFile()}>New Text File</ContextMenuItem>
+      <ContextMenuItem icon="folder_copy" disabled={!currentPath} onClick={() => void copyTextToClipboard(currentPath, 'Copy folder path unavailable')}>Copy Folder Path</ContextMenuItem>
+      <ContextMenuItem icon="code_blocks" disabled={!currentPath} onClick={() => void openCurrentFolderInVscode()}>Open in VS Code</ContextMenuItem>
+      <ContextMenuItem icon="terminal" disabled={!currentPath} onClick={() => void openTerminalHere()}>Open Terminal Here</ContextMenuItem>
+      <ContextMenuItem icon="settings" disabled={!currentPath} onClick={() => void showCurrentFolderProperties()}>Properties</ContextMenuItem>
+    </ContextMenu>
   {/if}
 
   {#if deleteConfirmation}

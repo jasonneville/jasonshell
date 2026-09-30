@@ -119,10 +119,13 @@ test('app-managed quick icon backend commands are no longer registered', () => {
 
 test('Explorer launcher context menu exposes Windows taskbar unpin only through validated lnk path', () => {
   const taskbarMenuRs = readFileSync(new URL('../src-tauri/src/taskbar_menu.rs', import.meta.url), 'utf8');
-
-  assert.match(taskbarMenuRs, /LAUNCHER_MENU_PREFIX\}:unpin/);
-  assert.match(taskbarMenuRs, /"Unpin from taskbar"/);
-  assert.match(taskbarMenuRs, /"unpin"\s*=>\s*launchers::unpin_pinned_taskbar_app/);
+  const taskbarMenuTs = readFileSync(new URL('../src/lib/taskbarMenus.ts', import.meta.url), 'utf8');
+  assert.match(bottomBarSource, /selection\.kind === 'launcher' && selection\.token === launcherContextMenu\?\.token/);
+  assert.match(bottomBarSource, /selection\.action === 'unpin'[\s\S]*?runTaskbarLauncherAction\(shortcutPath, selection\.action\)/);
+  assert.match(readFileSync(new URL('../src/components/ContextMenuOverlaySurface.svelte', import.meta.url), 'utf8'), /select\('unpin'\)/);
+  assert.match(taskbarMenuTs, /invoke\(IPC_COMMANDS\.runTaskbarLauncherAction, \{ request: \{ shortcutPath, action \} \}\)/);
+  assert.match(taskbarMenuRs, /pub fn run_taskbar_launcher_action\([\s\S]*?if window\.label\(\) != BOTTOM_BAR_LABEL \{[\s\S]*?"unpin" => launchers::unpin_pinned_taskbar_app\(request\.shortcut_path\)/);
+  assert.match(taskbarMenuRs, /_ => return Err\("Unknown taskbar launcher action"\.to_string\(\)\)/);
   assert.match(launchersRs, /pub fn unpin_pinned_taskbar_app\(shortcut_path: String\) -> Result<\(\), String>/);
   assert.match(launchersRs, /let shortcut_path = validate_shortcut_path\(&shortcut_path\)\?/);
   assert.match(launchersRs, /fs::remove_file\(&shortcut_path\)/);
@@ -135,13 +138,14 @@ test('active task window context menu exposes PID lookup and taskbar pin actions
   const processManagerRust = readFileSync(new URL('../src-tauri/src/process_manager.rs', import.meta.url), 'utf8');
   const processManagerSurface = readFileSync(new URL('../src/components/ProcessManagerSurface.svelte', import.meta.url), 'utf8');
 
-  assert.match(taskbarMenuTs, /processId: number \| null/);
-  assert.match(bottomBarSource, /processId: normalizeTaskGalleryProcessId\(taskWindow\.processId\)/);
-  assert.match(taskbarMenuRs, /"Pin to taskbar"/);
-  assert.match(taskbarMenuRs, /launchers::can_pin_task_window_to_taskbar\(&request\.hwnd\)/);
-  assert.match(taskbarMenuRs, /"pin"\s*=>\s*launchers::pin_task_window_to_taskbar/);
-  assert.match(taskbarMenuRs, /PID \{pid\} - open in Process Manager/);
-  assert.match(taskbarMenuRs, /process_manager::show_process_manager/);
+  assert.match(taskbarMenuTs, /invoke\(IPC_COMMANDS\.runTaskWindowAction, \{ request: \{ hwnd, action, processId \} \}\)/);
+  assert.match(bottomBarSource, /selection\.kind === 'task-window' && selection\.token === taskContextMenu\?\.token/);
+  assert.match(bottomBarSource, /const processId = normalizeTaskGalleryProcessId\(taskWindow\.processId\)/);
+  assert.match(bottomBarSource, /if \(selection\.action === 'process'\) \{\s*if \(processId\) await runTaskWindowAction\(taskWindow\.hwnd, 'process', processId\)/);
+  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid \}\)/);
+  assert.match(bottomBarSource, /selection\.action === 'pin'[\s\S]*?runTaskWindowAction\(taskWindow\.hwnd, selection\.action\)/);
+  assert.match(taskbarMenuRs, /pub fn run_task_window_action\([\s\S]*?if window\.label\(\) != BOTTOM_BAR_LABEL \{[\s\S]*?"pin" => launchers::pin_task_window_to_taskbar\(request\.hwnd\)/);
+  assert.match(taskbarMenuRs, /_ => return Err\("Unknown task window action"\.to_string\(\)\)/);
   assert.match(processManagerRust, /pub focus_pid: Option<u32>/);
   assert.match(processManagerRust, /emit\(PROCESS_MANAGER_OPEN_EVENT, request\.focus_pid\)/);
   assert.match(processManagerSurface, /processFilter = String\(focusPid\)/);

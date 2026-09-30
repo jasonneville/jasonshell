@@ -3,8 +3,9 @@
 use crate::contracts;
 use crate::speech::{
     CopySpeechHistoryTranscriptRequest, SpeechController, SpeechHistoryEntry, SpeechSessionNonce,
-    SpeechStatusEvent, SpeechStatusKind, StartSpeechCaptureResponse, StopSpeechCaptureRequest,
-    MAX_RECORDING_DURATION, MAX_SPEECH_HISTORY_ENTRIES, MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
+    SpeechStatusEvent, SpeechStatusKind, StartSpeechCaptureRequest, StartSpeechCaptureResponse,
+    StopSpeechCaptureRequest, MAX_RECORDING_DURATION, MAX_SPEECH_HISTORY_ENTRIES,
+    MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
 };
 use crate::speech_streaming::{
     merge_tdt_window, BoundedIntake, InputCloseReason, IntakeResult, WorkerMessage,
@@ -17,7 +18,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -60,6 +61,19 @@ impl SpeechFailure {
     }
 }
 
+fn map_paste_failure(
+    failure: crate::speech_target::SpeechPasteFailure,
+) -> crate::speech_clipboard::ClipboardFailure {
+    use crate::speech_clipboard::ClipboardFailure;
+    use crate::speech_target::SpeechPasteFailure;
+    match failure {
+        SpeechPasteFailure::TargetUnavailable => ClipboardFailure::PasteTargetUnavailable,
+        SpeechPasteFailure::TargetChanged => ClipboardFailure::PasteTargetChanged,
+        SpeechPasteFailure::FocusDenied => ClipboardFailure::PasteFocusDenied,
+        SpeechPasteFailure::InputRejected => ClipboardFailure::PasteInputRejected,
+    }
+}
+
 #[derive(Default)]
 struct CaptureHealth {
     stream_error: AtomicBool,
@@ -79,10 +93,32 @@ pub(crate) struct SpeechRuntimeState {
     inner: Mutex<RuntimeInner>,
     generation: AtomicU64,
     commit: Mutex<()>,
+    /// Serializes cancellation with the native clipboard/focus/input delivery.
+    /// It is never held with `inner` or `history` during the native operations.
+    delivery: Mutex<()>,
+    focus_admission: Mutex<FocusAdmission>,
+    focus_drained: Condvar,
     shutting_down: AtomicBool,
     epoch: Instant,
     history: Mutex<VecDeque<SpeechHistoryEntry>>,
     model_pool: Mutex<WarmModelState>,
+}
+
+#[derive(Default)]
+struct FocusAdmission {
+    closed: bool,
+    in_flight: usize,
+}
+
+struct FocusLease<'a>(&'a SpeechRuntimeState);
+
+impl Drop for FocusLease<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut admission) = self.0.focus_admission.lock() {
+            admission.in_flight -= 1;
+            self.0.focus_drained.notify_all();
+        }
+    }
 }
 
 enum WarmModelState {
@@ -96,6 +132,41 @@ enum WarmModelState {
 struct RuntimeInner {
     controller: SpeechController,
     capture: Option<Capture>,
+    paste_target: Option<SessionPasteTarget>,
+    prepared: Option<PreparedPasteTarget>,
+    next_reservation: u64,
+}
+
+struct PreparedPasteTarget {
+    reservation_id: u64,
+    target: Option<crate::speech_target::SpeechPasteTarget>,
+    prepared_at: Instant,
+}
+
+struct SessionPasteTarget {
+    nonce: SpeechSessionNonce,
+    target: Option<crate::speech_target::SpeechPasteTarget>,
+}
+
+impl RuntimeInner {
+    fn matches_prepared_request(&self, request: StartSpeechCaptureRequest) -> bool {
+        self.prepared.as_ref().is_some_and(|prepared| {
+            prepared.reservation_id == request.reservation_id
+                && prepared.prepared_at.elapsed() < Duration::from_secs(2)
+        })
+    }
+
+    fn take_session_target(&mut self, nonce: SpeechSessionNonce) -> Option<SessionPasteTarget> {
+        if self
+            .paste_target
+            .as_ref()
+            .is_some_and(|slot| slot.nonce == nonce)
+        {
+            self.paste_target.take()
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for SpeechRuntimeState {
@@ -104,9 +175,15 @@ impl Default for SpeechRuntimeState {
             inner: Mutex::new(RuntimeInner {
                 controller: SpeechController::default(),
                 capture: None,
+                paste_target: None,
+                prepared: None,
+                next_reservation: 0,
             }),
             generation: AtomicU64::new(0),
             commit: Mutex::new(()),
+            delivery: Mutex::new(()),
+            focus_admission: Mutex::new(FocusAdmission::default()),
+            focus_drained: Condvar::new(),
             shutting_down: AtomicBool::new(false),
             epoch: Instant::now(),
             history: Mutex::new(VecDeque::with_capacity(MAX_SPEECH_HISTORY_ENTRIES)),
@@ -218,6 +295,105 @@ pub(crate) fn copy_speech_history_transcript(
 }
 
 impl SpeechRuntimeState {
+    fn admit_focus(&self, nonce: SpeechSessionNonce) -> Option<FocusLease<'_>> {
+        let mut admission = self.focus_admission.lock().ok()?;
+        if admission.closed || !self.can_prepare_focus(nonce) {
+            return None;
+        }
+        admission.in_flight += 1;
+        Some(FocusLease(self))
+    }
+
+    fn drain_focus_admission_for_shutdown(&self) {
+        if let Ok(mut admission) = self.focus_admission.lock() {
+            admission.closed = true;
+            while admission.in_flight != 0 {
+                admission = match self.focus_drained.wait(admission) {
+                    Ok(value) => value,
+                    Err(_) => return,
+                };
+            }
+        }
+    }
+
+    fn can_prepare_focus(&self, nonce: SpeechSessionNonce) -> bool {
+        !self.shutting_down.load(Ordering::Acquire)
+            && self.generation.load(Ordering::Acquire) == nonce.0
+            && self
+                .inner
+                .lock()
+                .ok()
+                .is_some_and(|inner| inner.controller.can_complete(nonce, self.now()))
+    }
+
+    pub(crate) fn cancel_speech_preparation(&self, reservation_id: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            if inner
+                .prepared
+                .as_ref()
+                .is_some_and(|prepared| prepared.reservation_id == reservation_id)
+            {
+                inner.prepared = None;
+            }
+        }
+    }
+
+    pub(crate) fn prepare_speech_paste_target(
+        &self,
+    ) -> Option<crate::speech::SpeechHotkeyActivation> {
+        use crate::speech::SpeechHotkeyActivation;
+        if self.shutting_down.load(Ordering::Acquire) {
+            return None;
+        }
+        let reservation_id = {
+            let Ok(mut inner) = self.inner.lock() else {
+                return None;
+            };
+            if inner.capture.is_some() || inner.controller.status().status != SpeechStatusKind::Idle
+            {
+                let status = inner.controller.status();
+                return if status.status == SpeechStatusKind::Recording {
+                    status
+                        .nonce
+                        .map(|nonce| SpeechHotkeyActivation::Stop { nonce: nonce })
+                } else {
+                    None
+                };
+            }
+            inner.paste_target = None;
+            if inner
+                .prepared
+                .as_ref()
+                .is_some_and(|p| p.prepared_at.elapsed() < Duration::from_secs(2))
+            {
+                return None; // Duplicate hotkey while activation is pending.
+            }
+            inner.next_reservation = inner.next_reservation.wrapping_add(1);
+            let id = inner.next_reservation;
+            inner.prepared = Some(PreparedPasteTarget {
+                reservation_id: id,
+                target: None,
+                prepared_at: Instant::now(),
+            });
+            id
+        };
+        // Native capture may wait on another window: never hold the runtime lock here.
+        let target = crate::speech_target::capture_speech_paste_target().ok();
+        if let Ok(mut inner) = self.inner.lock() {
+            if inner.capture.is_some() || inner.controller.status().status != SpeechStatusKind::Idle
+            {
+                return None;
+            }
+            if let Some(prepared) = inner.prepared.as_mut() {
+                if prepared.reservation_id == reservation_id {
+                    prepared.target = target;
+                    return Some(SpeechHotkeyActivation::Start { reservation_id });
+                }
+            }
+        }
+        None
+    }
+
     fn now(&self) -> Duration {
         self.epoch.elapsed()
     }
@@ -277,12 +453,56 @@ pub(crate) fn spawn_warm_model_async(app: AppHandle) {
 }
 
 #[tauri::command]
+pub(crate) fn capture_speech_paste_target(
+    state: State<'_, SpeechRuntimeState>,
+    capture: Option<bool>,
+) -> Result<u64, String> {
+    let reservation_id = {
+        let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR.to_owned())?;
+        if inner.capture.is_some() || inner.controller.status().status != SpeechStatusKind::Idle {
+            return Err("Speech is busy".into());
+        }
+        inner.next_reservation = inner.next_reservation.wrapping_add(1);
+        let id = inner.next_reservation;
+        inner.prepared = Some(PreparedPasteTarget {
+            reservation_id: id,
+            target: None,
+            prepared_at: Instant::now(),
+        });
+        id
+    };
+    let target = if capture.unwrap_or(true) {
+        crate::speech_target::capture_speech_paste_target().ok()
+    } else {
+        None
+    };
+    let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR.to_owned())?;
+    if inner.capture.is_some()
+        || inner.controller.status().status != SpeechStatusKind::Idle
+        || inner
+            .prepared
+            .as_ref()
+            .is_none_or(|p| p.reservation_id != reservation_id)
+    {
+        return Err("Speech is busy".into());
+    }
+    inner.prepared.as_mut().unwrap().target = target;
+    Ok(reservation_id)
+}
+
+#[tauri::command]
 pub(crate) fn start_speech_capture(
     app: AppHandle,
     state: State<'_, SpeechRuntimeState>,
+    request: StartSpeechCaptureRequest,
 ) -> Result<StartSpeechCaptureResponse, String> {
     let commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
     if state.shutting_down.load(Ordering::Acquire) {
+        state
+            .inner
+            .lock()
+            .ok()
+            .map(|mut inner| inner.prepared = None);
         return Err(GENERIC_ERROR.into());
     }
     let event = {
@@ -290,7 +510,30 @@ pub(crate) fn start_speech_capture(
         if inner.capture.is_some() {
             return Err("Speech is busy".into());
         }
-        inner.controller.start(state.now()).map_err(str::to_owned)?
+        if !inner.matches_prepared_request(request)
+            || inner.prepared.as_ref().is_none_or(|prepared| {
+                prepared.reservation_id != request.reservation_id
+                    || prepared.prepared_at.elapsed() >= Duration::from_secs(2)
+            })
+        {
+            return Err(crate::speech::SPEECH_STATE_ERROR.into());
+        }
+        let event = match inner.controller.start(state.now()) {
+            Ok(event) => event,
+            Err(error) => {
+                inner.prepared = None;
+                return Err(error.to_owned());
+            }
+        };
+        // Consume the prepared snapshot, never recapture the UI's foreground.
+        let prepared_target = inner.paste_target.take();
+        let target = inner.prepared.take().and_then(|prepared| prepared.target);
+        inner.paste_target = Some(SessionPasteTarget {
+            nonce: event.nonce.ok_or(GENERIC_ERROR)?,
+            target,
+        });
+        drop(prepared_target);
+        event
     };
     let nonce = event.nonce.ok_or_else(|| GENERIC_ERROR.to_string())?;
     // Reserve the controller session before exclusively taking the process-warmed model.
@@ -507,12 +750,72 @@ fn run_streaming_worker(
         if text.is_empty() {
             return Err(SpeechFailure::TranscriptEmpty);
         }
+        let _commit = state.commit.lock().map_err(|_| SpeechFailure::StateRace)?;
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return Err(SpeechFailure::StateRace);
+        }
+        let paste_target = state
+            .inner
+            .lock()
+            .map_err(|_| SpeechFailure::StateRace)
+            .and_then(|mut inner| {
+                if !inner.controller.can_complete(nonce, state.now()) {
+                    return Err(SpeechFailure::StateRace);
+                }
+                Ok(inner
+                    .take_session_target(nonce)
+                    .and_then(|slot| slot.target))
+            })?;
+        drop(_commit);
         publish_recorded_if_current(
             &state,
             nonce,
             text,
             || state.now(),
-            || crate::speech_clipboard::write_unicode_text(text),
+            || {
+                crate::speech_clipboard::write_unicode_text(text)?;
+                if let Some(paste_target) = paste_target {
+                    if state.shutting_down.load(Ordering::Acquire)
+                        || state.generation.load(Ordering::Acquire) != nonce.0
+                        || !state.can_prepare_focus(nonce)
+                    {
+                        return Err(
+                            crate::speech_clipboard::ClipboardFailure::PasteTargetUnavailable,
+                        );
+                    }
+                    let focus_lease = state
+                        .admit_focus(nonce)
+                        .ok_or(crate::speech_clipboard::ClipboardFailure::PasteTargetUnavailable)?;
+                    crate::speech_target::prepare_captured_target(paste_target)
+                        .map_err(map_paste_failure)?;
+                    drop(focus_lease);
+                    let _delivery = state.delivery.lock().map_err(|_| {
+                        crate::speech_clipboard::ClipboardFailure::PasteTargetUnavailable
+                    })?;
+                    if state.shutting_down.load(Ordering::Acquire)
+                        || state.generation.load(Ordering::Acquire) != nonce.0
+                    {
+                        return Err(
+                            crate::speech_clipboard::ClipboardFailure::PasteTargetUnavailable,
+                        );
+                    }
+                    let authorized = state
+                        .inner
+                        .lock()
+                        .ok()
+                        .is_some_and(|inner| inner.controller.can_complete(nonce, state.now()));
+                    if !authorized {
+                        return Err(
+                            crate::speech_clipboard::ClipboardFailure::PasteTargetUnavailable,
+                        );
+                    }
+                    use crate::speech_target::inject_to_prepared_target as paste_to_captured_target;
+                    paste_to_captured_target(paste_target).map_err(map_paste_failure)?;
+                }
+                Ok(())
+            },
         )
     })();
     drop(model);
@@ -676,44 +979,60 @@ where
     N: FnMut() -> Duration,
     P: FnOnce() -> Result<(), crate::speech_clipboard::ClipboardFailure>,
 {
-    let commit = state.commit.lock().map_err(|_| SpeechFailure::StateRace)?;
+    // Shutdown takes this gate before it invalidates the session. Once delivery
+    // starts, shutdown waits; when shutdown wins first, this preflight observes
+    // the invalidated generation and sends no native input.
+    // Native clipboard/focus work is outside the short final injection gate.
+    // `state.delivery` protects only bounded_native_delivery (the final identity
+    // check and SendInput), never clipboard publication or focus restoration.
     let publish_at = now();
-    if state.shutting_down.load(Ordering::Acquire)
-        || state.generation.load(Ordering::Acquire) != nonce.0
     {
-        return Err(SpeechFailure::StateRace);
-    }
-    if !state
-        .inner
-        .lock()
-        .map_err(|_| SpeechFailure::StateRace)?
-        .controller
-        .can_complete(nonce, publish_at)
-    {
-        return state
+        // The commit gate only guards authorization. Clipboard and SendInput can block,
+        // so they must run after this short critical section is released.
+        let _commit = state.commit.lock().map_err(|_| SpeechFailure::StateRace)?;
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return Err(SpeechFailure::StateRace);
+        }
+        if !state
             .inner
             .lock()
             .map_err(|_| SpeechFailure::StateRace)?
             .controller
-            .complete_error_code(nonce, publish_at, SpeechFailure::Timeout.code())
-            .ok_or(SpeechFailure::StateRace);
+            .can_complete(nonce, publish_at)
+        {
+            return state
+                .inner
+                .lock()
+                .map_err(|_| SpeechFailure::StateRace)?
+                .controller
+                .complete_error_code(nonce, publish_at, SpeechFailure::Timeout.code())
+                .ok_or(SpeechFailure::StateRace);
+        }
+        insert_history_attempt(state, nonce, transcript).map_err(|_| SpeechFailure::StateRace)?;
     }
 
-    insert_history_attempt(state, nonce, transcript).map_err(|_| SpeechFailure::StateRace)?;
     if let Err(failure) = publish() {
-        drop(commit);
         update_history_outcome(state, nonce, failure.code())
             .map_err(|_| SpeechFailure::StateRace)?;
         return Err(SpeechFailure::Clipboard(failure));
     }
-    let event = state
-        .inner
-        .lock()
-        .map_err(|_| SpeechFailure::StateRace)?
-        .controller
-        .complete_copied(nonce, publish_at)
-        .ok_or(SpeechFailure::StateRace)?;
-    drop(commit);
+    let event = {
+        let _commit = state.commit.lock().map_err(|_| SpeechFailure::StateRace)?;
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return Err(SpeechFailure::StateRace);
+        }
+        state
+            .inner
+            .lock()
+            .map_err(|_| SpeechFailure::StateRace)?
+            .controller
+            .complete_copied(nonce, publish_at)
+            .ok_or(SpeechFailure::StateRace)?
+    };
     update_history_outcome(state, nonce, "copied").map_err(|_| SpeechFailure::StateRace)?;
     Ok(event)
 }
@@ -738,6 +1057,8 @@ fn recover_failed_stop_with(
 ) {
     state.invalidate();
     let event = state.inner.lock().ok().and_then(|mut inner| {
+        inner.paste_target = None;
+        inner.prepared = None;
         if inner.controller.status().status == SpeechStatusKind::Recording {
             let _ = inner.controller.stop(nonce, state.now());
         }
@@ -758,6 +1079,8 @@ fn expire_transcription_and_invalidate(
 ) -> Option<SpeechStatusEvent> {
     let mut inner = state.inner.lock().ok()?;
     let event = inner.controller.expire_transcription(nonce, now)?;
+    inner.paste_target = None;
+    inner.prepared = None;
     state.invalidate();
     Some(event)
 }
@@ -769,6 +1092,8 @@ fn expire_recording_and_invalidate(
 ) -> Option<(SpeechStatusEvent, Option<Capture>)> {
     let mut inner = state.inner.lock().ok()?;
     let event = inner.controller.expire_recording(nonce, now)?;
+    inner.paste_target = None;
+    inner.prepared = None;
     let capture = inner.capture.take();
     state.invalidate();
     Some((event, capture))
@@ -785,7 +1110,11 @@ fn reset_terminal_if_current(
     {
         return None;
     }
-    state.inner.lock().ok()?.controller.reset(nonce)
+    let mut inner = state.inner.lock().ok()?;
+    let event = inner.controller.reset(nonce)?;
+    inner.paste_target = None;
+    inner.prepared = None;
+    Some(event)
 }
 
 fn schedule_terminal_reset(app: AppHandle, nonce: SpeechSessionNonce) {
@@ -945,7 +1274,9 @@ fn schedule_transcription_limit(app: AppHandle, nonce: SpeechSessionNonce) {
 }
 
 pub(crate) fn shutdown(state: &SpeechRuntimeState) {
+    let _delivery = state.delivery.lock().ok();
     let _commit = state.commit.lock().ok();
+    state.drain_focus_admission_for_shutdown();
     shutdown_after_commit(state);
 }
 
@@ -954,19 +1285,21 @@ fn shutdown_with_hook<F>(state: &SpeechRuntimeState, after_commit_locked: F)
 where
     F: FnOnce(),
 {
+    let _delivery = state.delivery.lock().ok();
     let _commit = state.commit.lock().ok();
     after_commit_locked();
+    state.drain_focus_admission_for_shutdown();
     shutdown_after_commit(state);
 }
 
 fn shutdown_after_commit(state: &SpeechRuntimeState) {
-    state.invalidate();
+    state.generation.fetch_add(1, Ordering::AcqRel);
     state.shutting_down.store(true, Ordering::Release);
-    let capture = state
-        .inner
-        .lock()
-        .ok()
-        .and_then(|mut inner| inner.capture.take());
+    let capture = state.inner.lock().ok().and_then(|mut inner| {
+        inner.paste_target = None;
+        inner.prepared = None;
+        inner.capture.take()
+    });
     if let Some(capture) = capture {
         capture.intake.first_close(InputCloseReason::Shutdown);
         drop(capture);
@@ -1234,6 +1567,193 @@ mod tests {
     use crate::speech::MAX_SPEECH_OPERATION_DURATION;
 
     #[test]
+    fn focus_lease_shutdown_waits_for_admitted_focus_and_rejects_late_admission() {
+        let state = Arc::new(SpeechRuntimeState::default());
+        let nonce = SpeechSessionNonce(1);
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.controller.start(Duration::ZERO).unwrap();
+            inner.controller.stop(nonce, state.now()).unwrap();
+        }
+        state.generation.store(nonce.0, Ordering::Release);
+        let lease = state
+            .admit_focus(nonce)
+            .expect("focus admitted before shutdown");
+        let (draining_tx, draining_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let other = Arc::clone(&state);
+        let shutdown = std::thread::spawn(move || {
+            shutdown_with_hook(&other, || {
+                draining_tx.send(()).unwrap();
+            });
+            done_tx.send(()).unwrap();
+        });
+        draining_rx.recv().unwrap();
+        // Wait until shutdown has closed admission, not for a scheduling timeout.
+        while !state.focus_admission.lock().unwrap().closed {
+            std::thread::yield_now();
+        }
+        assert!(state.admit_focus(nonce).is_none());
+        assert!(done_rx.try_recv().is_err());
+        drop(lease);
+        done_rx.recv().unwrap();
+        shutdown.join().unwrap();
+    }
+
+    #[test]
+    fn delayed_stop_payload_retains_original_nonce() {
+        let state = SpeechRuntimeState::default();
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.controller.start(Duration::ZERO).unwrap();
+        }
+        assert_eq!(
+            state.prepare_speech_paste_target(),
+            Some(crate::speech::SpeechHotkeyActivation::Stop {
+                nonce: SpeechSessionNonce(1)
+            })
+        );
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner
+                .controller
+                .stop(SpeechSessionNonce(1), state.now())
+                .unwrap();
+        }
+        assert!(state.prepare_speech_paste_target().is_none());
+    }
+
+    #[test]
+    fn cancelled_hotkey_cannot_clear_replacement_reservation() {
+        let state = SpeechRuntimeState::default();
+        state.inner.lock().unwrap().prepared = Some(PreparedPasteTarget {
+            reservation_id: 22,
+            target: None,
+            prepared_at: Instant::now(),
+        });
+        state.cancel_speech_preparation(21);
+        assert_eq!(
+            state
+                .inner
+                .lock()
+                .unwrap()
+                .prepared
+                .as_ref()
+                .unwrap()
+                .reservation_id,
+            22
+        );
+        state.cancel_speech_preparation(22);
+        assert!(state.inner.lock().unwrap().prepared.is_none());
+    }
+
+    #[test]
+    fn shutdown_and_stale_generation_prevent_focus_preparation() {
+        let state = SpeechRuntimeState::default();
+        let nonce = SpeechSessionNonce(1);
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.controller.start(Duration::ZERO).unwrap();
+            inner.controller.stop(nonce, state.now()).unwrap();
+        }
+        state.generation.store(1, Ordering::Release);
+        assert!(state.can_prepare_focus(nonce));
+        state.generation.store(2, Ordering::Release);
+        assert!(!state.can_prepare_focus(nonce));
+        state.generation.store(1, Ordering::Release);
+        state.shutting_down.store(true, Ordering::Release);
+        assert!(!state.can_prepare_focus(nonce));
+    }
+
+    #[test]
+    fn start_reservation_requires_exact_unexpired_id() {
+        let mut inner = SpeechRuntimeState::default().inner.into_inner().unwrap();
+        inner.prepared = Some(PreparedPasteTarget {
+            reservation_id: 17,
+            target: None,
+            prepared_at: Instant::now(),
+        });
+        assert!(inner.matches_prepared_request(StartSpeechCaptureRequest { reservation_id: 17 }));
+        assert!(!inner.matches_prepared_request(StartSpeechCaptureRequest { reservation_id: 16 }));
+        inner.prepared.as_mut().unwrap().prepared_at = Instant::now() - Duration::from_secs(3);
+        assert!(!inner.matches_prepared_request(StartSpeechCaptureRequest { reservation_id: 17 }));
+    }
+
+    #[test]
+    fn duplicate_pending_hotkey_does_not_replace_reservation() {
+        let state = SpeechRuntimeState::default();
+        let mut inner = state.inner.lock().unwrap();
+        inner.prepared = Some(PreparedPasteTarget {
+            reservation_id: 42,
+            target: None,
+            prepared_at: Instant::now(),
+        });
+        drop(inner);
+        assert!(state.prepare_speech_paste_target().is_none());
+        assert_eq!(
+            state
+                .inner
+                .lock()
+                .unwrap()
+                .prepared
+                .as_ref()
+                .unwrap()
+                .reservation_id,
+            42
+        );
+    }
+
+    #[test]
+    fn only_matching_nonce_takes_session_target_and_manual_reservation_replaces_stale() {
+        let mut inner = SpeechRuntimeState::default().inner.into_inner().unwrap();
+        inner.paste_target = Some(SessionPasteTarget {
+            nonce: SpeechSessionNonce(7),
+            target: None,
+        });
+        assert!(inner.take_session_target(SpeechSessionNonce(6)).is_none());
+        assert!(inner.take_session_target(SpeechSessionNonce(7)).is_some());
+        inner.prepared = Some(PreparedPasteTarget {
+            reservation_id: 1,
+            target: None,
+            prepared_at: Instant::now(),
+        });
+        inner.next_reservation = 1;
+        inner.next_reservation += 1;
+        inner.prepared = Some(PreparedPasteTarget {
+            reservation_id: inner.next_reservation,
+            target: None,
+            prepared_at: Instant::now(),
+        });
+        assert_eq!(inner.prepared.as_ref().unwrap().reservation_id, 2);
+    }
+
+    #[test]
+    fn clipboard_publisher_does_not_hold_final_input_delivery_gate() {
+        let state = SpeechRuntimeState::default();
+        let nonce = SpeechSessionNonce(1);
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.controller.start(Duration::ZERO).unwrap();
+            inner
+                .controller
+                .stop(nonce, Duration::from_secs(1))
+                .unwrap();
+        }
+        state.generation.store(1, Ordering::Release);
+        publish_recorded_if_current(
+            &state,
+            nonce,
+            "synthetic",
+            || Duration::from_secs(2),
+            || {
+                assert!(state.delivery.try_lock().is_ok());
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn retained_history_nonce_copies_exact_transcript() {
         let state = SpeechRuntimeState::default();
         insert_history_attempt(&state, SpeechSessionNonce(7), "exact Unicode 🦀")
@@ -1435,7 +1955,7 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_cannot_overtake_authorized_publisher() {
+    fn shutdown_can_invalidate_authorized_publisher_while_native_publish_is_in_flight() {
         let state = Arc::new(SpeechRuntimeState::default());
         let nonce = SpeechSessionNonce(1);
         {
@@ -1483,13 +2003,15 @@ mod tests {
         assert!(!state.shutting_down.load(Ordering::Acquire));
 
         release_tx.send(()).expect("release publisher");
-        worker
+        let event = worker
             .join()
             .expect("worker should finish")
-            .expect("publish should succeed");
+            .expect("delivery should complete before shutdown");
+        assert_eq!(event.status, SpeechStatusKind::Copied);
+        assert_eq!(event.nonce, Some(nonce));
         shutdown_locked_rx
             .recv()
-            .expect("shutdown should acquire commit gate after publisher");
+            .expect("shutdown should wait for native delivery before acquiring the gate");
         shutdown_thread.join().expect("shutdown should finish");
         assert_eq!(publisher_calls.load(Ordering::Acquire), 1);
         assert!(state.shutting_down.load(Ordering::Acquire));

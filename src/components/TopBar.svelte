@@ -113,10 +113,10 @@
   import type { SearchMode } from '../lib/searchSettings';
   import { showControlPlane } from '../lib/controlPlane';
   import {
-    showTopBarPinContextMenu,
-    TOP_BAR_PIN_MENU_ACTION_EVENT,
-    type TopBarPinMenuActionPayload
-  } from '../lib/taskbarMenus';
+    CONTEXT_MENU_OVERLAY_SELECT_EVENT,
+    showContextMenuOverlay,
+    type ContextMenuOverlaySelection
+  } from '../lib/contextMenuOverlay';
   import {
     hasTaskbarGroupDragStarted,
     taskbarGroupDragDelta,
@@ -182,11 +182,13 @@
   let openWindows: TaskbarWindow[] = [];
   let lastTaskbarSnapshotSequence = 0;
   let stackPins: StackPin[] = [];
+  let pinContextMenu: { pin: StackPin; token: string } | null = null;
   let searchResults: SearchPanelResult[] = [];
   let searchResultsQuery = '';
   let searchQuery = '';
   let searchInputDraft = '';
   let searchOpen = false;
+  let micControl: TopBarMicControl | null = null;
   let selectedIndex = 0;
   let searchStatus = 'Loading search catalog...';
   let searchControl: HTMLDivElement;
@@ -263,6 +265,7 @@
   const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
   const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
   const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';
+  const SPEECH_HOTKEY_TOGGLE_EVENT = 'speech:toggle';
   const STACK_POPUP_CLOSED_EVENT = 'stack-popup:closed';
   const TOP_BAR_TERMINAL_ACTIVITY_EVENT = 'terminal-panel:activity';
   const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
@@ -677,14 +680,6 @@
     void openCenteredPanel({ publishCurrentPayload: true });
   }
 
-  function isCtrlSpaceHotkey(event: KeyboardEvent) {
-    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
-  }
-
-  function isSpaceKey(event: KeyboardEvent) {
-    return event.code === 'Space';
-  }
-
   async function closePanel() {
     resetActiveSearchState();
     searchOpen = false;
@@ -809,14 +804,6 @@
     const element = target instanceof Element ? target : target?.parentElement ?? null;
     const pinnedFolderButton = element?.closest('button[data-path]');
     return !!pinnedFolderButton && !!pinRailEl?.contains(pinnedFolderButton);
-  }
-
-  function isAltBackquoteHotkey(event: KeyboardEvent) {
-    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
-  }
-
-  function isAltOneHotkey(event: KeyboardEvent) {
-    return event.code === 'Digit1' && event.altKey && !event.ctrlKey && !event.metaKey;
   }
 
   function handleTopBarKeydown(event: KeyboardEvent) {
@@ -1429,13 +1416,30 @@
   function handlePinContextMenu(event: MouseEvent, pin: StackPin) {
     event.preventDefault();
     event.stopPropagation();
-    void showTopBarPinContextMenu({
-      path: pin.path,
-      x: event.clientX,
-      y: event.clientY
-    }).catch((error) => {
-      console.error('Failed to show top-bar pin context menu', error);
-    });
+    const token = crypto.randomUUID();
+    pinContextMenu = { pin, token };
+    void showContextMenuOverlay({ source: 'top-bar', kind: 'pin', token, x: event.clientX, y: event.clientY })
+      .catch((error) => {
+        if (pinContextMenu?.token === token) pinContextMenu = null;
+        console.error('Failed to show top bar context menu overlay', error);
+      });
+  }
+
+  async function handlePinContextMenuSelection(selection: ContextMenuOverlaySelection) {
+    if (
+      selection.source !== 'top-bar'
+      || selection.kind !== 'pin'
+      || selection.token !== pinContextMenu?.token
+    ) return;
+    const { path } = pinContextMenu.pin;
+    pinContextMenu = null;
+    if (selection.action === 'open') {
+      await openStackPath(path, queryPinButton(path));
+    } else if (selection.action === 'openInVscode') {
+      await openStackFolderInVscode(path);
+    } else if (selection.action === 'unpin') {
+      await unpinFromMenu(path);
+    }
   }
 
   async function unpinFromMenu(path: string) {
@@ -1875,8 +1879,16 @@
     registerAsyncUnlistener(listen(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT, () => {
       void toggleStackBrowserFromHotkey();
     }));
+    registerAsyncUnlistener(listen<{kind: 'start'; reservationId: number} | {kind: 'stop'; nonce: number}>(SPEECH_HOTKEY_TOGGLE_EVENT, (event) => {
+      void micControl?.toggleSpeech(event.payload);
+    }));
     registerAsyncUnlistener(listen(STACK_POPUP_CLOSED_EVENT, () => {
       stackBrowserOpen = false;
+    }));
+    registerAsyncUnlistener(listen<ContextMenuOverlaySelection>(CONTEXT_MENU_OVERLAY_SELECT_EVENT, (event) => {
+      void handlePinContextMenuSelection(event.payload).catch((error) => {
+        console.error('Failed to apply top bar context menu action', error);
+      });
     }));
     registerAsyncUnlistener(listen<TopBarTerminalActivityPayload>(TOP_BAR_TERMINAL_ACTIVITY_EVENT, (event) => {
       if (event.payload?.active === false) {
@@ -1888,51 +1900,6 @@
       }
       terminalCompletionPending = false;
     }));
-    let shellSurfaceHotkeyHandled = false;
-    let terminalSurfaceHotkeyHandled = false;
-    const keydownHandler = (event: KeyboardEvent) => {
-      if (isAltOneHotkey(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!event.repeat) {
-          void toggleStackBrowserFromHotkey();
-        }
-        return;
-      }
-      if (isAltBackquoteHotkey(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!terminalSurfaceHotkeyHandled && !event.repeat) {
-          terminalSurfaceHotkeyHandled = true;
-          void toggleTerminalPanel(terminalControl);
-        }
-        return;
-      }
-      if (isCtrlSpaceHotkey(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!shellSurfaceHotkeyHandled && !event.repeat) {
-          shellSurfaceHotkeyHandled = true;
-          toggleCenteredSearchFromHotkey();
-        }
-      }
-    };
-    const keyupHandler = (event: KeyboardEvent) => {
-      if ((event.key === '`' || event.code === 'Backquote') && terminalSurfaceHotkeyHandled) {
-        event.preventDefault();
-        event.stopPropagation();
-        terminalSurfaceHotkeyHandled = false;
-        return;
-      }
-      if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      shellSurfaceHotkeyHandled = false;
-    };
-    window.addEventListener('keydown', keydownHandler, true);
-    window.addEventListener('keyup', keyupHandler, true);
     registerAsyncUnlistener(listen<SearchPanelQueryPayload>(SEARCH_PANEL_QUERY_EVENT, (event) => {
       markSearchPanelInteraction();
       if (!isSearchPanelQueryPayload(event.payload)) {
@@ -1993,17 +1960,6 @@
     }, {
       target: topBarWebviewWindowEventTarget()
     }));
-    registerAsyncUnlistener(listen<TopBarPinMenuActionPayload>(TOP_BAR_PIN_MENU_ACTION_EVENT, (event) => {
-      if (event.payload.action === 'open') {
-        void openStackPath(event.payload.path, queryPinButton(event.payload.path));
-      } else if (event.payload.action === 'openInVscode') {
-        void openStackFolderInVscode(event.payload.path).catch((error) => {
-          console.error('Failed to open pinned folder in VS Code', error);
-        });
-      } else if (event.payload.action === 'unpin') {
-        void unpinFromMenu(event.payload.path);
-      }
-    }));
     registerAsyncUnlistener(listen(AUDIO_PANEL_CLOSED_EVENT, () => {
       audioOpen = false;
     }));
@@ -2042,8 +1998,6 @@
       cancelSearchFreshnessRetry();
       cancelSearchProviderCacheRetry();
       cancelRailScrollButtonUpdate();
-      window.removeEventListener('keydown', keydownHandler, true);
-      window.removeEventListener('keyup', keyupHandler, true);
       if (pinDropStatusTimer !== null) {
         window.clearTimeout(pinDropStatusTimer);
       }
@@ -2177,7 +2131,7 @@
             </MeltActionButton>
           </div>
         {:else if control.id === 'mic'}
-          <TopBarMicControl />
+          <TopBarMicControl bind:this={micControl} />
         {:else}
           <div class="sound-control" bind:this={soundControl}>
             <MeltActionButton class="sound-button" ariaLabel="Open sound controls" ariaHaspopup="dialog" ariaExpanded={audioOpen} ariaControls={SOUND_PANEL_ID} tooltip="Sound controls" onClick={(event) => void toggleSoundPanel(event.currentTarget)}>

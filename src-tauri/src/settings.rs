@@ -32,6 +32,39 @@ pub struct ShellSettings {
     pub task_history: Vec<Value>,
     #[serde(default)]
     pub quick_commands: QuickCommandsSettings,
+    #[serde(default = "default_standard_hotkeys")]
+    pub hotkeys: StandardHotkeySettings,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct CanonicalHotkeyBinding(pub String);
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StandardHotkeySettings {
+    pub search: CanonicalHotkeyBinding,
+    pub terminal: CanonicalHotkeyBinding,
+    pub stack_browser: CanonicalHotkeyBinding,
+    #[serde(default = "default_speech_transcription_hotkey")]
+    pub speech_transcription: CanonicalHotkeyBinding,
+}
+
+fn default_speech_transcription_hotkey() -> CanonicalHotkeyBinding {
+    CanonicalHotkeyBinding("Ctrl+D".to_string())
+}
+
+fn default_standard_hotkeys() -> StandardHotkeySettings {
+    StandardHotkeySettings {
+        search: CanonicalHotkeyBinding("Ctrl+Space".to_string()),
+        terminal: CanonicalHotkeyBinding("Alt+Backquote".to_string()),
+        stack_browser: CanonicalHotkeyBinding("Alt+1".to_string()),
+        speech_transcription: default_speech_transcription_hotkey(),
+    }
+}
+
+impl Default for StandardHotkeySettings {
+    fn default() -> Self { default_standard_hotkeys() }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -227,6 +260,7 @@ impl Default for ShellSettings {
             workspaces: Vec::new(),
             task_history: Vec::new(),
             quick_commands: QuickCommandsSettings::default(),
+            hotkeys: default_standard_hotkeys(),
         }
     }
 }
@@ -373,7 +407,24 @@ pub(crate) fn save_shell_settings_for_app(
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|_| "settings write lock is poisoned".to_string())?;
-    save_settings_to_path(&path, settings)
+    let mut settings = settings;
+    settings.schema = SETTINGS_SCHEMA.to_string();
+    settings.version = SETTINGS_VERSION;
+    let settings = validate_settings(settings)?;
+    reject_secret_setting_keys(
+        &serde_json::to_value(&settings)
+            .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
+        &[],
+    )?;
+    let previous = load_settings_from_path(&path)?;
+    crate::windows_key_hook::configure_standard_hotkeys(app_handle, &settings.hotkeys)?;
+    if let Err(error) = save_settings_to_path(&path, settings.clone()) {
+        return match crate::windows_key_hook::configure_standard_hotkeys(app_handle, &previous.hotkeys) {
+            Ok(()) => Err(error),
+            Err(restore_error) => Err(format!("{error}; failed to restore previous hotkeys: {restore_error}")),
+        };
+    }
+    Ok(settings)
 }
 
 pub(crate) fn update_shell_settings_for_app(
@@ -534,7 +585,57 @@ fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, Strin
     }
     settings.workspaces = workspaces;
     settings.quick_commands = validate_quick_commands_settings(settings.quick_commands)?;
+    settings.hotkeys = validate_standard_hotkey_settings(settings.hotkeys)?;
     Ok(settings)
+}
+
+const MAX_HOTKEY_BINDING_LENGTH: usize = 32;
+
+// Security acceptance coverage: rejects_empty_hotkey_binding,
+// rejects_control_char_hotkey_binding, rejects_unknown_hotkey_key,
+// rejects_unknown_hotkey_modifier, rejects_bare_hotkey_key,
+// rejects_ctrl_alt_altgr_conflict, rejects_duplicate_standard_hotkeys,
+// canonicalizes_hotkey_bindings_before_persisting.
+
+pub(crate) fn validate_standard_hotkey_settings(
+    hotkeys: StandardHotkeySettings,
+) -> Result<StandardHotkeySettings, String> {
+    let normalized = StandardHotkeySettings {
+        search: canonicalize_hotkey_binding(&hotkeys.search.0)?,
+        terminal: canonicalize_hotkey_binding(&hotkeys.terminal.0)?,
+        stack_browser: canonicalize_hotkey_binding(&hotkeys.stack_browser.0)?,
+        speech_transcription: canonicalize_hotkey_binding(&hotkeys.speech_transcription.0)?,
+    };
+    let mut unique = HashSet::new();
+    for binding in [&normalized.search, &normalized.terminal, &normalized.stack_browser, &normalized.speech_transcription] {
+        if !unique.insert(binding.0.as_str()) {
+            return Err("standard hotkey bindings must be unique".to_string());
+        }
+    }
+    Ok(normalized)
+}
+
+pub(crate) fn canonicalize_hotkey_binding(value: &str) -> Result<CanonicalHotkeyBinding, String> {
+    let value = value.trim();
+    if value.is_empty() { return Err("hotkey binding must not be empty".to_string()); }
+    if value.len() > MAX_HOTKEY_BINDING_LENGTH { return Err("hotkey binding is too long".to_string()); }
+    if value.chars().any(char::is_control) { return Err("hotkey binding contains control characters".to_string()); }
+    let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
+    if parts.len() < 2 { return Err("hotkey binding must include a modifier".to_string()); }
+    if parts.len() != 2 { return Err("Ctrl+Alt hotkeys conflict with AltGr".to_string()); }
+    let modifier = match parts[0].to_ascii_lowercase().as_str() {
+        "ctrl" | "control" => "Ctrl",
+        "alt" => "Alt",
+        _ => return Err("unknown hotkey modifier".to_string()),
+    };
+    let lowered = parts[1].to_ascii_lowercase();
+    let key = match lowered.as_str() {
+        "space" => "Space".to_string(),
+        "backquote" | "`" => "Backquote".to_string(),
+        _ if parts[1].len() == 1 && parts[1].bytes().all(|b| b.is_ascii_alphanumeric()) => parts[1].to_ascii_uppercase(),
+        _ => return Err("unknown hotkey key".to_string()),
+    };
+    Ok(CanonicalHotkeyBinding(format!("{modifier}+{key}")))
 }
 
 pub(crate) fn clamp_shell_bar_height_logical(value: f64, minimum: f64) -> f64 {
@@ -1085,6 +1186,90 @@ mod tests {
         );
         assert_eq!(value["quickCommands"]["entries"], json!([]));
         assert!(value.get("quickIcons").is_none());
+    }
+
+    fn hotkeys(search: &str, terminal: &str, stack_browser: &str) -> StandardHotkeySettings {
+        StandardHotkeySettings {
+            search: CanonicalHotkeyBinding(search.to_string()),
+            terminal: CanonicalHotkeyBinding(terminal.to_string()),
+            stack_browser: CanonicalHotkeyBinding(stack_browser.to_string()),
+            speech_transcription: default_speech_transcription_hotkey(),
+        }
+    }
+
+    #[test]
+    fn standard_hotkey_defaults_match_native_only_actions() {
+        let defaults = StandardHotkeySettings::default();
+
+        assert_eq!(defaults.search.0, "Ctrl+Space");
+        assert_eq!(defaults.terminal.0, "Alt+Backquote");
+        assert_eq!(defaults.stack_browser.0, "Alt+1");
+        assert_eq!(defaults.speech_transcription.0, "Ctrl+D");
+    }
+
+    #[test]
+    fn legacy_standard_hotkeys_default_speech_and_reject_speech_conflicts() {
+        let legacy = json!({"search": "Ctrl+Space", "terminal": "Alt+Backquote", "stackBrowser": "Alt+1"});
+        let parsed: StandardHotkeySettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.speech_transcription.0, "Ctrl+D");
+        assert_eq!(serde_json::to_value(&parsed).unwrap()["speechTranscription"], "Ctrl+D");
+        let mut duplicate = parsed;
+        duplicate.speech_transcription = CanonicalHotkeyBinding("ctrl+space".into());
+        assert!(validate_standard_hotkey_settings(duplicate).is_err());
+    }
+
+    #[test]
+    fn canonicalizes_hotkey_bindings_before_persisting() {
+        let path = test_dir("hotkey-canonical").join(SETTINGS_FILE);
+        let mut settings = ShellSettings::default();
+        settings.hotkeys = hotkeys(" control + space ", " alt + ` ", " alt + a ");
+
+        let saved = save_settings_to_path(&path, settings).unwrap();
+        let persisted: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(saved.hotkeys.search.0, "Ctrl+Space");
+        assert_eq!(saved.hotkeys.terminal.0, "Alt+Backquote");
+        assert_eq!(saved.hotkeys.stack_browser.0, "Alt+A");
+        assert_eq!(persisted["hotkeys"]["search"], json!("Ctrl+Space"));
+        assert_eq!(persisted["hotkeys"]["terminal"], json!("Alt+Backquote"));
+        assert_eq!(persisted["hotkeys"]["stackBrowser"], json!("Alt+A"));
+    }
+
+    #[test]
+    fn rejects_unsafe_hotkey_bindings_before_persisting() {
+        let cases = [
+            ("", "hotkey binding must not be empty"),
+            ("Ctrl+Spa\nce", "hotkey binding contains control characters"),
+            ("Shift+Space", "unknown hotkey modifier"),
+            ("Space", "hotkey binding must include a modifier"),
+            ("Ctrl+Escape", "unknown hotkey key"),
+            ("Ctrl+Alt+1", "Ctrl+Alt hotkeys conflict with AltGr"),
+            ("Ctrl+F1", "unknown hotkey key"),
+            ("Alt+ForwardSlash", "unknown hotkey key"),
+            ("Ctrl+Space++++++++++++++++++++++++++++++++", "hotkey binding is too long"),
+        ];
+
+        for (binding, expected_error) in cases {
+            let mut settings = ShellSettings::default();
+            settings.hotkeys.search = CanonicalHotkeyBinding(binding.to_string());
+
+            let error = validate_settings(settings).unwrap_err();
+
+            assert!(
+                error.contains(expected_error),
+                "{binding:?} returned {error:?}, expected {expected_error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_standard_hotkeys() {
+        let mut settings = ShellSettings::default();
+        settings.hotkeys = hotkeys("ctrl+space", "Alt+Backquote", "CONTROL+SPACE");
+
+        let error = validate_settings(settings).unwrap_err();
+
+        assert!(error.contains("standard hotkey bindings must be unique"));
     }
 
     #[test]

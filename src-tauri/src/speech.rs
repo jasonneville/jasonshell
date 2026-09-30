@@ -57,6 +57,24 @@ pub struct StopSpeechCaptureRequest {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StartSpeechCaptureRequest {
+    pub reservation_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SpeechHotkeyActivation {
+    Start {
+        #[serde(rename = "reservationId")]
+        reservation_id: u64,
+    },
+    Stop {
+        nonce: SpeechSessionNonce,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CopySpeechHistoryTranscriptRequest {
     pub nonce: SpeechSessionNonce,
 }

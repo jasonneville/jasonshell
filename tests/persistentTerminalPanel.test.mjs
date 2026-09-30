@@ -143,10 +143,14 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /trackTerminalInput\(data\)/);
   assert.match(terminalPanel, /resizeStackTerminal\(/);
   assert.match(terminalPanel, /terminal\.attachCustomKeyEventHandler/);
-  assert.match(terminalPanel, /isAltBackquoteHotkey\(event\)/);
-  assert.match(terminalPanel, /hideTerminalPanel\(\)/);
-  assert.match(terminalPanel, /<svelte:window on:keydown\|capture/);
-  assert.match(terminalPanel, /return false;\s*}\s*if \(event\.type === 'keyup'/);
+  const nativeHook = readFileSync(new URL('../src-tauri/src/windows_key_hook.rs', import.meta.url), 'utf8');
+  const topBar = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+  assert.match(nativeHook, /crate::contracts::events::TERMINAL_TOGGLE_PANEL/);
+  assert.match(topBar, /listen\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, \(\) =>/);
+  assert.doesNotMatch(terminalPanel, /isAltBackquoteHotkey\(event\)/);
+  assert.match(topBar, /listen\(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT, \(\) =>[\s\S]*?toggleTerminalPanel/);
+  assert.doesNotMatch(terminalPanel, /<svelte:window on:keydown\|capture/, 'native hotkey must not be intercepted by a competing frontend listener');
+  assert.match(terminalPanel, /terminal\.attachCustomKeyEventHandler\(\(event\) => \{/);
   assert.match(terminalPanel, /event\.preventDefault\(\);\s*\r?\n\s*event\.stopPropagation\(\);\s*\r?\n\s*void copySelection\(\)/);
   assert.match(terminalPanel, /function isTerminalFontZoomKey\(event: KeyboardEvent\)[\s\S]*event\.key === '-' && !event\.shiftKey[\s\S]*event\.key === '\+' \|\| event\.key === '='/);
   assert.match(terminalPanel, /function handleTerminalFontZoomWheel\(event: WheelEvent\)/);
@@ -199,7 +203,7 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /event\.key === 'Backspace' \|\| event\.key === 'Delete'/);
   assert.match(terminalPanel, /on:mousedown\|capture=\{\(event\) => \{ activatePane\(pane\.paneId\); handleTerminalMouseDown\(event\); \}\}/);
   assert.match(terminalPanel, /on:contextmenu=\{\(event\) => \{ activatePane\(pane\.paneId\); openTerminalContextMenu\(event\); \}\}/);
-  assert.match(terminalPanel, /class="terminal-panel-context-menu"/);
+  assert.match(terminalPanel, /className="terminal-panel-context-menu"/);
   assert.match(terminalPanel, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
   assert.match(terminalPanel, /const TERMINAL_PANEL_DEFAULT_FONT_SIZE = 13/);
   assert.match(terminalPanel, /fontSize: terminalFontSize/);

@@ -80,6 +80,8 @@ Node tests live in `tests/*.test.mjs` and usually assert source contracts, view-
 - Live shell smoke can alter Windows shell state. Get human consent before running it.
 - File/process/native-picker actions need backend validation, not only frontend hiding.
 - Persistence claims need current source path, data shape, migration/default behavior, and tests or explicit validation gap.
+- Global hotkeys expose only standard search, terminal, Stack Browser, and speech transcription actions. Settings persist validated canonical chords (defaults `Ctrl+Space`, `Alt+Backquote`, `Alt+1`, `Ctrl+D`); empty, control-character, bare, unknown, duplicate, and Ctrl+Alt/AltGr-conflicting bindings are rejected before persistence or registration.
+- `windows_key_hook.rs` owns four no-repeat OS `RegisterHotKey` registrations on a dedicated Windows message thread and dispatches `WM_HOTKEY` to top-bar contract events; it does not intercept or suppress raw key releases. Startup loads persisted settings before registering. Settings saves validate and replace registrations before writing to disk; failed registration attempts restore prior bindings, and failed writes attempt to restore prior bindings. Windows does not provide atomic replacement: if another process claims an old chord during rollback, the save fails with explicit restoration details and retains verified active registrations; the claimed chord may remain unavailable until a later successful update. `Backquote` maps to the layout-sensitive `VK_OEM_3`. Live Windows hotkey and Alt+Tab behavior remains consent-gated manual-smoke pending.
 
 ## Subsystem pointers
 

@@ -9,13 +9,13 @@ const stackPopupApi = readFileSync(new URL('../src/lib/stackPopup.ts', import.me
 test('row context menu exposes Open with picker plus suggested developer apps', () => {
   assert.equal(surface.includes('Open width'), false);
   assert.equal(surface.includes('Default width'), false);
-  assert.match(surface, />Open with ▸<\/MeltActionButton>/);
+  assert.match(surface, />Open with ▸<\/ContextMenuItem>/);
   assert.match(surface, /openWithSuggestions/);
   assert.match(surface, /openSelectedWithSuggestedApp\(app\)/);
-  assert.match(surface, />\{app\.label\}<\/MeltActionButton>/);
+  assert.match(surface, />\{app\.label\}<\/ContextMenuItem>/);
   assert.match(stackPopupApi, /listStackOpenWithCandidates\(path: string\): Promise<StackOpenWithCandidate\[]>/);
   assert.match(stackPopupApi, /openStackItemWithApp\(path: string, appId: string\): Promise<void>/);
-  assert.match(surface, />Choose app\.\.\.<\/MeltActionButton>/);
+  assert.match(surface, />Choose app\.\.\.<\/ContextMenuItem>/);
   assert.match(surface, /openSelectedWithPicker\(\)/);
 });
 
@@ -33,7 +33,7 @@ test('Open with flyout is a sibling of the independently scrolling root menu', (
   );
 
   assert.match(rowMenu, /class="context-menu-shell"/);
-  assert.match(rowMenu, /class="context-menu context-menu-scroll"[\s\S]*?<\/div>\s*<div bind:this=\{rowSubmenuPanelElement\} class="context-menu context-submenu-panel"/);
+  assert.match(rowMenu, /<ContextMenu bind:element=\{rowMenuElement\} className="context-menu context-menu-scroll"[\s\S]*?<\/ContextMenu>\s*<ContextMenu bind:element=\{rowSubmenuPanelElement\} className="context-menu context-submenu-panel"/);
   assert.match(rowMenu, /on:keydown=\{\(event\) => void handleRowMenuKeydown\(event\)\}/);
   assert.match(surface, /event\.key !== 'ArrowRight'[\s\S]*?rowSubmenuPanelElement\?\.querySelector<HTMLElement>\('button:not\(:disabled\)'\)\?\.focus\(\)/);
   assert.match(css, /\.context-menu-scroll\s*\{[\s\S]*?overflow-y:\s*auto;/);
@@ -54,16 +54,9 @@ test('background context menu is available off rows and keeps selection actions'
     surface.indexOf('{#if backgroundMenu}'),
     surface.indexOf('{#if deleteConfirmation}')
   );
-  assert.match(backgroundMenu, />Copy<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Cut<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Rename<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Delete<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Reveal<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Paste<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />New Folder<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />New Text File<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Copy Folder Path<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Open Terminal Here<\/MeltActionButton>/);
+  for (const label of ['Copy', 'Cut', 'Rename', 'Delete', 'Reveal', 'Paste', 'New Folder', 'New Text File', 'Copy Folder Path', 'Open Terminal Here']) {
+    assert.ok(backgroundMenu.includes(`>${label}</ContextMenuItem>`), `${label} must remain a background menu action`);
+  }
   assert.match(stackPopupApi, /newStackTextFile\(parent: string\): Promise<StackEntry>/);
   assert.match(stackPopupApi, /openStackTerminalHere\(path: string\): Promise<void>/);
 });

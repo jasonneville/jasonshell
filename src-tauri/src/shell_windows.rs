@@ -28,6 +28,7 @@ pub const COMMAND_PANEL_LABEL: &str = "command-panel";
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
 pub const SPEECH_HISTORY_PANEL_LABEL: &str = "speech-history-panel";
 pub const CALENDAR_PANEL_LABEL: &str = "calendar-panel";
+pub const CONTEXT_MENU_OVERLAY_LABEL: &str = "context-menu-overlay";
 #[cfg(test)]
 pub const ALL_LABELS: &[&str] = &[
     TOP_BAR_LABEL,
@@ -46,6 +47,7 @@ pub const ALL_LABELS: &[&str] = &[
     AUDIO_PANEL_LABEL,
     SPEECH_HISTORY_PANEL_LABEL,
     CALENDAR_PANEL_LABEL,
+    CONTEXT_MENU_OVERLAY_LABEL,
 ];
 pub const TOP_BAR_HEIGHT_LOGICAL: f64 = 23.4;
 pub const BOTTOM_BAR_HEIGHT_LOGICAL: f64 = 32.4;
@@ -79,6 +81,8 @@ pub const SPEECH_HISTORY_PANEL_WIDTH_LOGICAL: f64 = 360.0;
 pub const SPEECH_HISTORY_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
 pub const CALENDAR_PANEL_WIDTH_LOGICAL: f64 = 360.0;
 pub const CALENDAR_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
+pub const CONTEXT_MENU_OVERLAY_WIDTH_LOGICAL: f64 = 360.0;
+pub const CONTEXT_MENU_OVERLAY_HEIGHT_LOGICAL: f64 = 360.0;
 const DISABLE_NATIVE_CONTEXT_MENU_SCRIPT: &str =
     "window.addEventListener('contextmenu', (event) => event.preventDefault());";
 
@@ -135,8 +139,36 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _audio_panel = build_audio_panel_window(app)?;
     let _speech_history_panel = build_speech_history_panel_window(app)?;
     let _calendar_panel = build_calendar_panel_window(app)?;
+    let _context_menu_overlay = build_context_menu_overlay_window(app)?;
 
     Ok(CreatedShellWindows { top, bottom })
+}
+
+fn build_context_menu_overlay_window(app: &mut App) -> AppResult<WebviewWindow> {
+    Ok(WebviewWindowBuilder::new(
+        app,
+        CONTEXT_MENU_OVERLAY_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .always_on_top(true)
+    .devtools(false)
+    .decorations(false)
+    .focused(false)
+    .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+    .inner_size(
+        CONTEXT_MENU_OVERLAY_WIDTH_LOGICAL,
+        CONTEXT_MENU_OVERLAY_HEIGHT_LOGICAL,
+    )
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(false)
+    .shadow(false)
+    .skip_taskbar(true)
+    .theme(Some(Theme::Dark))
+    .title("JasonShell Context Menu")
+    .transparent(true)
+    .visible(false)
+    .build()?)
 }
 
 fn build_quick_launch_panel_window(app: &mut App) -> AppResult<WebviewWindow> {

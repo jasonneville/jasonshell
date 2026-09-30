@@ -16,11 +16,14 @@
   } from '../features/top-bar/micControlState';
   import {
     listenSpeechStatus,
+    captureSpeechPasteTarget,
     showSpeechHistoryPanel,
     startSpeechCapture,
     stopSpeechCapture
   } from '../lib/speech';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+
+  type SpeechHotkeyActivation = {kind: 'start'; reservationId: number} | {kind: 'stop'; nonce: number};
 
   const micIconUrl = new URL(
     '../assets/icons/mic_24dp_E3E3E3_FILL1_wght300_GRAD0_opsz24.svg',
@@ -29,6 +32,8 @@
 
   let micModel: MicControlModel = INITIAL_MIC_CONTROL_MODEL;
   let disposed = false;
+  let pasteTargetCapture: Promise<number> | null = null;
+  let pendingStopNonce: number | null = null;
   $: micPresentation = MIC_CONTROL_PRESENTATION[micModel.state];
   $: micLabel = speechControlLabel(micModel);
 
@@ -46,18 +51,42 @@
     });
     return () => {
       disposed = true;
+      pendingStopNonce = null;
       unlisten?.();
     };
   });
 
-  async function handleMicControl() {
+  export async function toggleSpeech(activation?: SpeechHotkeyActivation) {
+    if (activation?.kind === 'stop' && micModel.state === 'starting') {
+      pendingStopNonce = activation.nonce;
+      return;
+    }
+    if (activation?.kind === 'stop' && (micModel.state !== 'recording' || activation.nonce !== micModel.nonce)) return;
+    if (activation?.kind === 'start' && micModel.state !== 'idle' && !(micModel.state === 'error' && micModel.nonce === null)) return;
     if (micModel.state === 'idle' || (micModel.state === 'error' && micModel.nonce === null)) {
       micModel = beginSpeechStart(micModel);
+      // Native hotkeys already prepared their target before this UI callback.
+      const targetCapture = activation?.kind === 'start' ? Promise.resolve(activation.reservationId) : (pasteTargetCapture ?? captureSpeechPasteTarget(false));
+      pasteTargetCapture = null;
       await settleSpeechCommand(
-        startSpeechCapture(),
+        targetCapture.then((reservationId) => startSpeechCapture({ reservationId })),
         () => disposed,
-        (response) => { micModel = acceptSpeechStart(micModel, response); },
+        (response) => {
+          micModel = acceptSpeechStart(micModel, response);
+          const deferredNonce = pendingStopNonce;
+          pendingStopNonce = null;
+          if (deferredNonce !== response.nonce || micModel.state !== 'recording') return;
+          const nonce = response.nonce;
+          micModel = beginSpeechStop(micModel);
+          void settleSpeechCommand(
+            stopSpeechCapture({ nonce }),
+            () => disposed,
+            (stopped) => { micModel = acceptSpeechStop(micModel, stopped); },
+            (error) => { micModel = failSpeechCommand(micModel, normalizeSpeechCommandError(error)); }
+          );
+        },
         (error) => {
+          pendingStopNonce = null;
           micModel = failSpeechCommand(micModel, normalizeSpeechCommandError(error));
         }
       );
@@ -77,7 +106,14 @@
     }
   }
 
+  function capturePasteTargetBeforeMicFocus(event: PointerEvent) {
+    if (event.button === 0 && event.isPrimary && (micModel.state === 'idle' || (micModel.state === 'error' && micModel.nonce === null))) {
+      pasteTargetCapture = captureSpeechPasteTarget();
+    }
+  }
+
   function openSpeechHistory(event: MouseEvent) {
+    pasteTargetCapture = null;
     event.preventDefault();
     event.stopPropagation();
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -111,7 +147,8 @@
     ariaPressed={micPresentation.pressed}
     disabled={micPresentation.disabled || (micModel.state === 'error' && micModel.nonce !== null)}
     tooltip={micLabel}
-    onClick={handleMicControl}
+    onClick={() => { void toggleSpeech(); }}
+    onPointerDown={capturePasteTargetBeforeMicFocus}
     onContextMenu={openSpeechHistory}
     onKeyDown={handleSpeechHistoryKeydown}
   >

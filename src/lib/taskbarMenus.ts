@@ -28,6 +28,17 @@ export type TopBarPinMenuActionPayload = {
 
 export const TOP_BAR_PIN_MENU_ACTION_EVENT = 'top-bar:pin-menu-action';
 
+export type TaskbarLauncherAction = 'launch' | 'runas' | 'properties' | 'reveal' | 'revealTarget' | 'copyPath' | 'unpin';
+export type TaskWindowAction = 'focus' | 'minimize' | 'close' | 'pin' | 'process';
+
+export function runTaskbarLauncherAction(shortcutPath: string, action: TaskbarLauncherAction): Promise<void> {
+  return invoke(IPC_COMMANDS.runTaskbarLauncherAction, { request: { shortcutPath, action } });
+}
+
+export function runTaskWindowAction(hwnd: string, action: TaskWindowAction, processId: number | null = null): Promise<void> {
+  return invoke(IPC_COMMANDS.runTaskWindowAction, { request: { hwnd, action, processId } });
+}
+
 export function showTaskWindowContextMenu(
   request: ShowTaskWindowContextMenuRequest
 ): Promise<void> {

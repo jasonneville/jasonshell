@@ -6,9 +6,10 @@
     hideTaskGallery as hideTaskGalleryNative,
     hideTaskGalleryOnFocusLoss,
     hideTaskGalleryWindowPreview,
-    showTaskGalleryWindowContextMenu,
     showTaskGalleryWindowPreview
   } from '../lib/taskGallery';
+  import ContextMenu from './ContextMenu.svelte';
+  import ContextMenuItem from './ContextMenuItem.svelte';
   import { nextTaskGalleryFocusIndex, reconcileTaskGalleryFocus } from '../lib/taskGallery';
   import type { TaskbarWindow } from '../lib/taskbarWindows';
   import { allocateTaskPreviewRequestId } from '../lib/taskbarPreview';
@@ -32,6 +33,7 @@
   let activeNonce: string | null = null;
   let disposed = false;
   let galleryHoverCloseTimer: number | null = null;
+  let contextTask: { item: TaskbarWindow; x: number; y: number } | null = null;
 
   function cancelGalleryHoverClose() {
     if (galleryHoverCloseTimer === null) return;
@@ -147,12 +149,15 @@
 
   function handleTaskGalleryItemContextMenu(event: MouseEvent, item: TaskbarWindow) {
     event.preventDefault();
-    void showTaskGalleryWindowContextMenu({
-      nonce: payload?.nonce ?? '',
-      hwnd: item.hwnd,
-      x: event.clientX,
-      y: event.clientY
-    });
+    contextTask = { item, x: event.clientX, y: event.clientY };
+  }
+
+  async function activateContextTask(minimizeIfActive: boolean) {
+    const menu = contextTask;
+    if (!payload || !menu) return;
+    contextTask = null;
+    await closePreview();
+    await activateTaskGalleryWindow(menu.item.hwnd, payload.nonce, minimizeIfActive);
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -168,7 +173,7 @@
       const button = rowButtons[focusedIndex];
       const rect = button?.getBoundingClientRect();
       if (!rect) return;
-      void showTaskGalleryWindowContextMenu({ nonce: payload.nonce, hwnd: item.hwnd, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) });
+      contextTask = { item, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
       return;
     }
     const nextIndex = nextTaskGalleryFocusIndex(focusedIndex, galleryItems.length, event.key);
@@ -248,6 +253,16 @@
       </button>
     {/each}
   </div>
+  {#if contextTask}
+    <ContextMenu
+      ariaLabel={`${contextTask.item.title} actions`}
+      style={`left: ${contextTask.x}px; top: ${contextTask.y}px;`}
+      on:click={() => (contextTask = null)}
+    >
+      <ContextMenuItem icon="preview" onClick={() => void activateContextTask(false)}>Restore / Switch</ContextMenuItem>
+      <ContextMenuItem icon={null} onClick={() => void activateContextTask(true)}>Minimize</ContextMenuItem>
+    </ContextMenu>
+  {/if}
 </div>
 {/if}
 

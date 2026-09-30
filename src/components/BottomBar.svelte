@@ -2,7 +2,7 @@
   import './BottomBar.css';
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, tick } from 'svelte';
-  import { emit, listen } from '@tauri-apps/api/event';
+  import { listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import {
@@ -36,10 +36,6 @@
     taskbarLauncherOrderFromDisplacement
   } from '../lib/taskbarPins';
   import {
-    showLauncherContextMenu,
-    showTaskWindowContextMenu
-  } from '../lib/taskbarMenus';
-  import {
     allocateTaskPreviewRequestId,
     hideTaskWindowPreview,
     showTaskWindowPreview
@@ -49,6 +45,12 @@
     showTaskGallery as showTaskGalleryNative
   } from '../lib/taskGallery';
   import { normalizeTaskGalleryProcessId } from '../lib/taskGallery';
+  import { runTaskbarLauncherAction, runTaskWindowAction } from '../lib/taskbarMenus';
+  import {
+    CONTEXT_MENU_OVERLAY_SELECT_EVENT,
+    showContextMenuOverlay,
+    type ContextMenuOverlaySelection
+  } from '../lib/contextMenuOverlay';
   import {
     hasTaskbarGroupDragStarted,
     buildTaskWindowGroups,
@@ -97,6 +99,8 @@
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  let taskContextMenu: { taskWindow: TaskbarWindow; token: string } | null = null;
+  let launcherContextMenu: { launcher: PinnedTaskbarLauncher; token: string } | null = null;
   const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
   const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
   let launcherMessage = 'Loading Explorer taskbar pins…';
@@ -163,9 +167,6 @@
   let quickLaunchOpenInFlight = false;
   let suppressQuickLaunchClick = false;
   let taskbarOverflow = taskbarOverflowState(0, 0, 0);
-  const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT = 'search:toggle-centered';
-  const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT = 'terminal:toggle-panel';
-  const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT = 'stack-browser:toggle';
   const QUICK_LAUNCH_CLOSED_EVENT = 'quick-launch-panel:closed';
   const QUICK_LAUNCH_OPEN_EVENT = 'quick-launch-panel:open';
   type QuickLaunchRow = PinnedTaskbarLauncher;
@@ -612,30 +613,48 @@
     event.preventDefault();
     event.stopPropagation();
     await hidePreview();
-    try {
-      await showTaskWindowContextMenu({
-        hwnd: taskWindow.hwnd,
-        processId: normalizeTaskGalleryProcessId(taskWindow.processId),
-        isMinimized: taskWindow.isMinimized,
-        x: event.clientX,
-        y: event.clientY
+    const token = crypto.randomUUID();
+    taskContextMenu = { taskWindow, token };
+    void showContextMenuOverlay({ source: 'bottom-bar', kind: 'task-window', token, x: event.clientX, y: event.clientY, isMinimized: taskWindow.isMinimized, processId: normalizeTaskGalleryProcessId(taskWindow.processId) })
+      .catch((error) => {
+        if (taskContextMenu?.token === token) taskContextMenu = null;
+        console.error('Failed to show task context menu overlay', error);
       });
-    } catch (error) {
-      console.error(`Failed to open task menu for ${taskWindow.hwnd}`, error);
-    }
   }
   async function openLauncherMenu(launcher: PinnedTaskbarLauncher, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
     await hidePreview();
-    try {
-      await showLauncherContextMenu({
-        shortcutPath: launcher.shortcutPath,
-        x: event.clientX,
-        y: event.clientY
+    const token = crypto.randomUUID();
+    launcherContextMenu = { launcher, token };
+    void showContextMenuOverlay({ source: 'bottom-bar', kind: 'launcher', token, x: event.clientX, y: event.clientY })
+      .catch((error) => {
+        if (launcherContextMenu?.token === token) launcherContextMenu = null;
+        console.error('Failed to show launcher context menu overlay', error);
       });
-    } catch (error) {
-      console.error(`Failed to open launcher menu for ${launcher.name}`, error);
+  }
+
+  async function handleContextMenuOverlaySelection(selection: ContextMenuOverlaySelection) {
+    if (selection.source !== 'bottom-bar') return;
+    if (selection.kind === 'task-window' && selection.token === taskContextMenu?.token) {
+      const { taskWindow } = taskContextMenu;
+      taskContextMenu = null;
+      const processId = normalizeTaskGalleryProcessId(taskWindow.processId);
+      if (selection.action === 'process') {
+        if (processId) await runTaskWindowAction(taskWindow.hwnd, 'process', processId);
+        return;
+      }
+      if (selection.action === 'focus' || selection.action === 'minimize' || selection.action === 'pin' || selection.action === 'close') {
+        await runTaskWindowAction(taskWindow.hwnd, selection.action);
+      }
+      return;
+    }
+    if (selection.kind === 'launcher' && selection.token === launcherContextMenu?.token) {
+      const { shortcutPath } = launcherContextMenu.launcher;
+      launcherContextMenu = null;
+      if (selection.action === 'launch' || selection.action === 'runas' || selection.action === 'properties' || selection.action === 'reveal' || selection.action === 'revealTarget' || selection.action === 'copyPath' || selection.action === 'unpin') {
+        await runTaskbarLauncherAction(shortcutPath, selection.action);
+      }
     }
   }
   function taskGroupLabel(group: TaskWindowGroup) {
@@ -1020,19 +1039,7 @@
     buttons[nextIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     updateTaskbarOverflow();
   }
-  function isCtrlSpaceHotkey(event: KeyboardEvent) {
-    return event.code === 'Space' && event.ctrlKey && !event.altKey && !event.metaKey;
-  }
-  function isAltBackquoteHotkey(event: KeyboardEvent) {
-    return event.altKey && !event.ctrlKey && !event.metaKey && (event.key === '`' || event.code === 'Backquote');
-  }
-  function isAltOneHotkey(event: KeyboardEvent) {
-    return event.code === 'Digit1' && event.altKey && !event.ctrlKey && !event.metaKey;
-  }
-  function isSpaceKey(event: KeyboardEvent) {
-    return event.code === 'Space';
-  }
-  async function openProcessManager(event: MouseEvent) {
+  async function openProcessManager(event: MouseEvent, focusPid: number | null = null) {
     const button = event.currentTarget as HTMLButtonElement | null;
     if (!button) {
       return;
@@ -1040,7 +1047,7 @@
     await hidePreview();
     const rect = button.getBoundingClientRect();
     try {
-      await showProcessManager({ anchorLeft: rect.left, anchorWidth: rect.width });
+      await showProcessManager({ anchorLeft: rect.left, anchorWidth: rect.width, focusPid });
     } catch (error) {
       console.error('Failed to open process manager', error);
     }
@@ -1101,6 +1108,11 @@
         unlisteners.push(unlisten);
       });
     };
+    registerAsyncUnlistener(listen<ContextMenuOverlaySelection>(CONTEXT_MENU_OVERLAY_SELECT_EVENT, (event) => {
+      void handleContextMenuOverlaySelection(event.payload).catch((error) => {
+        console.error('Failed to apply bottom bar context menu action', error);
+      });
+    }));
     void loadBottomBarResizeSettings();
     void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
@@ -1174,53 +1186,7 @@
     }));
 
     const resizeHandler = () => updateTaskbarOverflow();
-    let shellSurfaceHotkeyHandled = false;
-    let terminalSurfaceHotkeyHandled = false;
-    const keydownHandler = (event: KeyboardEvent) => {
-      if (isAltOneHotkey(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!event.repeat) {
-          void emit(STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT);
-        }
-        return;
-      }
-      if (isAltBackquoteHotkey(event)) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!terminalSurfaceHotkeyHandled && !event.repeat) {
-          terminalSurfaceHotkeyHandled = true;
-          void emit(TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT);
-        }
-        return;
-      }
-      if (!isCtrlSpaceHotkey(event)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if (!shellSurfaceHotkeyHandled && !event.repeat) {
-        shellSurfaceHotkeyHandled = true;
-        void emit(SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT);
-      }
-    };
-    const keyupHandler = (event: KeyboardEvent) => {
-      if ((event.key === '`' || event.code === 'Backquote') && terminalSurfaceHotkeyHandled) {
-        event.preventDefault();
-        event.stopPropagation();
-        terminalSurfaceHotkeyHandled = false;
-        return;
-      }
-      if (!isSpaceKey(event) || (!event.ctrlKey && !shellSurfaceHotkeyHandled)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      shellSurfaceHotkeyHandled = false;
-    };
     window.addEventListener('resize', resizeHandler);
-    window.addEventListener('keydown', keydownHandler, true);
-    window.addEventListener('keyup', keyupHandler, true);
 
     const runtimeMetricsTimer = window.setTimeout(() => {
       void reportShellSurfaceRuntimeMetrics('bottom-bar').catch((error) => {
@@ -1238,8 +1204,6 @@
       void hidePreview();
       window.clearTimeout(runtimeMetricsTimer);
       window.removeEventListener('resize', resizeHandler);
-      window.removeEventListener('keydown', keydownHandler, true);
-      window.removeEventListener('keyup', keyupHandler, true);
       for (const unlisten of unlisteners) {
         unlisten();
       }

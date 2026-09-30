@@ -80,6 +80,8 @@
 </script>
 
 <script lang="ts">
+  import ContextMenu from './ContextMenu.svelte';
+  import ContextMenuItem from './ContextMenuItem.svelte';
   import { afterUpdate, onMount, tick } from 'svelte';
   import * as stackPopup from '../lib/stackPopup';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
@@ -2015,9 +2017,9 @@
   {/if}
 
   {#if gitIgnoreMenu}
-    <div bind:this={gitIgnoreMenuElement} class="stack-git-context-menu" role="menu" aria-label="Git file actions" style:left={`${gitIgnoreMenu.x}px`} style:top={`${gitIgnoreMenu.y}px`}>
-      <button type="button" role="menuitem" on:click={openGitIgnoreConfirm}>Add to .gitignore</button>
-    </div>
+    <ContextMenu bind:element={gitIgnoreMenuElement} className="stack-git-context-menu" ariaLabel="Git file actions" style={`left:${gitIgnoreMenu.x}px;top:${gitIgnoreMenu.y}px`}>
+      <ContextMenuItem onClick={openGitIgnoreConfirm}>Add to .gitignore</ContextMenuItem>
+    </ContextMenu>
   {/if}
 
   {#if gitIgnoreConfirmOpen}
@@ -3009,6 +3011,7 @@
     text-align: center;
     color: var(--js-color-text-muted);
     border-right: 1px solid color-mix(in srgb, var(--js-color-border-soft) 80%, transparent);
+    user-select: none;
   }
 
   .stack-git-diff-line__prefix {
@@ -3176,30 +3179,6 @@
     min-height: 32px;
     padding: 0 10px;
   }
-
-  .stack-git-context-menu {
-    background: var(--js-color-surface-raised);
-    border: 1px solid var(--js-color-border);
-    border-radius: var(--js-radius-sm);
-    box-shadow: var(--js-shadow-raised);
-    padding: 4px;
-    position: fixed;
-    width: 168px;
-    z-index: 95;
-  }
-
-  .stack-git-panel .stack-git-context-menu button {
-    background: transparent;
-    border: 0;
-    color: var(--js-color-text);
-    justify-content: flex-start;
-    min-height: 30px;
-    padding: 0 9px;
-    width: 100%;
-  }
-
-  .stack-git-panel .stack-git-context-menu button:hover,
-  .stack-git-panel .stack-git-context-menu button:focus-visible { background: var(--js-color-control-hover); }
 
   .stack-git-ignore-choices { border: 0; display: grid; gap: 4px; margin: 0; padding: 0; }
   .stack-git-ignore-choices legend { color: var(--js-color-text-muted); font-size: .64rem; font-weight: 750; margin-bottom: 6px; }

@@ -25,6 +25,10 @@ export const IPC_COMMANDS = {
   showLauncherContextMenu: 'show_launcher_context_menu',
   showQuickLaunchPanelContextMenu: 'show_quick_launch_panel_context_menu',
   showTopBarPinContextMenu: 'show_top_bar_pin_context_menu',
+  runTaskbarLauncherAction: 'run_taskbar_launcher_action',
+  runTaskWindowAction: 'run_task_window_action',
+  showContextMenuOverlay: 'show_context_menu_overlay',
+  hideContextMenuOverlay: 'hide_context_menu_overlay',
   showSearchPanel: 'show_search_panel',
   showCenteredSearchPanel: 'show_centered_search_panel',
   searchEngine: 'search_engine',
@@ -173,6 +177,7 @@ export const IPC_COMMANDS = {
   getSingleInstanceForwardingContract: 'get_single_instance_forwarding_contract',
   resolveProviderRegistry: 'resolve_provider_registry',
   startSpeechCapture: 'start_speech_capture',
+  captureSpeechPasteTarget: 'capture_speech_paste_target',
   stopSpeechCapture: 'stop_speech_capture',
   getSpeechHistory: 'get_speech_history',
   copySpeechHistoryTranscript: 'copy_speech_history_transcript',
@@ -192,4 +197,8 @@ export interface CopySpeechHistoryTranscriptRequest {
 export interface StartSpeechCaptureResponse {
   nonce: SpeechSessionNonce;
   status: SpeechStatusKind;
+}
+
+export interface StartSpeechCaptureRequest {
+  reservationId: number;
 }
