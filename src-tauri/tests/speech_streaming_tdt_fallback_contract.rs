@@ -335,25 +335,21 @@ fn retained_history_copy_releases_history_lock_before_clipboard_publish() {
     let source = runtime_source();
     let copy = function_body(&source, "copy_retained_history_transcript");
 
-    let history_lock = index_of(copy, "state.history.lock");
+    let transcript_scope_marker = "let transcript =";
+    let transcript_scope = block_starting_at(copy, transcript_scope_marker);
+    let history_lock = index_of(transcript_scope, "state.history.lock");
     let publish_call = index_of(copy, "publish(");
-    let transcript_clone = copy.find("transcript.clone()").unwrap_or_else(|| {
+    let transcript_clone = transcript_scope.find("transcript.clone()").unwrap_or_else(|| {
         panic!(
             "copy_retained_history_transcript must clone transcript while holding history.lock(), then publish the owned transcript after the guard scope ends; publishing a borrowed entry transcript keeps the mutex held"
         )
     });
-    let guard_scope_end = copy
-        .find("};\n    publish")
-        .or_else(|| copy.find("}\n    publish"))
-        .unwrap_or_else(|| {
-            panic!(
-                "copy_retained_history_transcript must close the history.lock() guard scope before clipboard publish; current lock-order can stall finalization/shutdown"
-            )
-        });
+    let marker_start = index_of(copy, transcript_scope_marker);
+    let scope_open = marker_start + index_of(&copy[marker_start..], "{");
+    let guard_scope_end = scope_open + 1 + transcript_scope.len();
 
     assert!(
         history_lock < transcript_clone
-            && transcript_clone < guard_scope_end
             && guard_scope_end < publish_call,
         "copy_retained_history_transcript must clone transcript inside the history lock, drop the guard, then call publish outside the mutex"
     );

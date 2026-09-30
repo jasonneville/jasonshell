@@ -59,7 +59,9 @@ test('background context menu is available off rows and keeps selection actions'
   assert.match(backgroundMenu, />Rename<\/MeltActionButton>/);
   assert.match(backgroundMenu, />Delete<\/MeltActionButton>/);
   assert.match(backgroundMenu, />Reveal<\/MeltActionButton>/);
-  assert.match(backgroundMenu, />Paste<\/MeltActionButton>/);
+  assert.doesNotMatch(backgroundMenu, />Paste<\/MeltActionButton>/, 'background menu intentionally omits Paste');
+  const toolbar = surface.slice(surface.indexOf('<div class="stack-actions">'), surface.indexOf('<div class="stack-search">'));
+  assert.match(toolbar, /ariaLabel="Paste into current folder"[^>]*disabled=\{!currentPath\}[^>]*onClick=\{\(\) => void pasteIntoCurrentFolder\(\)\}/, 'toolbar retains Paste ownership');
   assert.match(backgroundMenu, />New Folder<\/MeltActionButton>/);
   assert.match(backgroundMenu, />New Text File<\/MeltActionButton>/);
   assert.match(backgroundMenu, />Copy Folder Path<\/MeltActionButton>/);

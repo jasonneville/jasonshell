@@ -7,7 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 const SETTINGS_SCHEMA: &str = "jasonshell.settings";
 const SETTINGS_VERSION: u32 = 1;
@@ -318,17 +319,52 @@ fn default_command_panel_height_logical() -> f64 {
 }
 
 #[tauri::command]
-pub fn load_shell_settings(app_handle: AppHandle) -> Result<ShellSettings, String> {
-    load_shell_settings_for_app(&app_handle)
+pub fn load_shell_settings(window: WebviewWindow, app_handle: AppHandle) -> Result<ShellSettings, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::LOAD_SHELL_SETTINGS,
+        callers: &[crate::contracts::surfaces::COMMAND_PANEL, crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::BOTTOM_BAR, crate::contracts::surfaces::STACK_POPUP],
+    }).map_err(CallerAuthError::into_string)?;
+    let settings = load_shell_settings_for_app(&app_handle)?;
+    Ok(settings_for_caller(settings, window.label()))
 }
 
 #[tauri::command]
 pub fn save_shell_settings(
+    window: WebviewWindow,
     app_handle: AppHandle,
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
-    save_shell_settings_for_app(&app_handle, settings)
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::SAVE_SHELL_SETTINGS,
+        callers: &[crate::contracts::surfaces::COMMAND_PANEL, crate::contracts::surfaces::SETTINGS_PANEL],
+    }).map_err(CallerAuthError::into_string)?;
+    if window.label() == crate::contracts::surfaces::COMMAND_PANEL {
+        save_shell_settings_for_app(&app_handle, settings)
+    } else {
+        // Ignore Quick Command data supplied by a non-owner; preserve the stored version atomically.
+        update_shell_settings_for_app(&app_handle, |stored| {
+            stored.schema = settings.schema;
+            stored.version = settings.version;
+            stored.ui = settings.ui;
+            stored.search = settings.search;
+            stored.stack_browser = settings.stack_browser;
+            stored.workspaces = settings.workspaces;
+            stored.task_history = settings.task_history;
+        }).map(|saved| settings_for_caller(saved, window.label()))
+    }
 }
+
+fn settings_for_caller(mut settings: ShellSettings, caller: &str) -> ShellSettings {
+    if caller != crate::contracts::surfaces::COMMAND_PANEL {
+        settings.quick_commands = QuickCommandsSettings::default();
+    }
+    settings
+}
+
+// Wire-compatible shell-bar response; never serializes stored Quick Command data.
+#[derive(Serialize)]
+#[serde(transparent)]
+pub struct ShellBarSettingsResponse(ShellSettings);
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -346,18 +382,30 @@ pub struct SaveShellBarLockRequest {
 
 #[tauri::command]
 pub fn save_shell_bar_height(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: SaveShellBarHeightRequest,
-) -> Result<ShellSettings, String> {
+) -> Result<ShellBarSettingsResponse, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::SAVE_SHELL_BAR_HEIGHT,
+        callers: &[crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::BOTTOM_BAR],
+    }).map_err(CallerAuthError::into_string)?;
     save_shell_bar_height_for_app(&app_handle, request)
+        .map(|settings| ShellBarSettingsResponse(settings_for_caller(settings, "")))
 }
 
 #[tauri::command]
 pub fn save_shell_bar_lock(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: SaveShellBarLockRequest,
-) -> Result<ShellSettings, String> {
+) -> Result<ShellBarSettingsResponse, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::SAVE_SHELL_BAR_LOCK,
+        callers: &[crate::contracts::surfaces::SETTINGS_PANEL],
+    }).map_err(CallerAuthError::into_string)?;
     save_shell_bar_lock_for_app(&app_handle, request)
+        .map(|settings| ShellBarSettingsResponse(settings_for_caller(settings, "")))
 }
 
 pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<ShellSettings, String> {
@@ -1006,6 +1054,71 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::env;
+
+    #[test]
+    fn every_non_command_settings_reader_loses_definitions_history_and_transcripts() {
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.entries.push(QuickCommandEntry {
+            id: "private".into(), label: "private".into(), mode: QuickCommandMode::Direct,
+            target_path: "secret-command.exe".into(), args: vec![], commands: vec![],
+            cwd: None, artifact_location: None,
+        });
+        settings.quick_commands.history.push(QuickCommandRunHistoryEntry {
+            run_id: "private-run".into(), command_id: "private".into(), started_at_epoch_ms: 1,
+            started_at_filetime_100ns: 0, finished_at_epoch_ms: 2, process_id: 1,
+            exit_code: None, stdout: "private-output".into(), stderr: String::new(),
+            transcript: vec![QuickCommandTranscriptEntry {
+                kind: "stdout".into(), body: "private-transcript".into(), request_id: None,
+                prompt: None, secret: true, max_length: None, redacted: false,
+                sequence: 1, at_epoch_ms: 1, pending: false,
+            }], stdout_truncated: false, stderr_truncated: false, running: false,
+        });
+        assert_eq!(settings_for_caller(settings.clone(), crate::contracts::surfaces::COMMAND_PANEL).quick_commands, settings.quick_commands);
+        for caller in [crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::TOP_BAR,
+            crate::contracts::surfaces::BOTTOM_BAR, crate::contracts::surfaces::STACK_POPUP] {
+            let response = settings_for_caller(settings.clone(), caller);
+            assert!(response.quick_commands.entries.is_empty(), "{caller} sees definitions");
+            assert!(response.quick_commands.history.is_empty(), "{caller} sees history/transcripts");
+        }
+        let bar_wire = serde_json::to_string(&ShellBarSettingsResponse(settings_for_caller(settings, ""))).unwrap();
+        for secret in ["secret-command.exe", "private-output", "private-transcript"] {
+            assert!(!bar_wire.contains(secret), "bar response disclosed {secret}");
+        }
+    }
+
+    #[test]
+    fn generic_settings_read_must_not_expose_quick_command_history_to_other_panels() {
+        let source = include_str!("settings.rs");
+        let handler = source.split("pub fn load_shell_settings(").nth(1).unwrap().split("#[tauri::command]").next().unwrap();
+        assert!(handler.contains("WebviewWindow"), "generic read requires trusted caller identity");
+        let guard = handler.find("authorize_stack_command(").expect("generic read must reject non-owning panels");
+        let io = handler.find("load_shell_settings_for_app(").unwrap();
+        assert!(guard < io, "reject before loading history/transcripts from settings storage");
+        assert!(handler.contains("COMMAND_PANEL"), "full settings read containing quick-command history must be command-panel-only; otherwise return a DTO without quick_commands");
+    }
+
+    #[test]
+    fn generic_settings_save_must_reject_other_panels_before_any_settings_write() {
+        let source = include_str!("settings.rs");
+        let handler = source.split("pub fn save_shell_settings(").nth(1).unwrap().split("#[derive(Clone, Debug, Deserialize)]").next().unwrap();
+        assert!(handler.contains("WebviewWindow"), "generic save requires trusted caller identity");
+        let guard = handler.find("authorize_stack_command(").expect("generic save must reject non-owning panels");
+        let write = handler.find("save_shell_settings_for_app(").unwrap();
+        assert!(guard < write, "reject before persisting altered quick-command entries or history");
+        assert!(handler.contains("COMMAND_PANEL"), "full settings save containing quick-command history must be command-panel-only; otherwise accept a DTO without quick_commands");
+    }
+
+    #[test]
+    fn unrestricted_settings_routes_must_not_return_full_quick_command_bearing_settings() {
+        let source = include_str!("settings.rs");
+        for name in ["save_shell_bar_height", "save_shell_bar_lock"] {
+            let handler = source.split(&format!("pub fn {name}(")).nth(1).unwrap().split("#[tauri::command]").next().unwrap();
+            let restricted = handler.find("authorize_stack_command(").is_some_and(|guard| {
+                handler.find(&format!("{name}_for_app(")).is_some_and(|work| guard < work)
+            });
+            assert!(!handler.contains("Result<ShellSettings, String>") || restricted, "{name} must return a DTO without quick-command history, or restrict the caller before loading settings");
+        }
+    }
 
     fn test_dir(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!(

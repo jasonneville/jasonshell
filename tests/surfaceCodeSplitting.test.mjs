@@ -17,6 +17,7 @@ const expectedSurfaceImports = {
   'quick-launch-panel': '../components/QuickLaunchPanelSurface.svelte',
   'control-plane': '../components/ControlPlaneSurface.svelte',
   'settings-panel': '../components/SettingsPanelSurface.svelte',
+  'speech-history-panel': '../components/SpeechHistoryPanelSurface.svelte',
   'tray-panel': '../components/TrayPanelSurface.svelte',
   'terminal-panel': '../components/TerminalPanelSurface.svelte',
   'command-panel': '../components/CommandPanelSurface.svelte',

@@ -20,7 +20,8 @@ test('master_spec repeats the same four truths', () => {
   assert.match(masterSpec, /workspace restoration[^.;]*(?:is )?reserved[^.;]*not implemented/i);
   assert.match(masterSpec, /startup commands[^.;]*not executed automatically/i);
   assert.match(masterSpec, /automation forwarding[^.;]*planned[^.;]*not wired/i);
-  assert.match(masterSpec, /multi-monitor[^.;]*planning-only[^.;]*single-monitor runtime/i);
+  assert.match(masterSpec, /primary-monitor AppBar work-area reservation/i);
+  assert.match(masterSpec, /multi-monitor support is planning-only/i);
 });
 
 test('control plane user-facing copy keeps workspace startup/restoration and automation forwarding constrained', () => {

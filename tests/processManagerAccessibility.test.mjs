@@ -45,13 +45,14 @@ test('process manager keeps auto-refresh grid silent and uses dedicated status l
 test('process manager auto refresh does not announce every successful timer tick', () => {
   const refreshBody = functionBody(processManagerSource, 'refreshProcesses');
   const timerBody = functionBody(processManagerSource, 'startRefreshTimer');
-  const manualRefresh = processManagerSource.match(/<MeltActionButton onClick=\{\(\) => void refreshProcesses\([\s\S]*?\)\}>\s*Refresh/)?.[0] ?? '';
+  const manualRefresh = processManagerSource.match(/<MeltActionButton\s+class="process-manager-refresh-button"\s+ariaLabel="Refresh process manager"\s+onClick=\{\(\) => void refreshProcesses\(\{[^}]*\}\)\}/)?.[0] ?? '';
   const killBody = functionBody(processManagerSource, 'killRow');
 
   assert.match(processManagerSource, /refreshProcesses\(options:\s*\{\s*preserveVolatileOrder\?:\s*boolean;\s*announce\?:\s*boolean\s*\}/);
   assert.match(refreshBody, /if \(options\.announce !== false\) \{/);
   assert.match(timerBody, /refreshProcesses\(\{\s*announce:\s*false\s*\}\)/);
   assert.match(manualRefresh, /announce:\s*true/);
+  assert.match(manualRefresh, /preserveVolatileOrder:\s*false/);
   assert.match(killBody, /refreshProcesses\(\{\s*preserveVolatileOrder:\s*false,\s*announce:\s*false\s*\}\)/);
 });
 

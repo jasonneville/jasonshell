@@ -217,6 +217,7 @@ npm run build
 npm run preview
 npm run check
 npm run test:node
+npm run test:component
 npm run test:search
 npm run p03:experiment
 npm run cargo:check

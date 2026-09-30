@@ -29,7 +29,7 @@ const stackPhase1Commands = [
   ['OPEN_STACK_ITEM_WITH_APP', 'open_stack_item_with_app', ['stack-popup']],
   ['RENAME_STACK_ITEM', 'rename_stack_item', ['stack-popup']],
   ['COPY_STACK_ITEMS', 'copy_stack_items', ['stack-popup']],
-  ['PREPARE_STACK_FILE_DRAG', 'prepare_stack_file_drag', ['stack-popup']],
+  ['START_STACK_FILE_DRAG', 'start_stack_file_drag', ['stack-popup']],
   ['CUT_STACK_ITEMS', 'cut_stack_items', ['stack-popup']],
   ['PASTE_STACK_ITEMS', 'paste_stack_items', ['stack-popup']],
   ['DELETE_STACK_ITEM', 'delete_stack_item', ['stack-popup']],
@@ -94,7 +94,7 @@ test('WP0 scoped Phase 1 handlers authorize before side effects with window inje
     ['list_stack_open_with_candidates', 'LIST_STACK_OPEN_WITH_CANDIDATES'],
     ['open_stack_item_with_app', 'OPEN_STACK_ITEM_WITH_APP'],
     ['rename_stack_item', 'RENAME_STACK_ITEM'],
-    ['prepare_stack_file_drag', 'PREPARE_STACK_FILE_DRAG'],
+    ['start_stack_file_drag', 'START_STACK_FILE_DRAG'],
     ['extract_stack_archive', 'EXTRACT_STACK_ARCHIVE'],
     ['show_stack_item_properties', 'SHOW_STACK_ITEM_PROPERTIES'],
   ];

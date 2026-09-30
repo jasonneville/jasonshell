@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 use crate::shell_windows::{
     BOTTOM_BAR_LABEL, PROCESS_MANAGER_HEIGHT_LOGICAL, PROCESS_MANAGER_LABEL,
@@ -179,7 +180,11 @@ pub fn hide_process_manager(app_handle: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
+pub fn list_processes(window: WebviewWindow) -> Result<Vec<ProcessInfo>, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::LIST_PROCESSES,
+        callers: &[PROCESS_MANAGER_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
     #[cfg(target_os = "windows")]
     {
         windows_impl::list_processes()
@@ -191,7 +196,11 @@ pub fn list_processes() -> Result<Vec<ProcessInfo>, String> {
 }
 
 #[tauri::command]
-pub fn kill_process(pid: u32, confirmation: Option<ProcessKillConfirmation>) -> Result<(), String> {
+pub fn kill_process(window: WebviewWindow, pid: u32, confirmation: Option<ProcessKillConfirmation>) -> Result<(), String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::KILL_PROCESS,
+        callers: &[PROCESS_MANAGER_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
     #[cfg(target_os = "windows")]
     {
         let processes = windows_impl::list_processes()?;
@@ -1360,6 +1369,51 @@ mod windows_impl {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn process_listing_requires_process_manager_caller_before_enumeration() {
+        use crate::stack_popup::{authorize_stack_command_caller, StackCommandAuth};
+        let source = include_str!("process_manager.rs");
+        let handler = source.split("pub fn list_processes(").nth(1).unwrap().split("#[tauri::command]").next().unwrap();
+        assert!(handler.contains("WebviewWindow"), "process listing requires trusted invoking webview");
+        assert!(handler.contains("callers: &[PROCESS_MANAGER_LABEL]"), "listing must bind process-manager-only policy");
+        let guard = handler.find("authorize_stack_command(").expect("listing must authorize caller");
+        assert!(guard < handler.find("windows_impl::list_processes()").unwrap(), "deny before enumeration or diagnostics");
+        let auth = StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::LIST_PROCESSES,
+            callers: &[crate::shell_windows::PROCESS_MANAGER_LABEL],
+        };
+        assert!(authorize_stack_command_caller(crate::shell_windows::PROCESS_MANAGER_LABEL, auth).is_ok());
+        for denied in [crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::COMMAND_PANEL] {
+            let error = authorize_stack_command_caller(denied, auth).unwrap_err().into_string();
+            assert_eq!(error, format!("Unauthorized caller for command {}", crate::contracts::commands::LIST_PROCESSES));
+            assert!(!error.contains(denied));
+        }
+    }
+    #[test]
+    fn kill_caller_policy_accepts_process_manager_only_and_redacts_denial() {
+        use crate::stack_popup::{authorize_stack_command_caller, StackCommandAuth};
+        let handler = include_str!("process_manager.rs").split("pub fn kill_process(").nth(1).unwrap().split("#[cfg(target_os = \"windows\")]").next().unwrap();
+        assert!(handler.contains("callers: &[PROCESS_MANAGER_LABEL]"), "handler must bind exactly process manager policy");
+        let auth = StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::KILL_PROCESS,
+            callers: &[crate::shell_windows::PROCESS_MANAGER_LABEL],
+        };
+        assert!(authorize_stack_command_caller(crate::shell_windows::PROCESS_MANAGER_LABEL, auth).is_ok());
+        for denied in [crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::COMMAND_PANEL] {
+            let error = authorize_stack_command_caller(denied, auth).unwrap_err().into_string();
+            assert_eq!(error, format!("Unauthorized caller for command {}", crate::contracts::commands::KILL_PROCESS));
+            assert!(!error.contains(denied), "denial must not disclose caller label");
+        }
+    }
+    #[test]
+    fn termination_requires_caller_before_identity_or_termination_work() {
+        let source = include_str!("process_manager.rs");
+        let handler = source.split("pub fn kill_process(").nth(1).unwrap().split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(handler.split(')').next().unwrap().contains("WebviewWindow"), "kill_process must receive trusted invoking webview");
+        let guard = handler.find("authorize_stack_command(").expect("kill_process must authorize caller");
+        let work = handler.find("build_kill_guardrail_plan(").expect("kill guardrail work present");
+        assert!(guard < work, "deny before inspecting or terminating processes");
+    }
     use super::{
         build_kill_guardrail_plan, cpu_percent_from_snapshots, dev_workspace_from_text,
         enrich_process_tree, execute_kill_after_identity_revalidation, is_access_denied_status,

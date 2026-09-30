@@ -9,7 +9,9 @@ test('stack browser delete confirmation stays inside stack popup webview', () =>
 
   assert.doesNotMatch(stackSurface, /window\.confirm/);
   assert.match(stackSurface, /deleteConfirmation/);
-  assert.match(stackSurface, /role="dialog"/);
+  assert.match(stackSurface, /\{#if deleteConfirmation\}\s*<StackConfirmDialog[^>]*confirmLabel="Delete"[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*dismissOnBackdrop=\{false\}[^>]*onConfirm=\{\(\) => void confirmDeleteSelection\(\)\}/);
+  const confirmation = readFileSync('src/components/StackConfirmDialog.svelte', 'utf8');
+  assert.match(confirmation, /role="alertdialog" aria-modal="true"/);
   assert.match(stackSurface, /confirmDeleteSelection/);
   assert.match(stackRust, /begin_stack_popup_focus_hold/);
   assert.match(stackRust, /end_stack_popup_focus_hold/);
@@ -18,7 +20,8 @@ test('stack browser delete confirmation stays inside stack popup webview', () =>
   assert.match(stackRust, /suppress_next_stack_popup_focus_loss/);
   assert.match(main, /suppress_stack_popup_focus_loss/);
   assert.match(stackSurface, /await beginStackPopupFocusLossHold\(\)/);
-  assert.match(stackSurface, /await deleteStackItem\(path\)/);
+  assert.match(stackSurface, /const invokeDelete = deleteStackItem as unknown/);
+  assert.match(stackSurface, /await invokeDelete\(path, operationId\)/);
   assert.match(stackSurface, /applyStackFolderListing\(stackState, pendingDelete\.folderPath, listing\)/);
   assert.match(stackSurface, /await endStackPopupFocusLossHold\(\)/);
 });
@@ -81,22 +84,21 @@ test('search panel has outside-dismiss and result-interaction handshake', () => 
   assert.match(searchPanel, /SEARCH_PANEL_CLOSED_EVENT = 'search-panel:closed'/);
   assert.match(searchSurface, /<svelte:window on:mousedown=\{markPanelInteraction\}/);
   assert.match(topBar, /on:pointerdown=\{handleTopBarPointerDown\}/);
-  assert.match(topBar, /on:blur=\{scheduleSearchBlurClose\}/);
+  assert.match(topBar, /function handleTopBarPointerDown[\s\S]*if \(target && searchControl\.contains\(target\)\) \{[\s\S]*return;[\s\S]*void closePanel\(\)/);
   assert.match(topBar, /SEARCH_PANEL_INTERACTION_EVENT/);
-  assert.match(topBar, /SEARCH_PANEL_CLOSED_EVENT/);
+  assert.match(topBar, /listen\(SEARCH_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*resetActiveSearchState\(\);[\s\S]*searchOpen = false;/);
   assert.match(main, /window\.label\(\) == shell_windows::SEARCH_PANEL_LABEL/);
   assert.match(main, /WindowEvent::Focused\(true\)/);
   assert.match(main, /search_panel::SEARCH_PANEL_INTERACTION_EVENT/);
   assert.match(main, /search_panel::emit_search_panel_closed_to_top_bar\(window\.app_handle\(\)\)/);
 });
 
-test('outside-click and blur search dismissal route through reset-closing path', () => {
+test('outside-pointer and native focus-loss search dismissal route through shared reset', () => {
   const topBar = readFileSync('src/components/TopBar.svelte', 'utf8');
 
   assert.match(topBar, /function resetActiveSearchState\(\)/);
   assert.match(topBar, /on:pointerdown=\{handleTopBarPointerDown\}/);
-  assert.match(topBar, /on:blur=\{scheduleSearchBlurClose\}/);
-  assert.match(topBar, /function handleTopBarPointerDown[\s\S]*void closePanel\(\);[\s\S]*function openSettingsPanel/);
-  assert.match(topBar, /function scheduleSearchBlurClose[\s\S]*void closePanel\(\);[\s\S]*function handleTopBarPointerDown/);
-  assert.match(topBar, /async function closePanel\(\) \{[\s\S]*resetActiveSearchState\(\)/);
+  assert.match(topBar, /function handleTopBarPointerDown[\s\S]*if \(!searchOpen \|\| !searchControl\) \{[\s\S]*return;[\s\S]*if \(target && searchControl\.contains\(target\)\) \{[\s\S]*return;[\s\S]*void closePanel\(\)/);
+  assert.match(topBar, /listen\(SEARCH_PANEL_CLOSED_EVENT, \(\) => \{[\s\S]*resetActiveSearchState\(\);[\s\S]*searchOpen = false;/);
+  assert.match(topBar, /async function closePanel\(\) \{[\s\S]*resetActiveSearchState\(\)[\s\S]*await publishSearchPanel\([\s\S]*await hideSearchPanel\(\)/);
 });

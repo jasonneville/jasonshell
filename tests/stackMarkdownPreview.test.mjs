@@ -71,12 +71,21 @@ test('Markdown preview uses the scroll pane width without cramped centered colum
 });
 
 test('dirty Markdown Preview -> Edit -> Escape uses component dirty state, not remounted adapter baseline', () => {
+  const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte', import.meta.url), 'utf8');
+  const dirtyHelper = readFileSync(new URL('../src/features/stack-browser/basicTextEditorDirtyState.ts', import.meta.url), 'utf8');
   assert.match(
     editor,
-    /async function mountDraftEditor[\s\S]*content: draft,[\s\S]*onDismiss: \(\) => onDismiss\(dirty\)/
+    /async function mountDraftEditor\(filePath: string\)[\s\S]*content: draft,[\s\S]*onChange: \(currentDraft\) => \{ draft = currentDraft; \},[\s\S]*onDismiss: \(\) => onDismiss\(dirty\)/
   );
   assert.doesNotMatch(editor, /onDismiss: \(currentDirty\) => onDismiss\(currentDirty\)/);
-  assert.match(editor, /\$: dirty = draft !== initialContent/);
+  assert.match(dirtyHelper, /return draft !== persistedContent;/);
+  assert.match(editor, /\$: dirty = isStackBasicTextEditorDirty\(draft, initialContent\);/);
+  assert.match(editor, /\$: onDirtyChange\(dirty\);/);
   assert.match(editor, /onClick=\{\(\) => onDismiss\(dirty\)\}/);
+  assert.match(editor, /function setEditorMode\(mode: 'preview' \| 'edit'\) \{[\s\S]*editorMode = mode;\s*destroyEditor\(\);\s*if \(mode === 'edit'\) void mountDraftEditor\(path\);/);
+  assert.match(surface, /<StackTextEditor path=\{editorPath\} onDirtyChange=\{handleEditorDirtyChange\} onDismiss=\{requestEditorClose\}/);
+  assert.match(surface, /function requestEditorClose\(dirty: boolean\) \{\s*editorDirty = dirty;\s*void requestEditorExit/);
+  assert.match(surface, /beginBasicTextEditorExit\(pendingEditorExit, Boolean\(editorPath\), editorDirty, action, dismissEditor\)/);
+  assert.match(surface, /\{#if pendingEditorExit\}[\s\S]*<StackConfirmDialog title="Discard unsaved draft\?"/);
   assert.match(editor, /editorMode = markdown \? 'preview' : 'edit'/);
 });

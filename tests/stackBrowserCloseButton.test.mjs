@@ -26,7 +26,7 @@ function cssRule(source, selector) {
   return match[1];
 }
 
-test('stack browser has an accessible rectangular red X close button wired to the surface close path', () => {
+test('stack browser has an accessible token-styled close button wired to the surface close path', () => {
   const closeBody = functionBody(stackPopupSource, 'closeStackPopupFromSurface');
   const closeButtonRule = cssRule(stackPopupCss, '.stack-browser-close-button');
   const toolbarRule = cssRule(stackPopupCss, '.stack-toolbar');
@@ -44,7 +44,11 @@ test('stack browser has an accessible rectangular red X close button wired to th
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /top:\s*0\.42rem/);
   assert.match(closeButtonRule, /right:\s*0\.42rem/);
-  assert.match(closeButtonRule, /background:\s*#dc2626/);
+  assert.match(closeButtonRule, /background:\s*none/);
+  assert.match(closeButtonRule, /color:\s*var\(--js-color-text\)/);
+  const hoverAndFocusRule = cssRule(stackPopupCss, '.stack-browser-close-button:focus-visible');
+  assert.match(hoverAndFocusRule, /background:\s*var\(--js-color-accent-soft\)/);
+  assert.match(hoverAndFocusRule, /border-color:\s*var\(--js-color-accent-border\)/);
   assert.match(closeButtonRule, /border-radius:\s*var\(--js-radius-xs\)/);
   assert.doesNotMatch(closeButtonRule, /border-radius:\s*999px/);
   assert.match(closeButtonRule, /min-width:\s*2\.1rem/);

@@ -630,8 +630,29 @@ mod tests {
             0.0,
         );
 
-        assert_eq!((x, y), (8, 92));
+        // Host ends at 50 + 32: a preview below it is flush, not 10px away.
+        assert_eq!((x, y), (8, 82));
         assert_eq!((width, height), (332, 228));
+
+        let (_, above_y, _, above_height) = preview_position_from_host(
+            PhysicalPosition::new(0, 400),
+            PhysicalSize::new(420, 32),
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1920, 1080),
+            1.0, 0.0, 0.0,
+        );
+        assert_eq!(above_y + above_height as i32, 400, "above preview touches host");
+
+        let (edge_x, edge_y, edge_width, edge_height) = preview_position_from_host(
+            PhysicalPosition::new(1800, 50),
+            PhysicalSize::new(420, 32),
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1920, 250),
+            1.0, 0.0, 420.0,
+        );
+        assert_eq!(edge_x + edge_width as i32, 1920 - 8, "right edge retains monitor padding");
+        assert_eq!(edge_y, 8, "short monitor clamps vertically to top padding");
+        assert_eq!(edge_height, 228);
     }
     #[test]
     fn live_thumbnail_properties_make_destination_visible() {

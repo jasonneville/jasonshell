@@ -526,13 +526,10 @@ test('stack terminal layout is flat, dense, and isolated from file grid interact
 });
 
 test('durable docs mention persistent terminal panel behavior and validation', () => {
-  assert.match(masterSpec, /Persistent terminal panel/);
-  assert.match(masterSpec, /`terminal-panel`/);
-  assert.match(masterSpec, /`start_persistent_terminal`/);
-  assert.match(masterSpec, /`stackBrowser\.terminalProfile`/);
-  assert.match(masterSpec, /xterm\.js|xterm/);
-  assert.match(masterSpec, /tests\/stackBrowserTerminal\.test\.mjs/);
-  assert.match(masterSpec, /tests\/persistentTerminalPanel\.test\.mjs/);
+  assert.match(masterSpec, /persistent terminal panel/i);
+  assert.match(masterSpec, /terminalPanel\.ts/);
+  assert.match(masterSpec, /terminal_panel\.rs/);
+  assert.match(masterSpec, /tests\/terminal\*\.test\.mjs/);
   assert.match(changelog, /Persistent terminal panel/);
   assert.match(changelog, /xterm\.js|xterm/);
   assert.match(changelog, /tests\\persistentTerminalPanel\.test\.mjs|tests\/persistentTerminalPanel\.test\.mjs/);

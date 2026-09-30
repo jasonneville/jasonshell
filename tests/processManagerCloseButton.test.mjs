@@ -27,7 +27,7 @@ function cssRule(source, selector) {
   return match[1];
 }
 
-test('process manager has an accessible task-preview-style red X close button', () => {
+test('process manager has an accessible token-styled close button with header and focus affordances', () => {
   const closeBody = functionBody(processManagerSource, 'requestClose');
   const closeButtonRule = cssRule(processManagerCss, '.process-manager-close-button');
   const headerRule = cssRule(processManagerCss, '.process-manager-header');
@@ -46,7 +46,12 @@ test('process manager has an accessible task-preview-style red X close button', 
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /top:\s*0\.42rem/);
   assert.match(closeButtonRule, /right:\s*0\.42rem/);
-  assert.match(closeButtonRule, /background:\s*#dc2626/);
+  assert.match(closeButtonRule, /background:\s*none/);
+  assert.match(closeButtonRule, /color:\s*var\(--js-color-text\)/);
+  const hoverRule = cssRule(processManagerCss, '.process-manager-close-button:hover');
+  assert.match(hoverRule, /background:\s*var\(--js-color-accent-soft\)/);
+  assert.match(hoverRule, /border-color:\s*var\(--js-color-accent-border\)/);
+  assert.match(processManagerCss, /\.process-manager-close-button:focus-visible\s*\{[^}]*box-shadow:\s*var\(--js-focus-ring\)/s);
   assert.match(closeButtonRule, /border-radius:\s*var\(--js-radius-xs\)/);
   assert.doesNotMatch(closeButtonRule, /border-radius:\s*999px/);
   assert.match(closeButtonRule, /min-width:\s*2\.1rem/);

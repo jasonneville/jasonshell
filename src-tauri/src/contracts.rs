@@ -589,7 +589,7 @@ mod tests {
         assert!(unique.contains("stack_git_delete_branch"));
         assert!(unique.contains("list_stack_open_with_candidates"));
         assert!(unique.contains("open_stack_item_with_app"));
-        assert!(unique.contains("prepare_stack_file_drag"));
+        assert!(unique.contains("start_stack_file_drag"));
         assert!(unique.contains("new_stack_text_file"));
         assert!(unique.contains("open_stack_terminal_here"));
         assert!(unique.contains("open_stack_folder_in_vscode"));

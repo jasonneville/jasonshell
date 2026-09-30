@@ -105,11 +105,11 @@ test('docs index local pointers resolve and scheduled docs stay explicitly index
 });
 
 test('README validation scripts match package scripts without stale copies', () => {
-  const scriptBlock = readme.match(/Exact package scripts:\n\n```powershell\n([\s\S]*?)\n```/);
+  const scriptBlock = readme.match(/Exact package scripts:\r?\n\r?\n```powershell\r?\n([\s\S]*?)\r?\n```/);
   assert.notEqual(scriptBlock, null);
 
   const documentedScripts = scriptBlock[1]
-    .split('\n')
+    .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => line.replace(/^npm run /, ''));

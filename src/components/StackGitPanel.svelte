@@ -686,6 +686,7 @@
   }
 
   async function refreshHistoryFiles() {
+    const requestFolderPath = folderPath;
     const entry = history.find((item) => item.commitHash === selectedHistoryHash) ?? null;
     if (!entry) {
       historyFiles = [];
@@ -697,46 +698,48 @@
     historyFilesLoading = true;
     historyFilesError = '';
     try {
-      const result = await stackPopup.stackGitCommitFiles(folderPath, entry.commitHash);
-      if (entry.commitHash !== selectedHistoryHash) return;
+      const result = await stackPopup.stackGitCommitFiles(requestFolderPath, entry.commitHash);
+      if (requestFolderPath !== folderPath || entry.commitHash !== selectedHistoryHash) return;
       historyFiles = result.files;
       if (!historyFiles.some((file) => file.path === selectedHistoryFilePath)) selectedHistoryFilePath = '';
       historyFilesError = '';
     } catch (error) {
-      if (entry.commitHash === selectedHistoryHash) {
+      if (requestFolderPath === folderPath && entry.commitHash === selectedHistoryHash) {
         historyFilesError = error instanceof Error ? error.message : 'Commit files unavailable';
         historyFiles = [];
         selectedHistoryFilePath = '';
       }
     } finally {
-      if (entry.commitHash === selectedHistoryHash) historyFilesLoading = false;
+      if (requestFolderPath === folderPath && entry.commitHash === selectedHistoryHash) historyFilesLoading = false;
     }
   }
 
   async function loadHistoryFileDiff(path: string) {
+    const requestFolderPath = folderPath;
     const commitHash = selectedHistoryHash;
     if (!commitHash || !path) return;
     const token = ++diffToken;
     diffLoading = true;
     diffError = '';
     try {
-      const result = await stackPopup.stackGitCommitFileDiff(folderPath, commitHash, path);
-      if (token !== diffToken || selectedHistoryHash !== commitHash || selectedHistoryFilePath !== path) return;
+      const result = await stackPopup.stackGitCommitFileDiff(requestFolderPath, commitHash, path);
+      if (requestFolderPath !== folderPath || token !== diffToken || selectedHistoryHash !== commitHash || selectedHistoryFilePath !== path) return;
       diffText = result?.content ?? '';
       diffTitle = path;
       diffError = '';
       if (!diffText) diffText = 'No diff content.';
     } catch (error) {
-      if (token === diffToken && selectedHistoryHash === commitHash && selectedHistoryFilePath === path) {
+      if (requestFolderPath === folderPath && token === diffToken && selectedHistoryHash === commitHash && selectedHistoryFilePath === path) {
         diffError = error instanceof Error ? error.message : 'Diff unavailable';
         diffText = 'No diff content.';
       }
     } finally {
-      if (token === diffToken) diffLoading = false;
+      if (requestFolderPath === folderPath && token === diffToken) diffLoading = false;
     }
   }
 
   async function refreshStashDiff() {
+    const requestFolderPath = folderPath;
     const selectedRef = ensureStashSelection();
     const entry = stashes.find((item) => normalizeRef(item) === selectedRef) ?? null;
     if (!entry) {
@@ -753,17 +756,17 @@
     selectedStashFilePath = '';
     closeDiffDrawer();
     try {
-      const result = await stackPopup.stackGitStashFiles(folderPath, normalizeRef(entry));
-      if (normalizeRef(entry) !== selectedStashRef || selectedRef !== selectedStashRef) return;
+      const result = await stackPopup.stackGitStashFiles(requestFolderPath, normalizeRef(entry));
+      if (requestFolderPath !== folderPath || normalizeRef(entry) !== selectedStashRef || selectedRef !== selectedStashRef) return;
       stashFiles = result.files ?? [];
       stashFilesError = stashFiles.length ? '' : 'No files changed in stash.';
     } catch (error) {
-      if (normalizeRef(entry) === selectedStashRef && selectedRef === selectedStashRef) {
+      if (requestFolderPath === folderPath && normalizeRef(entry) === selectedStashRef && selectedRef === selectedStashRef) {
         stashFiles = [];
         stashFilesError = error instanceof Error ? error.message : 'Stash files unavailable';
       }
     } finally {
-      if (normalizeRef(entry) === selectedStashRef && selectedRef === selectedStashRef) stashFilesLoading = false;
+      if (requestFolderPath === folderPath && normalizeRef(entry) === selectedStashRef && selectedRef === selectedStashRef) stashFilesLoading = false;
     }
   }
 
@@ -778,13 +781,13 @@
       return;
     }
     try {
-      const result = await stackPopup.stackGitDiff(folderPath, target, staged);
+      const result = await stackPopup.stackGitDiff(requestFolderPath, target, staged);
       if (token !== diffToken || requestFolderPath !== folderPath) return;
       diffText = normalizeDiffResult(result) || 'No diff content.';
     } catch (error) {
-      if (token === diffToken) diffText = error instanceof Error ? error.message : 'Diff unavailable';
+      if (token === diffToken && requestFolderPath === folderPath) diffText = error instanceof Error ? error.message : 'Diff unavailable';
     } finally {
-      if (token === diffToken) diffLoading = false;
+      if (token === diffToken && requestFolderPath === folderPath) diffLoading = false;
     }
   }
 
@@ -1153,25 +1156,26 @@
   }
 
   async function loadStashFileDiff(path: string) {
+    const requestFolderPath = folderPath;
     const stashRef = selectedStashRef;
     if (!stashRef || !path) return;
     const token = ++diffToken;
     diffLoading = true;
     diffError = '';
     try {
-      const result = await stackPopup.stackGitStashFileDiff(folderPath, stashRef, path);
-      if (token !== diffToken || selectedStashRef !== stashRef || selectedStashFilePath !== path) return;
+      const result = await stackPopup.stackGitStashFileDiff(requestFolderPath, stashRef, path);
+      if (requestFolderPath !== folderPath || token !== diffToken || selectedStashRef !== stashRef || selectedStashFilePath !== path) return;
       diffText = result?.content ?? '';
       diffTitle = path;
       diffError = '';
       if (!diffText) diffText = 'No diff content.';
     } catch (error) {
-      if (token === diffToken && selectedStashRef === stashRef && selectedStashFilePath === path) {
+      if (requestFolderPath === folderPath && token === diffToken && selectedStashRef === stashRef && selectedStashFilePath === path) {
         diffError = error instanceof Error ? error.message : 'Diff unavailable';
         diffText = 'No diff content.';
       }
     } finally {
-      if (token === diffToken) diffLoading = false;
+      if (requestFolderPath === folderPath && token === diffToken) diffLoading = false;
     }
   }
 

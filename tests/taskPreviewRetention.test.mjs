@@ -60,7 +60,7 @@ test('scheduled hide keeps preview alive until backend hide event arrives', () =
   assert.doesNotMatch(hideBody, /if \(mode === 'schedule'\)[\s\S]*preview = null;/);
 });
 
-test('preview close button is accessible red X and does not activate preview', () => {
+test('preview close button is accessible, token-styled, and does not activate preview', () => {
   const closeBody = functionBody(previewSource, 'handlePreviewClose');
   const closeButtonRule = cssRule(previewCss, '.preview-close-button');
   assert.match(previewSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
@@ -75,7 +75,12 @@ test('preview close button is accessible red X and does not activate preview', (
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /top:/);
   assert.match(closeButtonRule, /right:/);
-  assert.match(closeButtonRule, /(red|danger|#dc2626|#ef4444|--js-color-danger)/);
+  assert.match(closeButtonRule, /background:\s*none/);
+  assert.match(closeButtonRule, /color:\s*var\(--js-color-text\)/);
+  const hoverRule = cssRule(previewCss, '.preview-close-button:hover');
+  assert.match(hoverRule, /background:\s*var\(--js-color-accent-soft\)/);
+  assert.match(hoverRule, /border-color:\s*var\(--js-color-accent-border\)/);
+  assert.match(previewCss, /\.preview-surface:focus-visible\s*\{[^}]*box-shadow:[^;]*var\(--js-focus-ring\)/s);
   assert.match(closeButtonRule, /border-radius:\s*(?:0|[234]px|var\(--js-radius-xs\)|var\(--js-radius-sm\))/);
   assert.doesNotMatch(closeButtonRule, /border-radius:\s*999px/);
   assert.match(closeButtonRule, /(?:min-width:\s*(?:2\.[0-9]+|[3-9])rem|padding:\s*0\s+(?:0\.[1-9]|[1-9])\d*rem)/);

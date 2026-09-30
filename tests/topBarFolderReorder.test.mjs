@@ -61,7 +61,8 @@ test('TopBar ordinary pointerdown hides stack popup but pinned-folder pointerdow
   assert.match(source, /hideStackPopup/);
   assert.match(source, /function isPinnedFolderPointerTarget\(target: Node \| null\)/);
   assert.match(source, /closest\('button\[data-path\]'\)/);
-  assert.match(source, /function handleTopBarPointerDown[\s\S]*if \(!isPinnedFolderPointerTarget\(target\)\) \{[\s\S]*void hideStackPopup\(\)/);
+  const pointerHandler = source.slice(source.indexOf('function handleTopBarPointerDown('), source.indexOf('function isPinnedFolderPointerTarget('));
+  assert.match(pointerHandler, /const stackBrowserTarget = target instanceof Element && target\.closest\('\.stack-browser-button'\);\s*if \(!isPinnedFolderPointerTarget\(target\) && !stackBrowserTarget\) \{\s*stackBrowserOpen = false;\s*void hideStackPopup\(\)/);
   assert.match(source, /function handleTopBarPointerDown[\s\S]*if \(!searchOpen \|\| !searchControl\)/);
   assert.match(source, /function startPinPointerDrag[\s\S]*beginStackPinFocusHold\(\);[\s\S]*draggingPinPath = pin\.path/);
   assert.match(source, /function finishPinPointerDrag[\s\S]*void openStackPath\(sourcePath, event\.currentTarget\)\.finally\(\(\) => \{[\s\S]*releaseStackPinFocusHold\(\);/);

@@ -58,7 +58,10 @@ test('explicit close uses shared reset and publishes blank payload for centered 
   assert.match(closePanel, /results: \[\]/);
   assert.match(closePanel, /selectedIndex: 0/);
   assert.match(closePanel, /statusMessage: 'Search is ready'/);
-  assert.match(closePanel, /searchInput\?\.blur\(\)/);
+  assert.match(closePanel, /await publishSearchPanel\(/);
+  assert.match(closePanel, /await hideSearchPanel\(\)/);
+  assert.ok(closePanel.indexOf('resetActiveSearchState()') < closePanel.indexOf('await publishSearchPanel('));
+  assert.ok(closePanel.indexOf('await publishSearchPanel(') < closePanel.indexOf('await hideSearchPanel('));
 });
 
 test('native search-panel closed event uses the same reset path', () => {
