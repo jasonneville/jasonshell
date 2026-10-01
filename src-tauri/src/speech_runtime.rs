@@ -3,7 +3,7 @@
 use crate::contracts;
 use crate::speech::{
     CopySpeechHistoryTranscriptRequest, SpeechController, SpeechHistoryEntry, SpeechSessionNonce,
-    SpeechStatusEvent, SpeechStatusKind, StartSpeechCaptureRequest, StartSpeechCaptureResponse,
+    SpeechStatusEvent, SpeechStatusKind, SpeechVoiceLevelEvent, StartSpeechCaptureRequest, StartSpeechCaptureResponse,
     StopSpeechCaptureRequest, MAX_RECORDING_DURATION, MAX_SPEECH_HISTORY_ENTRIES,
     MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
 };
@@ -16,7 +16,7 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use parakeet_rs::Transcriber;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -87,12 +87,15 @@ struct Capture {
     sample_rate: u32,
     channels: u16,
     health: Arc<CaptureHealth>,
+    meter: Arc<AtomicU32>,
 }
 
 pub(crate) struct SpeechRuntimeState {
     inner: Mutex<RuntimeInner>,
     generation: AtomicU64,
     commit: Mutex<()>,
+    /// Orders native indicator actions without extending the lifecycle commit gate.
+    visibility_order: Mutex<()>,
     /// Serializes cancellation with the native clipboard/focus/input delivery.
     /// It is never held with `inner` or `history` during the native operations.
     delivery: Mutex<()>,
@@ -181,6 +184,7 @@ impl Default for SpeechRuntimeState {
             }),
             generation: AtomicU64::new(0),
             commit: Mutex::new(()),
+            visibility_order: Mutex::new(()),
             delivery: Mutex::new(()),
             focus_admission: Mutex::new(FocusAdmission::default()),
             focus_drained: Condvar::new(),
@@ -262,6 +266,17 @@ pub(crate) fn get_speech_history(
         .history
         .lock()
         .map(|history| history.iter().cloned().collect())
+        .map_err(|_| GENERIC_ERROR.to_owned())
+}
+
+#[tauri::command]
+pub(crate) fn get_speech_status(
+    state: State<'_, SpeechRuntimeState>,
+) -> Result<crate::speech::SpeechStatusResponse, String> {
+    state
+        .inner
+        .lock()
+        .map(|inner| inner.controller.status())
         .map_err(|_| GENERIC_ERROR.to_owned())
 }
 
@@ -544,7 +559,7 @@ pub(crate) fn start_speech_capture(
             return Err(error);
         }
     };
-    let (stream, intake_slot, tail, sample_rate, channels, health) = match create_capture_stream() {
+    let (stream, intake_slot, tail, sample_rate, channels, health, meter) = match create_capture_stream() {
         Ok(capture) => capture,
         Err(_) => {
             state.return_model(model);
@@ -593,6 +608,7 @@ pub(crate) fn start_speech_capture(
         sample_rate,
         channels,
         health,
+        meter,
     });
     drop(inner);
     state.generation.store(nonce.0, Ordering::Release);
@@ -614,7 +630,9 @@ pub(crate) fn start_speech_capture(
         return Err(error);
     }
     drop(commit);
+    apply_indicator_visibility(app.clone(), event.clone());
     schedule_capture_health(app.clone(), nonce);
+    schedule_voice_level_updates(app.clone(), nonce);
     schedule_recording_limit(app, nonce, activated_at);
     Ok(StartSpeechCaptureResponse {
         nonce,
@@ -665,6 +683,7 @@ pub(crate) fn stop_speech_capture(
         channels,
         health,
         tail,
+        meter: _,
     } = capture;
     drop(stream);
     handoff_tail(&intake, &tail, &health);
@@ -861,7 +880,7 @@ fn run_streaming_worker(
         {
             return;
         }
-        let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
+        let _ = emit(&app, &event);
         schedule_terminal_reset(app.clone(), nonce);
     }
 }
@@ -1135,7 +1154,7 @@ fn schedule_terminal_reset(app: AppHandle, nonce: SpeechSessionNonce) {
             {
                 return;
             }
-            let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
+            let _ = emit(&app, &event);
         }
     });
 }
@@ -1168,7 +1187,7 @@ fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated
         handoff_tail(&capture.intake, &capture.tail, &capture.health);
         capture.intake.first_close(InputCloseReason::RecordingCap);
         drop(capture.intake);
-        let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
+        let _ = emit(&app, &event);
         schedule_transcription_limit(app.clone(), nonce);
     });
 }
@@ -1215,9 +1234,43 @@ fn schedule_capture_health(app: AppHandle, nonce: SpeechSessionNonce) {
             capture.intake.first_close(InputCloseReason::SafeFailure);
             drop(capture);
         }
-        let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
+        let _ = emit(&app, &event);
         schedule_terminal_reset(app.clone(), nonce);
         return;
+    });
+}
+
+/// Publishes the most recent scalar capture meter away from CPAL's real-time callback.
+/// This is intentionally rate-limited and guarded by the active session generation.
+fn schedule_voice_level_updates(app: AppHandle, nonce: SpeechSessionNonce) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(50));
+        let state = app.state::<SpeechRuntimeState>();
+        if state.shutting_down.load(Ordering::Acquire)
+            || state.generation.load(Ordering::Acquire) != nonce.0
+        {
+            return;
+        }
+        let level = state.inner.lock().ok().and_then(|inner| {
+            (inner.controller.status().status == SpeechStatusKind::Recording)
+                .then(|| inner.capture.as_ref().map(|capture| capture.meter.load(Ordering::Acquire)))
+                .flatten()
+        });
+        let Some(level) = level else {
+            return;
+        };
+        if state.generation.load(Ordering::Acquire) != nonce.0 {
+            return;
+        }
+        let event = SpeechVoiceLevelEvent {
+            nonce,
+            level: f32::from_bits(level).clamp(0.0, 1.0),
+        };
+        let _ = app.emit_to(
+            crate::shell_windows::SPEECH_INDICATOR_LABEL,
+            contracts::events::SPEECH_VOICE_LEVEL,
+            event,
+        );
     });
 }
 
@@ -1267,7 +1320,7 @@ fn schedule_transcription_limit(app: AppHandle, nonce: SpeechSessionNonce) {
                 true,
                 0.0,
             );
-            let _ = app.emit(contracts::events::SPEECH_STATUS_CHANGED, event);
+            let _ = emit(&app, &event);
             schedule_terminal_reset(app.clone(), nonce);
         }
     });
@@ -1310,8 +1363,81 @@ fn shutdown_after_commit(state: &SpeechRuntimeState) {
 }
 
 fn emit(app: &AppHandle, event: &SpeechStatusEvent) -> Result<(), String> {
+    // Native window I/O is deferred; this function is often called with the commit gate held.
+    let _speech_surface = app.get_webview_window(crate::shell_windows::SPEECH_INDICATOR_LABEL);
+    // SpeechStatusKind::Recording is deferred to speech_surface.show(); _ is deferred to speech_surface.hide().
+    apply_indicator_visibility(app.clone(), event.clone());
     app.emit(contracts::events::SPEECH_STATUS_CHANGED, event)
         .map_err(|_| GENERIC_ERROR.to_string())
+}
+
+/// Applies a current speech-status visibility decision outside the lifecycle commit gate.
+/// No captured speech data is read, emitted, or logged here.
+fn apply_indicator_visibility(app: AppHandle, event: SpeechStatusEvent) {
+    std::thread::spawn(move || {
+        let state = app.state::<SpeechRuntimeState>();
+        // Every status plan passes through this gate. It keeps native actions ordered
+        // while lifecycle transitions remain free to release `commit` before I/O.
+        let Ok(_visibility_order) = state.visibility_order.lock() else {
+            eprintln!("speech indicator visibility ordering unavailable");
+            return;
+        };
+        let _generation = state.generation.load(Ordering::Acquire);
+        let is_current = state.inner.lock().ok().is_some_and(|inner| {
+            let current = inner.controller.status();
+            current.status == event.status
+                && (event.status == SpeechStatusKind::Idle || current.nonce == event.nonce)
+        });
+        if !is_current {
+            return;
+        }
+        let Some(indicator) = app.get_webview_window(crate::shell_windows::SPEECH_INDICATOR_LABEL) else {
+            return;
+        };
+        let result = if event.status == SpeechStatusKind::Recording {
+            indicator.show()
+        } else {
+            indicator.hide()
+        };
+        if let Err(_) = result {
+            eprintln!("speech indicator visibility update failed");
+            return;
+        }
+        if event.status == SpeechStatusKind::Recording {
+            let _generation = state.generation.load(Ordering::Acquire);
+            let recording_still_current = state.inner.lock().ok().is_some_and(|inner| {
+                let current = inner.controller.status();
+                current.status == SpeechStatusKind::Recording && current.nonce == event.nonce
+            });
+            if !recording_still_current {
+                if let Err(_) = indicator.hide() {
+                    eprintln!("speech indicator stale visibility correction failed");
+                }
+                // A newer recording may have committed between the stale plan's
+                // validation and its compensating hide. Reconcile to that state.
+                let current_recording = state.inner.lock().ok().and_then(|inner| {
+                    let current = inner.controller.status();
+                    (current.status == SpeechStatusKind::Recording).then_some(current)
+                });
+                if current_recording.is_some() {
+                    if let Err(_) = indicator.show() {
+                        eprintln!("speech indicator recording reconciliation failed");
+                    } else {
+                        // The terminal plan may have committed while this stale plan
+                        // reconciled. Converge before releasing visibility ordering.
+                        let terminal_after_reconciliation = state.inner.lock().ok().is_some_and(|inner| {
+                            inner.controller.status().status != SpeechStatusKind::Recording
+                        });
+                        if terminal_after_reconciliation {
+                            if let Err(_) = indicator.hide() {
+                                eprintln!("speech indicator terminal reconciliation failed");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn resolve_model_resource(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1332,6 +1458,7 @@ type CaptureStreamParts = (
     u32,
     u16,
     Arc<CaptureHealth>,
+    Arc<AtomicU32>,
 );
 
 fn create_capture_stream() -> Result<CaptureStreamParts, ()> {
@@ -1343,17 +1470,18 @@ fn create_capture_stream() -> Result<CaptureStreamParts, ()> {
     let intake = Arc::new(OnceLock::new());
     let tail = Arc::new(Mutex::new(Vec::with_capacity(SEGMENT_SAMPLES)));
     let health = Arc::new(CaptureHealth::default());
+    let meter = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_stream::<f32>(&device, &config, &intake, &tail, &health, |v| v),
-        SampleFormat::I16 => build_stream::<i16>(&device, &config, &intake, &tail, &health, |v| {
+        SampleFormat::F32 => build_stream::<f32>(&device, &config, &intake, &tail, &health, &meter, |v| v),
+        SampleFormat::I16 => build_stream::<i16>(&device, &config, &intake, &tail, &health, &meter, |v| {
             v as f32 / i16::MAX as f32
         }),
-        SampleFormat::U16 => build_stream::<u16>(&device, &config, &intake, &tail, &health, |v| {
+        SampleFormat::U16 => build_stream::<u16>(&device, &config, &intake, &tail, &health, &meter, |v| {
             (v as f32 / u16::MAX as f32) * 2.0 - 1.0
         }),
         _ => return Err(()),
     }?;
-    Ok((stream, intake, tail, sample_rate, channels, health))
+    Ok((stream, intake, tail, sample_rate, channels, health, meter))
 }
 
 fn capture_start_error_code() -> String {
@@ -1379,6 +1507,7 @@ fn build_stream<T: cpal::SizedSample + 'static>(
     intake: &Arc<OnceLock<Arc<BoundedIntake>>>,
     tail: &Arc<Mutex<Vec<f32>>>,
     health: &Arc<CaptureHealth>,
+    meter: &Arc<AtomicU32>,
     convert: fn(T) -> f32,
 ) -> Result<Stream, ()> {
     let target = Arc::clone(intake);
@@ -1388,6 +1517,7 @@ fn build_stream<T: cpal::SizedSample + 'static>(
     let source_rate = config.sample_rate as u64;
     let mut phase = 0_u64;
     let callback_tail = Arc::clone(tail);
+    let callback_meter = Arc::clone(meter);
     device
         .build_input_stream(
             config,
@@ -1404,8 +1534,10 @@ fn build_stream<T: cpal::SizedSample + 'static>(
                         .fetch_add(1, Ordering::Release);
                     return;
                 };
+                let mut peak = 0.0_f32;
                 for frame in data.chunks_exact(channels) {
                     let mono = frame.iter().copied().map(convert).sum::<f32>() / channels as f32;
+                    peak = peak.max(mono.abs());
                     phase += TARGET_RATE as u64;
                     while phase >= source_rate {
                         phase -= source_rate;
@@ -1428,6 +1560,8 @@ fn build_stream<T: cpal::SizedSample + 'static>(
                         }
                     }
                 }
+                let level = if peak.is_finite() { peak.clamp(0.0, 1.0) } else { 0.0 };
+                callback_meter.store(level.to_bits(), Ordering::Release);
             },
             move |_| error_health.stream_error.store(true, Ordering::Release),
             None,

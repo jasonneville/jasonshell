@@ -40,6 +40,7 @@ export const IPC_EVENTS = {
   taskPreviewUpdate: 'task-preview:update',
   taskPreviewHide: 'task-preview:hide',
   speechStatusChanged: 'speech:status-changed',
+  speechVoiceLevel: 'speech:voice-level',
   topBarPinMenuAction: 'top-bar:pin-menu-action'
 } as const;
 
@@ -72,6 +73,11 @@ export interface SpeechStatusEvent {
   nonce: SpeechSessionNonce | null;
   error?: string;
   finalizationReason?: 'recording_cap';
+}
+
+export interface SpeechVoiceLevelEvent {
+  nonce: SpeechSessionNonce;
+  level: number;
 }
 
 export interface SpeechStatusResponse {

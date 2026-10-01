@@ -2,7 +2,7 @@ use crate::layout::build_shell_preview_rects;
 #[cfg(windows)]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::error::Error;
-use tauri::{App, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Manager, PhysicalPosition, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 #[cfg(windows)]
 use windows::Win32::Foundation::{GetLastError, SetLastError, ERROR_SUCCESS, HWND, WIN32_ERROR};
 #[cfg(windows)]
@@ -28,6 +28,7 @@ pub const COMMAND_PANEL_LABEL: &str = "command-panel";
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
 pub const SPEECH_HISTORY_PANEL_LABEL: &str = "speech-history-panel";
 pub const CALENDAR_PANEL_LABEL: &str = "calendar-panel";
+pub const SPEECH_INDICATOR_LABEL: &str = "speech-indicator";
 pub const CONTEXT_MENU_OVERLAY_LABEL: &str = "context-menu-overlay";
 #[cfg(test)]
 pub const ALL_LABELS: &[&str] = &[
@@ -48,6 +49,7 @@ pub const ALL_LABELS: &[&str] = &[
     SPEECH_HISTORY_PANEL_LABEL,
     CALENDAR_PANEL_LABEL,
     CONTEXT_MENU_OVERLAY_LABEL,
+    SPEECH_INDICATOR_LABEL,
 ];
 pub const TOP_BAR_HEIGHT_LOGICAL: f64 = 23.4;
 pub const BOTTOM_BAR_HEIGHT_LOGICAL: f64 = 32.4;
@@ -83,6 +85,8 @@ pub const CALENDAR_PANEL_WIDTH_LOGICAL: f64 = 360.0;
 pub const CALENDAR_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
 pub const CONTEXT_MENU_OVERLAY_WIDTH_LOGICAL: f64 = 360.0;
 pub const CONTEXT_MENU_OVERLAY_HEIGHT_LOGICAL: f64 = 360.0;
+pub const SPEECH_INDICATOR_WIDTH_LOGICAL: f64 = 280.0;
+pub const SPEECH_INDICATOR_HEIGHT_LOGICAL: f64 = 44.0;
 const DISABLE_NATIVE_CONTEXT_MENU_SCRIPT: &str =
     "window.addEventListener('contextmenu', (event) => event.preventDefault());";
 
@@ -140,8 +144,62 @@ pub fn create_shell_windows(app: &mut App) -> AppResult<CreatedShellWindows> {
     let _speech_history_panel = build_speech_history_panel_window(app)?;
     let _calendar_panel = build_calendar_panel_window(app)?;
     let _context_menu_overlay = build_context_menu_overlay_window(app)?;
+    let _speech_indicator = build_speech_indicator_window(app)?;
 
     Ok(CreatedShellWindows { top, bottom })
+}
+
+fn build_speech_indicator_window(app: &mut App) -> AppResult<WebviewWindow> {
+    let primary_monitor = app
+        .primary_monitor()?
+        .ok_or_else(|| "Primary monitor is unavailable".to_string())?;
+    let scale_factor = primary_monitor.scale_factor();
+    let logical_width = f64::from(primary_monitor.size().width) / scale_factor;
+    let logical_x = f64::from(primary_monitor.position().x) / scale_factor
+        + logical_width / 2.0
+        - SPEECH_INDICATOR_WIDTH_LOGICAL / 2.0;
+    let logical_y = (f64::from(primary_monitor.position().y + primary_monitor.size().height as i32)
+        / scale_factor)
+        - BOTTOM_BAR_HEIGHT_LOGICAL
+        - SPEECH_INDICATOR_HEIGHT_LOGICAL;
+    let window = WebviewWindowBuilder::new(
+        app,
+        SPEECH_INDICATOR_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .always_on_top(true)
+    .decorations(false)
+    .focused(false)
+    .inner_size(SPEECH_INDICATOR_WIDTH_LOGICAL, SPEECH_INDICATOR_HEIGHT_LOGICAL)
+    .maximizable(false)
+    .minimizable(false)
+    .resizable(false)
+    .shadow(false)
+    .skip_taskbar(true)
+    .transparent(true)
+    .visible(false)
+    .position(logical_x, logical_y)
+    .title("JasonShell Speech Indicator")
+    .build()?;
+    window.set_ignore_cursor_events(true)?;
+    apply_nonactivating_indicator_style(&window)?;
+    Ok(window)
+}
+
+/// Keeps the noninteractive speech meter directly above the current bottom AppBar.
+pub(crate) fn reposition_speech_indicator(app: &AppHandle, bottom_top: i32) -> AppResult<()> {
+    let Some(indicator) = app.get_webview_window(SPEECH_INDICATOR_LABEL) else {
+        return Ok(());
+    };
+    let monitor = app
+        .primary_monitor()?
+        .ok_or_else(|| "Primary monitor is unavailable".to_string())?;
+    let scale = monitor.scale_factor();
+    let width = (SPEECH_INDICATOR_WIDTH_LOGICAL * scale).round() as i32;
+    let height = (SPEECH_INDICATOR_HEIGHT_LOGICAL * scale).round() as i32;
+    let x = monitor.position().x + (monitor.size().width as i32 - width) / 2;
+    indicator.set_position(PhysicalPosition::new(x, bottom_top - height))?;
+    Ok(())
 }
 
 fn build_context_menu_overlay_window(app: &mut App) -> AppResult<WebviewWindow> {
@@ -561,6 +619,31 @@ pub fn to_physical_height(logical_height: f64, scale_factor: f64) -> i32 {
 fn apply_no_alt_tab_shell_style(window: &WebviewWindow) -> AppResult<()> {
     let hwnd = hwnd_from_tauri_window(window)?;
     apply_no_alt_tab_shell_style_to_hwnd(hwnd, window.label())
+}
+
+#[cfg(windows)]
+fn apply_nonactivating_indicator_style(window: &WebviewWindow) -> AppResult<()> {
+    let hwnd = hwnd_from_tauri_window(window)?;
+    let current_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 };
+    let desired_style = (current_style | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) & !WS_EX_APPWINDOW.0;
+    unsafe {
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired_style as isize);
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn apply_nonactivating_indicator_style(_window: &WebviewWindow) -> AppResult<()> {
+    Ok(())
 }
 
 #[cfg(windows)]

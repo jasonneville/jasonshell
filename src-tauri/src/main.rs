@@ -184,6 +184,7 @@ fn main() {
             speech_runtime::capture_speech_paste_target,
             speech_runtime::stop_speech_capture,
             speech_runtime::get_speech_history,
+            speech_runtime::get_speech_status,
             speech_runtime::copy_speech_history_transcript,
             system_tray::list_system_tray_icons,
             system_tray::invoke_system_tray_icon,

@@ -1,0 +1,11 @@
+{
+  "identifier": "speech-indicator",
+  "description": "Speech indicator auxiliary surface capability: status and scalar meter events plus window-label access.",
+  "windows": [
+    "speech-indicator"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

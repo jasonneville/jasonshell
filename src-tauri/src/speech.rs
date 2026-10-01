@@ -42,6 +42,15 @@ pub struct SpeechStatusEvent {
     pub finalization_reason: Option<FinalizationReason>,
 }
 
+/// A privacy-preserving, normalized capture meter for the active speech session.
+/// It deliberately contains no captured audio or transcription data.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechVoiceLevelEvent {
+    pub nonce: SpeechSessionNonce,
+    pub level: f32,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechStatusResponse {

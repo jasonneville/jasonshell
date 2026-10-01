@@ -14,6 +14,19 @@ test('shared context-menu overlay is its own native surface rather than a thin-b
   assert.match(read('src-tauri/src/shell_windows.rs'), /context.menu.*(?:overlay|popup)|(?:overlay|popup).*context.menu/i, 'native window must own overlay');
 });
 
+test('overlay event listener has a capability target and a frontend IPC surface label', () => {
+  assert.ok(overlayName, 'dedicated overlay surface must exist');
+  assert.match(read(`src/components/${overlayName}`), /listen(?:<[^>]+>)?\(/);
+  const capabilityDir = new URL('../src-tauri/capabilities/', import.meta.url);
+  const capabilities = readdirSync(capabilityDir).filter((name) => name.endsWith('.json'))
+    .map((name) => JSON.parse(readFileSync(new URL(name, capabilityDir), 'utf8')));
+  const targets = capabilities.filter(({ windows }) => windows?.includes('context-menu-overlay'));
+  assert.ok(targets.length, 'context-menu-overlay must be targeted by a Tauri capability');
+  assert.ok(targets.some(({ permissions }) => permissions?.includes('core:default') && permissions?.includes('core:window:default')),
+    'overlay needs nearby window/event capability permissions');
+  assert.match(read('src/ipc/surfaces.ts'), /contextMenuOverlay:\s*'context-menu-overlay'/);
+});
+
 test('top and bottom bars request the same external overlay; neither renders an inline menu', () => {
   const top = read('src/components/TopBar.svelte');
   const bottom = read('src/components/BottomBar.svelte');

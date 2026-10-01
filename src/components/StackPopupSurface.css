@@ -1341,7 +1341,7 @@
 }
 
 .context-menu {
-  background: var(--js-color-surface-raised);
+  background: var(--js-color-bg);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-md);
   box-shadow: var(--js-shadow-raised);
@@ -1409,7 +1409,8 @@
   display: grid;
 }
 
-.context-menu button {
+.context-menu-scroll.js-context-menu .context-menu-item,
+.context-submenu-panel.js-context-menu .context-menu-item {
   background: transparent;
   border: 0;
   border-radius: var(--js-radius-sm);
@@ -1417,6 +1418,7 @@
   font: inherit;
   font-size: 0.68rem;
   min-height: 1.55rem;
+  height: 1.55rem;
   padding: 0 0.55rem;
   text-align: left;
 }

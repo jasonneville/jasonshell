@@ -30,6 +30,7 @@ Current shipped surfaces:
 - centered search
 - process manager
 - audio, calendar, settings, tray, and related panels
+- speech capture uses a dedicated transparent, noninteractive `speech-indicator` surface; its nonce-tagged `speech:voice-level` event carries only a normalized scalar meter, never audio or transcript data
 
 Intentional limits:
 

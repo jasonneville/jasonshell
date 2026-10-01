@@ -14,7 +14,9 @@ export const SHELL_SURFACES = {
   commandPanel: 'command-panel',
   audioPanel: 'audio-panel',
   speechHistoryPanel: 'speech-history-panel',
-  calendarPanel: 'calendar-panel'
+  calendarPanel: 'calendar-panel',
+  speechIndicator: 'speech-indicator',
+  contextMenuOverlay: 'context-menu-overlay'
 } as const;
 
 export type KnownShellSurface = (typeof SHELL_SURFACES)[keyof typeof SHELL_SURFACES];
@@ -36,7 +38,9 @@ export const SHELL_SURFACE_TITLES: Record<KnownShellSurface, string> = {
   [SHELL_SURFACES.commandPanel]: 'Command Panel',
   [SHELL_SURFACES.audioPanel]: 'Audio Panel',
   [SHELL_SURFACES.speechHistoryPanel]: 'Speech History Panel',
-  [SHELL_SURFACES.calendarPanel]: 'Calendar Panel'
+  [SHELL_SURFACES.calendarPanel]: 'Calendar Panel',
+  [SHELL_SURFACES.speechIndicator]: 'Speech Indicator',
+  [SHELL_SURFACES.contextMenuOverlay]: 'Context Menu Overlay'
 };
 
 export function isKnownShellSurface(label: string): label is KnownShellSurface {

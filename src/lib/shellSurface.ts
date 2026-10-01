@@ -15,6 +15,7 @@ export type ShellSurface =
   | 'audio-panel'
   | 'speech-history-panel'
   | 'calendar-panel'
+  | 'speech-indicator'
   | 'context-menu-overlay'
   | 'unknown';
 
@@ -88,6 +89,10 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Clock calendar and timezone details',
     title: 'JasonShell Calendar'
   },
+  'speech-indicator': {
+    subtitle: 'Noninteractive speech capture level',
+    title: 'JasonShell Speech Indicator'
+  },
   'context-menu-overlay': {
     subtitle: 'Shared top and bottom bar context menu',
     title: 'JasonShell Context Menu'
@@ -116,6 +121,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'audio-panel'
     || label === 'speech-history-panel'
     || label === 'calendar-panel'
+    || label === 'speech-indicator'
     || label === 'context-menu-overlay'
   ) {
     return label;

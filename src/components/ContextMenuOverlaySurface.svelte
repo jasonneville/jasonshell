@@ -15,7 +15,8 @@
   let request: ContextMenuOverlayRequest | null = null;
   let menuElement: HTMLDivElement | null = null;
   const MENU_INSET = 8;
-  let placement = { x: 8, y: 0, maxHeight: 0 };
+  let placement: { x: number; y: number; maxHeight?: number } = { x: MENU_INSET, y: MENU_INSET };
+  let positioned = false;
 
   function enabledMenuItems(): HTMLButtonElement[] {
     return Array.from(menuElement?.querySelectorAll<HTMLButtonElement>('button:not(:disabled).context-menu-item') ?? []);
@@ -28,19 +29,26 @@
   }
 
   async function positionMenu() {
+    const currentRequest = request;
     await tick();
-    if (!request) return;
-    const bounds = menuElement?.getBoundingClientRect();
-    if (!bounds) return;
+    if (!currentRequest || request !== currentRequest || !menuElement) return;
+    const currentMenuElement = menuElement;
+    // scrollHeight reflects the full content even when the previous menu was scroll-clamped.
+    // offsetWidth is not affected by the shared menu's opening transform.
+    const menuHeight = menuElement.scrollHeight + menuElement.offsetHeight - menuElement.clientHeight;
+    const menuWidth = menuElement.offsetWidth;
     const source = request.source;
     const anchor = source === 'bottom-bar'
-      ? { x: MENU_INSET, y: Math.max(MENU_INSET, window.innerHeight - bounds.height - MENU_INSET) }
+      ? { x: MENU_INSET, y: Math.max(MENU_INSET, window.innerHeight - menuHeight - MENU_INSET) }
       : { x: MENU_INSET, y: MENU_INSET };
     placement = positionScrollableContextMenuInViewport(
       anchor,
-      { width: bounds.width, height: bounds.height },
+      { width: menuWidth, height: menuHeight },
       { width: window.innerWidth, height: window.innerHeight }
     );
+    positioned = true;
+    await tick();
+    if (request !== currentRequest || !menuElement || menuElement !== currentMenuElement) return;
     focusMenuItem(0);
   }
 
@@ -88,11 +96,15 @@
   onMount(() => {
     let disposed = false;
     const registration = listen<ContextMenuOverlayRequest>(CONTEXT_MENU_OVERLAY_OPEN_EVENT, (event) => {
+      positioned = false;
+      placement = { x: MENU_INSET, y: MENU_INSET };
       request = event.payload;
       void positionMenu();
     });
+    window.addEventListener('resize', positionMenu);
     return () => {
       disposed = true;
+      window.removeEventListener('resize', positionMenu);
       void registration.then((unlisten) => unlisten());
       void disposed;
     };
@@ -102,11 +114,11 @@
 <svelte:window on:keydown={handleKeydown} on:blur={dismiss} />
 
 {#if request}
-  <div class="context-menu-overlay-backdrop" on:pointerdown={dismiss} role="presentation">
+  <div class="context-menu-overlay-backdrop" class:positioned on:pointerdown={dismiss} role="presentation">
     <ContextMenu
       className="context-menu-overlay"
       ariaLabel="Context menu"
-      style={`left:${placement.x}px;top:${placement.y}px;max-height:${placement.maxHeight}px`}
+      style={`left:${placement.x}px;top:${placement.y}px;${placement.maxHeight === undefined ? '' : `max-height:${placement.maxHeight}px`}`}
       bind:element={menuElement}
       on:click={(event) => event.stopPropagation()}
       on:pointerdown={(event) => event.stopPropagation()}
@@ -144,4 +156,6 @@
     position: fixed;
     width: 100%;
   }
+  .context-menu-overlay-backdrop :global(.context-menu-overlay) { visibility: hidden; }
+  .context-menu-overlay-backdrop.positioned :global(.context-menu-overlay) { visibility: visible; }
 </style>

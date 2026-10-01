@@ -27,6 +27,7 @@ export const surfaceComponentLoaders: Record<LoadableShellSurface, SurfaceCompon
   'audio-panel': () => import('../components/AudioPanelSurface.svelte'),
   'speech-history-panel': () => import('../components/SpeechHistoryPanelSurface.svelte'),
   'calendar-panel': () => import('../components/CalendarPanelSurface.svelte'),
+  'speech-indicator': () => import('../components/SpeechIndicatorSurface.svelte'),
   'context-menu-overlay': () => import('../components/ContextMenuOverlaySurface.svelte')
 };
 

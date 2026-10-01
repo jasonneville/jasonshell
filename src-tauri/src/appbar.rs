@@ -500,6 +500,9 @@ fn resize_shell_bar_runtime(
         bottom_rect,
         ..layout
     });
+    let indicator_bottom_top = bottom_rect.top;
+    drop(state);
+    super::shell_windows::reposition_speech_indicator(app_handle, indicator_bottom_top)?;
 
     Ok(())
 }

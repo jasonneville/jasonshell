@@ -11,10 +11,12 @@ import {
   IPC_EVENTS,
   type SpeechHistoryEntry,
   type SpeechStatusEvent,
-  type SpeechStatusResponse
+  type SpeechStatusResponse,
+  type SpeechVoiceLevelEvent
 } from '../ipc/events.js';
 
 export const SPEECH_STATUS_CHANGED_EVENT = IPC_EVENTS.speechStatusChanged;
+export const SPEECH_VOICE_LEVEL_EVENT = IPC_EVENTS.speechVoiceLevel;
 export const SPEECH_HISTORY_PANEL_OPEN_EVENT = IPC_EVENTS.speechHistoryPanelOpen;
 export const SPEECH_HISTORY_PANEL_CLOSED_EVENT = IPC_EVENTS.speechHistoryPanelClosed;
 
@@ -59,6 +61,18 @@ export function listenSpeechStatus(
   handler: (event: SpeechStatusEvent) => void
 ): Promise<UnlistenFn> {
   return listen<SpeechStatusEvent>(SPEECH_STATUS_CHANGED_EVENT, (event: Event<SpeechStatusEvent>) => {
+    handler(event.payload);
+  });
+}
+
+export function getSpeechStatus(): Promise<SpeechStatusResponse> {
+  return invoke<SpeechStatusResponse>(IPC_COMMANDS.getSpeechStatus);
+}
+
+export function listenSpeechVoiceLevel(
+  handler: (event: SpeechVoiceLevelEvent) => void
+): Promise<UnlistenFn> {
+  return listen<SpeechVoiceLevelEvent>(SPEECH_VOICE_LEVEL_EVENT, (event: Event<SpeechVoiceLevelEvent>) => {
     handler(event.payload);
   });
 }

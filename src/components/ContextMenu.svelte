@@ -30,9 +30,7 @@
 
 <style>
   :global(.js-context-menu) {
-    background: color-mix(in srgb, var(--js-color-surface-raised) 88%, transparent);
-    backdrop-filter: blur(16px) saturate(1.15);
-    -webkit-backdrop-filter: blur(16px) saturate(1.15);
+    background: var(--js-color-bg);
     border: 1px solid color-mix(in srgb, var(--js-color-border) 86%, transparent);
     border-radius: 12px;
     box-shadow: var(--js-shadow-raised);
@@ -74,11 +72,12 @@
   :global(.js-context-menu .context-menu-item--destructive) { color: var(--js-color-danger, #f08080); }
   :global(.js-context-menu .context-menu-icon),
   :global(.js-context-menu .context-menu-icon-placeholder) { color: var(--js-color-text-muted); height: 16px; pointer-events: none; width: 16px; }
+  :global(.js-context-menu .context-menu-icon) { align-items: center; display: flex; justify-content: center; line-height: 0; }
   :global(.js-context-menu .context-menu-icon-placeholder) { display: block; }
   :global(.js-context-menu .context-menu-separator) { background: var(--js-color-border-soft, var(--js-color-border)); border: 0; height: 1px; margin: 4px -1px; }
 
   @keyframes js-context-menu-in {
-    from { opacity: 0; transform: scale(.95); }
-    to { opacity: 1; transform: scale(1); }
+    from { transform: scale(.95); }
+    to { transform: scale(1); }
   }
 </style>

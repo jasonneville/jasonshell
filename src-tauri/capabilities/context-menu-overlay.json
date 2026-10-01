@@ -1,0 +1,11 @@
+{
+  "identifier": "context-menu-overlay",
+  "description": "Context-menu overlay auxiliary surface capability: menu events and window-label access.",
+  "windows": [
+    "context-menu-overlay"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

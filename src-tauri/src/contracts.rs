@@ -18,6 +18,7 @@ pub mod surfaces {
     pub const SPEECH_HISTORY_PANEL: &str = "speech-history-panel";
     pub const CALENDAR_PANEL: &str = "calendar-panel";
     pub const CONTEXT_MENU_OVERLAY: &str = "context-menu-overlay";
+    pub const SPEECH_INDICATOR: &str = "speech-indicator";
 
     pub const ALL: &[&str] = &[
         TOP_BAR,
@@ -37,6 +38,7 @@ pub mod surfaces {
         SPEECH_HISTORY_PANEL,
         CALENDAR_PANEL,
         CONTEXT_MENU_OVERLAY,
+        SPEECH_INDICATOR,
     ];
 }
 
@@ -223,6 +225,7 @@ pub mod commands {
     pub const STOP_SPEECH_CAPTURE: &str = "stop_speech_capture";
     pub const GET_SPEECH_HISTORY: &str = "get_speech_history";
     pub const COPY_SPEECH_HISTORY_TRANSCRIPT: &str = "copy_speech_history_transcript";
+    pub const GET_SPEECH_STATUS: &str = "get_speech_status";
 
     pub const ALL: &[&str] = &[
         LIST_PINNED_TASKBAR_APPS,
@@ -404,6 +407,7 @@ pub mod commands {
         STOP_SPEECH_CAPTURE,
         GET_SPEECH_HISTORY,
         COPY_SPEECH_HISTORY_TRANSCRIPT,
+        GET_SPEECH_STATUS,
     ];
 }
 
@@ -459,6 +463,7 @@ pub mod events {
     pub const TASK_GALLERY_OPEN: &str = "task-gallery:open";
     pub const TASK_GALLERY_CLOSED: &str = "task-gallery:closed";
     pub const SPEECH_STATUS_CHANGED: &str = "speech:status-changed";
+    pub const SPEECH_VOICE_LEVEL: &str = "speech:voice-level";
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
@@ -510,6 +515,7 @@ pub mod events {
         TASK_GALLERY_OPEN,
         TASK_GALLERY_CLOSED,
         SPEECH_STATUS_CHANGED,
+        SPEECH_VOICE_LEVEL,
         TRAY_PANEL_CLOSED,
         TRAY_PANEL_OPEN,
     ];
@@ -542,6 +548,8 @@ mod tests {
                 "audio-panel",
                 "speech-history-panel",
                 "calendar-panel",
+                "context-menu-overlay",
+                "speech-indicator",
             ]
         );
     }
@@ -721,6 +729,7 @@ mod tests {
                 "task-gallery:open",
                 "task-gallery:closed",
                 "speech:status-changed",
+                "speech:voice-level",
                 "tray-panel:closed",
                 "tray-panel:open",
             ]
