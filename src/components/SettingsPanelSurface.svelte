@@ -7,6 +7,7 @@
   import MeltRadioGroup from './melt/MeltRadioGroup.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
   import MeltToggle from './melt/MeltToggle.svelte';
+  import { getSpeechModelStatus, importSpeechModel, type SpeechModelStatus } from '../lib/speech';
   import {
     formatShellDate,
     formatShellTime,
@@ -75,6 +76,12 @@
   let googleFontLink = '';
   let googleFontStatus = '';
   let googleFontError = '';
+  let speechModel: SpeechModelStatus | null = null;
+  let speechModelBusy = false;
+  let speechModelError = '';
+  let speechModelMounted = false;
+  let speechModelRequest = 0;
+  let speechModelTimer: ReturnType<typeof setTimeout> | undefined;
 
   const powerActionLabels: Record<SystemPowerAction, string> = {
     sleep: 'Sleep',
@@ -85,10 +92,76 @@
   $: fontSelectOptions = shellFontOptions(preferences.customFonts).map((font) => ({ value: font.id, label: font.label }));
   $: datePreview = formatShellDate(now, preferences.dateFormat);
   $: timePreview = formatShellTime(now, preferences);
+  $: speechModelLabel = speechModel?.state === 'ready'
+    ? `Speech model ready (${speechModel.source === 'installed' ? 'installed' : 'bundled'}).`
+    : speechModel?.state === 'loading'
+      ? 'Loading speech model…'
+      : speechModel?.state === 'missing'
+        ? 'Speech model not installed.'
+        : speechModel?.state === 'error'
+          ? 'Speech model unavailable. Import a compatible archive.'
+          : 'Checking speech model…';
 
   onMount(() => {
     void loadJsonShellSettings();
+    speechModelMounted = true;
+    void refreshSpeechModel();
+    return () => {
+      speechModelMounted = false;
+      speechModelRequest += 1;
+      clearTimeout(speechModelTimer);
+    };
   });
+
+  function scheduleSpeechModelRefresh() {
+    clearTimeout(speechModelTimer);
+    if (speechModelMounted && !speechModelBusy && speechModel?.state === 'loading') {
+      speechModelTimer = setTimeout(() => void refreshSpeechModel(), 1000);
+    }
+  }
+
+  async function refreshSpeechModel(preserveImportError = false) {
+    const request = ++speechModelRequest;
+    try {
+      const model = await getSpeechModelStatus();
+      if (!speechModelMounted || request !== speechModelRequest) return;
+      speechModel = model;
+      if (!preserveImportError) speechModelError = model.error ?? '';
+      scheduleSpeechModelRefresh();
+    } catch (error) {
+      if (!speechModelMounted || request !== speechModelRequest) return;
+      speechModel = { state: 'error', source: null, error: null };
+      if (!preserveImportError) {
+        speechModelError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Could not check speech model. Try importing a compatible archive.';
+      }
+    }
+  }
+
+  async function handleSpeechModelImport() {
+    if (speechModelBusy) return;
+    const request = ++speechModelRequest;
+    clearTimeout(speechModelTimer);
+    speechModelBusy = true;
+    speechModelError = '';
+    try {
+      const result = await importSpeechModel();
+      if (!speechModelMounted || request !== speechModelRequest) return;
+      speechModel = result.model;
+      speechModelError = result.model.error ?? '';
+    } catch (error) {
+      if (!speechModelMounted || request !== speechModelRequest) return;
+      speechModelError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Import failed. Choose a complete Parakeet v2 int8 archive and try again.';
+      if (!speechModel) {
+        speechModelBusy = false;
+        void refreshSpeechModel(true);
+      }
+    } finally {
+      if (speechModelMounted && request === speechModelRequest) {
+        speechModelBusy = false;
+        scheduleSpeechModelRefresh();
+      }
+    }
+  }
 
   function updatePreferences(patch: Partial<ShellPreferences>) {
     preferences = patchShellPreferences(patch);
@@ -454,6 +527,24 @@
     </fieldset>
     {#if settingsError}
       <p class="settings-error" role="alert">{settingsError}</p>
+    {/if}
+  </section>
+
+  <section class="settings-section" aria-labelledby="speech-model-heading">
+    <h2 id="speech-model-heading">Speech</h2>
+    <p class="settings-help">
+      Choose a trusted Parakeet v2 int8 .tar, .tar.gz, or .tgz once. JasonShell installs it for offline use, including after restart. No manual extraction needed.
+    </p>
+    <div class="speech-model-actions" aria-busy={speechModelBusy}>
+      <MeltActionButton disabled={speechModelBusy} onClick={handleSpeechModelImport}>
+        {speechModelBusy ? 'Installing speech model…' : 'Import speech model'}
+      </MeltActionButton>
+    </div>
+    <p class:settings-success={speechModel?.state === 'ready'} class="settings-help" role="status" aria-live="polite">
+      {speechModelBusy ? 'Choose an archive; installation and validation may take a minute.' : speechModelLabel}
+    </p>
+    {#if speechModelError}
+      <p class="settings-error" role="alert">{speechModelError}</p>
     {/if}
   </section>
 

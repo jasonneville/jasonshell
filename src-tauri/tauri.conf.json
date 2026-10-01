@@ -10,9 +10,7 @@
     "frontendDist": "../dist"
   },
   "bundle": {
-    "resources": [
-      "resources/speech-models/parakeet-tdt-0.6b-v2-int8/**/*"
-    ]
+    "resources": []
   },
   "app": {
     "security": {

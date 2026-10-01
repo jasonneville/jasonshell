@@ -62,6 +62,8 @@ export const IPC_COMMANDS = {
   showCalendarPanel: 'show_calendar_panel',
   hideCalendarPanel: 'hide_calendar_panel',
   getSpeechStatus: 'get_speech_status',
+  getSpeechModelStatus: 'get_speech_model_status',
+  importSpeechModel: 'import_speech_model',
   getAudioState: 'get_audio_state',
   setMasterVolume: 'set_master_volume',
   setAppVolume: 'set_app_volume',

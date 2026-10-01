@@ -54,8 +54,9 @@ test('speech commands and managed runtime are registered in Tauri main', () => {
   assert.match(mainSource, /speech_runtime::shutdown/);
 });
 
-test('speech model directory is included in Tauri bundle resources', () => {
-  assert.deepEqual(tauriConfig.bundle?.resources, ['resources/speech-models/parakeet-tdt-0.6b-v2-int8/**/*']);
+test('model-free fresh builds do not require ignored speech binaries as bundle resources', () => {
+  const resources = tauriConfig.bundle?.resources ?? [];
+  assert.doesNotMatch(JSON.stringify(resources), /speech-models|parakeet/);
 });
 
 test('planned speech cap finalization reason remains optional and cap-only', (t) => {

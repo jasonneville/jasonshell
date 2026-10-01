@@ -127,7 +127,8 @@
   grid-template-columns: minmax(0, 1fr) max-content;
 }
 
-.google-font-installer button {
+.google-font-installer button,
+.speech-model-actions button {
   background: var(--js-bg-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
@@ -136,6 +137,26 @@
   font-weight: 800;
   min-height: 1.7rem;
   padding: 0 0.55rem;
+}
+
+.speech-model-actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.speech-model-actions button:hover:not(:disabled) {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
+}
+
+.speech-model-actions button:focus-visible {
+  outline: 2px solid var(--js-color-accent);
+  outline-offset: 2px;
+}
+
+.speech-model-actions button:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .settings-success {

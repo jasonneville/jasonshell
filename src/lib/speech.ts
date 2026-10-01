@@ -20,6 +20,25 @@ export const SPEECH_VOICE_LEVEL_EVENT = IPC_EVENTS.speechVoiceLevel;
 export const SPEECH_HISTORY_PANEL_OPEN_EVENT = IPC_EVENTS.speechHistoryPanelOpen;
 export const SPEECH_HISTORY_PANEL_CLOSED_EVENT = IPC_EVENTS.speechHistoryPanelClosed;
 
+export interface SpeechModelStatus {
+  state: 'missing' | 'loading' | 'ready' | 'error';
+  source: 'installed' | 'bundled' | null;
+  error: string | null;
+}
+
+export interface ImportSpeechModelResponse {
+  cancelled: boolean;
+  model: SpeechModelStatus;
+}
+
+export function getSpeechModelStatus(): Promise<SpeechModelStatus> {
+  return invoke<SpeechModelStatus>(IPC_COMMANDS.getSpeechModelStatus);
+}
+
+export function importSpeechModel(): Promise<ImportSpeechModelResponse> {
+  return invoke<ImportSpeechModelResponse>(IPC_COMMANDS.importSpeechModel);
+}
+
 export interface ShowSpeechHistoryPanelRequest {
   anchorLeft: number;
   anchorWidth: number;

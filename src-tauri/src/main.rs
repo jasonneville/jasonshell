@@ -25,11 +25,12 @@ mod shell_paths;
 mod shell_windows;
 mod speech;
 mod speech_clipboard;
-mod speech_target;
 mod speech_history_panel;
 mod speech_model;
+mod speech_model_install;
 mod speech_runtime;
 mod speech_streaming;
+mod speech_target;
 mod stack_popup;
 mod system_power;
 mod task_gallery;
@@ -96,6 +97,7 @@ fn main() {
     }
 
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(shell_runtime_state())
         .manage(task_preview_state())
         .manage(search_panel_state())
@@ -185,6 +187,8 @@ fn main() {
             speech_runtime::stop_speech_capture,
             speech_runtime::get_speech_history,
             speech_runtime::get_speech_status,
+            speech_runtime::get_speech_model_status,
+            speech_runtime::import_speech_model,
             speech_runtime::copy_speech_history_transcript,
             system_tray::list_system_tray_icons,
             system_tray::invoke_system_tray_icon,

@@ -3,9 +3,9 @@
 use crate::contracts;
 use crate::speech::{
     CopySpeechHistoryTranscriptRequest, SpeechController, SpeechHistoryEntry, SpeechSessionNonce,
-    SpeechStatusEvent, SpeechStatusKind, SpeechVoiceLevelEvent, StartSpeechCaptureRequest, StartSpeechCaptureResponse,
-    StopSpeechCaptureRequest, MAX_RECORDING_DURATION, MAX_SPEECH_HISTORY_ENTRIES,
-    MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
+    SpeechStatusEvent, SpeechStatusKind, SpeechVoiceLevelEvent, StartSpeechCaptureRequest,
+    StartSpeechCaptureResponse, StopSpeechCaptureRequest, MAX_RECORDING_DURATION,
+    MAX_SPEECH_HISTORY_ENTRIES, MAX_SPEECH_HISTORY_TRANSCRIPT_BYTES,
 };
 use crate::speech_streaming::{
     merge_tdt_window, BoundedIntake, InputCloseReason, IntakeResult, WorkerMessage,
@@ -105,6 +105,7 @@ pub(crate) struct SpeechRuntimeState {
     epoch: Instant,
     history: Mutex<VecDeque<SpeechHistoryEntry>>,
     model_pool: Mutex<WarmModelState>,
+    model_operation: Mutex<ModelOperation>,
 }
 
 #[derive(Default)]
@@ -130,6 +131,28 @@ enum WarmModelState {
     Ready(parakeet_rs::ParakeetTDT),
     InUse,
     Failed,
+}
+
+#[derive(Default)]
+struct ModelOperation {
+    importing: bool,
+    epoch: u64,
+    source: Option<&'static str>,
+    error: Option<String>,
+    missing: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub(crate) struct ModelStatus {
+    state: &'static str,
+    source: Option<&'static str>,
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct ImportModelResponse {
+    cancelled: bool,
+    model: ModelStatus,
 }
 
 struct RuntimeInner {
@@ -192,6 +215,7 @@ impl Default for SpeechRuntimeState {
             epoch: Instant::now(),
             history: Mutex::new(VecDeque::with_capacity(MAX_SPEECH_HISTORY_ENTRIES)),
             model_pool: Mutex::new(WarmModelState::NotStarted),
+            model_operation: Mutex::new(ModelOperation::default()),
         }
     }
 }
@@ -444,6 +468,13 @@ impl SpeechRuntimeState {
 
 pub(crate) fn spawn_warm_model_async(app: AppHandle) {
     let state = app.state::<SpeechRuntimeState>();
+    let Ok(operation) = state.model_operation.lock() else {
+        return;
+    };
+    if operation.importing {
+        return;
+    }
+    let epoch = operation.epoch;
     let should_load = state.model_pool.lock().ok().is_some_and(|mut slot| {
         if matches!(*slot, WarmModelState::NotStarted) {
             *slot = WarmModelState::Loading;
@@ -455,9 +486,29 @@ pub(crate) fn spawn_warm_model_async(app: AppHandle) {
     if !should_load {
         return;
     }
+    drop(operation);
     tauri::async_runtime::spawn_blocking(move || {
-        let loaded = resolve_model_resource(&app).and_then(|path| preload_parakeet_tdt(&path));
+        let resolved = resolve_model_resource(&app);
+        let source = resolved.as_ref().ok().map(|(_, source)| *source);
+        let missing = resolved.is_err();
+        let loaded = resolved.and_then(|(path, _)| preload_parakeet_tdt(&path));
         let state = app.state::<SpeechRuntimeState>();
+        let Ok(mut operation) = state.model_operation.lock() else {
+            return;
+        };
+        if operation.epoch != epoch
+            || operation.importing
+            || state.shutting_down.load(Ordering::Acquire)
+        {
+            return;
+        }
+        operation.source = source;
+        operation.missing = missing;
+        operation.error = if loaded.is_err() && !missing {
+            Some("Model could not load. Import a matching Parakeet TDT int8 bundle.".into())
+        } else {
+            None
+        };
         if let Ok(mut slot) = state.model_pool.lock() {
             *slot = match loaded {
                 Ok(model) => WarmModelState::Ready(model),
@@ -465,6 +516,156 @@ pub(crate) fn spawn_warm_model_async(app: AppHandle) {
             };
         };
     });
+}
+
+fn model_status(state: &SpeechRuntimeState) -> Result<ModelStatus, String> {
+    let operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
+    let slot = state.model_pool.lock().map_err(|_| GENERIC_ERROR)?;
+    let status = if operation.importing {
+        "loading"
+    } else {
+        match &*slot {
+            WarmModelState::NotStarted => "missing",
+            WarmModelState::Loading => "loading",
+            WarmModelState::Ready(_) | WarmModelState::InUse => "ready",
+            WarmModelState::Failed if operation.missing => "missing",
+            WarmModelState::Failed => "error",
+        }
+    };
+    Ok(ModelStatus {
+        state: status,
+        source: operation.source,
+        error: operation.error.clone(),
+    })
+}
+
+fn require_model_settings(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != crate::shell_windows::SETTINGS_PANEL_LABEL {
+        return Err("Model management is available only in Settings.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn get_speech_model_status(
+    window: tauri::WebviewWindow,
+    state: State<'_, SpeechRuntimeState>,
+) -> Result<ModelStatus, String> {
+    require_model_settings(&window)?;
+    model_status(&state)
+}
+
+struct ImportReservation(AppHandle);
+impl Drop for ImportReservation {
+    fn drop(&mut self) {
+        if let Ok(mut operation) = self.0.state::<SpeechRuntimeState>().model_operation.lock() {
+            operation.importing = false;
+        }
+        spawn_warm_model_async(self.0.clone());
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn import_speech_model(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+) -> Result<ImportModelResponse, String> {
+    require_model_settings(&window)?;
+    tauri::async_runtime::spawn_blocking(move || import_model_blocking(app, window))
+        .await
+        .map_err(|_| "Model import could not complete. Try again.".to_owned())?
+}
+
+fn import_model_blocking(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<ImportModelResponse, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let state = app.state::<SpeechRuntimeState>();
+    {
+        let _commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
+        let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
+        let inner = state.inner.lock().map_err(|_| GENERIC_ERROR)?;
+        let slot = state.model_pool.lock().map_err(|_| GENERIC_ERROR)?;
+        if state.shutting_down.load(Ordering::Acquire)
+            || operation.importing
+            || matches!(*slot, WarmModelState::InUse)
+            || inner.capture.is_some()
+            || matches!(
+                inner.controller.status().status,
+                SpeechStatusKind::Recording | SpeechStatusKind::Transcribing
+            )
+        {
+            return Err("Speech is busy. Stop capture and wait before importing a model.".into());
+        }
+        operation.importing = true;
+        // Invalidates startup work before releasing admission; no late warmup publication.
+        operation.epoch = operation.epoch.wrapping_add(1);
+    }
+    let reservation = ImportReservation(app.clone());
+    let selected = app
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .add_filter("Parakeet model archive", &["tar", "tar.gz", "tgz"])
+        .blocking_pick_file();
+    let result = if let Some(selected) = selected {
+        let archive = selected
+            .into_path()
+            .map_err(|_| "Choose a local model archive.".to_owned());
+        archive.and_then(|archive| {
+            let data = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|_| "App model storage is unavailable.".to_owned())?;
+            let mut loaded = None;
+            crate::speech_model_install::install_archive(
+                &archive,
+                &data,
+                crate::speech_model_install::InstallLimits::default(),
+                |path| {
+                    loaded = Some(
+                        crate::speech_model::load_parakeet_tdt(path)
+                            .map_err(|_| "Model could not load.".to_owned())?,
+                    );
+                    Ok(())
+                },
+            )?;
+            let model = loaded.ok_or_else(|| "Model could not load.".to_owned())?;
+            let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
+            let old = {
+                let mut slot = state.model_pool.lock().map_err(|_| GENERIC_ERROR)?;
+                std::mem::replace(&mut *slot, WarmModelState::Ready(model))
+            };
+            operation.source = Some("installed");
+            operation.error = None;
+            operation.missing = false;
+            drop(operation);
+            // Model destruction can be slow; never do it under the pool/global lock.
+            drop(old);
+            Ok(false)
+        })
+    } else {
+        Ok(true)
+    };
+    {
+        let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
+        if let Err(error) = &result {
+            operation.error = Some(error.clone());
+        }
+        let mut slot = state.model_pool.lock().map_err(|_| GENERIC_ERROR)?;
+        // Startup work was invalidated. Cancellation/failure retries instead of
+        // leaving its old Loading state stranded, retaining any existing ready model.
+        if matches!(*slot, WarmModelState::Loading | WarmModelState::Failed) {
+            *slot = WarmModelState::NotStarted;
+        }
+    }
+    drop(reservation);
+    let model = model_status(&state)?;
+    match result {
+        Ok(cancelled) => Ok(ImportModelResponse { cancelled, model }),
+        Err(error) => Err(error),
+    }
 }
 
 #[tauri::command]
@@ -512,6 +713,14 @@ pub(crate) fn start_speech_capture(
     request: StartSpeechCaptureRequest,
 ) -> Result<StartSpeechCaptureResponse, String> {
     let commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
+    if state
+        .model_operation
+        .lock()
+        .map_err(|_| GENERIC_ERROR)?
+        .importing
+    {
+        return Err("Model import is in progress. Wait before starting speech.".into());
+    }
     if state.shutting_down.load(Ordering::Acquire) {
         state
             .inner
@@ -559,15 +768,16 @@ pub(crate) fn start_speech_capture(
             return Err(error);
         }
     };
-    let (stream, intake_slot, tail, sample_rate, channels, health, meter) = match create_capture_stream() {
-        Ok(capture) => capture,
-        Err(_) => {
-            state.return_model(model);
-            recover_failed_stop_with(&app, &state, nonce, SpeechFailure::CaptureStreamError);
-            report_capture_start_failure();
-            return Err(capture_start_error_code());
-        }
-    };
+    let (stream, intake_slot, tail, sample_rate, channels, health, meter) =
+        match create_capture_stream() {
+            Ok(capture) => capture,
+            Err(_) => {
+                state.return_model(model);
+                recover_failed_stop_with(&app, &state, nonce, SpeechFailure::CaptureStreamError);
+                report_capture_start_failure();
+                return Err(capture_start_error_code());
+            }
+        };
     let (intake, receiver) = BoundedIntake::prepared(nonce, nonce.0);
     let intake = Arc::new(intake);
     if intake_slot.set(Arc::clone(&intake)).is_err() {
@@ -1253,7 +1463,12 @@ fn schedule_voice_level_updates(app: AppHandle, nonce: SpeechSessionNonce) {
         }
         let level = state.inner.lock().ok().and_then(|inner| {
             (inner.controller.status().status == SpeechStatusKind::Recording)
-                .then(|| inner.capture.as_ref().map(|capture| capture.meter.load(Ordering::Acquire)))
+                .then(|| {
+                    inner
+                        .capture
+                        .as_ref()
+                        .map(|capture| capture.meter.load(Ordering::Acquire))
+                })
                 .flatten()
         });
         let Some(level) = level else {
@@ -1391,7 +1606,8 @@ fn apply_indicator_visibility(app: AppHandle, event: SpeechStatusEvent) {
         if !is_current {
             return;
         }
-        let Some(indicator) = app.get_webview_window(crate::shell_windows::SPEECH_INDICATOR_LABEL) else {
+        let Some(indicator) = app.get_webview_window(crate::shell_windows::SPEECH_INDICATOR_LABEL)
+        else {
             return;
         };
         let result = if event.status == SpeechStatusKind::Recording {
@@ -1425,9 +1641,10 @@ fn apply_indicator_visibility(app: AppHandle, event: SpeechStatusEvent) {
                     } else {
                         // The terminal plan may have committed while this stale plan
                         // reconciled. Converge before releasing visibility ordering.
-                        let terminal_after_reconciliation = state.inner.lock().ok().is_some_and(|inner| {
-                            inner.controller.status().status != SpeechStatusKind::Recording
-                        });
+                        let terminal_after_reconciliation =
+                            state.inner.lock().ok().is_some_and(|inner| {
+                                inner.controller.status().status != SpeechStatusKind::Recording
+                            });
                         if terminal_after_reconciliation {
                             if let Err(_) = indicator.hide() {
                                 eprintln!("speech indicator terminal reconciliation failed");
@@ -1440,10 +1657,19 @@ fn apply_indicator_visibility(app: AppHandle, event: SpeechStatusEvent) {
     });
 }
 
-fn resolve_model_resource(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
+fn resolve_model_resource(app: &AppHandle) -> Result<(PathBuf, &'static str), String> {
+    if let Ok(data) = app.path().app_local_data_dir() {
+        if let Some(path) = crate::speech_model_install::resolve_installed_model(&data) {
+            return Ok((path, "installed"));
+        }
+    }
+    let bundled = app
+        .path()
         .resolve(MODEL_RESOURCE, tauri::path::BaseDirectory::Resource)
-        .map_err(|_| GENERIC_ERROR.to_string())
+        .map_err(|_| GENERIC_ERROR.to_string())?;
+    crate::speech_model::validate_parakeet_tdt_layout(&bundled)
+        .map_err(|_| GENERIC_ERROR.to_string())?;
+    Ok((bundled, "bundled"))
 }
 
 fn preload_parakeet_tdt(model_path: &PathBuf) -> Result<parakeet_rs::ParakeetTDT, String> {
@@ -1472,13 +1698,19 @@ fn create_capture_stream() -> Result<CaptureStreamParts, ()> {
     let health = Arc::new(CaptureHealth::default());
     let meter = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_stream::<f32>(&device, &config, &intake, &tail, &health, &meter, |v| v),
-        SampleFormat::I16 => build_stream::<i16>(&device, &config, &intake, &tail, &health, &meter, |v| {
-            v as f32 / i16::MAX as f32
-        }),
-        SampleFormat::U16 => build_stream::<u16>(&device, &config, &intake, &tail, &health, &meter, |v| {
-            (v as f32 / u16::MAX as f32) * 2.0 - 1.0
-        }),
+        SampleFormat::F32 => {
+            build_stream::<f32>(&device, &config, &intake, &tail, &health, &meter, |v| v)
+        }
+        SampleFormat::I16 => {
+            build_stream::<i16>(&device, &config, &intake, &tail, &health, &meter, |v| {
+                v as f32 / i16::MAX as f32
+            })
+        }
+        SampleFormat::U16 => {
+            build_stream::<u16>(&device, &config, &intake, &tail, &health, &meter, |v| {
+                (v as f32 / u16::MAX as f32) * 2.0 - 1.0
+            })
+        }
         _ => return Err(()),
     }?;
     Ok((stream, intake, tail, sample_rate, channels, health, meter))
@@ -1560,7 +1792,11 @@ fn build_stream<T: cpal::SizedSample + 'static>(
                         }
                     }
                 }
-                let level = if peak.is_finite() { peak.clamp(0.0, 1.0) } else { 0.0 };
+                let level = if peak.is_finite() {
+                    peak.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 callback_meter.store(level.to_bits(), Ordering::Release);
             },
             move |_| error_health.stream_error.store(true, Ordering::Release),

@@ -71,6 +71,16 @@ Feature clusters:
 
 Node tests live in `tests/*.test.mjs` and usually assert source contracts, view-model behavior, generated snippets, or static runtime contracts. Rust tests live beside Rust modules. Use nearby tests for behavior claims.
 
+### Speech model installation
+
+Speech model provisioning is a runtime import workflow, not a repository or bootstrap prerequisite. Settings exposes **Import speech model**; the backend opens the picker, accepts only trusted Parakeet TDT 0.6b v2 int8 `.tar`, `.tar.gz`, or `.tgz` archives, validates them in a secure staging area, and requires a successful ONNX model load before replacing the installed model. The three required model files are `encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, and `vocab.txt`.
+
+The validated model is installed under the per-user `app_local_data_dir`, becomes available to the current session, and the startup resolver selects the newest valid installed generation after restart or app update without requiring the original archive. Audio and transcripts are not newly persisted by model installation. Installed files may be removed with the app's local data; documentation must not promise survival across uninstall or profile deletion. Archive provenance is guidance only: no pinned hash, license clearance, or independent compatibility claim is established.
+
+Each replacement publishes a unique generation and retains older generations. Repeated imports therefore consume additional disk space, and an interrupted import may leave a staging directory; no power-loss durability guarantee is made.
+
+Contract pointers: archive installation lives in `src-tauri/src/speech_model_install.rs`; ONNX layout validation/loading remains in `src-tauri/src/speech_model.rs`. Acceptance pointers are `src-tauri/tests/speech_model_install.rs` and `tests/components/settings-speech-import.test.ts`. The Settings contract uses the authorized, path-free commands `import_speech_model` and `get_speech_model_status`.
+
 ## Safety and no-persistence contracts
 
 - AppBar and native-window changes must preserve rollback paths and avoid holding global locks across slow or fallible side effects.

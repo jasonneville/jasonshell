@@ -13,10 +13,15 @@ fn packaged_model_path() -> PathBuf {
 }
 
 #[test]
-fn packaged_model_layout_has_required_parakeet_tdt_files() {
-    let result = speech_model::validate_parakeet_tdt_layout(&packaged_model_path());
-
-    assert!(result.is_ok(), "packaged model layout must be valid");
+fn model_layout_validation_does_not_require_repository_model_artifacts() {
+    let root = std::env::temp_dir().join(format!("jasonshell-model-layout-test-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    for name in ["encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt"] {
+        std::fs::write(root.join(name), b"layout-fixture").unwrap();
+    }
+    let result = speech_model::validate_parakeet_tdt_layout(&root);
+    std::fs::remove_dir_all(root).unwrap();
+    assert!(result.is_ok(), "isolated complete model layout must be valid");
 }
 
 #[test]
