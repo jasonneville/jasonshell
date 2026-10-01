@@ -17,6 +17,9 @@ test-results/
 src-tauri/target/
 src-tauri/gen/
 
+# Locally provisioned speech models (still included by Tauri packaging)
+/src-tauri/resources/speech-models/
+
 # Logs and local command output
 *.log
 npm-debug.log*

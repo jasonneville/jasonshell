@@ -46,9 +46,90 @@ It explores:
 - Microsoft WebView2 runtime
 - Git optional for workbench and repo workflows
 
+## Speech model setup (before bootstrap or native build)
+
+Speech model binaries are locally provisioned setup artifacts, not Git-managed files. The five model files are removed from this branch's unpublished history and ignored; fresh clones therefore need the bundle provisioned using the steps below before bootstrap (which launches the app) or a native build. Tauri still bundles `src-tauri/resources/speech-models/parakeet-tdt-0.6b-v2-int8/**/*`; ignoring them in Git does not change packaging.
+
+Use the matching **Parakeet TDT 0.6b v2 int8 ONNX bundle**, not NVIDIA training weights or a different ONNX export. [Handy's v0.6.0 model registry](https://github.com/cjpais/Handy/blob/v0.6.0/src-tauri/src/managers/model.rs) maps model ID `parakeet-tdt-0.6b-v2` to directory `parakeet-tdt-0.6b-v2-int8` and download URL `https://blob.handy.computer/parakeet-v2-int8.tar.gz`. That endpoint was verified to respond with HTTP 200 and gzip content, 473,166,028 bytes (about 451 MiB compressed). The archive contents, inference compatibility, model revision, and license provenance have not been independently verified; confirm applicable usage terms before use. The registry citation identifies the download source, not a pinned artifact hash.
+
+From the repository root, download and extract into a unique user-temporary staging directory. Windows `tar.exe` must be available. The archive root layout is not assumed: this finds exactly one directory containing all required filenames, otherwise it stops.
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$required = @('encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt')
+$staging = Join-Path $env:TEMP ('jasonshell-speech-' + [guid]::NewGuid().ToString('N'))
+$archive = Join-Path $staging 'parakeet-v2-int8.tar.gz'
+$extracted = Join-Path $staging 'extracted'
+New-Item -ItemType Directory -Path $extracted -Force | Out-Null
+Invoke-WebRequest -Uri 'https://blob.handy.computer/parakeet-v2-int8.tar.gz' -OutFile $archive
+tar.exe -xzf $archive -C $extracted
+if ($LASTEXITCODE -ne 0) { throw 'Model archive extraction failed' }
+$candidates = @(Get-ChildItem -LiteralPath $extracted -Recurse -File -Filter 'encoder-model.int8.onnx' |
+    ForEach-Object { $_.Directory.FullName } |
+    Where-Object {
+        $directory = $_
+        @($required | Where-Object {
+            !(Test-Path -LiteralPath (Join-Path $directory $_) -PathType Leaf)
+        }).Count -eq 0
+    } | Select-Object -Unique)
+if ($candidates.Count -ne 1) { throw 'Expected exactly one complete Parakeet model directory' }
+$source = $candidates[0]
+```
+
+Alternatively, skip the download block and set `$source` to a trusted existing bundle copied from another device, or your populated Handy directory:
+
+```powershell
+$source = Join-Path $env:APPDATA 'com.pais.handy\models\parakeet-tdt-0.6b-v2-int8'
+```
+
+Handy is not required at JasonShell runtime. With `$source` set by either route, install only the model bundle files and verify the copy:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$destination = Join-Path (Get-Location).Path 'src-tauri\resources\speech-models\parakeet-tdt-0.6b-v2-int8'
+$required = @('encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt')
+foreach ($name in $required) {
+    $file = Join-Path $source $name
+    if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
+        throw "Missing or empty source model file: $file"
+    }
+}
+New-Item -ItemType Directory -Force -Path $destination | Out-Null
+foreach ($name in ($required + @('config.json', 'nemo128.onnx'))) {
+    $file = Join-Path $source $name
+    if (Test-Path -LiteralPath $file -PathType Leaf) {
+        Copy-Item -LiteralPath $file -Destination $destination -Force
+        $installed = Join-Path $destination $name
+        if ((Get-FileHash -LiteralPath $file).Hash -ne (Get-FileHash -LiteralPath $installed).Hash) {
+            throw "Model copy verification failed: $name"
+        }
+    }
+}
+foreach ($name in $required) {
+    $file = Join-Path $destination $name
+    if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
+        throw "Missing or empty installed model file: $file"
+    }
+}
+Get-ChildItem -LiteralPath $destination | Select-Object Name, Length
+```
+
+Required layout (files directly inside this directory, not another nested model folder):
+
+```text
+src-tauri/resources/speech-models/parakeet-tdt-0.6b-v2-int8/
+  encoder-model.int8.onnx
+  decoder_joint-model.int8.onnx
+  vocab.txt
+```
+
+The imported bundle also contained `config.json` and `nemo128.onnx`; the copy above preserves those when available, while the runtime's explicit required-file check names the three files shown. Presence and copy hashes do not prove model compatibility or provenance. The known encoder alone is 652,184,014 bytes (about 622 MiB); allow roughly 632 MiB for the full bundle, plus the compressed download, staging, and build/package copies. Staging files remain in `$staging` for inspection; remove them manually when no longer needed. Transferring or downloading the bundle and provisioning build dependencies are setup costs and may require network access. Speech inference uses the installed local model offline; bootstrap does not download this model.
+
+The model files are excluded from the outgoing branch history and ignored locally. Ignore rules alone do **not** remove already tracked files or large blobs from existing commits; a push containing such a committed model needs separate history remediation.
+
 ## First run bootstrap
 
-Use this exact PowerShell bootstrap on first run:
+After completing the speech model setup above, use this exact PowerShell bootstrap on first run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
