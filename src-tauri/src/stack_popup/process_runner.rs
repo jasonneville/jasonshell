@@ -38,6 +38,12 @@ pub struct ProcessRunOutput {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProcessRunError {
     Spawn(String),
+    StdinWrite(String),
+    StatusQuery {
+        reason: String,
+        stdout_total_bytes: u64,
+        stderr_total_bytes: u64,
+    },
     Timeout {
         kind: ProcessTimeoutKind,
         stdout_total_bytes: u64,
@@ -88,7 +94,9 @@ pub fn run_process(spec: ProcessRunSpec) -> Result<ProcessRunOutput, ProcessRunE
         .spawn()
         .map_err(|err| ProcessRunError::Spawn(err.to_string()))?;
     if let Some(stdin) = spec.stdin {
-        write_child_stdin(&mut child, stdin)?;
+        if let Err(reason) = write_child_stdin(&mut child, stdin) {
+            return Err(cleanup_after_stdin_write_failure(child, reason));
+        }
     }
 
     let stdout = child.stdout.take();
@@ -105,34 +113,113 @@ pub fn run_process(spec: ProcessRunSpec) -> Result<ProcessRunOutput, ProcessRunE
             stderr_handle,
             status,
         ),
-        Err(timeout) => handle_timeout(
+        Err(wait_error) => cleanup_after_wait(
             child,
             stdout_rx,
             stderr_rx,
             stdout_handle,
             stderr_handle,
-            timeout,
+            wait_error,
             spec.kill_tree,
         ),
     }
 }
 
-fn write_child_stdin(child: &mut Child, input: Vec<u8>) -> Result<(), ProcessRunError> {
-    match child.stdin.take() {
-        Some(mut stdin) => {
-            stdin
-                .write_all(&input)
-                .map_err(|err| ProcessRunError::CleanupIncomplete {
-                    reason: format!("stdin write failed: {err}"),
-                    stdout_total_bytes: 0,
-                    stderr_total_bytes: 0,
-                })
+fn cleanup_after_wait(
+    child: Child,
+    stdout_rx: mpsc::Receiver<StreamDone>,
+    stderr_rx: mpsc::Receiver<StreamDone>,
+    stdout_handle: Option<thread::JoinHandle<()>>,
+    stderr_handle: Option<thread::JoinHandle<()>>,
+    wait_error: ProcessWaitError,
+    kill_tree: bool,
+) -> Result<ProcessRunOutput, ProcessRunError> {
+    handle_timeout(child, stdout_rx, stderr_rx, stdout_handle, stderr_handle, wait_error, kill_tree)
+}
+
+fn write_child_stdin(child: &mut Child, input: Vec<u8>) -> Result<(), String> {
+    write_child_stdin_with(child, input, |child, input| {
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stdin not piped")
+        })?;
+        stdin.write_all(&input)
+    })
+}
+
+fn write_child_stdin_with(
+    child: &mut Child,
+    input: Vec<u8>,
+    write: impl FnOnce(&mut Child, Vec<u8>) -> std::io::Result<()>,
+) -> Result<(), String> {
+    write(child, input).map_err(|err| {
+        let cause = err.to_string();
+        let cause = cause.chars().take(512).collect::<String>();
+        format!("stdin write failed: {cause}")
+    })
+}
+
+fn cleanup_after_stdin_write_failure(child: Child, reason: String) -> ProcessRunError {
+    cleanup_after_stdin_write_failure_with(child, reason, 0, 0, |child| child.kill(), |_| {})
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StdinCleanupCompletion {
+    Reaped,
+    ReaperOwnsChild,
+}
+
+fn cleanup_after_stdin_write_failure_with(
+    mut child: Child,
+    reason: String,
+    stdout_total_bytes: u64,
+    stderr_total_bytes: u64,
+    terminate: impl FnOnce(&mut Child) -> std::io::Result<()>,
+    completed: impl FnOnce(StdinCleanupCompletion),
+) -> ProcessRunError {
+    // Close the pipe first; do not drop a still-running child on a write failure.
+    child.stdin.take();
+    let kill_error = terminate(&mut child).err();
+    // A failed injected or native termination must not skip the real fallback.
+    let fallback_error = if kill_error.is_some() { child.kill().err() } else { None };
+    if fallback_error.is_some() {
+        thread::spawn(move || {
+            let _ = child.wait();
+        });
+        completed(StdinCleanupCompletion::ReaperOwnsChild);
+        return ProcessRunError::CleanupIncomplete {
+            reason: format!(
+                "{reason}; child.kill: {}; fallback kill: {}",
+                kill_error.as_ref().map(ToString::to_string).unwrap_or_default(),
+                fallback_error.as_ref().map(ToString::to_string).unwrap_or_default()
+            ),
+            stdout_total_bytes,
+            stderr_total_bytes,
+        };
+    }
+    match child.wait() {
+        Ok(_) => {
+            completed(StdinCleanupCompletion::Reaped);
+            if let Some(error) = kill_error {
+                ProcessRunError::CleanupIncomplete {
+                    reason: format!("{reason}; child.kill: {error}"),
+                    stdout_total_bytes,
+                    stderr_total_bytes,
+                }
+            } else {
+                ProcessRunError::StdinWrite(reason)
+            }
         }
-        None => Err(ProcessRunError::CleanupIncomplete {
-            reason: "stdin not piped".to_string(),
-            stdout_total_bytes: 0,
-            stderr_total_bytes: 0,
-        }),
+        Err(error) => {
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            completed(StdinCleanupCompletion::ReaperOwnsChild);
+            ProcessRunError::CleanupIncomplete {
+                reason: format!("{reason}; child.wait: {error}"),
+                stdout_total_bytes,
+                stderr_total_bytes,
+            }
+        }
     }
 }
 
@@ -171,13 +258,35 @@ fn finish_success(
 }
 
 fn handle_timeout(
+    child: Child,
+    stdout_rx: mpsc::Receiver<StreamDone>,
+    stderr_rx: mpsc::Receiver<StreamDone>,
+    stdout_handle: Option<thread::JoinHandle<()>>,
+    stderr_handle: Option<thread::JoinHandle<()>>,
+    wait_error: ProcessWaitError,
+    kill_tree: bool,
+) -> Result<ProcessRunOutput, ProcessRunError> {
+    handle_timeout_with_cleanup(
+        child, stdout_rx, stderr_rx, stdout_handle, stderr_handle, wait_error, kill_tree,
+        wait_for_cleanup,
+    )
+}
+
+fn handle_timeout_with_cleanup(
     mut child: Child,
     stdout_rx: mpsc::Receiver<StreamDone>,
     stderr_rx: mpsc::Receiver<StreamDone>,
     stdout_handle: Option<thread::JoinHandle<()>>,
     stderr_handle: Option<thread::JoinHandle<()>>,
-    timeout: ProcessTimeoutError,
+    wait_error: ProcessWaitError,
     kill_tree: bool,
+    cleanup: impl FnOnce(
+        &mut Child,
+        mpsc::Receiver<StreamDone>,
+        mpsc::Receiver<StreamDone>,
+        Option<thread::JoinHandle<()>>,
+        Option<thread::JoinHandle<()>>,
+    ) -> Result<(CollectedStream, CollectedStream, Option<ExitStatus>), CleanupIncompleteError>,
 ) -> Result<ProcessRunOutput, ProcessRunError> {
     let tree_err = if kill_tree {
         kill_child_tree(&child).err()
@@ -185,24 +294,41 @@ fn handle_timeout(
         None
     };
     let direct_kill_err = child.kill().err().map(|e| e.to_string());
-    match wait_for_cleanup(
+    let cleanup_result = cleanup(
         &mut child,
         stdout_rx,
         stderr_rx,
         stdout_handle,
         stderr_handle,
-    ) {
-        Ok((stdout, stderr, _)) => Err(ProcessRunError::Timeout {
-            kind: ProcessTimeoutKind::DeadlineExceeded,
-            stdout_total_bytes: stdout.total_bytes,
-            stderr_total_bytes: stderr.total_bytes,
-            stdout_truncated: stdout.truncated,
-            stderr_truncated: stderr.truncated,
-        }),
+    );
+    // Child::drop does not reap. Reap even when drain/status cleanup fails.
+    // If termination itself failed, hand ownership to a reaper rather than block this error path.
+    if direct_kill_err.is_none() {
+        let _ = child.wait();
+    } else {
+        thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+    match cleanup_result {
+        Ok((stdout, stderr, _)) => match wait_error {
+            ProcessWaitError::Timeout => Err(ProcessRunError::Timeout {
+                kind: ProcessTimeoutKind::DeadlineExceeded,
+                stdout_total_bytes: stdout.total_bytes,
+                stderr_total_bytes: stderr.total_bytes,
+                stdout_truncated: stdout.truncated,
+                stderr_truncated: stderr.truncated,
+            }),
+            ProcessWaitError::StatusQuery(reason) => Err(ProcessRunError::StatusQuery {
+                reason,
+                stdout_total_bytes: stdout.total_bytes,
+                stderr_total_bytes: stderr.total_bytes,
+            }),
+        },
         Err(err) => Err(ProcessRunError::CleanupIncomplete {
-            reason: cleanup_reason(timeout.reason, err.reason, direct_kill_err, tree_err),
-            stdout_total_bytes: 0,
-            stderr_total_bytes: 0,
+            reason: cleanup_reason(wait_error.reason(), err.reason, direct_kill_err, tree_err),
+            stdout_total_bytes: err.stdout_total_bytes,
+            stderr_total_bytes: err.stderr_total_bytes,
         }),
     }
 }
@@ -224,8 +350,18 @@ fn cleanup_reason(
 }
 
 #[derive(Debug)]
-struct ProcessTimeoutError {
-    reason: String,
+enum ProcessWaitError {
+    Timeout,
+    StatusQuery(String),
+}
+
+impl ProcessWaitError {
+    fn reason(self) -> String {
+        match self {
+            Self::Timeout => "deadline exceeded".to_string(),
+            Self::StatusQuery(reason) => format!("status query failed: {reason}"),
+        }
+    }
 }
 struct CleanupIncompleteError {
     reason: String,
@@ -237,15 +373,24 @@ fn wait_with_deadline(
     child: &mut Child,
     deadline: Instant,
     poll_interval: Duration,
-) -> Result<ExitStatus, ProcessTimeoutError> {
+) -> Result<ExitStatus, ProcessWaitError> {
+    wait_with_deadline_with(child, deadline, poll_interval, |child| child.try_wait())
+}
+
+fn wait_with_deadline_with(
+    child: &mut Child,
+    deadline: Instant,
+    poll_interval: Duration,
+    mut try_wait: impl FnMut(&mut Child) -> std::io::Result<Option<ExitStatus>>,
+) -> Result<ExitStatus, ProcessWaitError> {
     loop {
-        if let Ok(Some(status)) = child.try_wait() {
-            return Ok(status);
+        match try_wait(child) {
+            Ok(Some(status)) => return Ok(status),
+            Err(err) => return Err(ProcessWaitError::StatusQuery(err.to_string())),
+            Ok(None) => {}
         }
         if Instant::now() >= deadline {
-            return Err(ProcessTimeoutError {
-                reason: "deadline exceeded".to_string(),
-            });
+            return Err(ProcessWaitError::Timeout);
         }
         thread::sleep(poll_interval);
     }
@@ -279,7 +424,7 @@ fn spawn_drain<T: Read + Send + 'static>(
                         let space = cap.saturating_sub(retained.len());
                         let to_copy = space.min(n);
                         retained.extend_from_slice(&buf[..to_copy]);
-                        if to_copy < n || retained.len() >= cap {
+                        if to_copy < n {
                             truncated = true;
                         }
                     }
@@ -344,6 +489,19 @@ fn wait_for_cleanup(
     stdout_handle: Option<thread::JoinHandle<()>>,
     stderr_handle: Option<thread::JoinHandle<()>>,
 ) -> Result<(CollectedStream, CollectedStream, Option<ExitStatus>), CleanupIncompleteError> {
+    wait_for_cleanup_with(child, stdout_rx, stderr_rx, stdout_handle, stderr_handle, |child| {
+        child.try_wait()
+    })
+}
+
+fn wait_for_cleanup_with(
+    child: &mut Child,
+    stdout_rx: mpsc::Receiver<StreamDone>,
+    stderr_rx: mpsc::Receiver<StreamDone>,
+    stdout_handle: Option<thread::JoinHandle<()>>,
+    stderr_handle: Option<thread::JoinHandle<()>>,
+    mut try_wait: impl FnMut(&mut Child) -> std::io::Result<Option<ExitStatus>>,
+) -> Result<(CollectedStream, CollectedStream, Option<ExitStatus>), CleanupIncompleteError> {
     let stdout = stdout_rx
         .recv_timeout(Duration::from_millis(250))
         .map_err(|err| CleanupIncompleteError {
@@ -386,7 +544,7 @@ fn wait_for_cleanup(
             });
         }
     }
-    let status = child.try_wait().map_err(|err| CleanupIncompleteError {
+    let status = try_wait(child).map_err(|err| CleanupIncompleteError {
         reason: err.to_string(),
         stdout_total_bytes: stdout.total_bytes,
         stderr_total_bytes: stderr.total_bytes,
@@ -447,6 +605,184 @@ pub(crate) fn trusted_taskkill_path() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_runner_injected_stdin_write_failure_reaps_owned_child_and_keeps_cause() {
+        let mut owned = OwnedTestChild::spawn();
+        let input = vec![b'x'; 16];
+        let mut writer_called = false;
+        let reason = write_child_stdin_with(owned.child(), input.clone(), |child, data| {
+            writer_called = true;
+            assert_eq!(data, input);
+            assert!(child.try_wait().unwrap().is_none(), "test child must still be running at injected failure");
+            Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "injected writer failed"))
+        }).unwrap_err();
+        assert!(writer_called);
+        assert!(reason.contains("injected writer failed"));
+        let start = Instant::now();
+        let result = cleanup_after_stdin_write_failure(owned.take(), reason);
+        assert!(start.elapsed() < Duration::from_secs(5), "owned-child cleanup must be bounded");
+        assert!(matches!(result, ProcessRunError::StdinWrite(cause) if cause.contains("injected writer failed")));
+    }
+
+    #[test]
+    fn process_runner_stdin_write_failure_observer_confirms_reaped_or_cleanup_error() {
+        for inject_termination_failure in [false, true] {
+            let mut owned = OwnedTestChild::spawn();
+            let reason = write_child_stdin_with(owned.child(), vec![1], |_, _| {
+                Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "injected writer failed"))
+            }).unwrap_err();
+            let mut completion = None;
+            let result = cleanup_after_stdin_write_failure_with(
+                owned.take(), reason, 4, 7,
+                |child| {
+                    if inject_termination_failure {
+                        Err(std::io::Error::other("injected termination failed"))
+                    } else {
+                        child.kill()
+                    }
+                },
+                |observed| completion = Some(observed),
+            );
+            assert_eq!(completion, Some(StdinCleanupCompletion::Reaped), "fallback must terminate and reap test-owned child");
+            if inject_termination_failure {
+                assert!(matches!(result, ProcessRunError::CleanupIncomplete { stdout_total_bytes: 4, stderr_total_bytes: 7, reason }
+                    if reason.contains("injected writer failed") && reason.contains("injected termination failed") && reason.len() < 1024));
+            } else {
+                assert!(matches!(result, ProcessRunError::StdinWrite(reason) if reason.contains("injected writer failed")));
+            }
+        }
+    }
+
+    #[test]
+    fn process_runner_stdin_write_failure_must_transfer_or_reap_owned_child() {
+        let source = include_str!("process_runner.rs");
+        let runner = source.split("pub fn run_process(").nth(1).unwrap().split("fn write_child_stdin(").next().unwrap();
+        assert!(!runner.contains("write_child_stdin(&mut child, stdin)?"),
+            "propagating stdin write failure with ? drops the owned Child without kill/reap");
+        let write = source.split("fn write_child_stdin(").nth(1).unwrap().split("fn finish_success(").next().unwrap();
+        assert!(write.contains("stdin write failed:"), "write error must retain its cause");
+    }
+
+    struct OwnedTestChild(Option<Child>);
+    impl OwnedTestChild {
+        fn spawn() -> Self {
+            let child = Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"])
+                .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+                .spawn().expect("spawn uniquely owned test child");
+            Self(Some(child))
+        }
+        fn child(&mut self) -> &mut Child { self.0.as_mut().unwrap() }
+        fn take(&mut self) -> Child { self.0.take().unwrap() }
+    }
+    impl Drop for OwnedTestChild {
+        fn drop(&mut self) {
+            if let Some(child) = &mut self.0 { let _ = child.kill(); let _ = child.wait(); }
+        }
+    }
+
+    #[test]
+    fn process_runner_injected_status_error_returns_on_first_poll_not_timeout() {
+        let mut owned = OwnedTestChild::spawn();
+        let mut calls = 0;
+        let now = Instant::now();
+        let result = wait_with_deadline_with(owned.child(), now + Duration::from_secs(5), Duration::from_secs(1), |_| {
+            calls += 1;
+            Err(std::io::Error::other("injected status query failure"))
+        });
+        assert_eq!(calls, 1);
+        assert!(now.elapsed() < Duration::from_secs(2));
+        assert!(matches!(result, Err(ProcessWaitError::StatusQuery(reason)) if reason.contains("injected status query failure")));
+    }
+
+    #[test]
+    fn process_runner_status_failure_kills_owned_child_and_preserves_collected_counts() {
+        let mut owned = OwnedTestChild::spawn();
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        stdout_tx.send(StreamDone { bytes: vec![b'a'], total_bytes: 11, truncated: true }).unwrap();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        stderr_tx.send(StreamDone { bytes: vec![b'b'], total_bytes: 17, truncated: true }).unwrap();
+        let result = handle_timeout(owned.take(), stdout_rx, stderr_rx, None, None,
+            ProcessWaitError::StatusQuery("injected status query failure".into()), false);
+        assert!(matches!(result, Err(ProcessRunError::StatusQuery { stdout_total_bytes: 11, stderr_total_bytes: 17, .. })));
+        // Child was moved into the cleanup path and its pipes/counts drained before return.
+    }
+
+    #[test]
+    fn process_runner_cleanup_failure_retains_available_counts_and_wait_error_cause() {
+        let mut owned = OwnedTestChild::spawn();
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        stdout_tx.send(StreamDone { bytes: vec![b'a'], total_bytes: 11, truncated: true }).unwrap();
+        let (stderr_tx, stderr_rx) = mpsc::channel::<StreamDone>();
+        drop(stderr_tx);
+        let failure = wait_for_cleanup(owned.child(), stdout_rx, stderr_rx, None, None).err().unwrap();
+        assert_eq!((failure.stdout_total_bytes, failure.stderr_total_bytes), (11, 0));
+        let reason = cleanup_reason(ProcessWaitError::StatusQuery("injected status query failure".into()).reason(), failure.reason, None, None);
+        assert!(reason.contains("injected status query failure") && reason.len() < 1024);
+    }
+
+    #[test]
+    fn process_runner_final_cleanup_failure_preserves_counts_and_reaps_owned_child() {
+        let mut owned = OwnedTestChild::spawn();
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        stdout_tx.send(StreamDone { bytes: vec![b'a'], total_bytes: 4, truncated: false }).unwrap();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        stderr_tx.send(StreamDone { bytes: vec![b'b'], total_bytes: 7, truncated: false }).unwrap();
+        let mut observed_terminated = false;
+        let result = handle_timeout_with_cleanup(
+            owned.take(), stdout_rx, stderr_rx, None, None,
+            ProcessWaitError::StatusQuery("injected status query failure".into()), false,
+            |child, stdout_rx, stderr_rx, _, _| {
+                // Final cleanup is called only after direct termination. Its error must
+                // not lose either stream count or the original status-query cause.
+                observed_terminated = child.wait().unwrap().code().is_some();
+                let stdout = stdout_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                let stderr = stderr_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                Err(CleanupIncompleteError {
+                    reason: "injected cleanup failed".into(),
+                    stdout_total_bytes: stdout.total_bytes,
+                    stderr_total_bytes: stderr.total_bytes,
+                })
+            },
+        );
+        assert!(observed_terminated, "owned child must be terminated before final cleanup");
+        assert!(matches!(result, Err(ProcessRunError::CleanupIncomplete { stdout_total_bytes: 4, stderr_total_bytes: 7, reason })
+            if reason.contains("injected cleanup failed") && reason.contains("injected status query failure") && reason.len() < 1024));
+    }
+
+    #[test]
+    fn process_runner_output_boundary_is_truncated_only_above_cap_on_each_stream() {
+        for (name, cap) in [("stdout", 8usize), ("stderr", 8usize)] {
+            for length in [0usize, cap, cap + 1] {
+                let input = vec![b'x'; length];
+                let (rx, handle) = spawn_drain(Some(std::io::Cursor::new(input.clone())), cap);
+                let result = collect_stream(rx, handle, Duration::from_secs(1)).unwrap();
+                assert_eq!(result.total_bytes, length as u64, "{name} length {length}");
+                assert_eq!(result.bytes, input[..length.min(cap)], "{name} length {length}");
+                assert_eq!(result.truncated, length > cap, "{name} length {length}");
+            }
+        }
+    }
+
+    #[test]
+    fn process_runner_try_wait_failure_must_not_be_reclassified_as_deadline_timeout() {
+        let source = include_str!("process_runner.rs");
+        let wait = source.split("fn wait_with_deadline(").nth(1).unwrap().split("struct StreamDone").next().unwrap();
+        assert!(!wait.contains("if let Ok(Some(status)) = child.try_wait()"), "try_wait Err must exit immediately instead of polling until timeout");
+        assert!(wait.contains("child.try_wait()"), "poll must query owned child status");
+        assert!(source.contains("StatusQuery") || source.contains("WaitFailed"), "status-query failure needs its own error classification, not Timeout");
+        let runner = source.split("pub fn run_process(").nth(1).unwrap().split("fn write_child_stdin(").next().unwrap();
+        assert!(runner.contains("handle_status") || runner.contains("cleanup_after_wait"), "status-query failure must initiate owned-child cleanup");
+    }
+
+    #[test]
+    fn process_runner_cleanup_error_retains_bounded_status_and_stream_diagnostics() {
+        let source = include_str!("process_runner.rs");
+        let cleanup = source.split("fn handle_timeout(").nth(1).unwrap().split("fn cleanup_reason(").next().unwrap();
+        assert!(!cleanup.contains("stdout_total_bytes: 0,\n            stderr_total_bytes: 0,"), "failed cleanup must retain available stream byte counts");
+        assert!(source.contains("fn cleanup_reason("), "retain bounded failure reason and kill errors");
+    }
 
     fn powershell_command(script: &str) -> ProcessRunSpec {
         ProcessRunSpec {
@@ -526,10 +862,22 @@ mod tests {
     #[test]
     fn timeout_kill_tree_runs_before_direct_child_kill() {
         let source = include_str!("process_runner.rs");
-        let timeout_body = source.split("fn handle_timeout").nth(1).unwrap_or("");
+        let cleanup_body = source
+            .split("fn handle_timeout_with_cleanup(")
+            .nth(1)
+            .expect("shared timeout/status cleanup function must exist")
+            .split("fn cleanup_reason(")
+            .next()
+            .expect("cleanup function must end before reason formatter");
+        let tree_kill = cleanup_body
+            .find("kill_child_tree(&child)")
+            .expect("tree termination must remain in shared cleanup path");
+        let direct_kill = cleanup_body
+            .find("child.kill()")
+            .expect("direct child termination must remain in shared cleanup path");
         assert!(
-            timeout_body.find("kill_child_tree(&child)").unwrap()
-                < timeout_body.find("child.kill()").unwrap()
+            cleanup_body.contains("if kill_tree") && tree_kill < direct_kill,
+            "when requested, shared cleanup must attempt tree termination before direct child kill"
         );
     }
 }

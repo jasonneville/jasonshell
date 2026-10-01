@@ -129,14 +129,12 @@ test('stack browser toolbar text buttons are Material Symbol icon buttons with a
 
   assert.match(
     stackToolbarSource,
-    /copySelectionIsFolder \? 'folder_copy' : 'file_copy'/,
-    'Copy toolbar icon branches selected folders to folder_copy and files to file_copy'
+    /<MeltActionButton class="stack-action-icon-button" ariaLabel=\{selectedEntry\?\.entryType === 'Folder' \? 'Copy folder' : 'Copy selected item'\} tooltip=\{selectedEntry\?\.entryType === 'Folder' \? 'Copy folder' : 'Copy selected item'\} disabled=\{!hasSelection\} onClick=\{\(\) => void copySelected\(false\)\}><MaterialSymbolIcon name=\{selectedEntry\?\.entryType === 'Folder' \? 'folder_copy' : 'file_copy'\} \/><\/MeltActionButton>/,
+    'Copy toolbar control binds accessible label, tooltip, disabled state, and icon to selected entry'
   );
-  assert.match(
-    stackToolbarSource,
-    /<MeltActionButton\s+class="stack-action-icon-button"[\s\S]*ariaLabel=\{copySelectionLabel\}[\s\S]*tooltip=\{copySelectionLabel\}[\s\S]*<MaterialSymbolIcon\s+name=\{copySelectionIsFolder \? 'folder_copy' : 'file_copy'\}\s*\/>[\s\S]*<\/MeltActionButton>/,
-    'Copy toolbar control uses accessible file/folder copy icon branch'
-  );
+  assert.match(materialSymbolIconSource, /export let decorative = true;/, 'Copy icon is decorative by default');
+  assert.match(materialSymbolIconSource, /aria-hidden=\{decorative \? 'true' : undefined\}/, 'Copy icon cannot override button accessible label');
+  assert.match(readFileSync(new URL('../src/components/melt/MeltActionButton.svelte', import.meta.url), 'utf8'), /<button[\s\S]*?aria-label=\{ariaLabel\}[\s\S]*?disabled=\{disabled\}/, 'Melt control forwards accessible label and disabled state');
 
   for (const text of ['Back', 'Forward', 'Refresh', 'Cut selected item', 'Paste into current folder', 'Rename selected item', 'Delete selected item', 'New folder', 'Reveal selected item']) {
     assert.doesNotMatch(stackToolbarSource, new RegExp(`>${text}<`), `${text} toolbar text is removed`);

@@ -44,34 +44,19 @@ test('top and bottom anchors keep short and oversized menus inside overlay edges
   }
 });
 
-test('shared menu is opaque throughout opening animation, including bars', () => {
+test('shared menu uses a stable translucent theme backplate throughout opening animation', () => {
   const panel = rule(shared, ':global(.js-context-menu)');
   const background = panel.match(/(?:^|;)\s*background(?:-color)?\s*:\s*([^;]+)/)?.[1]?.trim();
-  assert.ok(background, 'menu needs a background');
-  const token = background.match(/^var\((--[\w-]+)\)$/)?.[1];
-  const colors = token
-    ? [...theme.matchAll(new RegExp(`${token}\\s*:\\s*([^;]+);`, 'g'))].map((match) => match[1].trim())
-    : [background];
-  assert.ok(colors.length, `background token ${token} must resolve in app.css`);
-  for (const color of colors) {
-    assert.match(color, /^(?:#[0-9a-f]{3,8}|rgb\([^)]*\)|rgba\([^)]*\)|(?:white|black|Canvas))$/i,
-      `menu background must resolve to a directly auditable solid color: ${color}`);
-    const rgba = color.match(/^rgba\([^)]*,\s*(0?(?:\.\d+)?|1(?:\.0+)?)\s*\)$/i);
-    if (rgba) assert.equal(Number(rgba[1]), 1, `menu background must be fully opaque: ${color}`);
-    if (color.startsWith('#')) assert.ok(![4, 8].includes(color.length - 1) || parseInt(color.slice(-2), 16) === 255,
-      `menu background hex alpha must be opaque: ${color}`);
-  }
-  assert.doesNotMatch(rule(shared, '@keyframes js-context-menu-in'), /opacity\s*:\s*[0.][0-9]*\s*;/,
-    'opacity animation exposes transparent menu background while opening');
+  assert.equal(background, 'color-mix(in srgb, var(--js-color-surface-overlay) 73%, transparent)');
+  assert.match(theme, /--js-color-surface-overlay\s*:/, 'menu backplate must resolve in app.css');
+  assert.doesNotMatch(rule(shared, '@keyframes js-context-menu-in'), /opacity\s*:/,
+    'opening animation must not additionally fade the translucent menu');
 });
 
-test('shared menu disables standard and WebKit backdrop filtering', () => {
+test('shared menu uses the established 8px backdrop blur without vendor override', () => {
   const panel = rule(shared, ':global(.js-context-menu)');
-  for (const property of ['backdrop-filter', '-webkit-backdrop-filter']) {
-    const values = [...panel.matchAll(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+);`, 'g'))];
-    assert.ok(values.every((match) => match[1].trim() === 'none'),
-      `${property} must be absent or disabled; blur can show the underlying bar`);
-  }
+  assert.match(panel, /(?:^|;)\s*backdrop-filter\s*:\s*blur\(8px\);/);
+  assert.doesNotMatch(panel, /(?:^|;)\s*-webkit-backdrop-filter\s*:\s*(?!blur\(8px\))[^;]+;/);
 });
 
 test('overlay hides each new request until its measured placement commits', () => {

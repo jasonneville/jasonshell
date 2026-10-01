@@ -319,8 +319,12 @@ pub fn toggle_stack_popup(
         .get_webview_window(crate::shell_windows::STACK_POPUP_LABEL)
         .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
     if popup.is_visible().unwrap_or(false) {
-        popup_window::hide_stack_popup_window(app_handle)?;
-        Ok(Some(false))
+        popup
+            .emit(crate::contracts::events::STACK_POPUP_CLOSE_REQUESTED, ())
+            .map_err(|error| format!("Failed to request Stack popup close: {error}"))?;
+        // Visibility does not change until the renderer's dirty-editor guard
+        // accepts the request. The closed event updates the top-bar state.
+        Ok(Some(true))
     } else if popup_window::latest_stack_popup_request(state.clone()).is_some() {
         popup_window::reopen_stack_popup_window(app_handle, state)?;
         Ok(Some(true))
@@ -2185,10 +2189,16 @@ fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String
         Err(process_runner::ProcessRunError::Spawn(error)) => {
             Err(format!("Failed to extract archive: {error}"))
         }
+        Err(process_runner::ProcessRunError::StdinWrite(_)) => {
+            Err("Failed to extract archive: process input failed".to_string())
+        }
         Err(process_runner::ProcessRunError::Timeout { .. }) => Err(format!(
             "Failed to extract archive: timed out after {}s",
             timeout.as_secs()
         )),
+        Err(process_runner::ProcessRunError::StatusQuery { .. }) => {
+            Err("Failed to extract archive: process status unavailable".to_string())
+        }
         Err(process_runner::ProcessRunError::NonZero { status, .. }) => Err(format!(
             "Archive extraction failed with status {}",
             status.map_or_else(|| "unknown".to_string(), |code| code.to_string())
@@ -3425,7 +3435,8 @@ mod tests {
 
     #[test]
     fn stack_phase1_matrix_commands_are_guarded_in_source() {
-        let stack_source = include_str!("stack_popup.rs");
+        let stack_source = include_str!("stack_popup.rs").replace("\r\n", "\n");
+        let production = stack_source.split("#[cfg(test)]\nmod tests").next().unwrap();
         for command in [
             "OPEN_STACK_ITEM",
             "COPY_STACK_ITEMS",
@@ -3437,11 +3448,19 @@ mod tests {
             "REVEAL_STACK_ITEM",
             "OPEN_STACK_FOLDER_IN_VSCODE",
         ] {
-            assert!(stack_source.contains(command), "missing {command}");
-            assert!(
-                stack_source.contains("authorize_stack_command"),
-                "missing guard for {command}"
-            );
+            let name = command.to_ascii_lowercase();
+            let signature = format!("pub fn {name}(");
+            let async_signature = format!("pub async fn {name}(");
+            let handler = production.split(&signature).nth(1)
+                .or_else(|| production.split(&async_signature).nth(1))
+                .unwrap_or_else(|| panic!("missing handler {name}"));
+            let handler = handler.split("#[tauri::command]").next().unwrap();
+            let params = handler.split(") ->").next().unwrap();
+            assert!(params.contains("WebviewWindow"), "{name} must use invoking webview");
+            let guard = handler.find("authorize_stack_command(")
+                .unwrap_or_else(|| panic!("missing guard for {name}"));
+            let first_statement = handler.find("{\n").unwrap() + 2;
+            assert!(handler[first_statement..guard].trim().is_empty(), "{name} must authorize before work");
         }
     }
 

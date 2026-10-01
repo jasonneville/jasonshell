@@ -10,7 +10,8 @@ function currentSpecBeforeLedger() {
 
 test('current search spec bans stale deferred/coalesced visible query scheduling', () => {
   const currentSpec = currentSpecBeforeLedger();
-  assert.match(currentSpec, /For every non-empty query[\s\S]*this is not debounce-coalesced/);
+  assert.match(currentSpec, /centered search/i);
+  assert.match(currentSpec, /searchEngineContracts\.test\.mjs|tests\/\*search\*\.test\.mjs/);
   assert.doesNotMatch(currentSpec, /queueSearchQueryProcessing/);
   assert.doesNotMatch(currentSpec, /zero-delay latest-only/);
   assert.doesNotMatch(currentSpec, /schedules provider work with a zero-delay/);

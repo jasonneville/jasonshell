@@ -35,6 +35,47 @@ function stripRustTestBlocks(source) {
 
 const productionGitStatusRs = stripRustTestBlocks(gitStatusRs);
 
+test('loadDiff rejects old-folder success, error, and loading cleanup', () => {
+  const start = panel.indexOf('async function loadDiff(');
+  const end = panel.indexOf('\n  }', start);
+  assert.ok(start >= 0 && end > start, 'loadDiff exists');
+  const body = panel.slice(start, end + 4);
+  const [success, rejectedAndCleanup] = body.split('} catch (error) {');
+  assert.ok(rejectedAndCleanup, 'loadDiff handles rejection');
+  const [rejected, cleanup] = rejectedAndCleanup.split('} finally {');
+  assert.ok(cleanup, 'loadDiff cleans up loading');
+  assert.match(body, /const requestFolderPath = folderPath;/);
+  assert.match(success, /stackPopup\.stackGitDiff\((?:requestFolderPath|folderPath), target, staged\)/, 'IPC uses current folder before awaiting');
+  assert.match(success, /if \(token !== diffToken \|\| requestFolderPath !== folderPath\) return;\s*diffText =/, 'success guards publication');
+  assert.match(rejected, /if \(token === diffToken && requestFolderPath === folderPath\) diffText =/, 'rejection guards error publication');
+  assert.match(cleanup, /if \(token === diffToken && requestFolderPath === folderPath\) diffLoading = false;/, 'finally cannot clear new-folder loading');
+});
+
+for (const [name, call, selection] of [
+  ['refreshHistoryFiles', 'stackGitCommitFiles', 'selectedHistoryHash'],
+  ['loadHistoryFileDiff', 'stackGitCommitFileDiff', 'selectedHistoryHash'],
+  ['refreshStashDiff', 'stackGitStashFiles', 'selectedStashRef'],
+  ['loadStashFileDiff', 'stackGitStashFileDiff', 'selectedStashRef']
+]) {
+  test(`${name} rejects old-folder responses even when selected identifiers match`, () => {
+    const start = panel.indexOf(`async function ${name}(`);
+    assert.notEqual(start, -1, `${name} exists`);
+    const end = panel.indexOf('\n  }', start);
+    assert.notEqual(end, -1, `${name} ends`);
+    const body = panel.slice(start, end + 4);
+    assert.match(body, /const requestFolderPath = folderPath;/, `${name} captures request folder`);
+    assert.match(body, new RegExp(`${call}\\(requestFolderPath,`), `${name} uses captured folder for request`);
+    const [success, failureAndCleanup] = body.split('} catch (error) {');
+    assert.ok(failureAndCleanup, `${name} handles rejected requests`);
+    const [failure, cleanup] = failureAndCleanup.split('} finally {');
+    assert.ok(cleanup, `${name} cleans up loading state`);
+    assert.match(success, /if \(requestFolderPath !== folderPath \|\|[^\n]*\) return;/, `${name} guards successful response before publishing`);
+    assert.match(failure, /if \(requestFolderPath === folderPath &&[^\n]*\) \{/, `${name} guards error state against old folder`);
+    assert.match(cleanup, /if \(requestFolderPath === folderPath &&[^\n]*\) [^\n]*Loading = false;/, `${name} guards loading cleanup against old folder`);
+    assert.match(body, new RegExp(selection), `${name} retains selected identifier guard`);
+  });
+}
+
 test('stack git API exposes no-AI diff, unstage, and destructive revert command contracts', () => {
   for (const [jsName, commandId] of [
     ['stackGitUnstagePaths', 'stack_git_unstage_paths'],
@@ -58,7 +99,8 @@ test('stack git API exposes no-AI diff, unstage, and destructive revert command 
   assert.match(api, /export type StackGitFileStats = \{ additions: number; deletions: number \};/);
   assert.match(api, /export type StackGitCommitFileDiff = \{/);
   assert.match(api, /export type StackGitRevertRequest = \{/);
-  assert.match(api, /export type StackGitRevertRequest = \{[^}]*folderPath: string;[^}]*paths: string\[\]/);
+  assert.match(api, /export type StackGitRevertRequest = \{ folderPath: string; paths: string\[\] \};/);
+  assert.match(api, /stackGitRevertPaths\(request: StackGitRevertRequest\)[\s\S]*?IPC_COMMANDS\.stackGitRevertPaths, \{ request \}/);
 });
 
 test('stack git commit history exposes commit file list and per-file diff contracts', () => {
@@ -394,7 +436,9 @@ test('Stack Browser navigation shortcuts never capture Backspace from editable c
   assert.match(surface, /function isEditableKeyTarget\(target: EventTarget \| null\)/);
   assert.match(surface, /HTMLInputElement|HTMLTextAreaElement/);
   assert.match(surface, /isContentEditable/);
-  assert.match(surface, /if \(editorPath \|\| gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;\s*\}/);
+  const navigationHandler = surface.slice(surface.indexOf('function handleKeydown(event: KeyboardEvent)'), surface.indexOf('function ', surface.indexOf('function handleKeydown(event: KeyboardEvent)') + 1));
+  assert.match(navigationHandler, /if \(editorPath \|\| gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;\s*\}/);
+  assert.ok(navigationHandler.indexOf('isEditableKeyTarget(event.target)') < navigationHandler.indexOf("event.key === 'Backspace'"), 'editable guard precedes Backspace navigation');
   assert.match(panel, /id="stack-git-commit-message"[\s\S]*on:keydown\|stopPropagation/);
 });
 
@@ -422,11 +466,11 @@ test('StackGitPanel uses OpenChamber Git display geometry instead of card tabs a
 });
 
 test('StackGitPanel replaces the file grid instead of overlaying it', () => {
-  assert.match(surface, /\{#if editorPath\}[\s\S]*<StackTextEditor\b[\s\S]*\{:else if gitStatusPopupOpen\}[\s\S]*<StackGitPanel\b[\s\S]*\{:else\}[\s\S]*class="details-table"/);
+  assert.match(surface, /\{#if editorPath\}[\s\S]*?<StackTextEditor\b[\s\S]*?\{:else if gitStatusPopupOpen\}\s*<StackGitPanel\b[\s\S]*?\{:else\}\s*<div\s+class="details-table"/);
   assert.match(panel, /\.stack-git-panel\s*\{[^}]*background:\s*var\(--js-bg-surface\)/);
   assert.doesNotMatch(panel, /\.stack-git-panel\s*\{[^}]*position:\s*absolute/);
   assert.match(surface, /function handleBackgroundContextMenu\(event: MouseEvent\) \{\s*if \(gitStatusPopupOpen \|\|/);
-  assert.match(surface, /function handleKeydown\(event: KeyboardEvent\) \{\s*if \(editorPath \|\| gitStatusPopupOpen \|\|/);
+  assert.match(surface, /function handleKeydown\(event: KeyboardEvent\) \{\s*if \(editorPath \|\| gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;/);
 });
 
 test('StackGitPanel branch button opens a grouped branch dropdown, not the Branches view', () => {
@@ -653,6 +697,8 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.match(bareActionStyles, /:focus-visible[\s\S]*box-shadow:\s*var\(--js-focus-ring\);/);
   assert.match(changeRowStyles, /background:\s*color-mix\(in srgb, var\(--js-color-surface-overlay\) 68%, transparent\);/);
   assert.match(changeRowStyles, /\.stack-git-change-row:hover,[\s\S]*\.stack-git-change-row:focus-within[\s\S]*background:\s*color-mix\(in srgb, var\(--js-color-control-hover\) 84%, var\(--js-color-accent-border\)\);/);
+  assert.match(bareActionStyles, /\.stack-git-panel button\.stack-git-change-row__action,[\s\S]*background:\s*transparent;/);
+  assert.match(panel, /class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0" aria-expanded=\{diffDrawerOpen/);
   assert.match(panel, /class="stack-git-history-file stack-git-change-group-file" role="button" tabindex="0"[^>]*on:click=\{\(\) => openChangeDiff\(entry, true\)\}[^>]*on:keydown=\{\(event\) => handleChangeRowKeydown\(event, entry, 'staged'\)\}/);
   assert.match(panel, /class="stack-git-change-row__action stack-git-change-group-file__action"[^>]*disabled=\{operationBusy \|\| pendingChangeRowPaths\.has\(entry\.path\)\}[^>]*on:click=\{\(\) => handleChangeRowAction\(entry, 'staged'\)\}/);
   assert.match(changeHeaderStyles, /padding:\s*8px;/);
@@ -683,8 +729,8 @@ test('stack git stash selection reconciles invalid refs and clears loading state
   assert.match(refreshStashDiffBlock, /stashFilesError = '';/);
   assert.match(refreshStashDiffBlock, /stashFilesLoading = false;/);
   assert.match(refreshStashDiffBlock, /selectedStashFilePath = '';/);
-  assert.match(refreshStashDiffBlock, /if \(normalizeRef\(entry\) !== selectedStashRef \|\| selectedRef !== selectedStashRef\) return;/);
-  assert.match(refreshStashDiffBlock, /if \(normalizeRef\(entry\) === selectedStashRef && selectedRef === selectedStashRef\) stashFilesLoading = false;/);
+  assert.match(refreshStashDiffBlock, /if \(requestFolderPath !== folderPath \|\| normalizeRef\(entry\) !== selectedStashRef \|\| selectedRef !== selectedStashRef\) return;/);
+  assert.match(refreshStashDiffBlock, /if \(requestFolderPath === folderPath && normalizeRef\(entry\) === selectedStashRef && selectedRef === selectedStashRef\) stashFilesLoading = false;/);
 });
 
 test('StackGitPanel changes view collapses staged and unstaged groups with history-file row shell reuse', () => {

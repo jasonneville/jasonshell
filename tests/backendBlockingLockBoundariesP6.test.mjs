@@ -47,16 +47,28 @@ test('P6 phase 1 archive spawn_blocking remains while Phase 1 safety owns timeou
 
 test('P6 phase 1 Stack recursive paste and delete commands use async blocking boundaries', () => {
   assert.match(stackPopupSource, /pub\s+async\s+fn\s+paste_stack_items\(/);
-  assert.match(stackPopupSource, /clipboard::paste_stack_clipboard_items_async\(&state,\s*destination\)\.await/);
+  const pasteCommand = stackPopupSource.slice(
+    stackPopupSource.indexOf('pub async fn paste_stack_items('),
+    stackPopupSource.indexOf('pub async fn delete_stack_item(')
+  );
+  assert.match(pasteCommand, /clipboard::paste_stack_clipboard_items_async\(&app_handle,\s*&state,\s*destination,\s*window,\s*operation_id\)\.await/);
   assert.match(stackClipboardSource, /pub\(crate\)\s+async\s+fn\s+paste_stack_clipboard_items_async/);
-  assert.match(stackClipboardSource, /tauri::async_runtime::spawn_blocking\(move \|\| \{\s*paste_clipboard_items\(&clipboard,\s*&destination,\s*journal_dir\.as_deref\(\)\)\s*\}\)/);
+  assert.match(stackClipboardSource, /tauri::async_runtime::spawn_blocking\(move \|\| \{\s*paste_clipboard_items_progress\(&clipboard,\s*&destination,\s*journal_dir\.as_deref\(\),\s*&worker_window,\s*&mut progress\)\s*\}\)/);
   const pasteBody = stackClipboardSource.slice(
     stackClipboardSource.indexOf('pub(crate) async fn paste_stack_clipboard_items_async'),
     stackClipboardSource.indexOf('fn update_cut_clipboard_after_paste')
   );
   assert.match(pasteBody, /recovery_journal_dir\(app_handle\)\?/);
   assert.match(pasteBody, /journal_dir\.as_deref\(\)/);
-  assert.match(stackClipboardSource, /update_cut_clipboard_after_paste\(state,\s*used_internal_clipboard,\s*&result\)/);
+  assert.match(pasteBody, /let clipboard = clipboard_for_paste\(state\)\?/);
+  assert.ok(pasteBody.indexOf('clipboard_for_paste(state)?') < pasteBody.indexOf('spawn_blocking('));
+  assert.match(pasteBody, /\.await\s*\.map_err\([\s\S]*?\?;\s*if matches!\(mode, ClipboardMode::Cut\) \{\s*update_cut_clipboard_after_paste\(state, used_internal_clipboard, &result\)/);
+  const clipboardSnapshot = stackClipboardSource.slice(
+    stackClipboardSource.indexOf('fn clipboard_for_paste('),
+    stackClipboardSource.indexOf('pub(crate) fn paste_clipboard_items(')
+  );
+  assert.match(clipboardSnapshot, /\.lock\(\)[\s\S]*?\.clipboard\s*\.clone\(\)/);
+  assert.match(clipboardSnapshot, /read_native_file_clipboard\(\)\?/);
 
   assert.match(stackPopupSource, /pub\s+async\s+fn\s+delete_stack_item\(/);
   assert.match(stackPopupSource, /file_ops::delete_stack_item_path_async\(path\)\.await/);

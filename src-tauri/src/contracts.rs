@@ -439,6 +439,7 @@ pub mod events {
     pub const SEARCH_PANEL_SELECT: &str = "search-panel:select";
     pub const SEARCH_PANEL_UPDATE: &str = "search-panel:update";
     pub const STACK_POPUP_OPEN: &str = "stack-popup:open";
+    pub const STACK_POPUP_CLOSE_REQUESTED: &str = "stack-popup:close-requested";
     pub const STACK_FILE_OPERATION_PROGRESS: &str = "stack-operation:progress";
     pub const STACK_POPUP_CLOSED: &str = "stack-popup:closed";
     pub const STACK_TERMINAL_CLOSED: &str = "stack-terminal:closed";
@@ -493,6 +494,7 @@ pub mod events {
         SEARCH_PANEL_SELECT,
         SEARCH_PANEL_UPDATE,
         STACK_POPUP_OPEN,
+        STACK_POPUP_CLOSE_REQUESTED,
         STACK_FILE_OPERATION_PROGRESS,
         STACK_POPUP_CLOSED,
         STACK_TERMINAL_CLOSED,
@@ -605,7 +607,7 @@ mod tests {
         assert!(unique.contains("stack_git_delete_branch"));
         assert!(unique.contains("list_stack_open_with_candidates"));
         assert!(unique.contains("open_stack_item_with_app"));
-        assert!(unique.contains("prepare_stack_file_drag"));
+        assert!(unique.contains("start_stack_file_drag"));
         assert!(unique.contains("new_stack_text_file"));
         assert!(unique.contains("open_stack_terminal_here"));
         assert!(unique.contains("open_stack_folder_in_vscode"));
@@ -707,6 +709,7 @@ mod tests {
                 "search-panel:select",
                 "search-panel:update",
                 "stack-popup:open",
+                "stack-popup:close-requested",
                 "stack-operation:progress",
                 "stack-popup:closed",
                 "stack-terminal:closed",

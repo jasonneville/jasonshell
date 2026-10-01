@@ -63,10 +63,12 @@ test('startup and successful settings saves apply hook configuration at runtime'
 
   assert.match(main, /let shell_settings = settings::load_shell_settings_for_app\(app\.handle\(\)\)/);
   assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\),\s*shell_settings\.hotkeys/);
-  assert.match(rustSettings, /windows_key_hook::configure_standard_hotkeys\(app_handle,\s*&settings\.hotkeys\)/);
-  assert.match(rustSettings, /save_shell_settings_for_app[\s\S]*configure_standard_hotkeys/);
-  const save = rustSettings.slice(rustSettings.indexOf('pub(crate) fn save_shell_settings_for_app('), rustSettings.indexOf('pub(crate) fn update_shell_settings_for_app('));
-  assert.ok(save.indexOf('configure_standard_hotkeys(') < save.indexOf('save_settings_to_path('), 'OS registration must succeed before writing settings to disk');
+  const save = rustSettings.slice(rustSettings.indexOf('fn save_settings_transaction('), rustSettings.indexOf('pub(crate) fn update_shell_settings_for_app('));
+  assert.match(rustSettings, /save_shell_settings_for_app[\s\S]*save_settings_transaction\(/);
+  assert.match(rustSettings, /save_settings_panel_for_app[\s\S]*save_settings_transaction\(/);
+  assert.match(rustSettings, /\|hotkeys\| crate::windows_key_hook::configure_standard_hotkeys\(app_handle, hotkeys\)/);
+  assert.ok(save.indexOf('configure(&settings.hotkeys)?') < save.indexOf('persist(path, settings.clone())'), 'OS registration must succeed before writing settings to disk');
+  assert.match(save, /persist\(path, settings\.clone\(\)\)[\s\S]*configure\(&previous\.hotkeys\)/, 'disk-write failure must restore prior registrations');
   assert.match(tsSettings, /SETTINGS_COMMANDS[\s\S]*save: 'save_shell_settings'/);
   assert.match(tsSettings, /saveShellSettings[\s\S]*broadcastShellSettings\(saved\)/);
 });
@@ -122,7 +124,7 @@ test('failed OS replacement retains or restores previous hotkeys and reports fai
 test('speech hotkey reaches same mic toggle command path as clicking control', () => {
   const top = readSource('../src/components/TopBar.svelte');
   const mic = readSource('../src/components/TopBarMicControl.svelte');
-  assert.match(top + mic, /listen\(SPEECH_[A-Z_]*TOGGLE[A-Z_]*_EVENT,/);
+  assert.match(top + mic, /listen(?:<[^>]+>)?\(SPEECH_[A-Z_]*TOGGLE[A-Z_]*_EVENT,/);
   assert.match(mic, /function toggleSpeech[\s\S]*startSpeechCapture\([\s\S]*stopSpeechCapture\(/);
   assert.match(mic, /onClick=\{[^}]*toggleSpeech/);
 });

@@ -54,7 +54,7 @@ test('stack git status backend is a separate non-listing command using git porce
   assert.match(productionRustGitStatus, /"--pathspec-from-file=-"/);
   assert.match(productionRustGitStatus, /"--pathspec-file-nul"/);
   assert.match(productionRustGitStatus, /"commit"/);
-  assert.match(masterSpec, /Stack popup:[\s\S]*`get_stack_git_status`/);
+  assert.match(rustStackPopup, /pub async fn get_stack_git_status\([\s\S]*?git_status::stack_git_status_for_path_async\(path\)\.await/);
 });
 
 test('stack popup API exposes typed git branch counts and per-path status entries', () => {
@@ -256,7 +256,7 @@ test('stack popup loads git status outside folder listing and guards stale respo
 test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackPopupSurface, /stackGitStatusPathMatchesEntry/);
   assert.match(stackPopupSurface, /\{#if gitStatus && gitStatusPath === currentPath\}[\s\S]*stack-git-summary/);
-  assert.match(stackPopupSurface, /\{#if gitStatusPopupOpen\}[\s\S]*<StackGitPanel/);
+  assert.match(stackPopupSurface, /\{:else if gitStatusPopupOpen\}\s*<StackGitPanel/);
   assert.match(stackPopupSurface, /stack-git-summary/);
   assert.match(stackPopupSurface, /openGitRemoteRepository\(url: string \| null \| undefined\)/);
   assert.match(stackPopupSurface, /await openStackGitRemoteUrl\(url\)/);
@@ -346,7 +346,7 @@ test('stack git workbench rejects stale async data and confirms mutating git com
   assert.match(stackGitPanel, /const token = \+\+diffToken/);
   assert.match(stackGitPanel, /token !== diffToken \|\| requestFolderPath !== folderPath/);
   assert.match(stackGitPanel, /viewLoading = false;/);
-  assert.match(stackGitPanel, /class="stack-git-confirm-dialog"/);
+  assert.match(stackGitPanel, /\{#if pendingConfirm\}\s*<StackConfirmDialog[^>]*title=\{pendingConfirm\.title\}[^>]*message=\{pendingConfirmLabel\(\)\}[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*onCancel=\{closePendingConfirm\}[^>]*onConfirm=\{\(\) => void confirmPendingAction\(\)\}/);
   assert.match(stackGitPanel, /confirmStackGitDiscard\(entries\)/);
   assert.match(readRepoFile('src/lib/stackGitPanelState.ts'), /This reverts working-tree changes and cannot be undone\./);
   assert.match(stackGitPanel, /Pop applies the stash and removes it from the list\./);
@@ -376,8 +376,9 @@ test('stack browser rows use the workbench bare status-letter appearance without
 
 test('stack git workbench uses edge-to-edge OpenChamber geometry without card nesting', () => {
   assert.match(stackGitPanel, /\.stack-git-panel \{/);
-  assert.match(stackGitPanel, /position: absolute;/);
-  assert.match(stackGitPanel, /inset: 0;/);
+  assert.match(stackPopupCss, /\.details-table,\s*\.stack-popup\s*>\s*\.stack-git-panel,\s*\.stack-popup\s*>\s*\.stack-text-editor\s*\{\s*grid-row:\s*3;/);
+  assert.match(stackGitPanel, /\.stack-git-panel \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow: hidden;[^}]*position: relative;/);
+  assert.doesNotMatch(stackGitPanel, /\.stack-git-panel \{[^}]*position: absolute;/);
   assert.match(stackGitPanel, /container-type: inline-size;/);
   assert.match(stackGitPanel, /\.stack-git-change-row \{[\s\S]*height: 34px;/);
   assert.match(stackGitPanel, /\.stack-git-icon-button \{[\s\S]*width: 32px;/);
@@ -386,7 +387,7 @@ test('stack git workbench uses edge-to-edge OpenChamber geometry without card ne
   assert.match(stackGitPanel, /class="stack-git-change-diff-drawer"/);
   assert.match(stackGitPanel, /@container \(max-width: 42rem\)/);
   assert.match(stackGitPanel, /\.stack-git-branch-form/);
-  assert.match(stackGitPanel, /\.stack-git-confirm-dialog/);
+  assert.match(stackGitPanel, /<StackConfirmDialog[^>]*title=\{pendingConfirm\.title\}[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*onConfirm=\{\(\) => void confirmPendingAction\(\)\}/);
   assert.doesNotMatch(stackGitPanel, /resize: both;/);
   assert.doesNotMatch(stackGitPanel, /class="stack-git-panel-tabs"/);
   assert.doesNotMatch(stackGitPanel, /grid-template-columns: minmax\(0, 1\.15fr\) minmax\(15rem, 0\.85fr\);/);

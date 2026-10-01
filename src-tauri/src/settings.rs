@@ -7,7 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 const SETTINGS_SCHEMA: &str = "jasonshell.settings";
 const SETTINGS_VERSION: u32 = 1;
@@ -352,17 +353,46 @@ fn default_command_panel_height_logical() -> f64 {
 }
 
 #[tauri::command]
-pub fn load_shell_settings(app_handle: AppHandle) -> Result<ShellSettings, String> {
-    load_shell_settings_for_app(&app_handle)
+pub fn load_shell_settings(window: WebviewWindow, app_handle: AppHandle) -> Result<ShellSettings, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::LOAD_SHELL_SETTINGS,
+        callers: &[crate::contracts::surfaces::COMMAND_PANEL, crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::BOTTOM_BAR, crate::contracts::surfaces::STACK_POPUP],
+    }).map_err(CallerAuthError::into_string)?;
+    let settings = load_shell_settings_for_app(&app_handle)?;
+    Ok(settings_for_caller(settings, window.label()))
 }
 
 #[tauri::command]
 pub fn save_shell_settings(
+    window: WebviewWindow,
     app_handle: AppHandle,
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
-    save_shell_settings_for_app(&app_handle, settings)
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::SAVE_SHELL_SETTINGS,
+        callers: &[crate::contracts::surfaces::COMMAND_PANEL, crate::contracts::surfaces::SETTINGS_PANEL],
+    }).map_err(CallerAuthError::into_string)?;
+    if window.label() == crate::contracts::surfaces::COMMAND_PANEL {
+        save_shell_settings_for_app(&app_handle, settings)
+    } else {
+        // The owner-only data is read and merged under the same write lock as
+        // native hotkey registration and persistence; never return it here.
+        save_settings_panel_for_app(&app_handle, settings)
+            .map(|saved| settings_for_caller(saved, window.label()))
+    }
 }
+
+fn settings_for_caller(mut settings: ShellSettings, caller: &str) -> ShellSettings {
+    if caller != crate::contracts::surfaces::COMMAND_PANEL {
+        settings.quick_commands = QuickCommandsSettings::default();
+    }
+    settings
+}
+
+// Wire-compatible shell-bar response; never serializes stored Quick Command data.
+#[derive(Serialize)]
+#[serde(transparent)]
+pub struct ShellBarSettingsResponse(ShellSettings);
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -380,18 +410,30 @@ pub struct SaveShellBarLockRequest {
 
 #[tauri::command]
 pub fn save_shell_bar_height(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: SaveShellBarHeightRequest,
-) -> Result<ShellSettings, String> {
+) -> Result<ShellBarSettingsResponse, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::SAVE_SHELL_BAR_HEIGHT,
+        callers: &[crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::BOTTOM_BAR],
+    }).map_err(CallerAuthError::into_string)?;
     save_shell_bar_height_for_app(&app_handle, request)
+        .map(|settings| ShellBarSettingsResponse(settings_for_caller(settings, "")))
 }
 
 #[tauri::command]
 pub fn save_shell_bar_lock(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: SaveShellBarLockRequest,
-) -> Result<ShellSettings, String> {
+) -> Result<ShellBarSettingsResponse, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::SAVE_SHELL_BAR_LOCK,
+        callers: &[crate::contracts::surfaces::SETTINGS_PANEL],
+    }).map_err(CallerAuthError::into_string)?;
     save_shell_bar_lock_for_app(&app_handle, request)
+        .map(|settings| ShellBarSettingsResponse(settings_for_caller(settings, "")))
 }
 
 pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<ShellSettings, String> {
@@ -404,10 +446,48 @@ pub(crate) fn save_shell_settings_for_app(
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
     let path = settings_path(app_handle)?;
+    save_settings_transaction(
+        &path,
+        settings,
+        |settings, _previous| settings,
+        |hotkeys| crate::windows_key_hook::configure_standard_hotkeys(app_handle, hotkeys),
+        save_settings_to_path,
+    )
+}
+
+fn save_settings_panel_for_app(
+    app_handle: &AppHandle,
+    settings: ShellSettings,
+) -> Result<ShellSettings, String> {
+    let path = settings_path(app_handle)?;
+    save_settings_transaction(
+        &path,
+        settings,
+        |mut settings, previous| {
+            settings.quick_commands = previous.quick_commands.clone();
+            settings
+        },
+        |hotkeys| crate::windows_key_hook::configure_standard_hotkeys(app_handle, hotkeys),
+        save_settings_to_path,
+    )
+}
+
+// OS-free seam for exercising owner merge, registration failure and disk-write
+// rollback with injected callbacks. The lock covers the entire read/merge/
+// register/write transaction so Quick Commands cannot be overwritten by a
+// concurrent owner update.
+fn save_settings_transaction(
+    path: &Path,
+    settings: ShellSettings,
+    merge: impl FnOnce(ShellSettings, &ShellSettings) -> ShellSettings,
+    mut configure: impl FnMut(&StandardHotkeySettings) -> Result<(), String>,
+    persist: impl FnOnce(&Path, ShellSettings) -> Result<ShellSettings, String>,
+) -> Result<ShellSettings, String> {
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|_| "settings write lock is poisoned".to_string())?;
-    let mut settings = settings;
+    let previous = load_settings_from_path(path)?;
+    let mut settings = merge(settings, &previous);
     settings.schema = SETTINGS_SCHEMA.to_string();
     settings.version = SETTINGS_VERSION;
     let settings = validate_settings(settings)?;
@@ -416,10 +496,9 @@ pub(crate) fn save_shell_settings_for_app(
             .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
         &[],
     )?;
-    let previous = load_settings_from_path(&path)?;
-    crate::windows_key_hook::configure_standard_hotkeys(app_handle, &settings.hotkeys)?;
-    if let Err(error) = save_settings_to_path(&path, settings.clone()) {
-        return match crate::windows_key_hook::configure_standard_hotkeys(app_handle, &previous.hotkeys) {
+    configure(&settings.hotkeys)?;
+    if let Err(error) = persist(path, settings.clone()) {
+        return match configure(&previous.hotkeys) {
             Ok(()) => Err(error),
             Err(restore_error) => Err(format!("{error}; failed to restore previous hotkeys: {restore_error}")),
         };
@@ -1108,6 +1187,71 @@ mod tests {
     use serde_json::json;
     use std::env;
 
+    #[test]
+    fn every_non_command_settings_reader_loses_definitions_history_and_transcripts() {
+        let mut settings = ShellSettings::default();
+        settings.quick_commands.entries.push(QuickCommandEntry {
+            id: "private".into(), label: "private".into(), mode: QuickCommandMode::Direct,
+            target_path: "secret-command.exe".into(), args: vec![], commands: vec![],
+            cwd: None, artifact_location: None,
+        });
+        settings.quick_commands.history.push(QuickCommandRunHistoryEntry {
+            run_id: "private-run".into(), command_id: "private".into(), started_at_epoch_ms: 1,
+            started_at_filetime_100ns: 0, finished_at_epoch_ms: 2, process_id: 1,
+            exit_code: None, stdout: "private-output".into(), stderr: String::new(),
+            transcript: vec![QuickCommandTranscriptEntry {
+                kind: "stdout".into(), body: "private-transcript".into(), request_id: None,
+                prompt: None, secret: true, max_length: None, redacted: false,
+                sequence: 1, at_epoch_ms: 1, pending: false,
+            }], stdout_truncated: false, stderr_truncated: false, running: false,
+        });
+        assert_eq!(settings_for_caller(settings.clone(), crate::contracts::surfaces::COMMAND_PANEL).quick_commands, settings.quick_commands);
+        for caller in [crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::TOP_BAR,
+            crate::contracts::surfaces::BOTTOM_BAR, crate::contracts::surfaces::STACK_POPUP] {
+            let response = settings_for_caller(settings.clone(), caller);
+            assert!(response.quick_commands.entries.is_empty(), "{caller} sees definitions");
+            assert!(response.quick_commands.history.is_empty(), "{caller} sees history/transcripts");
+        }
+        let bar_wire = serde_json::to_string(&ShellBarSettingsResponse(settings_for_caller(settings, ""))).unwrap();
+        for secret in ["secret-command.exe", "private-output", "private-transcript"] {
+            assert!(!bar_wire.contains(secret), "bar response disclosed {secret}");
+        }
+    }
+
+    #[test]
+    fn generic_settings_read_must_not_expose_quick_command_history_to_other_panels() {
+        let source = include_str!("settings.rs");
+        let handler = source.split("pub fn load_shell_settings(").nth(1).unwrap().split("#[tauri::command]").next().unwrap();
+        assert!(handler.contains("WebviewWindow"), "generic read requires trusted caller identity");
+        let guard = handler.find("authorize_stack_command(").expect("generic read must reject non-owning panels");
+        let io = handler.find("load_shell_settings_for_app(").unwrap();
+        assert!(guard < io, "reject before loading history/transcripts from settings storage");
+        assert!(handler.contains("COMMAND_PANEL"), "full settings read containing quick-command history must be command-panel-only; otherwise return a DTO without quick_commands");
+    }
+
+    #[test]
+    fn generic_settings_save_must_reject_other_panels_before_any_settings_write() {
+        let source = include_str!("settings.rs");
+        let handler = source.split("pub fn save_shell_settings(").nth(1).unwrap().split("#[derive(Clone, Debug, Deserialize)]").next().unwrap();
+        assert!(handler.contains("WebviewWindow"), "generic save requires trusted caller identity");
+        let guard = handler.find("authorize_stack_command(").expect("generic save must reject non-owning panels");
+        let write = handler.find("save_shell_settings_for_app(").unwrap();
+        assert!(guard < write, "reject before persisting altered quick-command entries or history");
+        assert!(handler.contains("COMMAND_PANEL"), "full settings save containing quick-command history must be command-panel-only; otherwise accept a DTO without quick_commands");
+    }
+
+    #[test]
+    fn unrestricted_settings_routes_must_not_return_full_quick_command_bearing_settings() {
+        let source = include_str!("settings.rs");
+        for name in ["save_shell_bar_height", "save_shell_bar_lock"] {
+            let handler = source.split(&format!("pub fn {name}(")).nth(1).unwrap().split("#[tauri::command]").next().unwrap();
+            let restricted = handler.find("authorize_stack_command(").is_some_and(|guard| {
+                handler.find(&format!("{name}_for_app(")).is_some_and(|work| guard < work)
+            });
+            assert!(!handler.contains("Result<ShellSettings, String>") || restricted, "{name} must return a DTO without quick-command history, or restrict the caller before loading settings");
+        }
+    }
+
     fn test_dir(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!(
             "jasonshell-settings-{name}-{}",
@@ -1116,6 +1260,119 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // Uses the same owner merge passed by save_settings_panel_for_app; the
+    // integration contract pins that command's wiring to this transaction.
+    fn panel_transaction(
+        path: &Path,
+        submitted: ShellSettings,
+        configure: impl FnMut(&StandardHotkeySettings) -> Result<(), String>,
+        persist: impl FnOnce(&Path, ShellSettings) -> Result<ShellSettings, String>,
+    ) -> Result<ShellSettings, String> {
+        save_settings_transaction(path, submitted, |mut submitted, previous| {
+            submitted.quick_commands = previous.quick_commands.clone();
+            submitted
+        }, configure, persist)
+    }
+
+    #[test]
+    fn panel_save_registers_custom_chord_persists_it_and_keeps_private_commands() {
+        let path = test_dir("panel-custom-chord").join(SETTINGS_FILE);
+        let mut previous = ShellSettings::default();
+        previous.quick_commands.entries.push(QuickCommandEntry {
+            id: "private".into(), label: "private".into(), mode: QuickCommandMode::Direct,
+            target_path: "private-command.exe".into(), args: vec![], commands: vec![],
+            cwd: None, artifact_location: None,
+        });
+        save_settings_to_path(&path, previous.clone()).unwrap();
+        let mut submitted = settings_for_caller(previous.clone(), crate::contracts::surfaces::SETTINGS_PANEL);
+        submitted.hotkeys.search = CanonicalHotkeyBinding("control+k".into());
+        submitted.ui.enable_diagnostics_export = true;
+        let mut registrations = vec![];
+        let saved = panel_transaction(&path, submitted, |binding| {
+            registrations.push(binding.clone()); Ok(())
+        }, save_settings_to_path).unwrap();
+        assert_eq!(registrations, vec![saved.hotkeys.clone()]);
+        assert_eq!(saved.hotkeys.search.0, "Ctrl+K");
+        assert!(saved.ui.enable_diagnostics_export);
+        assert_eq!(saved.quick_commands, previous.quick_commands);
+        assert_eq!(load_settings_from_path(&path).unwrap(), saved);
+        let response = settings_for_caller(saved, crate::contracts::surfaces::SETTINGS_PANEL);
+        assert!(response.quick_commands.entries.is_empty());
+        assert_eq!(response.hotkeys.search.0, "Ctrl+K");
+    }
+
+    #[test]
+    fn panel_hotkey_reset_registers_and_persists_defaults() {
+        let path = test_dir("panel-reset-chord").join(SETTINGS_FILE);
+        let mut previous = ShellSettings::default();
+        previous.hotkeys.search = CanonicalHotkeyBinding("Ctrl+K".into());
+        save_settings_to_path(&path, previous.clone()).unwrap();
+        let mut submitted = settings_for_caller(previous, crate::contracts::surfaces::SETTINGS_PANEL);
+        submitted.hotkeys = StandardHotkeySettings::default();
+        let mut registrations = vec![];
+        let saved = panel_transaction(&path, submitted, |binding| {
+            registrations.push(binding.clone()); Ok(())
+        }, save_settings_to_path).unwrap();
+        assert_eq!(registrations, vec![StandardHotkeySettings::default()]);
+        assert_eq!(saved.hotkeys, StandardHotkeySettings::default());
+        assert_eq!(load_settings_from_path(&path).unwrap().hotkeys, saved.hotkeys);
+    }
+
+    #[test]
+    fn occupied_chord_rejects_panel_save_without_touching_disk_or_restoring() {
+        let path = test_dir("panel-occupied-chord").join(SETTINGS_FILE);
+        let previous = ShellSettings::default();
+        save_settings_to_path(&path, previous.clone()).unwrap();
+        let before = fs::read(&path).unwrap();
+        let mut submitted = previous.clone();
+        submitted.hotkeys.search = CanonicalHotkeyBinding("Ctrl+K".into());
+        let mut calls = vec![];
+        let error = panel_transaction(&path, submitted, |binding| {
+            calls.push(binding.clone()); Err("chord occupied".into())
+        }, |_path, _settings| panic!("registration failure must not write")).unwrap_err();
+        assert!(error.contains("chord occupied"));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].search.0, "Ctrl+K");
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(load_settings_from_path(&path).unwrap(), previous);
+    }
+
+    #[test]
+    fn disk_failure_restores_previous_registration_and_settings() {
+        let path = test_dir("panel-disk-failure").join(SETTINGS_FILE);
+        let previous = ShellSettings::default();
+        save_settings_to_path(&path, previous.clone()).unwrap();
+        let before = fs::read(&path).unwrap();
+        let mut submitted = previous.clone();
+        submitted.hotkeys.search = CanonicalHotkeyBinding("Ctrl+K".into());
+        let mut calls = vec![];
+        let error = panel_transaction(&path, submitted, |binding| {
+            calls.push(binding.clone()); Ok(())
+        }, |_path, _settings| Err("disk full".into())).unwrap_err();
+        assert!(error.contains("disk full"));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].search.0, "Ctrl+K");
+        assert_eq!(calls[1], previous.hotkeys);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(load_settings_from_path(&path).unwrap(), previous);
+    }
+
+    #[test]
+    fn failed_registration_restore_reports_both_disk_and_rollback_errors() {
+        let path = test_dir("panel-rollback-failure").join(SETTINGS_FILE);
+        save_settings_to_path(&path, ShellSettings::default()).unwrap();
+        let mut submitted = ShellSettings::default();
+        submitted.hotkeys.search = CanonicalHotkeyBinding("Ctrl+K".into());
+        let mut calls = 0;
+        let error = panel_transaction(&path, submitted, |_| {
+            calls += 1;
+            if calls == 2 { Err("restore occupied".into()) } else { Ok(()) }
+        }, |_path, _settings| Err("disk full".into())).unwrap_err();
+        assert_eq!(calls, 2);
+        assert!(error.contains("disk full") && error.contains("restore occupied"));
+        assert_eq!(load_settings_from_path(&path).unwrap(), ShellSettings::default());
     }
 
     #[test]

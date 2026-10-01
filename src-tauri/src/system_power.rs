@@ -1,4 +1,6 @@
 use serde::Deserialize;
+use tauri::WebviewWindow;
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +23,11 @@ struct PowerActionPlan {
 }
 
 #[tauri::command]
-pub fn trigger_system_power_action(request: SystemPowerActionRequest) -> Result<(), String> {
+pub fn trigger_system_power_action(window: WebviewWindow, request: SystemPowerActionRequest) -> Result<(), String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: "trigger_system_power_action",
+        callers: &[crate::contracts::surfaces::SETTINGS_PANEL],
+    }).map_err(CallerAuthError::into_string)?;
     match request.action {
         SystemPowerAction::Sleep => trigger_sleep(),
         SystemPowerAction::Restart | SystemPowerAction::Shutdown => {
@@ -72,6 +78,33 @@ fn trigger_sleep() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{power_action_plan, PowerActionPlan, SystemPowerAction, SystemPowerActionRequest};
+
+    #[test]
+    fn power_caller_policy_accepts_settings_only_and_redacts_denial() {
+        use crate::stack_popup::{authorize_stack_command_caller, StackCommandAuth};
+        let handler = include_str!("system_power.rs").split("pub fn trigger_system_power_action(").nth(1).unwrap().split("fn power_action_plan(").next().unwrap();
+        assert!(handler.contains("callers: &[crate::contracts::surfaces::SETTINGS_PANEL]"), "handler must bind exactly settings panel policy");
+        let auth = StackCommandAuth::AllowedCallers {
+            command: "trigger_system_power_action",
+            callers: &[crate::contracts::surfaces::SETTINGS_PANEL],
+        };
+        assert!(authorize_stack_command_caller(crate::contracts::surfaces::SETTINGS_PANEL, auth).is_ok());
+        for denied in [crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::COMMAND_PANEL, crate::contracts::surfaces::PROCESS_MANAGER] {
+            let error = authorize_stack_command_caller(denied, auth).unwrap_err().into_string();
+            assert_eq!(error, "Unauthorized caller for command trigger_system_power_action");
+            assert!(!error.contains(denied), "denial must not disclose caller label");
+        }
+    }
+
+    #[test]
+    fn power_action_requires_caller_before_any_native_power_operation() {
+        let source = include_str!("system_power.rs");
+        let handler = source.split("pub fn trigger_system_power_action(").nth(1).unwrap().split("fn power_action_plan(").next().unwrap();
+        assert!(handler.contains("WebviewWindow"), "power action needs a trusted invoking webview label");
+        let guard = handler.find("authorize_stack_command(").expect("power action must check caller");
+        let effect = handler.find("match request.action").unwrap();
+        assert!(guard < effect, "deny before sleep or shutdown spawn");
+    }
 
     #[test]
     fn deserializes_only_known_power_actions() {

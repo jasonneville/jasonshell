@@ -32,8 +32,14 @@ fn speech_source() -> String {
 }
 
 fn runtime_source() -> String {
-    fs::read_to_string(manifest_dir().join("src/speech_runtime.rs"))
-        .expect("speech_runtime.rs should be readable")
+    let source = fs::read_to_string(manifest_dir().join("src/speech_runtime.rs"))
+        .expect("speech_runtime.rs should be readable");
+    let emit_body = function_body(&source, "emit");
+    assert!(
+        emit_body.contains("app.emit(contracts::events::SPEECH_STATUS_CHANGED, event)"),
+        "shared speech emit helper must publish the canonical status event"
+    );
+    source
 }
 
 fn main_source() -> String {
@@ -88,6 +94,18 @@ fn index_of(haystack: &str, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("expected source to contain `{needle}`"))
 }
 
+fn terminal_status_emit(section: &str) -> Option<usize> {
+    [
+        "app.emit(contracts::events::SPEECH_STATUS_CHANGED",
+        "emit(contracts::events::SPEECH_STATUS_CHANGED",
+        "emit(&app, &event)",
+        "emit(app, &event)",
+    ]
+    .iter()
+    .filter_map(|needle| section.find(needle))
+    .min()
+}
+
 fn block_starting_at<'a>(source: &'a str, marker: &str) -> &'a str {
     let marker_start = source
         .find(marker)
@@ -134,9 +152,7 @@ fn assert_deferred_terminal_emit_has_lifecycle_gate(section: &str, label: &str) 
                 "{label} must recheck generation after acquiring state.commit and before terminal event emit"
             )
         });
-    let terminal_emit = section
-        .find("app.emit(contracts::events::SPEECH_STATUS_CHANGED")
-        .or_else(|| section.find("emit(contracts::events::SPEECH_STATUS_CHANGED"))
+    let terminal_emit = terminal_status_emit(section)
         .unwrap_or_else(|| panic!("{label} must emit a terminal SPEECH_STATUS_CHANGED event"));
     let drop_commit_before_emit = section[commit_guard..terminal_emit]
         .find("drop(_commit)")
@@ -335,25 +351,21 @@ fn retained_history_copy_releases_history_lock_before_clipboard_publish() {
     let source = runtime_source();
     let copy = function_body(&source, "copy_retained_history_transcript");
 
-    let history_lock = index_of(copy, "state.history.lock");
+    let transcript_scope_marker = "let transcript =";
+    let transcript_scope = block_starting_at(copy, transcript_scope_marker);
+    let history_lock = index_of(transcript_scope, "state.history.lock");
     let publish_call = index_of(copy, "publish(");
-    let transcript_clone = copy.find("transcript.clone()").unwrap_or_else(|| {
+    let transcript_clone = transcript_scope.find("transcript.clone()").unwrap_or_else(|| {
         panic!(
             "copy_retained_history_transcript must clone transcript while holding history.lock(), then publish the owned transcript after the guard scope ends; publishing a borrowed entry transcript keeps the mutex held"
         )
     });
-    let guard_scope_end = copy
-        .find("};\n    publish")
-        .or_else(|| copy.find("}\n    publish"))
-        .unwrap_or_else(|| {
-            panic!(
-                "copy_retained_history_transcript must close the history.lock() guard scope before clipboard publish; current lock-order can stall finalization/shutdown"
-            )
-        });
+    let marker_start = index_of(copy, transcript_scope_marker);
+    let scope_open = marker_start + index_of(&copy[marker_start..], "{");
+    let guard_scope_end = scope_open + 1 + transcript_scope.len();
 
     assert!(
         history_lock < transcript_clone
-            && transcript_clone < guard_scope_end
             && guard_scope_end < publish_call,
         "copy_retained_history_transcript must clone transcript inside the history lock, drop the guard, then call publish outside the mutex"
     );
@@ -732,13 +744,9 @@ fn worker_returns_model_to_available_pool_before_terminal_event_emit() {
     let source = runtime_source();
     let worker = function_body(&source, "run_streaming_worker");
 
-    let terminal_emit = worker
-        .find("app.emit(contracts::events::SPEECH_STATUS_CHANGED")
-        .unwrap_or_else(|| {
-            panic!(
-                "run_streaming_worker must emit terminal speech event through SPEECH_STATUS_CHANGED"
-            )
-        });
+    let terminal_emit = terminal_status_emit(worker).unwrap_or_else(|| {
+        panic!("run_streaming_worker must emit terminal speech event through SPEECH_STATUS_CHANGED")
+    });
     let explicit_return_before_emit = worker[..terminal_emit].contains("return_model")
         || worker[..terminal_emit].contains("put_model")
         || worker[..terminal_emit].contains("available_model")
@@ -908,10 +916,8 @@ fn recording_cap_terminal_transition_holds_lifecycle_gate_through_handoff_and_em
         "capture.intake.first_close(InputCloseReason::RecordingCap)",
     );
     let drop_intake = index_of(schedule_cap, "drop(capture.intake)");
-    let terminal_emit = index_of(
-        schedule_cap,
-        "emit(contracts::events::SPEECH_STATUS_CHANGED",
-    );
+    let terminal_emit =
+        terminal_status_emit(schedule_cap).expect("recording cap terminal status emit");
     let transcription_limit = index_of(schedule_cap, "schedule_transcription_limit");
     let drop_commit_before_emit = schedule_cap[commit_guard..terminal_emit]
         .find("drop(_commit)")
@@ -985,10 +991,8 @@ fn capture_health_terminal_error_holds_lifecycle_gate_through_recovery_and_emit(
         "capture.intake.first_close(InputCloseReason::SafeFailure)",
     );
     let drop_capture = index_of(schedule_health, "drop(capture)");
-    let terminal_emit = index_of(
-        schedule_health,
-        "emit(contracts::events::SPEECH_STATUS_CHANGED",
-    );
+    let terminal_emit =
+        terminal_status_emit(schedule_health).expect("capture health terminal status emit");
     let terminal_reset = index_of(schedule_health, "schedule_terminal_reset");
     let drop_commit_before_emit = schedule_health[commit_guard..terminal_emit]
         .find("drop(_commit)")

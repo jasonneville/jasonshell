@@ -72,7 +72,8 @@ test('renders attentive task groups with toast badge, amber cue, and active supp
   assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''/);
   assert.match(bottomBarSource, /return taskWindow\.attentionState === 'requested' && !taskWindow\.isActive;/);
   assert.match(bottomBarSource, /class:task-group-toasted=\{taskGroupHasToast\(group\)\}/);
-  assert.match(bottomBarSource, /ariaLabel=\{taskGroupLabel\(group\)\}/);
+  assert.match(bottomBarSource, /<div\s+[^>]*class:task-group-toasted=\{taskGroupHasToast\(group\)\}[^>]*role="group"\s+aria-label=\{taskGroupLabel\(group\)\}/s);
+  assert.match(bottomBarSource, /function taskGroupLabel\(group: TaskWindowGroup\) \{\s*return taskGroupStateLabel\(group\);\s*\}/);
   assert.match(bottomBarCss, /\.bottom-bar \.task-window-attention,\s*\.bottom-bar \.task-group-toasted \{[\s\S]*box-shadow: inset 0 2px 0 var\(--js-color-warning-border\);/);
   const attentionShadow = cssRule(bottomBarCss, '.bottom-bar .task-button.task-window-attention')
     .match(/box-shadow:\s*([^;]+);/)?.[1] ?? '';

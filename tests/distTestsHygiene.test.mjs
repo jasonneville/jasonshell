@@ -18,8 +18,8 @@ test('test:node cleans repo-local dist-tests before compiling helpers', () => {
 
 test('generated dist-tests output stays ignored and documented as cleaned before compile', () => {
   assert.match(gitignore, /^dist-tests\/$/m);
-  assert.match(masterSpec, /`npm run test:node`: `node scripts\/clean-dist-tests\.mjs && tsc -p tsconfig\.test\.json && node --test tests\/\*\.test\.mjs`/);
-  assert.match(masterSpec, /`scripts\/clean-dist-tests\.mjs` refuses to clean anything except the repo-local `dist-tests` directory/);
+  assert.match(masterSpec, /Use `package\.json` as source of truth/);
+  assert.match(masterSpec, /`npm run test:node`/);
 });
 
 test('tests do not import root-level stale dist-tests outputs', () => {

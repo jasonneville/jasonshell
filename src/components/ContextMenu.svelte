@@ -30,7 +30,8 @@
 
 <style>
   :global(.js-context-menu) {
-    background: var(--js-color-bg);
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 73%, transparent);
+    backdrop-filter: blur(8px);
     border: 1px solid color-mix(in srgb, var(--js-color-border) 86%, transparent);
     border-radius: 12px;
     box-shadow: var(--js-shadow-raised);

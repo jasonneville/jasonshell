@@ -53,6 +53,7 @@ const MAX_DECODED_MARKER: usize = 4096;
 const MAX_INPUT_LENGTH: usize = 16 * 1024;
 const MAX_REQUEST_ID_LEN: usize = 128;
 const MAX_PROMPT_LEN: usize = 512;
+const MAX_INCOMPLETE_ANSI_CONTROL_BYTES: usize = 8 * 1024;
 const MARKER_PREFIX: &str = "\x1b]777;JasonShellQuickCommandInput;";
 const MARKER_SUFFIX: &str = "\x07";
 
@@ -155,6 +156,20 @@ struct MarkerCarry {
 #[derive(Clone, Debug, Default)]
 struct AnsiCarry {
     bytes: Vec<u8>,
+    control: AnsiControl,
+    control_len: usize,
+    discarding: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum AnsiControl {
+    #[default]
+    Text,
+    Escape,
+    Charset,
+    Csi,
+    StringControl,
+    StringEscape,
 }
 
 #[derive(Clone, Debug)]
@@ -196,9 +211,11 @@ struct QuickCommandRunUpdatedPayload {
 
 #[tauri::command]
 pub fn run_quick_command(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: RunQuickCommandRequest,
 ) -> Result<QuickCommandSpawnResult, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::RUN_QUICK_COMMAND, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
     if request.id.trim().is_empty() {
         return Err("quick command id must not be empty".into());
     }
@@ -245,9 +262,11 @@ pub fn run_quick_command(
 
 #[tauri::command]
 pub fn send_quick_command_input(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: SendQuickCommandInputRequest,
 ) -> Result<(), String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::SEND_QUICK_COMMAND_INPUT, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
     let mut runs_guard = runs()
         .lock()
         .map_err(|_| "quick command runtime state is poisoned".to_string())?;
@@ -335,7 +354,10 @@ pub fn send_quick_command_input(
 }
 
 #[tauri::command]
-pub fn open_quick_command_url(window: WebviewWindow, url: String) -> Result<(), String> {
+pub fn open_quick_command_url(
+    window: WebviewWindow,
+    url: String,
+) -> Result<(), String> {
     authorize_stack_command(
         &window,
         StackCommandAuth::AllowedCallers {
@@ -352,6 +374,7 @@ pub async fn open_quick_command_artifact_location(
     window: WebviewWindow,
     id: String,
 ) -> Result<(), String> {
+
     authorize_stack_command(&window, QUICK_COMMAND_ARTIFACT_OPEN_AUTH)
         .map_err(CallerAuthError::into_string)?;
     let settings = settings::load_shell_settings_for_app(window.app_handle())?;
@@ -454,9 +477,11 @@ fn open_quick_command_url_native(_url: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn stop_quick_command(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: StopQuickCommandRequest,
 ) -> Result<(), String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STOP_QUICK_COMMAND, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
     let app_handle = app_handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
         stop_running_quick_command(
@@ -472,9 +497,11 @@ pub async fn stop_quick_command(
 
 #[tauri::command]
 pub fn list_quick_command_history(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: Option<RunQuickCommandRequest>,
 ) -> Result<Vec<settings::QuickCommandRunHistoryEntry>, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::LIST_QUICK_COMMAND_HISTORY, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
     let settings = settings::load_shell_settings_for_app(&app_handle)?;
     let mut history = runs()
         .lock()
@@ -497,9 +524,11 @@ pub fn list_quick_command_history(
 
 #[tauri::command]
 pub fn save_quick_commands_settings(
+    window: WebviewWindow,
     app_handle: AppHandle,
     quick_commands: settings::QuickCommandsSettings,
 ) -> Result<settings::QuickCommandsSettings, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::SAVE_QUICK_COMMANDS_SETTINGS, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
     settings::update_shell_settings_for_app(&app_handle, |settings| {
         settings.quick_commands.entries = quick_commands.entries;
         settings.quick_commands.list_width = quick_commands.list_width;
@@ -1609,75 +1638,71 @@ fn sanitize_terminal_text(text: &str) -> String {
 }
 
 fn decode_terminal_text_stateful(chunk: &[u8], carry: &mut AnsiCarry, eof: bool) -> String {
-    carry.bytes.extend_from_slice(chunk);
-    let mut out = Vec::with_capacity(carry.bytes.len());
-    let mut i = 0usize;
-    while i < carry.bytes.len() {
-        let b = carry.bytes[i];
-        if b != 0x1b {
-            out.push(b);
-            i += 1;
-            continue;
-        }
-        let escape_start = i;
-        if i + 1 >= carry.bytes.len() {
-            break;
-        }
-        match carry.bytes[i + 1] {
-            b'[' => {
-                i += 2;
-                while i < carry.bytes.len() {
-                    let c = carry.bytes[i];
-                    i += 1;
-                    if (b'@'..=b'~').contains(&c) {
-                        break;
-                    }
-                }
-                if i >= carry.bytes.len() && !matches!(carry.bytes.last(), Some(b'@'..=b'~')) {
-                    i = escape_start;
-                    break;
+    // Allocate for visible output as it arrives, not for a potentially huge control payload.
+    let mut out = Vec::new();
+    out.append(&mut carry.bytes);
+    for &byte in chunk {
+        match carry.control {
+            AnsiControl::Text => {
+                if byte == 0x1b {
+                    carry.control = AnsiControl::Escape;
+                    carry.control_len = 1;
+                } else {
+                    out.push(byte);
                 }
             }
-            b']' | b'P' | b'^' | b'_' => {
-                i += 2;
-                while i < carry.bytes.len() {
-                    let c = carry.bytes[i];
-                    if c == 0x07 {
-                        i += 1;
-                        break;
-                    }
-                    if c == 0x1b && i + 1 < carry.bytes.len() && carry.bytes[i + 1] == b'\\' {
-                        i += 2;
-                        break;
-                    }
-                    i += 1;
-                }
-                if i >= carry.bytes.len() {
-                    i = escape_start;
-                    break;
+            AnsiControl::Escape => {
+                carry.control_len = carry.control_len.saturating_add(1).min(MAX_INCOMPLETE_ANSI_CONTROL_BYTES);
+                carry.control = match byte {
+                    b'[' => AnsiControl::Csi,
+                    b']' | b'P' | b'^' | b'_' => AnsiControl::StringControl,
+                    b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => AnsiControl::Charset,
+                    // All other two-byte escapes (including unknown introducers) are
+                    // consumed rather than replaying raw ESC into transcript text.
+                    _ => AnsiControl::Text,
+                };
+            }
+            AnsiControl::Charset => carry.control = AnsiControl::Text,
+            AnsiControl::Csi => {
+                carry.discarding |= carry.control_len >= MAX_INCOMPLETE_ANSI_CONTROL_BYTES;
+                carry.control_len = carry.control_len.saturating_add(1).min(MAX_INCOMPLETE_ANSI_CONTROL_BYTES);
+                // Any CSI final byte ends the sequence, including after overflow.
+                if (b'@'..=b'~').contains(&byte) {
+                    carry.control = AnsiControl::Text;
+                    carry.discarding = false;
                 }
             }
-            b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => {
-                if i + 2 >= carry.bytes.len() {
-                    i = escape_start;
-                    break;
+            AnsiControl::StringControl => {
+                carry.control_len = carry.control_len.saturating_add(1).min(MAX_INCOMPLETE_ANSI_CONTROL_BYTES);
+                if byte == 0x07 {
+                    carry.control = AnsiControl::Text;
+                } else if byte == 0x1b {
+                    carry.control = AnsiControl::StringEscape;
                 }
-                i += 3;
             }
-            b'7' | b'8' | b'c' => {
-                i += 2;
-            }
-            _ => {
-                i += 1;
+            AnsiControl::StringEscape => {
+                carry.control_len = carry.control_len.saturating_add(1).min(MAX_INCOMPLETE_ANSI_CONTROL_BYTES);
+                carry.control = if byte == b'\\' || byte == 0x07 {
+                    AnsiControl::Text
+                } else if byte == 0x1b {
+                    AnsiControl::StringEscape
+                } else {
+                    AnsiControl::StringControl
+                };
             }
         }
     }
-    let keep_from = i.min(carry.bytes.len());
-    carry.bytes.drain(..keep_from);
+    let flush_len = text_flush_len(&out, eof);
+    if !eof && flush_len < out.len() {
+        carry.bytes.extend_from_slice(&out[flush_len..]);
+    }
     if eof {
         carry.bytes.clear();
+        carry.control = AnsiControl::Text;
+        carry.control_len = 0;
+        carry.discarding = false;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    String::from_utf8_lossy(&out[..flush_len]).into_owned()
 }
 
 fn quote_command_part(value: &str) -> String {
@@ -1701,6 +1726,63 @@ pub(crate) fn append_quick_command_history_bounded(
 mod tests {
     use super::*;
     use crate::settings::QuickCommandRunHistoryEntry;
+
+    #[test]
+    fn each_quick_command_policy_accepts_command_panel_only_and_redacts_denial() {
+        use crate::stack_popup::authorize_stack_command_caller;
+        let source = include_str!("quick_commands.rs").replace("\r\n", "\n");
+        let production = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let artifact_auth = production.split("const QUICK_COMMAND_ARTIFACT_OPEN_AUTH:").nth(1).unwrap().split(';').next().unwrap();
+        assert!(artifact_auth.contains("callers: &[crate::shell_windows::COMMAND_PANEL_LABEL]"), "artifact open must bind command-panel-only policy");
+        for (handler_name, contract) in [
+            ("run_quick_command", crate::contracts::commands::RUN_QUICK_COMMAND),
+            ("send_quick_command_input", crate::contracts::commands::SEND_QUICK_COMMAND_INPUT),
+            ("open_quick_command_url", crate::contracts::commands::OPEN_QUICK_COMMAND_URL),
+            ("open_quick_command_artifact_location", crate::contracts::commands::OPEN_QUICK_COMMAND_ARTIFACT_LOCATION),
+            ("stop_quick_command", crate::contracts::commands::STOP_QUICK_COMMAND),
+            ("list_quick_command_history", crate::contracts::commands::LIST_QUICK_COMMAND_HISTORY),
+            ("save_quick_commands_settings", crate::contracts::commands::SAVE_QUICK_COMMANDS_SETTINGS),
+        ] {
+            let signature = format!("pub fn {handler_name}(");
+            let async_signature = format!("pub async fn {handler_name}(");
+            let body = production.split(&signature).nth(1).or_else(|| production.split(&async_signature).nth(1)).unwrap();
+            let body = body.split("#[tauri::command]").next().unwrap();
+            assert!(body.contains("callers: &[crate::shell_windows::COMMAND_PANEL_LABEL]") ||
+                (handler_name == "open_quick_command_artifact_location" && body.contains("QUICK_COMMAND_ARTIFACT_OPEN_AUTH")),
+                "{handler_name} must bind command-panel-only policy");
+            let auth = StackCommandAuth::AllowedCallers {
+                command: contract,
+                callers: &[crate::shell_windows::COMMAND_PANEL_LABEL],
+            };
+            assert!(authorize_stack_command_caller(crate::shell_windows::COMMAND_PANEL_LABEL, auth).is_ok(), "{handler_name}");
+            for denied in [crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::PROCESS_MANAGER] {
+                let error = authorize_stack_command_caller(denied, auth).unwrap_err().into_string();
+                assert_eq!(error, format!("Unauthorized caller for command {contract}"), "{handler_name}");
+                assert!(!error.contains(denied), "{handler_name}: caller label leaked");
+            }
+        }
+    }
+
+    #[test]
+    fn all_quick_command_handlers_authorize_the_invoking_panel_before_work() {
+        let source = include_str!("quick_commands.rs").replace("\r\n", "\n");
+        let production = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for command in [
+            "run_quick_command", "send_quick_command_input", "open_quick_command_url",
+            "open_quick_command_artifact_location", "stop_quick_command",
+            "list_quick_command_history", "save_quick_commands_settings",
+        ] {
+            let signature = format!("pub fn {command}(");
+            let async_signature = format!("pub async fn {command}(");
+            let body = production.split(&signature).nth(1).or_else(|| production.split(&async_signature).nth(1)).unwrap_or_else(|| panic!("missing {command}"));
+            let body = body.split("#[tauri::command]").next().unwrap();
+            let params = body.split(") ->").next().unwrap();
+            assert!(params.contains("WebviewWindow"), "{command} must accept invoking webview, not only AppHandle");
+            let guard = body.find("authorize_stack_command(").unwrap_or_else(|| panic!("{command} must authorize command-panel caller"));
+            let first_statement = body.find("{\n").unwrap() + 2;
+            assert!(body[first_statement..guard].trim().is_empty(), "{command} must authorize before work");
+        }
+    }
 
     const QUICK_COMMANDS_SOURCE: &str = include_str!("quick_commands.rs");
 
@@ -2186,6 +2268,105 @@ mod tests {
         let combined = format!("{}{}", first, second);
         assert_eq!(combined, "xy");
         assert!(!combined.contains("title"));
+    }
+
+    const ANSI_INCOMPLETE_CONTROL_LIMIT: usize = 8 * 1024;
+
+    #[test]
+    fn ansi_unsupported_two_byte_escapes_never_reach_transcript_bound_text() {
+        for control in [b'M', b'D', b'Z'] {
+            let mut carry = AnsiCarry::default();
+            let output = decode_terminal_text_stateful(&[b'b', 0x1b, control, b'a'], &mut carry, true);
+            assert_eq!(output, "ba", "ESC {control:?} must be consumed without discarding following text");
+            assert!(!output.contains('\x1b'), "raw ESC must never reach transcript-bound output");
+        }
+    }
+
+    #[test]
+    fn ansi_fragmented_unknown_escape_carries_safely_and_eof_discards_lone_escape() {
+        let mut carry = AnsiCarry::default();
+        assert_eq!(decode_terminal_text_stateful(b"before\x1b", &mut carry, false), "before");
+        assert_eq!(decode_terminal_text_stateful(b"Mafter", &mut carry, false), "after");
+        assert_eq!(decode_terminal_text_stateful(b"\x1b", &mut carry, true), "");
+        assert!(carry.bytes.is_empty());
+        assert_eq!(decode_terminal_text_stateful(b"plain", &mut carry, true), "plain");
+    }
+
+    #[test]
+    fn ansi_oversized_csi_recovers_on_any_valid_final_byte() {
+        for final_byte in [b'H', b'J', b'K', b'@', b'~', b'm'] {
+            let mut carry = AnsiCarry::default();
+            let mut sequence = b"\x1b[".to_vec();
+            sequence.extend(std::iter::repeat_n(b'0', ANSI_INCOMPLETE_CONTROL_LIMIT + 16));
+            assert_eq!(decode_terminal_text_stateful(&sequence, &mut carry, false), "");
+            assert!(carry.bytes.len() <= ANSI_INCOMPLETE_CONTROL_LIMIT);
+            let mut completed = vec![final_byte];
+            completed.extend_from_slice(b"visible");
+            assert_eq!(decode_terminal_text_stateful(&completed, &mut carry, false), "visible", "valid CSI final {final_byte:?} must end discard mode");
+            assert_eq!(decode_terminal_text_stateful(b" tail", &mut carry, true), " tail");
+            assert!(carry.bytes.is_empty());
+        }
+    }
+
+    #[test]
+    fn ansi_fragmented_control_classes_and_split_utf8_keep_plain_text() {
+        for (prefix, suffix) in [
+            (b"\x1b[3".as_slice(), b"1m".as_slice()),
+            (b"\x1b]0;title\x1b".as_slice(), b"\\".as_slice()),
+            (b"\x1bPprivate\x1b".as_slice(), b"\\".as_slice()),
+            (b"\x1b_private\x1b".as_slice(), b"\\".as_slice()),
+        ] {
+            let mut carry = AnsiCarry::default();
+            assert_eq!(decode_terminal_text_stateful(b"before", &mut carry, false), "before");
+            assert_eq!(decode_terminal_text_stateful(prefix, &mut carry, false), "");
+            let mut final_chunk = suffix.to_vec();
+            final_chunk.extend_from_slice(b"after");
+            assert_eq!(decode_terminal_text_stateful(&final_chunk, &mut carry, true), "after");
+            assert!(carry.bytes.is_empty());
+        }
+    }
+
+    #[test]
+    fn ansi_huge_unterminated_controls_remain_bounded_and_never_leak_payload() {
+        for prefix in [b"\x1b[".as_slice(), b"\x1b]".as_slice(), b"\x1bP".as_slice(), b"\x1b_".as_slice()] {
+            let mut carry = AnsiCarry::default();
+            let mut payload = prefix.to_vec();
+            payload.extend(std::iter::repeat_n(b'0', ANSI_INCOMPLETE_CONTROL_LIMIT * 3));
+            assert_eq!(decode_terminal_text_stateful(&payload, &mut carry, false), "");
+            assert!(carry.bytes.len() <= ANSI_INCOMPLETE_CONTROL_LIMIT, "unbounded retained control for {prefix:?}: {}", carry.bytes.len());
+        }
+    }
+
+    #[test]
+    fn ansi_tiny_fragments_discard_through_correct_terminator_then_resume_text_and_reset_on_eof() {
+        for (prefix, terminator) in [
+            (b"\x1b[".as_slice(), b"m".as_slice()),
+            (b"\x1b]".as_slice(), b"\x07".as_slice()),
+            (b"\x1bP".as_slice(), b"\x1b\\".as_slice()),
+            (b"\x1b_".as_slice(), b"\x1b\\".as_slice()),
+        ] {
+            let mut carry = AnsiCarry::default();
+            assert_eq!(decode_terminal_text_stateful(prefix, &mut carry, false), "");
+            for _ in 0..(ANSI_INCOMPLETE_CONTROL_LIMIT * 2) {
+                assert_eq!(decode_terminal_text_stateful(b"0", &mut carry, false), "", "discarded control payload leaked");
+                assert!(carry.bytes.len() <= ANSI_INCOMPLETE_CONTROL_LIMIT, "tiny fragments exceeded cap for {prefix:?}");
+            }
+            // CSI body bytes must stay in parameter/intermediate ranges; a letter
+            // such as 'p' would itself be a valid final byte and end the CSI.
+            let trailing_body = if prefix == b"\x1b[" { b"123;45".as_slice() } else { b"private".as_slice() };
+            assert_eq!(decode_terminal_text_stateful(trailing_body, &mut carry, false), "", "overflow payload leaked");
+            assert_eq!(decode_terminal_text_stateful(terminator, &mut carry, false), "");
+            assert_eq!(decode_terminal_text_stateful(b"visible", &mut carry, true), "visible");
+            assert!(carry.bytes.is_empty(), "EOF must clear carry");
+        }
+    }
+
+    #[test]
+    fn ansi_eof_drops_incomplete_control_and_next_stream_starts_clean() {
+        let mut carry = AnsiCarry::default();
+        assert_eq!(decode_terminal_text_stateful(b"\x1b]private", &mut carry, true), "");
+        assert!(carry.bytes.is_empty());
+        assert_eq!(decode_terminal_text_stateful(b"plain", &mut carry, true), "plain");
     }
 
     #[cfg(windows)]

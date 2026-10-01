@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const repoRoot = new URL('..', import.meta.url);
@@ -129,19 +129,33 @@ test('phase 6 top-bar hot path imports new search engine and no legacy catalog r
 });
 
 test('phase 6 hot path does not use legacy source files or browser storage for visible result production', () => {
+  const topBar = readSource('src/components/TopBar.svelte');
+  const searchFunctions = [
+    'publishImmediateSearchInputState',
+    'startImmediateSearchQueryExecution',
+    'handleSearchInput',
+    'applySearchQuery',
+    'loadSearchEngineResults',
+    'applySearchEngineProgress',
+    'scheduleSearchEngine',
+    'scheduleSearchFreshnessRetry',
+    'scheduleSearchProviderCacheRetry',
+    'queueSearchPanelPublish',
+    'publishPendingSearchPayload'
+  ].map((name) => extractFunction(topBar, name)).join('\n');
   const hotPathSources = [
-    'src/components/TopBar.svelte',
     'src/lib/searchEngine.ts',
-    'src/features/search/searchQueryController.ts'
+    'src/features/search/searchUxState.ts'
   ]
-    .filter((relativePath) => existsSync(repoPath(relativePath)))
     .map(readSource)
+    .concat(searchFunctions)
     .join('\n');
 
   assert.notEqual(hotPathSources, '', 'search hot path sources exist');
-  assert.equal(/from ['"].*searchCatalog['"]/.test(hotPathSources), false, 'searchCatalog import absent');
-  assert.equal(/from ['"].*searchRanking['"]/.test(hotPathSources), false, 'searchRanking import absent');
-  assert.equal(/from ['"].*systemSearch['"]/.test(hotPathSources), false, 'systemSearch import absent');
+  const importSources = `${topBar}\n${hotPathSources}`;
+  assert.equal(/from ['"].*searchCatalog['"]/.test(importSources), false, 'searchCatalog import absent');
+  assert.equal(/from ['"].*searchRanking['"]/.test(importSources), false, 'searchRanking import absent');
+  assert.equal(/from ['"].*systemSearch['"]/.test(importSources), false, 'systemSearch import absent');
   assert.equal(/localStorage/.test(hotPathSources), false, 'localStorage absent from hot path');
   assert.equal(
     /search_sources|windows_search|warmedCache|search-index-v1/.test(hotPathSources),

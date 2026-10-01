@@ -4,31 +4,14 @@ import test from 'node:test';
 
 const masterSpec = readFileSync(new URL('../master_spec.md', import.meta.url), 'utf8');
 
-test('master spec records multi-fix phase 5 and phase 6 durable behavior', () => {
-  for (const phrase of [
-    'Multi-fix Phase 5/6',
-    'Settings power actions',
-    'trigger_system_power_action',
-    'in-panel confirmation',
-    'no native confirm()',
-    'Windows power API',
-    'shutdown.exe argument-vector',
-    'settingsPowerActionsPhase5.test.mjs',
-    'multiFixPhase6SpecValidation.test.mjs'
-  ]) {
-    assert.match(masterSpec, new RegExp(phrase.replace(/[()]/g, '\\$&')));
-  }
+test('master spec records durable settings and native safety boundaries without phase ledger', () => {
+  assert.match(masterSpec, /settings\/tray\/audio\/calendar\/process manager/);
+  assert.match(masterSpec, /File\/process\/native-picker actions need backend validation/);
+  assert.doesNotMatch(masterSpec, /^## Change Ledger/m);
 });
 
-test('master spec validation notes include required phase acceptance checks', () => {
-  for (const phrase of [
-    'search typing',
-    'Stack Browser rectangle selection',
-    'bottom quick icons',
-    'VS Code folder actions',
-    'settings confirmations',
-    'npm run validate'
-  ]) {
-    assert.match(masterSpec, new RegExp(phrase));
-  }
+test('master spec links validation commands and active validation gaps', () => {
+  assert.match(masterSpec, /Use `package\.json` as source of truth/);
+  assert.match(masterSpec, /`npm run validate`/);
+  assert.match(masterSpec, /Live smoke is consent-gated/);
 });

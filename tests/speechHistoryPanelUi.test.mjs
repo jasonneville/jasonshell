@@ -8,7 +8,8 @@ const loader = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.meta.u
 const css = readFileSync(new URL('../src/components/SpeechHistoryPanelSurface.css', import.meta.url), 'utf8');
 
 test('mic keeps primary capture action and opens history from context-menu equivalents', () => {
-  assert.match(mic, /onClick=\{handleMicControl\}/);
+  assert.match(mic, /onClick=\{\(\) => \{ void toggleSpeech\(\); \}\}/);
+  assert.match(mic, /function toggleSpeech[\s\S]*startSpeechCapture\([\s\S]*stopSpeechCapture\(/);
   assert.match(mic, /ariaHaspopup="dialog"/);
   assert.match(mic, /onContextMenu=\{openSpeechHistory\}/);
   assert.match(mic, /onKeyDown=\{handleSpeechHistoryKeydown\}/);

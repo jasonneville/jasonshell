@@ -86,7 +86,9 @@ test('Alt+1 toggles Stack Browser from native hotkey and top bar wiring', () => 
   assert.match(topBar, /toggleStackBrowserFromHotkey/);
   assert.match(topBar, /toggleStackBrowserPanel\(/);
   assert.match(topBar, /closest\('\.stack-browser-button'\)/);
-  assert.match(topBar, /if \(stackBrowserOpen\) \{[\s\S]*await hideStackPopup\(\)/);
+  assert.match(topBar, /if \(stackBrowserOpen\) \{[\s\S]*await toggleStackPopup\(\)/);
+  assert.match(topBar, /listen\(STACK_POPUP_CLOSED_EVENT, \(\) => \{\s*stackBrowserOpen = false;/);
+  assert.doesNotMatch(topBar.slice(topBar.indexOf('async function toggleStackBrowserPanel('), topBar.indexOf('async function toggleStackBrowserFromHotkey(')), /await hideStackPopup\(/);
   assert.ok(topBar.indexOf('if (stackBrowserOpen)') < topBar.indexOf('const isOpen = await toggleStackPopup()'));
   assert.doesNotMatch(topBar, /isAltOneHotkey/);
 });

@@ -287,10 +287,16 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'search-panel:query',
     'search-panel:select',
     'search-panel:update',
+    'speech:toggle',
+    'speech-history-panel:open',
+    'speech-history-panel:closed',
     'speech:status-changed',
+    'speech:voice-level',
     'stack-browser:toggle',
     'stack-popup:closed',
+    'stack-popup:close-requested',
     'stack-popup:open',
+    'stack-operation:progress',
     'stack-terminal:closed',
     'stack-terminal:cwd',
     'stack-terminal:output',
@@ -308,6 +314,7 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'taskbar:windows-snapshot',
     'terminal-panel:closed',
     'terminal-panel:open',
+    'terminal:toggle-panel',
     'top-bar:pin-menu-action',
     'tray-panel:closed',
     'tray-panel:open'
@@ -318,6 +325,11 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     expectedRuntimeEvents,
     'contracts::events::ALL must remain the exhaustive Tauri shell runtime event registry'
   );
+  const overlay = readFileSync(new URL('../src/lib/contextMenuOverlay.ts', import.meta.url), 'utf8');
+  assert.match(overlay, /CONTEXT_MENU_OVERLAY_OPEN_EVENT = 'context-menu-overlay:open'/);
+  assert.match(overlay, /CONTEXT_MENU_OVERLAY_SELECT_EVENT = 'context-menu-overlay:select'/);
+  assert.match(overlay, /emitTo\(CONTEXT_MENU_OVERLAY_LABEL, CONTEXT_MENU_OVERLAY_OPEN_EVENT, request\)/);
+  assert.match(overlay, /emitTo\(selection\.source, CONTEXT_MENU_OVERLAY_SELECT_EVENT, selection\)/);
 });
 
 test('dead audio refresh event contract is not exposed without a Rust emitter', () => {
@@ -356,12 +368,19 @@ test('settings wrapper declares versioned schema and stable command names', () =
     workspaces: [],
     taskHistory: [],
     quickCommands: {
+      orderVersion: 1,
       entries: [],
       history: [],
       listWidth: 180
     },
     stackBrowser: {
       terminalProfile: 'windowsTerminal'
+    },
+    hotkeys: {
+      search: 'Ctrl+Space',
+      terminal: 'Alt+Backquote',
+      stackBrowser: 'Alt+1',
+      speechTranscription: 'Ctrl+D'
     }
   });
 });
@@ -460,10 +479,13 @@ test('backend settings and diagnostics commands are registered with hardened app
       ['bottom-bar'],
       ['calendar-panel'],
       ['command-panel'],
+      ['context-menu-overlay'],
       ['control-plane'],
       ['process-manager'],
       ['search-panel'],
       ['settings-panel'],
+      ['speech-history-panel'],
+      ['speech-indicator'],
       ['stack-popup'],
       ['task-gallery'],
       ['task-preview'],

@@ -43,6 +43,7 @@
     showStackItemProperties,
     suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
+    STACK_POPUP_CLOSE_REQUESTED_EVENT,
     STACK_TERMINAL_PROFILE_OPTIONS,
     type StackEntry,
     type StackArchiveDestinationMode,
@@ -274,6 +275,12 @@
       void reconcileLatestStackPopupRequest();
     }, 250);
     void initializeOpenRequestDelivery(unlisteners, () => disposed);
+    void getCurrentWindow().listen(STACK_POPUP_CLOSE_REQUESTED_EVENT, () => {
+      closeStackPopupFromSurface();
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlisteners.push(unlisten);
+    }).catch((error) => console.error('Failed to listen for Stack popup close requests', error));
     void loadStackTerminalProfile();
     void getCurrentWindow().listen<StackFileOperationProgress>(IPC_EVENTS.stackFileOperationProgress, ({ payload }) => {
       if (!activeOperation || payload.operationId !== activeOperation.operationId) return;
@@ -2839,7 +2846,6 @@
     >
       <ContextMenuItem icon="file_copy" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</ContextMenuItem>
       <ContextMenuItem icon="content_cut" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</ContextMenuItem>
-      <ContextMenuItem icon="content_paste" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}>Paste</ContextMenuItem>
       <ContextMenuItem icon="drive_file_rename" disabled={!selectedEntry} onClick={beginRenameSelected}>Rename</ContextMenuItem>
       <ContextMenuItem icon="delete" destructive disabled={!hasSelection} onClick={() => void deleteSelected()}>Delete</ContextMenuItem>
       <ContextMenuItem icon="folder" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</ContextMenuItem>

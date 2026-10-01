@@ -98,5 +98,5 @@ test('TopBar keeps stable popup anchors and all requested control renderers', ()
   assert.match(topBarSource, /bind:this=\{commandControl\}/);
   assert.match(topBarSource, /bind:this=\{trayControl\}/);
   assert.match(topBarSource, /bind:this=\{soundControl\}/);
-  assert.match(topBarSource, /<TopBarMicControl \/>/);
+  assert.match(topBarSource, /<TopBarMicControl bind:this=\{micControl\} \/>/);
 });

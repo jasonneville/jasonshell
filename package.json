@@ -9,13 +9,14 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:node": "node scripts/clean-dist-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
+    "test:component": "vitest run --config vitest.config.ts",
     "test:search": "npm run test:node",
     "p03:experiment": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stack-text-editor/launch-p03-experiment.ps1",
     "cargo:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "smoke:runtime": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/runtime-smoke.ps1 -DryRun",
     "smoke:fullscreen": "powershell -ExecutionPolicy Bypass -File scripts/smoke-fullscreen-appbar.ps1",
-    "validate": "npm run check && npm run build && npm run test:node && npm run cargo:test && npm run cargo:check",
+    "validate": "npm run check && npm run build && npm run test:component && npm run test:node && npm run cargo:test && npm run cargo:check",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -50,13 +51,17 @@
     "@replit/codemirror-lang-svelte": "6.0.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "2.10",
+    "@testing-library/svelte": "5.4.2",
+    "@testing-library/user-event": "14.6.1",
     "@tsconfig/svelte": "^5.0.0",
     "@types/node": "^24.0.0",
     "codemirror": "6.0.2",
+    "jsdom": "27.4.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
-    "vite-plugin-terminal": "^1.4.0"
+    "vite-plugin-terminal": "^1.4.0",
+    "vitest": "4.1.11"
   }
 }

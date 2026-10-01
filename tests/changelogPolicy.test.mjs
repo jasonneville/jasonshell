@@ -87,12 +87,9 @@ test('docs index local pointers resolve and scheduled docs stay explicitly index
   assert.doesNotMatch(docsIndex, /scheduled\/\*_/);
   assert.doesNotMatch(docsIndex, /no scheduled-docs directory/i);
   assert.match(docsIndex, /Scheduled reports are point-in-time evidence, not current product truth/);
-  assert.match(docsIndex, /docs\/scheduled\/09212026_WEEKLY_HEALTH_AUDIT\.md`/);
-  assert.match(docsIndex, /latest weekly health audit/);
-  assert.match(docsIndex, /docs\/scheduled\/09142026_WEEKLY_HEALTH_AUDIT\.md`/);
-  assert.match(docsIndex, /historical comparison only/);
-  assert.match(docsIndex, /docs\/scheduled\/09142026_session_learn\.md`/);
-  assert.match(docsIndex, /workflow\/process observations, not product behavior/);
+  assert.match(docsIndex, /No scheduled audit reports are included in this checkout/);
+  assert.match(docsIndex, /current-state-technical-audit-2026-08-28\.md/);
+  assert.doesNotMatch(docsIndex, /docs\/scheduled\/\d{8}[^`\s]*\.md`/);
 
   for (const link of localDocLinks) {
     if (link.includes('*')) {
@@ -105,11 +102,11 @@ test('docs index local pointers resolve and scheduled docs stay explicitly index
 });
 
 test('README validation scripts match package scripts without stale copies', () => {
-  const scriptBlock = readme.match(/Exact package scripts:\n\n```powershell\n([\s\S]*?)\n```/);
+  const scriptBlock = readme.match(/Exact package scripts:\r?\n\r?\n```powershell\r?\n([\s\S]*?)\r?\n```/);
   assert.notEqual(scriptBlock, null);
 
   const documentedScripts = scriptBlock[1]
-    .split('\n')
+    .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => line.replace(/^npm run /, ''));

@@ -774,10 +774,11 @@
     const target = event.target instanceof Node ? event.target : null;
     const stackBrowserTarget = target instanceof Element && target.closest('.stack-browser-button');
     if (!isPinnedFolderPointerTarget(target) && !stackBrowserTarget) {
-      stackBrowserOpen = false;
-      void hideStackPopup().catch((error) => {
-        console.error('Failed to hide stack popup after top bar pointer press', error);
-      });
+      if (stackBrowserOpen) {
+        void toggleStackPopup().catch((error) => {
+          console.error('Failed to request Stack popup close after top bar pointer press', error);
+        });
+      }
     }
     if (commandOpen && (!target || !commandControl?.contains(target))) {
       void closeCommandPanel();
@@ -971,10 +972,10 @@
 
   async function toggleStackBrowserPanel(target: EventTarget | null) {
     if (stackBrowserOpen) {
-      stackBrowserOpen = false;
-      await hideStackPopup().catch((error) => {
-        stackBrowserOpen = true;
-        console.error('Failed to hide stack popup', error);
+      // Native toggle sends a close request to the mounted popup. Only its
+      // guarded close emits stack-popup:closed and clears stackBrowserOpen.
+      await toggleStackPopup().catch((error) => {
+        console.error('Failed to request stack popup close', error);
       });
       return;
     }

@@ -117,10 +117,19 @@ pub fn save_command_panel_size_for_app(
 
 #[tauri::command]
 pub fn save_command_panel_size(
+    window: WebviewWindow,
     app_handle: AppHandle,
     width_physical: u32,
     height_physical: u32,
 ) -> Result<settings::ShellSettings, String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::SAVE_COMMAND_PANEL_SIZE,
+            callers: &[COMMAND_PANEL_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
     save_command_panel_size_for_app(&app_handle, width_physical, height_physical)
 }
 
@@ -318,6 +327,35 @@ pub fn command_panel_work_area(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn registered_size_save_authorizes_command_panel_before_settings_io() {
+        let source = include_str!("command_panel.rs").replace("\r\n", "\n");
+        let handler = source.split("#[tauri::command]\npub fn save_command_panel_size(").nth(1).expect("registered save entry point").split("#[tauri::command]").next().unwrap();
+        let signature = handler.split("-> Result").next().unwrap();
+        assert!(signature.contains("window: WebviewWindow"), "handler must inject trusted invoking window");
+        assert!(handler.contains("command: crate::contracts::commands::SAVE_COMMAND_PANEL_SIZE"));
+        assert!(handler.contains("callers: &[COMMAND_PANEL_LABEL]"), "only command panel may receive full settings");
+        let guard = handler.find("authorize_stack_command(").expect("must authorize caller");
+        let storage = handler.find("save_command_panel_size_for_app(").expect("settings helper");
+        assert!(guard < storage, "denied caller must not read or write settings or receive a full response");
+        assert!(handler[guard..storage].contains(".map_err(CallerAuthError::into_string)?"), "caller denial must short-circuit before storage");
+    }
+
+    #[test]
+    fn size_save_policy_accepts_owner_and_redacts_nonowner_denial() {
+        use crate::stack_popup::StackCommandAuth;
+        let policy = StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::SAVE_COMMAND_PANEL_SIZE,
+            callers: &[crate::shell_windows::COMMAND_PANEL_LABEL],
+        };
+        assert!(authorize_stack_command_caller(crate::shell_windows::COMMAND_PANEL_LABEL, policy).is_ok());
+        for denied in [crate::contracts::surfaces::SETTINGS_PANEL, crate::contracts::surfaces::TOP_BAR,
+            crate::contracts::surfaces::PROCESS_MANAGER] {
+            let error = authorize_stack_command_caller(denied, policy).unwrap_err().into_string();
+            assert_eq!(error, format!("Unauthorized caller for command {}", crate::contracts::commands::SAVE_COMMAND_PANEL_SIZE));
+            assert!(!error.contains(denied), "caller label must not leak");
+        }
+    }
     use super::{
         artifact_picker_restore_requires_current_open_lifecycle,
         begin_command_panel_focus_loss_hold, command_panel_focus_loss_held,

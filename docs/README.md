@@ -28,9 +28,7 @@ These docs capture evidence at a point in time. Use them for leads, then confirm
 
 Scheduled reports are point-in-time evidence, not current product truth. Use them for leads, then confirm against source/tests.
 
-- `docs/scheduled/09212026_WEEKLY_HEALTH_AUDIT.md`: latest weekly health audit in this checkout. Use for current audit leads and validation caveats.
-- `docs/scheduled/09142026_WEEKLY_HEALTH_AUDIT.md`: older weekly health audit. Use for historical comparison only.
-- `docs/scheduled/09142026_session_learn.md`: session learning report. Use for workflow/process observations, not product behavior.
+No scheduled audit reports are included in this checkout. For available audit leads, see `current-state-technical-audit-2026-08-28.md` above.
 
 ## Plans and research
 

@@ -127,7 +127,7 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.match(processManagerSource, /processMetricPercent\(process\.gpuPercent, 100\)/);
   assert.match(processManagerSource, /formatProcessMemoryPercent\(process\.memoryPercent\)/);
   assert.match(processManagerSource, /formatProcessGpu\(process\.gpuPercent\)/);
-  assert.match(processManagerSource, /<MeltActionButton onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false, announce: true \}\)\}>/);
+  assert.match(processManagerSource, /<MeltActionButton\s+class="process-manager-refresh-button"\s+ariaLabel="Refresh process manager"\s+onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false, announce: true \}\)\}/);
   assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="process-manager-close-button"[\s\S]*ariaLabel="Close process manager"[\s\S]*onClick=\{\(\) => void requestClose\(\)\}[\s\S]*<MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('name'\)\} onClick=\{\(\) => sortBy\('name'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('startTimeMs'\)\} onClick=\{\(\) => sortBy\('startTimeMs'\)\}/);
@@ -170,10 +170,10 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!selectedEntry\}[^>]*onClick=\{\(\) => selectedEntry && void activateEntry\(selectedEntry\)\}>Open<\/ContextMenuItem>/);
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{selectedEntry\?\.entryType !== 'File'\}>Open with ▸<\/ContextMenuItem>/);
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!currentPath\}[^>]*onClick=\{beginCreateFolder\}>New Folder<\/ContextMenuItem>/);
-  assert.match(stackPopupSource, /<MeltActionButton class="danger" onClick=\{\(\) => void confirmDeleteSelection\(\)\}>Delete<\/MeltActionButton>/);
+  assert.match(stackPopupSource, /\{#if deleteConfirmation\}\s*<StackConfirmDialog[^>]*confirmLabel="Delete"[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*dismissOnBackdrop=\{false\}[^>]*returnFocus=\{detailsGrid\}[^>]*onCancel=\{cancelDeleteConfirmation\}[^>]*onConfirm=\{\(\) => void confirmDeleteSelection\(\)\}/);
 
-  assert.match(stackPopupSource, /<button[\s\S]*type="button"[\s\S]*role="row"[\s\S]*aria-selected=\{stackState\.selectedPaths\.includes\(entry\.path\)\}[\s\S]*on:dblclick=\{\(\) => void activateEntry\(entry\)\}[\s\S]*on:dragstart=\{\(event\) => handleRowDragStart\(event, entry\)\}/);
-  assert.match(stackPopupSource, /bind:this=\{deleteCancelButton\}/);
+  assert.match(stackPopupSource, /<button[\s\S]*type="button"[\s\S]*role="row"[\s\S]*aria-selected=\{stackState\.selectedPaths\.includes\(entry\.path\)\}[\s\S]*on:dblclick=\{\(\) => void activateEntry\(entry\)\}[\s\S]*on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}[\s\S]*on:pointermove=\{\(event\) => moveRowDrag\(event, entry\)\}[\s\S]*on:pointerup=\{endRowDrag\}/);
+  assert.match(stackPopupSource, /import StackConfirmDialog from '\.\/StackConfirmDialog\.svelte'/);
   assert.match(stackPopupSource, /class="stack-resize-grip"[\s\S]*bind:this=\{resizeGrip\}[\s\S]*on:pointerdown=\{beginResize\}/);
   assert.match(stackPopupSource, /STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS/);
 });
@@ -190,7 +190,8 @@ test('top-bar action and pinned-folder controls use Melt-backed buttons without 
   assert.match(topBarSource, /onClick=\{\(event\) => handlePinClick\(event, pin, index\)\}/);
   assert.match(topBarSource, /onContextMenu=\{\(event\) => handlePinContextMenu\(event, pin\)\}/);
   assert.match(topBarSource, /querySelectorAll<HTMLElement>\('button\[data-path\]'\)/);
-  assert.match(topBarSource, /\{#if pinContextMenu\}\s*<ContextMenu\b/);
+  assert.match(topBarSource, /showContextMenuOverlay\(\{ source: 'top-bar', kind: 'pin', token, x: event\.clientX, y: event\.clientY \}\)/);
+  assert.match(topBarSource, /selection\.token !== pinContextMenu\?\.token/);
   assert.match(topBarSource, /showStackPopup\(\{/);
   assert.doesNotMatch(topBarSource, /<button[\s\S]*data-path=\{pin\.path\}/);
 });
@@ -221,7 +222,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /on:pointerup=\{finishTaskGroupPointerDrag\}/);
   assert.match(bottomBarSource, /on:lostpointercapture=\{handleTaskGroupLostPointerCapture\}/);
 
-  assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`task-button\$\{taskWindow\.isActive \? ' task-button-active' : ''\}\$\{taskWindow\.isMinimized \? ' task-button-minimized' : ''\}\$\{taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''\}`\}[\s\S]*type="button"[\s\S]*disabled=\{activatingHwnd === taskWindow\.hwnd\}/);
+  assert.match(bottomBarSource, /<MeltActionButton\s+class=\{`task-button\$\{taskWindow\.isActive \? ' task-button-active' : ''\}\$\{taskWindow\.isMinimized \? ' task-button-minimized' : ''\}\$\{taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''\}\$\{previewConnector\?\.hwnd === taskWindow\.hwnd \? ' task-button-preview-connected' : ''\}`\}[\s\S]*type="button"[\s\S]*disabled=\{activatingHwnd === taskWindow\.hwnd\}/);
   assert.match(bottomBarSource, /onPointerDown=\{\(event\) => handleTaskWindowPointerDown\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onClick=\{\(event\) => handleTaskWindowClick\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /onMouseEnter=\{\(event\) => queuePreview\(taskWindow, event\)\}/);
@@ -236,7 +237,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
 
   assert.match(bottomBarSource, /<MeltActionButton\s+class="process-manager-button"[\s\S]*type="button"[\s\S]*title="Processes"[\s\S]*ariaLabel="Open process manager"[\s\S]*onClick=\{\(event\) => void openProcessManager\(event\)\}/);
   assert.match(bottomBarSource, /event\.currentTarget as HTMLButtonElement \| null/);
-  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width \}\)/);
+  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid \}\)/);
 
   assert.doesNotMatch(bottomBarSource, /<button[\s\S]*class="launcher-button"/);
   assert.doesNotMatch(bottomBarSource, /<button[\s\S]*class="task-button"/);

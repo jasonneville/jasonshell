@@ -1544,7 +1544,13 @@ fn map_git_process_error(error: ProcessRunError) -> GitCommandError {
         ProcessRunError::Spawn(error) => {
             GitCommandError::Spawn(format!("Failed to run git: {error}"))
         }
+        ProcessRunError::StdinWrite(_) => {
+            GitCommandError::Internal("Git process input failed".to_string())
+        }
         ProcessRunError::Timeout { .. } => GitCommandError::Timeout("Git timed out".to_string()),
+        ProcessRunError::StatusQuery { .. } => {
+            GitCommandError::Internal("Git process status unavailable".to_string())
+        }
         ProcessRunError::CleanupIncomplete { reason, .. } => {
             GitCommandError::Internal(format!("Git internal error: {reason}"))
         }

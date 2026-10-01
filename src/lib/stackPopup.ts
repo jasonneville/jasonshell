@@ -7,6 +7,7 @@ import { topBarWebviewWindowEventTarget } from './topBarPins';
 export const STACK_POPUP_LABEL = 'stack-popup';
 export const TOP_BAR_LABEL = 'top-bar';
 export const STACK_POPUP_OPEN_EVENT = 'stack-popup:open';
+export const STACK_POPUP_CLOSE_REQUESTED_EVENT = 'stack-popup:close-requested';
 export const STACK_PINS_UPDATED_EVENT = 'stack-pins:updated';
 export type { StackFileOperationProgress };
 

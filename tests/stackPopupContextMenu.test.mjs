@@ -54,9 +54,12 @@ test('background context menu is available off rows and keeps selection actions'
     surface.indexOf('{#if backgroundMenu}'),
     surface.indexOf('{#if deleteConfirmation}')
   );
-  for (const label of ['Copy', 'Cut', 'Rename', 'Delete', 'Reveal', 'Paste', 'New Folder', 'New Text File', 'Copy Folder Path', 'Open Terminal Here']) {
+  for (const label of ['Copy', 'Cut', 'Rename', 'Delete', 'Reveal', 'New Folder', 'New Text File', 'Copy Folder Path', 'Open Terminal Here']) {
     assert.ok(backgroundMenu.includes(`>${label}</ContextMenuItem>`), `${label} must remain a background menu action`);
   }
+  assert.doesNotMatch(backgroundMenu, />Paste<\/ContextMenuItem>/, 'background menu intentionally omits Paste');
+  const toolbar = surface.slice(surface.indexOf('<div class="stack-actions">'), surface.indexOf('<div class="stack-search">'));
+  assert.match(toolbar, /ariaLabel="Paste into current folder"[^>]*disabled=\{!currentPath\}[^>]*onClick=\{\(\) => void pasteIntoCurrentFolder\(\)\}/, 'toolbar retains Paste ownership');
   assert.match(stackPopupApi, /newStackTextFile\(parent: string\): Promise<StackEntry>/);
   assert.match(stackPopupApi, /openStackTerminalHere\(path: string\): Promise<void>/);
 });

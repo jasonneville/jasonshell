@@ -4,6 +4,8 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte', import.meta.url), 'utf8');
+const topBar = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
+const nativePopup = readFileSync(new URL('../src-tauri/src/stack_popup.rs', import.meta.url), 'utf8');
 const surfaceCss = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
 const editor = readFileSync(new URL('../src/components/StackTextEditor.svelte', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../src/features/stack-browser/stackTextEditorAdapter.ts', import.meta.url), 'utf8');
@@ -234,8 +236,8 @@ test('save conflicts block stale retries and require a deliberate draft-discardi
 });
 
 test('confirmed conflict reload keeps the mounted draft until a disk read succeeds', () => {
-  const reload = editor.match(/async function reloadDiskVersion\(filePath: string\) \{([\s\S]*?)\n  \}\n\n  async function loadFile/)?.[1] ?? '';
-  const commit = editor.match(/async function commitLoadedFile\(filePath: string, sequence: number, result: \{ content: string; identity: string \}\) \{([\s\S]*?)\n  \}\n\n  async function reloadDiskVersion/)?.[1] ?? '';
+  const reload = editor.match(/async function reloadDiskVersion\(filePath: string\) \{([\s\S]*?)\r?\n  \}\r?\n\r?\n  async function loadFile/)?.[1] ?? '';
+  const commit = editor.match(/async function commitLoadedFile\(filePath: string, sequence: number, result: \{ content: string; identity: string \}\) \{([\s\S]*?)\r?\n  \}\r?\n\r?\n  async function reloadDiskVersion/)?.[1] ?? '';
 
   assert.match(reload, /const result = await readStackBasicTextFile\(filePath\);[\s\S]*await commitLoadedFile\(filePath, sequence, result\);/, 'reload reads a valid disk version before committing replacement state');
   assert.doesNotMatch(reload, /destroyEditor\(\)|initialContent\s*=|fileIdentity\s*=|draft\s*=|errorMessage\s*=|loading\s*=/, 'failed reads leave the mounted editor, draft, baseline, identity, and editor screen untouched');
@@ -445,6 +447,17 @@ test('folder, popup-request, editor-back, and surface-close routes use dirty-dra
   assert.match(surface, /async function handleOpenRequest[\s\S]*requestEditorExit\(async \(\) => \{[\s\S]*await performOpenFolder\(path/);
   assert.match(surface, /function requestEditorClose\(dirty: boolean\)[\s\S]*requestEditorExit\(\(\) => \{/);
   assert.match(surface, /function closeStackPopupFromSurface\(\)[\s\S]*requestEditorExit\(async \(\) => \{/);
-  assert.match(surface, /handleStackBrowserHotkeyKeydown[\s\S]*closeStackPopupFromSurface\(\)/);
+  const toggle = topBar.slice(topBar.indexOf('async function toggleStackBrowserPanel('), topBar.indexOf('async function toggleStackBrowserFromHotkey('));
+  assert.doesNotMatch(toggle, /await hideStackPopup\(/, 'top-bar toggle must request the popup dirty-draft guard before hiding');
+  assert.match(toggle, /if \(stackBrowserOpen\)[\s\S]*await toggleStackPopup\(\)/, 'top-bar close requests the native event instead of hiding directly');
+  assert.match(topBar, /listen\(STACK_POPUP_CLOSED_EVENT, \(\) => \{\s*stackBrowserOpen = false;/, 'only closed notification clears top-bar state');
+  assert.match(topBar, /if \(stackBrowserOpen\)[\s\S]*void toggleStackPopup\(\)/, 'outside-button dismissal also requests guarded close');
+  const nativeToggle = nativePopup.slice(nativePopup.indexOf('pub fn toggle_stack_popup('), nativePopup.indexOf('\n#[tauri::command]', nativePopup.indexOf('pub fn toggle_stack_popup(') + 1));
+  assert.doesNotMatch(nativeToggle, /if popup\.is_visible\(\)[\s\S]*?hide_stack_popup_window\(app_handle\)/, 'native toggle must not bypass dirty-draft confirmation');
+  assert.match(nativeToggle, /if popup\.is_visible\(\)[\s\S]*?\.emit\(crate::contracts::events::STACK_POPUP_CLOSE_REQUESTED, \(\)\)/, 'native visible toggle targets the popup close listener');
+  assert.match(nativeToggle, /Ok\(Some\(true\)\)/, 'pending close remains visible until the guard settles');
+  assert.match(surface, /getCurrentWindow\(\)\.listen\(STACK_POPUP_CLOSE_REQUESTED_EVENT, \(\) => \{\s*closeStackPopupFromSurface\(\);/, 'popup routes native request through its guarded close');
+  assert.match(surface, /if \(disposed\) unlisten\(\);\s*else unlisteners\.push\(unlisten\);/, 'late listener registration cleans up on unmount');
+  assert.match(surface, /for \(const unlisten of unlisteners\) \{\s*unlisten\(\);/, 'mounted listener is removed on unmount');
   assert.match(surface, /<StackTextEditor[\s\S]*onDirtyChange=\{handleEditorDirtyChange\}[\s\S]*onDismiss=\{requestEditorClose\}/);
 });

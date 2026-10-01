@@ -56,12 +56,14 @@ test('TopBar holds stack popup focus while a pinned folder is pressed', () => {
   assert.match(source, /return \(\) => \{[\s\S]*releaseStackPinFocusHold\(\);[\s\S]*cancelSearchBlurClose\(\);/);
 });
 
-test('TopBar ordinary pointerdown hides stack popup but pinned-folder pointerdown keeps switch path', () => {
+test('TopBar ordinary pointerdown requests guarded popup close but pinned-folder pointerdown keeps switch path', () => {
   const source = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
-  assert.match(source, /hideStackPopup/);
+  assert.match(source, /toggleStackPopup/);
   assert.match(source, /function isPinnedFolderPointerTarget\(target: Node \| null\)/);
   assert.match(source, /closest\('button\[data-path\]'\)/);
-  assert.match(source, /function handleTopBarPointerDown[\s\S]*if \(!isPinnedFolderPointerTarget\(target\)\) \{[\s\S]*void hideStackPopup\(\)/);
+  const pointerHandler = source.slice(source.indexOf('function handleTopBarPointerDown('), source.indexOf('function isPinnedFolderPointerTarget('));
+  assert.match(pointerHandler, /const stackBrowserTarget = target instanceof Element && target\.closest\('\.stack-browser-button'\);\s*if \(!isPinnedFolderPointerTarget\(target\) && !stackBrowserTarget\) \{\s*if \(stackBrowserOpen\) \{\s*void toggleStackPopup\(\)/);
+  assert.doesNotMatch(pointerHandler, /stackBrowserOpen = false|hideStackPopup\(/, 'pending guard must keep popup state until closed event');
   assert.match(source, /function handleTopBarPointerDown[\s\S]*if \(!searchOpen \|\| !searchControl\)/);
   assert.match(source, /function startPinPointerDrag[\s\S]*beginStackPinFocusHold\(\);[\s\S]*draggingPinPath = pin\.path/);
   assert.match(source, /function finishPinPointerDrag[\s\S]*void openStackPath\(sourcePath, event\.currentTarget\)\.finally\(\(\) => \{[\s\S]*releaseStackPinFocusHold\(\);/);
