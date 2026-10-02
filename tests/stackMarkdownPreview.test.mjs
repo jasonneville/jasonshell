@@ -83,9 +83,9 @@ test('dirty Markdown Preview -> Edit -> Escape uses component dirty state, not r
   assert.match(editor, /\$: onDirtyChange\(dirty\);/);
   assert.match(editor, /onClick=\{\(\) => onDismiss\(dirty\)\}/);
   assert.match(editor, /function setEditorMode\(mode: 'preview' \| 'edit'\) \{[\s\S]*editorMode = mode;\s*destroyEditor\(\);\s*if \(mode === 'edit'\) void mountDraftEditor\(path\);/);
-  assert.match(surface, /<StackTextEditor path=\{editorPath\} onDirtyChange=\{handleEditorDirtyChange\} onDismiss=\{requestEditorClose\}/);
+  assert.match(surface, /<StackTextEditor\s+bind:this=\{textEditor\}\s+path=\{editorPath\}\s+onDirtyChange=\{handleEditorDirtyChange\}\s+onDismiss=\{requestEditorClose\}/);
   assert.match(surface, /function requestEditorClose\(dirty: boolean\) \{\s*editorDirty = dirty;\s*void requestEditorExit/);
   assert.match(surface, /beginBasicTextEditorExit\(pendingEditorExit, Boolean\(editorPath\), editorDirty, action, dismissEditor\)/);
-  assert.match(surface, /\{#if pendingEditorExit\}[\s\S]*<StackConfirmDialog title="Discard unsaved draft\?"/);
+  assert.match(surface, /\{#if pendingEditorExit\}[\s\S]*<StackConfirmDialog\s+bind:this=\{editorExitDialog\}\s+title="Discard unsaved draft\?"/);
   assert.match(editor, /editorMode = markdown \? 'preview' : 'edit'/);
 });

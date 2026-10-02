@@ -31,3 +31,22 @@ it('delete confirmation is modal, focuses cancel first, disables backdrop, and r
   await waitFor(() => expect(document.activeElement).toBe(origin));
   origin.remove();
 });
+
+it.each([false, true])('side buttons are consumed before mutation; busy=%s only permits nonbusy Back cancellation', async (busy) => {
+  const onCancel = vi.fn();
+  const onConfirm = vi.fn();
+  const view = render(StackConfirmDialog, { title: 'Delete?', busy, onCancel, onConfirm });
+  const dialog = view.getByRole('alertdialog');
+  function dispatch(button: number, type = 'pointerdown') {
+    const event = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+    dialog.dispatchEvent(event);
+    return event;
+  }
+  expect(dispatch(4).defaultPrevented).toBe(true);
+  expect(onCancel).not.toHaveBeenCalled();
+  expect(dispatch(3).defaultPrevented).toBe(true);
+  dispatch(3, 'mousedown'); dispatch(3, 'auxclick');
+  expect(onCancel).toHaveBeenCalledTimes(busy ? 0 : 1);
+  expect(onConfirm).not.toHaveBeenCalled();
+});

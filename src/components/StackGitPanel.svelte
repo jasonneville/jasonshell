@@ -1457,6 +1457,52 @@
     closePanel();
   }
 
+  export function handleMouseNavigation(direction: -1 | 1): 'consumed' | 'unhandled' {
+    // Resolve rendered layers before outside-pointer handlers can dismiss them.
+    if (pendingConfirm) {
+      if (direction === -1 && !gitMutationBlocked) void closePendingConfirm();
+      return 'consumed';
+    }
+    if (gitIgnoreConfirmOpen) {
+      if (direction === -1) closeGitIgnoreUi();
+      return 'consumed';
+    }
+    if (direction === 1) return 'consumed';
+    if (gitIgnoreMenu) { closeGitIgnoreUi(); return 'consumed'; }
+    if (branchDropdownOpen) {
+      if (!gitMutationBlocked) closeBranchDropdown();
+      return 'consumed';
+    }
+    if (operationBusy) return 'consumed';
+    if (activeView === 'history' && selectedHistoryFilePath) {
+      selectedHistoryFilePath = '';
+      closeDiffDrawer();
+    } else if (activeView === 'history' && selectedHistoryHash) {
+      selectedHistoryHash = '';
+      historyFiles = [];
+      historyFilesLoading = false;
+      historyFilesError = '';
+      closeDiffDrawer();
+    } else if (activeView === 'stashes' && selectedStashFilePath) {
+      selectedStashFilePath = '';
+      closeDiffDrawer();
+    } else if (activeView === 'stashes' && selectedStashRef) {
+      selectedStashRef = '';
+      stashFiles = [];
+      stashFilesLoading = false;
+      stashFilesError = '';
+      closeDiffDrawer();
+    } else if (activeView === 'changes' && diffDrawerOpen
+      && !collapsedChangeGroups.has(diffDrawerStaged ? 'staged' : 'unstaged')
+      && (diffDrawerStaged ? stagedEntries : unstagedEntries).some((entry) => entry.path === selectedChangePaths[0])) {
+      closeDiffDrawer();
+    } else {
+      closeDiffDrawer();
+      closePanel();
+    }
+    return 'consumed';
+  }
+
   function openPendingConfirm(next: NonNullable<typeof pendingConfirm>) {
     pendingConfirmFocusOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     pendingConfirm = next;

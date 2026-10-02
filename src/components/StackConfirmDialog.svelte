@@ -29,6 +29,18 @@
     if (!busy) onCancel();
   }
 
+  export function handleMouseNavigation(direction: -1 | 1): 'consumed' | 'unhandled' {
+    if (direction === -1) cancel();
+    return 'consumed';
+  }
+
+  function handlePointerdown(event: PointerEvent) {
+    if (event.pointerType !== 'mouse' || (event.button !== 3 && event.button !== 4)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    handleMouseNavigation(event.button === 3 ? -1 : 1);
+  }
+
   function focusableDescendants() {
     const candidates = dialog.querySelectorAll<HTMLElement>([
       'a[href]',
@@ -88,7 +100,7 @@
   }
 </script>
 
-<div class="stack-confirm-backdrop" role="presentation">
+<div class="stack-confirm-backdrop" role="presentation" on:pointerdown|capture={handlePointerdown}>
   <button class="stack-confirm-hitbox" type="button" aria-label="Dismiss confirmation dialog" disabled={busy || !dismissOnBackdrop} on:click={cancel}></button>
   <div bind:this={dialog} class="stack-confirm-dialog" role="alertdialog" aria-modal="true" tabindex="-1" aria-labelledby={`${id}-title`} aria-describedby={`${id}-message`} aria-busy={busy} on:keydown={handleKeydown}>
     <header><span aria-hidden="true"></span><h2 id={`${id}-title`}>{title}</h2></header>

@@ -107,7 +107,7 @@ test('save rebases Escape dismissal against the persisted content while pre-save
   assert.equal(dismissCount, 2, 'dirty exit does not dismiss or run the action before confirmation');
 });
 
-test('clean and explicit-discard editor exits reset stale virtual scroll before grid remount', async () => {
+test('legacy viewport-reset utility returns an empty viewport without mutating its input', async () => {
   const { resetBasicTextEditorViewport } = await importExitState();
   const entries = Array.from({ length: 200 }, (_, index) => `file-${index}`);
   const staleViewport = { scrollTop: 2400, height: 320 };
@@ -167,7 +167,7 @@ test('normal text files route to the directly mounted editor while unsupported f
   assert.match(surface, /const STACK_BASIC_TEXT_EXTENSIONS = new Set\(\[[\s\S]*'txt'[\s\S]*'md'[\s\S]*'json'[\s\S]*'svelte'[\s\S]*\]\);/);
   assert.match(surface, /if \(entry\.entryType === 'File' && isStackBasicTextFile\(entry\.path\)\) \{[\s\S]*editorPath = entry\.path;[\s\S]*return;/);
   assert.match(surface, /await openStackItem\(entry\.path\);/);
-  assert.match(surface, /<StackTextEditor\s+path=\{editorPath\}/);
+  assert.match(surface, /<StackTextEditor\s+bind:this=\{textEditor\}\s+path=\{editorPath\}/);
 });
 
 test('editor replaces the file or Git content row and owns internal scrolling', () => {
@@ -207,7 +207,7 @@ test('save shortcuts leave an active parent-owned confirmation authoritative whi
   assert.match(editor, /const target = event\.target;[\s\S]*target instanceof Element[\s\S]*target\.closest\('\[role="alertdialog"\]\[aria-modal="true"\], \[role="dialog"\]\[aria-modal="true"\]'\)/);
   assert.match(saveShortcut, /event\.key\.toLowerCase\(\) !== 's'[\s\S]*event\.ctrlKey \|\| event\.metaKey/);
   assert.match(saveShortcut, /event\.preventDefault\(\);[\s\S]*if \(isSaveShortcutBlockedByActiveModal\(event\)\) return;[\s\S]*void saveDraft\(\);/);
-  assert.match(surface, /\{#if pendingEditorExit\}[\s\S]*<StackConfirmDialog title="Discard unsaved draft\?"/);
+  assert.match(surface, /\{#if pendingEditorExit\}[\s\S]*<StackConfirmDialog\s+bind:this=\{editorExitDialog\}\s+title="Discard unsaved draft\?"/);
 });
 
 test('save conflicts block stale retries and require a deliberate draft-discarding reload', async () => {
@@ -432,7 +432,14 @@ test('every editor exit routes through one parent-owned dirty-draft guard', () =
   assert.doesNotMatch(editor, /onDismiss: \(currentDirty\) => onDismiss\(currentDirty\)/);
 
   assert.match(surface, /function requestEditorExit\(action: \(\) => void \| Promise<void>\)/);
-  assert.match(surface, /function dismissEditor\(\)[\s\S]*detailsBodyScrollTop = viewport\.scrollTop;[\s\S]*detailsBodyHeight = viewport\.height;[\s\S]*editorPath = null;/);
+  const dismissEditor = surface.match(/function dismissEditor\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? '';
+  assert.match(dismissEditor, /editorPath = null;\s*editorDirty = false;/);
+  assert.doesNotMatch(dismissEditor, /resetBasicTextEditorViewport|detailsBodyScrollTop\s*=\s*0/, 'same-folder editor dismissal must not erase the saved folder viewport');
+  assert.match(surface, /function captureFolderViewport\(\)[\s\S]*detailsBodyScrollTop = detailsBody\.scrollTop;[\s\S]*folderViewport = \{ path: currentPath, search: searchQuery, scrollTop: detailsBodyScrollTop, height: detailsBodyHeight \}/);
+  assert.match(surface, /function restoreFolderViewport\(node: HTMLElement\)[\s\S]*checkpoint\.path !== currentPath \|\| checkpoint\.search !== searchQuery[\s\S]*detailsBodyScrollTop = checkpoint\.scrollTop;[\s\S]*detailsBodyHeight = checkpoint\.height;[\s\S]*void tick\(\)\.then\([\s\S]*if \(folderViewport !== checkpoint\) return;[\s\S]*if \(cancelled \|\| checkpoint\.path !== currentPath \|\| checkpoint\.search !== searchQuery\) \{[\s\S]*folderViewport = null;\s*return;[\s\S]*node\.scrollTop = checkpoint\.scrollTop;/);
+  assert.match(surface, /function restoreFolderViewport\(node: HTMLElement\)[\s\S]*return \{ destroy\(\) \{ cancelled = true; \} \};/);
+  assert.match(surface, /use:restoreFolderViewport/);
+  assert.match(surface, /detailsGrid\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(surface, /beginBasicTextEditorExit\(pendingEditorExit, Boolean\(editorPath\), editorDirty, action, dismissEditor\)/);
   assert.match(surface, /pendingEditorExit = request\.state;/);
   assert.match(surface, /if \(!request\.accepted\) return;/);

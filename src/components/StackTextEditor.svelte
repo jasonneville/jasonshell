@@ -29,6 +29,7 @@
   let reloadErrorMessage = '';
   let saveConflict = false;
   let reloadConfirmation = false;
+  let reloadDialog: StackConfirmDialog | undefined;
   let initialContent = '';
   let fileIdentity = '';
   let draft = '';
@@ -124,6 +125,15 @@
 
   function cancelConflictReload() {
     reloadConfirmation = false;
+  }
+
+  export function handleMouseNavigation(direction: -1 | 1): 'consumed' | 'unhandled' {
+    if (reloadConfirmation) {
+      reloadDialog?.handleMouseNavigation(direction);
+    } else if (direction === -1 && !saving) {
+      onDismiss(isStackBasicTextEditorDirty(draft, initialContent));
+    }
+    return 'consumed';
   }
 
   async function confirmConflictReload() {
@@ -283,7 +293,7 @@
   </div>
 
   {#if reloadConfirmation}
-    <StackConfirmDialog title="Discard draft and reload?" message="Your in-memory draft will be discarded and replaced with the current disk version." confirmLabel="Discard and reload" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} onCancel={cancelConflictReload} onConfirm={() => void confirmConflictReload()} />
+    <StackConfirmDialog bind:this={reloadDialog} title="Discard draft and reload?" message="Your in-memory draft will be discarded and replaced with the current disk version." confirmLabel="Discard and reload" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} onCancel={cancelConflictReload} onConfirm={() => void confirmConflictReload()} />
   {/if}
 </section>
 

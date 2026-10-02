@@ -89,3 +89,18 @@ it('mock-native close request closes clean popup without discard prompt', async 
   view.unmount();
   expect(bridge.handlers.get('stack-popup:close-requested')?.size ?? 0).toBe(0);
 });
+
+it('Back cancels existing native-close dirty confirmation without dismissing draft or hiding popup', async () => {
+  render(StackPopupSurface);
+  await fireEvent.dblClick(await screen.findByText('draft.txt'));
+  await fireEvent.click(screen.getByRole('button', { name: /Make draft dirty:/ }));
+  await bridge.request();
+  const dialog = await screen.findByRole('alertdialog');
+  const event = new MouseEvent('pointerdown', { button: 3, bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+  dialog.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  expect(screen.getByRole('button', { name: /Make draft dirty:/ })).toBeTruthy();
+  expect(bridge.hide).not.toHaveBeenCalled();
+});

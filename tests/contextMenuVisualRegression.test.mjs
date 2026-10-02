@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { positionScrollableContextMenuInViewport } from '../dist-tests/lib/contextMenuPosition.js';
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const overlay = read('src/components/ContextMenuOverlaySurface.svelte');
 const shared = read('src/components/ContextMenu.svelte');
 const item = read('src/components/ContextMenuItem.svelte');

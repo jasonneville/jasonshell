@@ -118,7 +118,6 @@
   import {
     beginBasicTextEditorExit,
     cancelPendingEditorExit,
-    resetBasicTextEditorViewport,
     takePendingEditorExit,
     type PendingBasicTextEditorExit
   } from '../features/stack-browser/basicTextEditorExit';
@@ -931,6 +930,7 @@
     if (entry.entryType === 'Folder' || isStackBrowsableArchiveEntry(entry)) {
       await openFolder(entry.path);
     } else if (entry.entryType === 'File' && isStackBasicTextFile(entry.path)) {
+      captureFolderViewport();
       editorPath = entry.path;
       return;
     } else {
@@ -1222,9 +1222,6 @@
   }
 
   function dismissEditor() {
-    const viewport = resetBasicTextEditorViewport({ scrollTop: detailsBodyScrollTop, height: detailsBodyHeight });
-    detailsBodyScrollTop = viewport.scrollTop;
-    detailsBodyHeight = viewport.height;
     editorPath = null;
     editorDirty = false;
   }
@@ -1510,6 +1507,7 @@
 
   function openGitStatusPopup(filter: StackGitFileStatusKind | 'all' = 'all') {
     closeMenus();
+    captureFolderViewport();
     gitStatusPopupFilter = filter;
     gitStatusPopupOpen = true;
   }
@@ -1739,7 +1737,42 @@
   }
 
   function focusDetailsGrid() {
-    window.requestAnimationFrame(() => detailsGrid?.focus());
+    window.requestAnimationFrame(() => detailsGrid?.focus({ preventScroll: true }));
+  }
+
+  let folderViewport: { path: string; search: string; scrollTop: number; height: number } | null = null;
+
+  function captureFolderViewport() {
+    if (editorPath || gitStatusPopupOpen || !detailsBody) return;
+    detailsBodyScrollTop = detailsBody.scrollTop;
+    detailsBodyHeight = detailsBody.getBoundingClientRect().height;
+    folderViewport = { path: currentPath, search: searchQuery, scrollTop: detailsBodyScrollTop, height: detailsBodyHeight };
+  }
+
+  function restoreFolderViewport(node: HTMLElement) {
+    const checkpoint = folderViewport;
+    if (!checkpoint || checkpoint.path !== currentPath || checkpoint.search !== searchQuery) {
+      folderViewport = null;
+      return;
+    }
+    detailsBodyScrollTop = checkpoint.scrollTop;
+    detailsBodyHeight = checkpoint.height;
+    // Let virtual spacers mount before applying the real DOM scroll offset.
+    let cancelled = false;
+    void tick().then(() => {
+      if (folderViewport !== checkpoint) return;
+      if (cancelled || checkpoint.path !== currentPath || checkpoint.search !== searchQuery) {
+        // Abandoned restoration must not keep the destination viewport blocked.
+        // Only release this callback's checkpoint, never a newer capture.
+        folderViewport = null;
+        return;
+      }
+      node.scrollTop = checkpoint.scrollTop;
+      detailsBodyHeight = node.getBoundingClientRect().height;
+      folderViewport = null;
+      emitVisibleRowsWindowChanged();
+    });
+    return { destroy() { cancelled = true; } };
   }
 
   function maybeFocusDetailsGridAfterPageAppend() {
@@ -1755,6 +1788,7 @@
 
   function updateDetailsViewport() {
     window.requestAnimationFrame(() => {
+      if (editorPath || gitStatusPopupOpen || folderViewport) return;
       if (!detailsBody) {
         detailsBodyScrollTop = 0;
         detailsBodyHeight = 0;
@@ -1768,6 +1802,7 @@
   }
 
   function handleDetailsBodyScroll() {
+    if (editorPath || gitStatusPopupOpen || folderViewport) return;
     detailsBodyScrollTop = detailsBody?.scrollTop ?? 0;
     detailsBodyHeight = detailsBody?.getBoundingClientRect().height ?? 0;
     emitVisibleRowsWindowChanged();
@@ -1776,6 +1811,7 @@
   async function handleStackSearchInput(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     searchQuery = input.value;
+    folderViewport = null;
     detailsBodyScrollTop = 0;
     if (detailsBody) {
       detailsBody.scrollTop = 0;
@@ -1809,6 +1845,7 @@
   }
 
   async function clearStackSearch() {
+    folderViewport = null;
     searchQuery = '';
     detailsBodyScrollTop = 0;
     if (detailsBody) {
@@ -2399,13 +2436,31 @@
   }
 
   function handleMouseNavigation(event: MouseEvent) {
-    if (event.button === 3 && canGoBack) {
-      event.preventDefault();
-      void navigateHistory(-1);
-    } else if (event.button === 4 && canGoForward) {
-      event.preventDefault();
-      void navigateHistory(1);
-    }
+    if ((event as PointerEvent).pointerType !== 'mouse' || (event.button !== 3 && event.button !== 4)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const direction = event.button === 3 ? -1 : 1;
+    if (pendingEditorExit) { editorExitDialog?.handleMouseNavigation(direction); return; }
+    if (deleteConfirmation) { deleteDialog?.handleMouseNavigation(direction); return; }
+    if (editorPath) { textEditor?.handleMouseNavigation(direction); return; }
+    if (gitStatusPopupOpen) { gitPanel?.handleMouseNavigation(direction); return; }
+    if (rowMenu || backgroundMenu) { if (direction === -1) closeMenus(); return; }
+    if (renameDraft !== null || createFolderDraft !== null) { if (direction === -1) cancelInlineEditor(); return; }
+    if (stackBrowserViewMode === 'terminal') return;
+    if (direction === -1 ? canGoBack : canGoForward) void navigateHistory(direction);
+  }
+
+  let textEditor: StackTextEditor | undefined;
+  let gitPanel: StackGitPanel | undefined;
+  let deleteDialog: StackConfirmDialog | undefined;
+  let editorExitDialog: StackConfirmDialog | undefined;
+
+  function suppressMouseNavigationCompatibility(event: MouseEvent) {
+    if (event.button !== 3 && event.button !== 4) return;
+    // WebView compatibility events must not perform browser history or reach
+    // outside-click handlers after pointerdown has already resolved the owner.
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }
 
   function beginResize(event: PointerEvent) {
@@ -2485,7 +2540,9 @@
 <svelte:window
   on:keydown={handleKeydown}
   on:click={closeMenus}
-  on:mousedown={handleMouseNavigation}
+  on:pointerdown|capture={handleMouseNavigation}
+  on:mousedown|capture={suppressMouseNavigationCompatibility}
+  on:auxclick|capture={suppressMouseNavigationCompatibility}
   on:pointermove={handleResizePointerMove}
   on:pointermove={handleMarqueePointerMove}
   on:pointerup={endResize}
@@ -2673,9 +2730,10 @@
     </form>
   {/if}
   {#if editorPath}
-    <StackTextEditor path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} />
+    <StackTextEditor bind:this={textEditor} path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} />
   {:else if gitStatusPopupOpen}
     <StackGitPanel
+      bind:this={gitPanel}
       folderPath={currentPath}
       initialStatus={gitStatus}
       initialChangeFilter={gitStatusPopupFilter}
@@ -2710,6 +2768,7 @@
         class:marquee-selecting={!!marqueeSelection}
         role="rowgroup"
         bind:this={detailsBody}
+        use:restoreFolderViewport
         data-stack-marquee-start="body"
         on:scroll={handleDetailsBodyScroll}
       >
@@ -2860,11 +2919,11 @@
   {/if}
 
   {#if deleteConfirmation}
-    <StackConfirmDialog title={deleteConfirmation.title} message={deleteConfirmation.message} confirmLabel="Delete" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={detailsGrid} onCancel={cancelDeleteConfirmation} onConfirm={() => void confirmDeleteSelection()} />
+    <StackConfirmDialog bind:this={deleteDialog} title={deleteConfirmation.title} message={deleteConfirmation.message} confirmLabel="Delete" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={detailsGrid} onCancel={cancelDeleteConfirmation} onConfirm={() => void confirmDeleteSelection()} />
   {/if}
 
   {#if pendingEditorExit}
-    <StackConfirmDialog title="Discard unsaved draft?" message="Your changes will be lost." confirmLabel="Discard" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={editorExitFocusOrigin} onCancel={cancelEditorExit} onConfirm={() => void confirmEditorExit()} />
+    <StackConfirmDialog bind:this={editorExitDialog} title="Discard unsaved draft?" message="Your changes will be lost." confirmLabel="Discard" tone="danger" initialFocus="cancel" dismissOnBackdrop={false} returnFocus={editorExitFocusOrigin} onCancel={cancelEditorExit} onConfirm={() => void confirmEditorExit()} />
   {/if}
 
   <button
