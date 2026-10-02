@@ -112,32 +112,44 @@
     };
   });
 
-  $: showBars = meterSnapshot.showBars;
-  $: barScale = Math.max(0.16, meterSnapshot.level);
+  $: isSpeaking = meterSnapshot.showBars;
 </script>
 
 <main class="speech-indicator" aria-hidden="true">
-  <div class={showBars ? 'mic-shell mic-shell--speaking' : 'mic-shell'}>
+  <div class={isSpeaking ? 'mic-shell mic-shell--speaking' : 'mic-shell'}>
     <img class="mic-glyph" src={micIconUrl} alt="" />
     <span class="mic-glyph-contrast"></span>
-    <div class="waveform" style:--bar-scale={barScale}>
-      <span class="bar"></span><span class="bar"></span><span class="bar"></span>
-      <span class="bar"></span><span class="bar"></span>
-    </div>
   </div>
 </main>
 
 <style>
   :global(html), :global(body) { background: transparent; margin: 0; overflow: hidden; }
   .speech-indicator { align-items: center; display: flex; height: 100%; justify-content: center; pointer-events: none; width: 100%; }
-  .mic-shell { align-items: center; background: color-mix(in srgb, var(--js-color-surface-raised) 55%, transparent); border: 1px solid color-mix(in srgb, #8fe3ff 24%, transparent); border-radius: 50%; box-sizing: border-box; display: flex; gap: 0; height: 40px; justify-content: center; padding: 7px; width: 40px; transition: width 220ms cubic-bezier(.22, 1, .36, 1), border-radius 220ms ease, gap 220ms cubic-bezier(.22, 1, .36, 1); }
-  .mic-shell--speaking { border-radius: 999px; gap: 8px; width: 88px; }
+  .mic-shell {
+    align-items: center;
+    background: color-mix(in srgb, var(--js-color-surface-raised) 55%, transparent);
+    border: 1px solid color-mix(in srgb, #8fe3ff 24%, transparent);
+    border-radius: 50%;
+    box-sizing: border-box;
+    box-shadow: inset 0 0 3px 1px transparent;
+    display: flex;
+    height: 40px;
+    justify-content: center;
+    padding: 7px;
+    width: 40px;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+  }
+  .mic-shell--speaking {
+    border-color: #8fe3ff;
+    box-shadow: inset 0 0 3px 1px color-mix(in srgb, #8fe3ff 35%, transparent);
+  }
   .mic-glyph { flex-shrink: 0; height: 24px; width: 24px; }
   .mic-glyph-contrast { display: none; flex-shrink: 0; height: 24px; width: 24px; }
-  .waveform { align-items: center; display: flex; flex-shrink: 0; gap: 4px; height: 28px; opacity: 0; overflow: hidden; width: 0; transition: width 220ms cubic-bezier(.22, 1, .36, 1), opacity 160ms ease; }
-  .mic-shell--speaking .waveform { opacity: 1; width: 31px; }
-  .bar { background: #8fe3ff; border-radius: 99px; box-shadow: 0 0 4px color-mix(in srgb, #8fe3ff 45%, transparent); flex-shrink: 0; height: calc(4px + var(--bar-scale) * 24px); width: 3px; transition: height 110ms cubic-bezier(.22, 1, .36, 1); }
-  .bar:nth-child(2), .bar:nth-child(4) { height: calc(4px + var(--bar-scale) * 18px); }
-  @media (prefers-reduced-motion: reduce) { .mic-shell, .waveform, .bar { animation: none; transition: none; } }
-  @media (forced-colors: active) { .mic-shell { background: Canvas; border: 1px solid CanvasText; } .mic-glyph { display: none; } .mic-glyph-contrast { background: CanvasText; display: block; mask: url('../assets/icons/mic_24dp_E3E3E3_FILL1_wght300_GRAD0_opsz24.svg') center / contain no-repeat; } .bar { background: CanvasText; box-shadow: none; } }
+  @media (prefers-reduced-motion: reduce) { .mic-shell { transition: none; } }
+  @media (forced-colors: active) {
+    .mic-shell { background: Canvas; border: 1px solid CanvasText; box-shadow: none; forced-color-adjust: none; }
+    .mic-shell--speaking { border-color: Highlight; }
+    .mic-glyph { display: none; }
+    .mic-glyph-contrast { background: CanvasText; display: block; mask: url('../assets/icons/mic_24dp_E3E3E3_FILL1_wght300_GRAD0_opsz24.svg') center / contain no-repeat; }
+  }
 </style>

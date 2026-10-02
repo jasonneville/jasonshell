@@ -46,3 +46,15 @@ test('invalid and subthreshold levels cannot activate bars; finite levels clamp 
   meter.reset();
   assert.deepEqual(meter.snapshot(10), { showBars: false, level: 0 });
 });
+
+test('exact 0.035 threshold is audible, immediately lower input is quiet and cannot extend expiry', () => {
+  const meter = createSpeechIndicatorMeter();
+  const below = 0.035 - Number.EPSILON;
+  assert.equal(meter.update(below, 0), false);
+  assert.deepEqual(meter.snapshot(0), { showBars: false, level: 0 });
+  assert.equal(meter.update(0.035, 10), true);
+  assert.deepEqual(meter.snapshot(10), { showBars: true, level: 0.035 });
+  assert.equal(meter.update(below, 309), false);
+  assert.equal(meter.snapshot(309).showBars, true);
+  assert.deepEqual(meter.snapshot(310), { showBars: false, level: 0 });
+});

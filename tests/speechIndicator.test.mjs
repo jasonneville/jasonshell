@@ -34,36 +34,59 @@ test('hidden speech-indicator webview has event, status-query and window access'
     'indicator needs nearby panel precedent for event IPC and window methods');
 });
 
-test('Centerline reuses the packaged top-bar mic artwork beside its quiet and level visuals', () => {
+test('Centerline reuses the packaged top-bar mic artwork in quiet and speaking states', () => {
   const indicator = indicatorSource();
   const micAsset = mic.match(/new URL\(\s*'([^']*mic_[^']*\.svg)'/)?.[1];
   assert.ok(micAsset, 'top-bar mic art must be a packaged SVG');
   assert.doesNotMatch(indicator, /<div\b[^>]*class="scan-line"|@keyframes scan-line|\.scan-line\s*\{/i);
-  assert.match(indicator, /(?:bar|waveform)/i);
   assert.ok(indicator.includes(micAsset) && /<img\b|background-image|url\(\$\{/.test(indicator),
     'Centerline must render the same packaged mic art as the top-bar control');
 });
 
-test('quiet mic has translucent circular shell that smoothly expands into voice pill', () => {
+test('mic shell stays a fixed translucent 40px circle in quiet and speaking states', () => {
   const indicator = indicatorSource();
   const css = indicator.split('<style>')[1] ?? '';
-  assert.match(indicator, /\{#if showBars\}|showBars\s*\?/);
+  assert.match(indicator, /meterSnapshot\.showBars/, 'the existing meter gates the speaking edge');
   assert.match(indicator, /<img\b[^>]*class="mic-glyph"/);
   assert.match(css, /border-radius:\s*(?:50%|999(?:9)?px|50vw)/i, 'quiet mic shell must be circular');
-  assert.match(css, /(?:\.[\w-]+--(?:speaking|active|voice)|:has\(\.waveform\)|\.[\w-]+\[data-(?:speaking|active))[^\{]*\{[^}]*border-radius:\s*(?:999(?:9)?px|\d+(?:\.\d+)?rem)/i,
-    'audible shell must take a pill silhouette');
+  const shell = css.match(/\.mic-shell\s*\{([^}]+)\}/)?.[1] ?? '';
+  assert.match(shell, /(?:^|;)\s*width:\s*40px\b/);
+  assert.match(shell, /(?:^|;)\s*height:\s*40px\b/);
+  const speaking = css.match(/\.mic-shell--speaking\s*\{([^}]+)\}/)?.[1] ?? '';
+  assert.doesNotMatch(speaking, /(?:^|;)\s*(?:width|height|min-width|max-width|padding|gap|border-radius|transform):/i,
+    'speaking must not override fixed circle geometry (old speaking width is 88px)');
   assert.match(css, /background:\s*(?:color-mix\(in srgb,\s*var\(--js-color-surface-[\w-]+\)\s*(?:4\d|5\d|6\d)%\s*,\s*transparent\)|rgba?\([^;]*[,/]\s*0\.[4-6]\d*\s*\))/i,
     'local surface-color backdrop should be about half transparent');
-  const shell = css.match(/\.\w*(?:shell|capsule|backdrop|indicator)[\w-]*\s*\{([^}]+)\}/i)?.[1] ?? '';
   assert.doesNotMatch(shell, /(?:^|;)\s*opacity:\s*0\.[4-6]\b/i,
     'translucency belongs to the backdrop, not the mic glyph or entire component');
-  assert.match(css, /transition:\s*[^;]*(?:width|max-width|padding|border-radius|background)[^;]*\d+ms/i,
-    'circle-to-pill geometry must transition rather than jump');
-  assert.match(css, /\.bar\b[^\{]*\{[^}]*transition:\s*[^;]*(?:height|transform)[^;]*\d+ms/i,
-    'bar height or scale must transition between real meter levels');
+  assert.doesNotMatch(css, /transition:\s*[^;]*(?:\ball\b|width|height|padding|gap|border-radius|transform)/i,
+    'geometry must not transition');
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?transition:\s*none/i);
   assert.match(css, /@media\s*\(forced-colors:\s*active\)[\s\S]*?(?:Canvas|CanvasText|border:\s*\d+px)/i);
   assert.doesNotMatch(indicator, /scan-line|idle-pulse|Math\.random/i);
+});
+
+test('speaking adds a steady cyan edge with a short color and inset fade, never waves or pulses', () => {
+  const indicator = indicatorSource();
+  const css = indicator.split('<style>')[1] ?? '';
+  const speaking = css.match(/\.mic-shell--speaking\s*\{([^}]+)\}/)?.[1] ?? '';
+  assert.match(speaking, /(?:border(?:-color)?|outline(?:-color)?):[^;]*#8fe3ff/i,
+    'speech must brighten the edge to the steady cyan accent');
+  assert.match(speaking, /box-shadow:[^;]*inset[^;]*#8fe3ff/i,
+    'speech edge gets a restrained inset accent');
+  assert.match(css, /transition:[^;]*(?:border-color|outline-color)\s+160ms/i);
+  assert.match(css, /transition:[^;]*box-shadow\s+160ms/i);
+  assert.doesNotMatch(indicator, /class="(?:waveform|bar)"|barScale|--bar-scale|meterSnapshot\.level/,
+    'normalized volume must not drive presentation; internal showBars remains valid');
+  assert.doesNotMatch(css, /\.waveform\b|\.bar\b|@keyframes|animation:\s*(?!\s*none\b)[^;]+|pulse/i);
+});
+
+test('forced colors keeps a distinguishable speaking edge without geometry changes', () => {
+  const css = indicatorSource().split('@media (forced-colors: active)')[1] ?? '';
+  const speaking = css.match(/\.mic-shell--speaking\s*\{([^}]+)\}/)?.[1] ?? '';
+  assert.match(speaking, /(?:border(?:-color)?|outline(?:-color)?):[^;]*Highlight/i,
+    'forced-colors speech must have an explicit distinguishable system-color edge');
+  assert.doesNotMatch(speaking, /(?:^|;)\s*(?:width|height|padding|gap|border-radius|transform):/i);
 });
 
 test('forced colors replace the packaged image with a visible CanvasText mic mask', () => {
@@ -269,14 +292,14 @@ test('voice-level IPC contains only a bounded normalized level and session nonce
   assert.doesNotMatch(callback, /\.emit\(|emit_to\(|speech:voice-level|SPEECH_VOICE_LEVEL/);
 });
 
-test('quiet recording shows only mic artwork; real voice levels control bars with a silence hold', () => {
+test('quiet recording shows mic artwork; real voice levels gate the speaking edge with a silence hold', () => {
   const indicator = indicatorSource();
   assert.match(indicator, /<img\b[^>]*class="mic-glyph"/);
   assert.doesNotMatch(indicator, /<div\b[^>]*class="scan-line"|@keyframes scan-line|\.scan-line\s*\{/i);
   assert.match(indicator, /(?:voiceLevel|voice_level|level)/);
   assert.match(indicator, /(?:threshold|noiseFloor|noise_floor)/i);
   assert.match(indicator, /(?:decay|holdMs|releaseMs)/i);
-  assert.match(indicator, /(?:bar|waveform)/i);
+  assert.match(indicator, /meterSnapshot\.showBars/);
   assert.doesNotMatch(indicator, /Math\.random|fakeLevel|simulatedLevel|setInterval\([^)]*random/i);
   assert.doesNotMatch(indicator, /pauseSpeech|resumeSpeech|simulatePause|simulateResume/i);
 });

@@ -30,7 +30,7 @@ Current shipped surfaces:
 - centered search
 - process manager
 - audio, calendar, settings, tray, and related panels
-- speech capture uses a dedicated transparent, noninteractive `speech-indicator` surface; its nonce-tagged `speech:voice-level` event carries only a normalized scalar meter, never audio or transcript data
+- speech capture uses a dedicated transparent, noninteractive `speech-indicator` surface visible only during recording: a centered, fixed 40×40px circle with translucent backdrop and unchanged mic artwork; speaking adds a steady cyan edge and inset light with a 160ms color/light fade, never waveform, pulse, volume-driven brightness, or geometry change. The existing 0.035 threshold and 300ms word-gap hold gate that edge; reduced motion removes transitions, and forced colors use distinct system-color edges. Its nonce-tagged `speech:voice-level` event carries only a normalized scalar meter, never audio or transcript data
 
 Intentional limits:
 
