@@ -278,6 +278,7 @@ mod windows_clipboard {
         Err(ClipboardFailure::PublishRejected)
     }
 
+    #[cfg(test)]
     fn publish_with(
         text: &str,
         publisher: &impl ClipboardPublisher,

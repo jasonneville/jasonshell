@@ -1621,16 +1621,6 @@ fn start_fullscreen_guard_owned(app_handle: AppHandle) -> StartedFullscreenGuard
     }
 }
 
-fn stop_fullscreen_guard(state: &mut ShellRuntimeState) {
-    if let Some(stop) = state.fullscreen_guard_stop.take() {
-        stop.store(true, Ordering::Relaxed);
-    }
-
-    if let Some(guard) = state.fullscreen_guard.take() {
-        let _ = guard.join();
-    }
-}
-
 fn stop_fullscreen_guard_owned(handles: StartedFullscreenGuardHandles) {
     handles.fullscreen_stop.store(true, Ordering::Relaxed);
     let _ = handles.fullscreen_guard.join();

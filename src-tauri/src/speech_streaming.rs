@@ -29,7 +29,6 @@ pub(crate) enum InputCloseReason {
 #[derive(Debug)]
 pub(crate) enum WorkerMessage {
     Segment(Box<[f32]>),
-    Close(InputCloseReason),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +209,7 @@ fn code_reason(code: u64) -> Option<InputCloseReason> {
 }
 
 /// Conservative overlap merge. Only token-boundary punctuation is ignored for matching.
+#[cfg(test)]
 pub(crate) fn merge_tdt_text(accumulated: &mut String, next: &str) {
     merge_tdt_window(accumulated, next, true);
 }

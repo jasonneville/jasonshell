@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::contracts;
 use tauri::WebviewWindow;
 
@@ -32,6 +33,7 @@ impl CallerAuthError {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn allowed_stack_command_callers(auth: StackCommandAuth) -> &'static [&'static str] {
     match auth {
         StackCommandAuth::AllowedCallers { callers, .. }
@@ -68,6 +70,7 @@ pub(crate) fn authorize_stack_command_caller(
 
 // terminal session target auth: caller must match stored session target; never trust request target alone.
 
+#[cfg(test)]
 pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
     StackCommandAuth::AllowedCallers {
         command: contracts::commands::LIST_PINNED_STACK_FOLDERS,

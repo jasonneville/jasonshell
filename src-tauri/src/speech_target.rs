@@ -20,17 +20,6 @@ pub(crate) enum SpeechPasteFailure {
     InputRejected,
 }
 
-impl SpeechPasteFailure {
-    pub(crate) const fn code(self) -> &'static str {
-        match self {
-            Self::TargetUnavailable => "paste-target-unavailable",
-            Self::TargetChanged => "paste-target-changed",
-            Self::FocusDenied => "paste-focus-denied",
-            Self::InputRejected => "paste-input-rejected",
-        }
-    }
-}
-
 #[cfg(target_os = "windows")]
 fn target_identity(hwnd: windows::Win32::Foundation::HWND) -> Option<SpeechPasteTarget> {
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -78,6 +67,7 @@ pub(crate) fn capture_speech_paste_target() -> Result<SpeechPasteTarget, SpeechP
 ///
 /// A changed or unavailable target fails closed rather than pasting into the
 /// current foreground application.
+#[cfg(test)]
 pub(crate) fn paste_to_captured_target(
     target: SpeechPasteTarget,
 ) -> Result<(), SpeechPasteFailure> {

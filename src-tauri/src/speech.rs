@@ -5,7 +5,6 @@ pub const MAX_RECORDING_DURATION: Duration = Duration::from_secs(300);
 pub const MAX_SPEECH_OPERATION_DURATION: Duration = Duration::from_secs(45);
 pub const SPEECH_BUSY_ERROR: &str = "Speech is busy";
 pub const SPEECH_STATE_ERROR: &str = "Speech request is no longer active";
-pub const SPEECH_LIMIT_ERROR: &str = "Speech recording limit reached";
 pub const SPEECH_TIMEOUT_CODE: &str = "timeout";
 pub const MAX_SPEECH_HISTORY_ENTRIES: usize = 5;
 /// Maximum retained transcript bytes per process-session history entry.
@@ -108,6 +107,7 @@ enum Phase {
     Idle,
     Recording {
         nonce: SpeechSessionNonce,
+        #[cfg(test)]
         started_at: Duration,
     },
     Transcribing {
@@ -136,7 +136,7 @@ impl Default for SpeechController {
 }
 
 impl SpeechController {
-    pub fn start(&mut self, now: Duration) -> Result<SpeechStatusEvent, &'static str> {
+    pub fn start(&mut self, _now: Duration) -> Result<SpeechStatusEvent, &'static str> {
         if matches!(
             self.phase,
             Phase::Recording { .. } | Phase::Transcribing { .. }
@@ -150,7 +150,8 @@ impl SpeechController {
         let nonce = SpeechSessionNonce(next_nonce);
         self.phase = Phase::Recording {
             nonce,
-            started_at: now,
+            #[cfg(test)]
+            started_at: _now,
         };
         Ok(Self::event(SpeechStatusKind::Recording, Some(nonce), None))
     }
@@ -187,6 +188,7 @@ impl SpeechController {
         Ok(event)
     }
 
+    #[cfg(test)]
     pub fn expire_recording(
         &mut self,
         nonce: SpeechSessionNonce,

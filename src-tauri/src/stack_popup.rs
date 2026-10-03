@@ -20,7 +20,6 @@ pub(crate) mod text_document;
 use crate::shell_paths;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{
@@ -36,10 +35,9 @@ pub struct StackPathSuggestion {
     pub path: String,
 }
 
-pub(crate) use auth::{
-    allowed_stack_command_callers, authorize_stack_command, authorize_stack_command_caller,
-    CallerAuthError, StackCommandAuth,
-};
+#[cfg(test)]
+pub(crate) use auth::authorize_stack_command_caller;
+pub(crate) use auth::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 pub use models::{
     PinnedStackFolder, ShowStackPopupRequest, StackBasicTextFile, StackFolderPage,
     StackGitBranchRequest, StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest,

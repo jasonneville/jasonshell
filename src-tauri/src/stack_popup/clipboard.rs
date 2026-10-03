@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::stack_popup::file_ops::{copy_path_with_journal, move_path_with_fallback_journal};
 use crate::stack_popup::file_ops::{
-    available_destination_path, copy_path_with_journal, ensure_paste_destination_allowed,
-    move_path_with_fallback_journal, copy_path_with_journal_progress, move_path_with_fallback_journal_progress,
+    available_destination_path, ensure_paste_destination_allowed,
+    copy_path_with_journal_progress, move_path_with_fallback_journal_progress,
 };
 use crate::stack_popup::items::stack_item_from_path;
 use crate::stack_popup::models::{
@@ -237,6 +239,7 @@ fn clipboard_for_paste(
     read_native_file_clipboard()?.ok_or_else(|| "Stack clipboard is empty".to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn paste_clipboard_items(
     clipboard: &StackClipboard,
     destination: &Path,
@@ -329,6 +332,7 @@ fn paste_clipboard_items_progress(
     StackPasteResult { pasted, failures }
 }
 
+#[cfg(test)]
 fn paste_one_clipboard_item(
     mode: ClipboardMode,
     source: &Path,
@@ -376,10 +380,9 @@ fn read_native_file_clipboard() -> Result<Option<StackClipboard>, String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        GetClipboardData, IsClipboardFormatAvailable,
         RegisterClipboardFormatW,
     };
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
     use windows::Win32::System::Ole::CF_HDROP;
     use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
@@ -432,7 +435,7 @@ fn read_native_file_clipboard() -> Result<Option<StackClipboard>, String> {
                 ClipboardMode::Copy
             } else {
                 let memory = memory.unwrap();
-                let effect = unsafe { *(memory.as_mut_ptr() as *mut u32) };
+                let effect = *(memory.as_mut_ptr() as *mut u32);
                 clipboard_mode_from_drop_effect(effect)
             }
         } else {
@@ -452,9 +455,8 @@ fn set_native_file_clipboard(paths: &[PathBuf], mode: ClipboardMode) -> Result<(
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{HANDLE, POINT};
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+        EmptyClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     use windows::Win32::System::Ole::CF_HDROP;
     use windows::Win32::UI::Shell::DROPFILES;
 
@@ -470,7 +472,7 @@ fn set_native_file_clipboard(paths: &[PathBuf], mode: ClipboardMode) -> Result<(
     // SAFETY: Allocates a movable global memory block large enough for the
     // DROPFILES header plus the double-NUL-terminated UTF-16 path list, locks it,
     // writes initialized bytes, then unlocks before transferring ownership to the clipboard.
-    let mut hdrop_owner = OwnedGlobalMem::allocate(dropfiles_size + paths_size)?;
+    let hdrop_owner = OwnedGlobalMem::allocate(dropfiles_size + paths_size)?;
     let hdrop = unsafe {
         let memory = GlobalLockGuard::lock(hdrop_owner.handle())?;
         let dropfiles = memory.as_mut_ptr() as *mut DROPFILES;

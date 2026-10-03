@@ -228,6 +228,7 @@ fn bounded_transcript(text: &str) -> String {
     text[..end].to_owned()
 }
 
+#[cfg(test)]
 fn record_clipboard_attempt<F>(
     state: &SpeechRuntimeState,
     nonce: SpeechSessionNonce,
@@ -949,7 +950,6 @@ fn run_streaming_worker(
                         new_segments = 0;
                     }
                 }
-                WorkerMessage::Close(_) => break,
             }
         }
         while let Ok(WorkerMessage::Segment(segment)) = receiver.try_recv() {
@@ -1170,6 +1170,7 @@ fn wait_for_finalizing(app: &AppHandle, nonce: SpeechSessionNonce) -> Result<(),
     Err(SpeechFailure::Timeout)
 }
 
+#[cfg(test)]
 fn complete_authorized_publish(
     controller: &mut SpeechController,
     nonce: SpeechSessionNonce,
@@ -1178,6 +1179,7 @@ fn complete_authorized_publish(
     controller.complete_copied(nonce, authorized_at)
 }
 
+#[cfg(test)]
 fn publish_if_current<N, P>(
     controller: &mut SpeechController,
     nonce: SpeechSessionNonce,
@@ -1314,6 +1316,7 @@ fn expire_transcription_and_invalidate(
     Some(event)
 }
 
+#[cfg(test)]
 fn expire_recording_and_invalidate(
     state: &SpeechRuntimeState,
     nonce: SpeechSessionNonce,
@@ -1860,16 +1863,6 @@ fn validate_audio(audio: &[f32]) -> Result<(), SpeechFailure> {
     }
 }
 
-fn sample_metrics(audio: &[f32]) -> (usize, bool, f32) {
-    (
-        audio.len(),
-        audio.iter().all(|sample| sample.is_finite()),
-        audio
-            .iter()
-            .fold(0.0_f32, |peak, sample| peak.max(sample.abs())),
-    )
-}
-
 #[cfg(debug_assertions)]
 fn debug_diagnostic(
     nonce: SpeechSessionNonce,
@@ -1908,6 +1901,7 @@ fn debug_diagnostic(
 ) {
 }
 
+#[cfg(test)]
 fn resample_to_mono_16k(input: &[f32], source_rate: u32, channels: u16) -> Vec<f32> {
     if input.is_empty() || source_rate == 0 || channels == 0 {
         return Vec::new();

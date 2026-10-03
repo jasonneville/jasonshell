@@ -19,6 +19,20 @@ export default defineConfig(({ command }) => {
   return {
     clearScreen: false,
     plugins,
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            // Keep the shared editor runtime out of the Stack surface chunk.
+            // XML is already required statically for atomic closing-tag edits.
+            const modulePath = id.replace(/\\/g, '/');
+            if (/\/node_modules\/(?:@codemirror\/(?:commands|language|lang-xml|search|state|view)|@lezer\/(?:common|highlight|lr))\//.test(modulePath)) {
+              return 'stack-editor-core';
+            }
+          }
+        }
+      }
+    },
     server: {
       host: host || false,
       hmr: host

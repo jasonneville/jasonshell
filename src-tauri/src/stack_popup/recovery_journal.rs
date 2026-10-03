@@ -4,11 +4,15 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const RECOVERY_JOURNAL_VERSION: u32 = 1;
+#[cfg(test)]
 pub(crate) const RECOVERY_JOURNAL_RETENTION_DAYS: u64 = 14;
 pub(crate) const RECOVERY_JOURNAL_DIR_NAME: &str = "stack-browser-recovery";
+#[cfg(test)]
 const RECOVERY_JOURNAL_STALE_INTERRUPT_AFTER_MS: u64 = 24 * 60 * 60 * 1000;
 static OP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -131,6 +135,7 @@ impl RecoveryJournalEntry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn mark_stale_running_as_interrupted(
         &mut self,
         now_epoch_ms: u64,
@@ -143,6 +148,7 @@ impl RecoveryJournalEntry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn is_terminal(&self) -> bool {
         matches!(
             self.state,
@@ -209,6 +215,7 @@ pub(crate) fn write_recovery_journal_atomic(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn cleanup_recovery_journals(
     dir: &Path,
     now_epoch_ms: u64,
@@ -267,6 +274,7 @@ pub(crate) fn cleanup_recovery_journals(
     Ok(removed)
 }
 
+#[cfg(test)]
 fn is_reparse_or_symlink(path: &Path) -> Result<bool, String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("Failed to inspect recovery journal artifact: {error}"))?;
@@ -285,6 +293,7 @@ fn is_reparse_or_symlink(path: &Path) -> Result<bool, String> {
     }
 }
 
+#[cfg(test)]
 fn is_terminal_journal_file(path: &Path) -> bool {
     let name = path.file_name().and_then(|v| v.to_str()).unwrap_or("");
     name.starts_with("recovery-") && name.ends_with(".json")
@@ -298,6 +307,7 @@ fn unique_recovery_journal_temp_path(dir: &Path, stem: &str) -> PathBuf {
     dir.join(format!(".{stem}.{nonce}.json.tmp"))
 }
 
+#[cfg(test)]
 fn epoch_ms(time: SystemTime) -> Option<u64> {
     time.duration_since(UNIX_EPOCH)
         .ok()

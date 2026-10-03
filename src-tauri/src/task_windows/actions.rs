@@ -415,20 +415,6 @@ pub(crate) struct TaskWindowIdentity {
     pub(crate) canonical_image_path: PathBuf,
 }
 
-pub(super) fn capture_task_window_identity(
-    hwnd: windows::Win32::Foundation::HWND,
-    process_id: u32,
-) -> Result<TaskWindowIdentity, String> {
-    let current = current_task_window_identity(hwnd)?;
-    if current.process_id != process_id {
-        return Err(
-            "Task window target identity could not be revalidated before close fallback"
-                .to_string(),
-        );
-    }
-    Ok(current)
-}
-
 pub(crate) fn current_task_window_identity(
     hwnd: windows::Win32::Foundation::HWND,
 ) -> Result<TaskWindowIdentity, String> {

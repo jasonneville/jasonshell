@@ -116,29 +116,6 @@ pub(crate) fn start_taskbar_hooks(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn record_taskbar_attention(
-    identity: attention::TaskbarAttentionIdentity,
-    requested: bool,
-) {
-    attention::record_taskbar_attention(identity, requested);
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn clear_taskbar_attention_if_matches(identity: &attention::TaskbarAttentionIdentity) {
-    attention::clear_taskbar_attention_if_matches(identity);
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn remove_root_owner_taskbar_attention(root_owner_hwnd: isize) {
-    attention::remove_root_owner_taskbar_attention(root_owner_hwnd);
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn taskbar_native_hooks_health() -> native_hooks::NativeHooksHealth {
-    native_hooks::native_hooks_health()
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) fn stop_taskbar_hooks() {
     native_hooks::stop_native_hooks();
 }

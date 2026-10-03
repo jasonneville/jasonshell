@@ -278,33 +278,6 @@ fn build_task_gallery_window(app: &mut App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
-fn build_shell_popup_window(
-    app: &App,
-    label: &str,
-    title: &str,
-    width: f64,
-    height: f64,
-) -> AppResult<WebviewWindow> {
-    Ok(
-        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-            .always_on_top(true)
-            .devtools(false)
-            .decorations(false)
-            .focused(false)
-            .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
-            .inner_size(width, height)
-            .maximizable(false)
-            .minimizable(false)
-            .resizable(false)
-            .shadow(true)
-            .skip_taskbar(true)
-            .theme(Some(Theme::Dark))
-            .title(title)
-            .visible(false)
-            .build()?,
-    )
-}
-
 fn build_shell_window(
     app: &App,
     label: &str,

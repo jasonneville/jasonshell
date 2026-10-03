@@ -34,9 +34,7 @@ enum GitRunMode {
 #[derive(Debug, PartialEq, Eq)]
 enum GitCommandError {
     Spawn(String),
-    Stdin(String),
     Timeout(String),
-    Canceled(String),
     Internal(String),
     NonZero(String),
     AuthRequired(String),
@@ -49,9 +47,7 @@ impl GitCommandError {
     fn into_message(self) -> String {
         match self {
             Self::Spawn(msg)
-            | Self::Stdin(msg)
             | Self::Timeout(msg)
-            | Self::Canceled(msg)
             | Self::Internal(msg)
             | Self::NonZero(msg)
             | Self::AuthRequired(msg)
@@ -1288,19 +1284,6 @@ fn trim_bounded_git_commit_message(value: &str) -> String {
     value.trim().chars().take(MAX_GIT_COMMIT_MESSAGE).collect()
 }
 
-fn git_relative_path_for_tree_request(repo_root: &Path, path: &str) -> Result<String, String> {
-    let canonical = canonicalize_existing_path(Path::new(path))?;
-    let canonical_root = canonicalize_existing_path(repo_root)?;
-    if !path_within_root(&canonical_root, &canonical) {
-        return Err("Git path is outside the repository".to_string());
-    }
-    Ok(canonical
-        .strip_prefix(&canonical_root)
-        .map_err(|_| "Git path is outside the repository".to_string())?
-        .to_string_lossy()
-        .replace('\\', "/"))
-}
-
 fn git_status_relative_paths(repo_root: &Path) -> Result<HashSet<String>, String> {
     let output = git_stdout_bytes(
         repo_root,
@@ -1338,6 +1321,7 @@ fn parse_git_status_paths(repo_root: &Path, porcelain: &[u8]) -> HashSet<String>
     paths
 }
 
+#[cfg(test)]
 fn normalize_repo_relative_existing_path(
     repo_root: &Path,
     candidate: &Path,

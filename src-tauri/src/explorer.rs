@@ -73,20 +73,7 @@ pub struct ExplorerTaskbarSnapshot {
     pub hidden_by_jasonshell: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ExplorerTaskbarDiagnosticsCounters {
-    pub tracked: u64,
-    pub hidden: u64,
-    pub recreation: u64,
-    pub hide_failure: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ExplorerTaskbarDiagnosticsState {
-    pub counters: ExplorerTaskbarDiagnosticsCounters,
-    pub last_error: Option<String>,
-}
-
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
 pub struct ExplorerTaskbarModel {
     pub tracked: Vec<ExplorerTaskbarSnapshot>,
@@ -96,6 +83,7 @@ pub struct ExplorerTaskbarModel {
     pub last_error: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplorerTaskbarFakeOp {
     Hide(isize),
@@ -237,15 +225,6 @@ pub fn hide_taskbars_if_needed(
 
 pub fn enforce_taskbar_hidden(snapshot: ExplorerTaskbarSnapshot) -> Result<bool, WindowsError> {
     set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
-}
-
-pub fn enforce_hidden_taskbars(snaps: &[ExplorerTaskbarSnapshot]) -> Result<(), WindowsError> {
-    for snapshot in snaps.iter().copied() {
-        if snapshot.hidden_by_jasonshell {
-            let _ = enforce_taskbar_hidden(snapshot)?;
-        }
-    }
-    Ok(())
 }
 
 pub fn reconcile_owned_taskbars(
@@ -489,16 +468,6 @@ fn hide_taskbars_core(
     Ok((hidden, hide_failures))
 }
 
-pub fn enforce_primary_taskbar_hidden(primary_monitor_rect: RECT) -> Result<bool, WindowsError> {
-    let Some(snapshot) = primary_taskbar_snapshot(primary_monitor_rect)? else {
-        return Ok(false);
-    };
-    if !snapshot.originally_visible {
-        return Ok(true);
-    }
-    set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
-}
-
 pub fn restore_taskbar(snapshot: ExplorerTaskbarSnapshot) -> Result<bool, WindowsError> {
     if !snapshot.hidden_by_jasonshell || !snapshot.originally_visible {
         return Ok(true);
@@ -509,6 +478,7 @@ pub fn restore_taskbar(snapshot: ExplorerTaskbarSnapshot) -> Result<bool, Window
     set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), true)
 }
 
+#[cfg(test)]
 pub fn reconcile_taskbars(
     model: &ExplorerTaskbarModel,
     current: Vec<ExplorerTaskbarSnapshot>,
@@ -528,12 +498,7 @@ pub fn reconcile_taskbars(
     (next, ops)
 }
 
-pub fn safe_restore_taskbars(
-    snapshots: &[ExplorerTaskbarSnapshot],
-) -> (Vec<ExplorerTaskbarSnapshot>, Vec<ExplorerTaskbarFakeOp>) {
-    safe_restore_plan(snapshots, |snapshot| revalidate_snapshot_identity(snapshot))
-}
-
+#[cfg(test)]
 pub fn safe_restore_plan(
     snapshots: &[ExplorerTaskbarSnapshot],
     mut is_live: impl FnMut(&ExplorerTaskbarSnapshot) -> bool,

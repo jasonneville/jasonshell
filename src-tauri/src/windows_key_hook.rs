@@ -18,10 +18,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY,
 };
 
+#[cfg(test)]
 pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str =
     crate::contracts::events::SEARCH_TOGGLE_CENTERED;
 #[rustfmt::skip]
+#[cfg(test)]
 pub const TERMINAL_HOTKEY_TOGGLE_TERMINAL_EVENT: &str = crate::contracts::events::TERMINAL_TOGGLE_PANEL;
+#[cfg(test)]
 pub const STACK_BROWSER_HOTKEY_TOGGLE_STACK_BROWSER_EVENT: &str =
     crate::contracts::events::STACK_BROWSER_TOGGLE;
 
@@ -291,7 +294,7 @@ fn run_hotkey_thread(
     let mut message = MSG::default();
     // Force creation of this thread's message queue before publishing its ID.
     unsafe {
-        PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+        let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
     }
     if ready.send(unsafe { GetCurrentThreadId() }).is_err() {
         return;

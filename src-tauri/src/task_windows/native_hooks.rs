@@ -33,8 +33,6 @@ fn shellhook_name() -> PCWSTR {
 
 const HSHELL_FLASH: i32 = 0x8006;
 const WM_TASKBAR_FLASH: u32 = WM_APP + 1;
-const EVENT_SYSTEM_FOREGROUND_ID: u32 = 3;
-const WINEVENT_OUTOFCONTEXT_FLAG: u32 = 0;
 
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 static SHELL_MSG_ID: AtomicU32 = AtomicU32::new(0);
@@ -122,14 +120,6 @@ pub fn explorer_suppression_v2_enabled_from_env() -> bool {
 
 pub fn taskbar_native_hooks_enabled_from_env() -> bool {
     std::env::var("JASONSHELL_TASKBAR_NATIVE_HOOKS").map_or(true, |value| value != "0")
-}
-
-pub fn native_hooks_health() -> NativeHooksHealth {
-    STATE
-        .get()
-        .and_then(|state| state.lock().ok())
-        .map(|guard| guard.health)
-        .unwrap_or(NativeHooksHealth::Disabled)
 }
 
 pub fn native_hooks_diagnostics_snapshot() -> super::diagnostics::NativeHooksDiagnosticsSnapshot {
@@ -537,6 +527,7 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
+#[cfg(test)]
 fn coalesce_hook_wake_timeout(
     last_wake: Option<Instant>,
     now: Instant,

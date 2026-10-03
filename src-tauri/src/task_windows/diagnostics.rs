@@ -238,24 +238,6 @@ pub(super) fn note_denied_request() {
     }
 }
 
-pub(super) fn note_package_identity(
-    available: bool,
-    package_full_name: Option<String>,
-    error: Option<String>,
-) {
-    if let Ok(mut s) = state().lock() {
-        s.diagnostics.package_identity_status = PackageIdentityStatus {
-            available,
-            checked: true,
-            error: error.map(|e| redact_text(&e)),
-        };
-        s.diagnostics.current_process_package_identity = PackageIdentitySummary {
-            available,
-            summary: package_full_name.map(|v| redact_package_name(&v)),
-        };
-    }
-}
-
 pub(super) fn note_resolved_app_id(app_id: &str) {
     if let Ok(mut s) = state().lock() {
         let redacted = redact_app_id(app_id);
@@ -381,15 +363,6 @@ fn probe_current_process_package_identity(diagnostics: &mut TaskbarRuntimeDiagno
 
 fn redact_text(input: &str) -> String {
     redact_paths_and_profile(input).chars().take(180).collect()
-}
-fn redact_package_name(input: &str) -> String {
-    redact_paths_and_profile(input)
-        .split('!')
-        .next()
-        .unwrap_or(input)
-        .chars()
-        .take(180)
-        .collect()
 }
 fn redact_app_id(input: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use super::{actions::TaskWindowIdentity, TaskbarWindowAttentionState};
+use super::TaskbarWindowAttentionState;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskbarAttentionIdentity {
@@ -86,10 +86,6 @@ impl AttentionStore {
         }
     }
 
-    pub fn remove(&mut self, identity: &TaskbarAttentionIdentity) {
-        self.records.remove(&TaskbarAttentionKey::from(identity));
-    }
-
     pub fn remove_root_owner(&mut self, root_owner_hwnd: isize) {
         self.records
             .retain(|key, _| key.root_owner_hwnd != root_owner_hwnd);
@@ -128,17 +124,6 @@ impl AttentionStore {
 
 static ATTENTION_STATE: OnceLock<Mutex<AttentionStore>> = OnceLock::new();
 
-pub fn taskbar_attention_identity_from_window(
-    root_owner_hwnd: isize,
-    identity: Option<&TaskWindowIdentity>,
-) -> TaskbarAttentionIdentity {
-    TaskbarAttentionIdentity {
-        root_owner_hwnd,
-        process_id: identity.map(|value| value.process_id).unwrap_or_default(),
-        creation_time: identity.map(|value| value.creation_time),
-    }
-}
-
 pub fn record_taskbar_attention(identity: TaskbarAttentionIdentity, requested: bool) {
     let state = ATTENTION_STATE.get_or_init(|| Mutex::new(AttentionStore::default()));
     if let Ok(mut store) = state.lock() {
@@ -154,13 +139,6 @@ pub fn clear_taskbar_attention_if_matches(identity: &TaskbarAttentionIdentity) {
     let state = ATTENTION_STATE.get_or_init(|| Mutex::new(AttentionStore::default()));
     if let Ok(mut store) = state.lock() {
         store.clear(identity);
-    }
-}
-
-pub fn clear_taskbar_attention(identity: &TaskbarAttentionIdentity) {
-    let state = ATTENTION_STATE.get_or_init(|| Mutex::new(AttentionStore::default()));
-    if let Ok(mut store) = state.lock() {
-        store.remove(identity);
     }
 }
 

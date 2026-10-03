@@ -261,11 +261,13 @@ pub(crate) fn available_destination_path(
     Err("Could not choose a paste destination name".to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn copy_path(source: &Path, destination: &Path) -> Result<(), String> {
     let mut visited = HashSet::new();
     copy_path_inner(source, destination, &mut visited)
 }
 
+#[cfg(test)]
 pub(crate) fn copy_path_with_journal(
     source: &Path,
     destination: &Path,
@@ -307,12 +309,14 @@ pub(crate) fn copy_path_with_journal_progress(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn move_path_with_fallback(source: &Path, destination: &Path) -> Result<(), String> {
     move_path_with_rename(source, destination, |source, destination| {
         fs::rename(source, destination)
     })
 }
 
+#[cfg(test)]
 pub(crate) fn move_path_with_fallback_journal(
     source: &Path,
     destination: &Path,
@@ -426,14 +430,6 @@ fn journal_entry_for(
     Ok(entry)
 }
 
-fn copy_path_with_manifest(
-    source: &Path,
-    destination: &Path,
-    journal: &mut RecoveryJournalEntry,
-) -> Result<(), String> {
-    copy_path_with_manifest_progress(source, destination, journal, &mut |_, _| {})
-}
-
 fn copy_path_with_manifest_progress(
     source: &Path, destination: &Path, journal: &mut RecoveryJournalEntry,
     progress: &mut impl FnMut(&Path, u64),
@@ -504,6 +500,7 @@ pub(super) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[cfg(test)]
 pub(crate) fn move_path_with_rename<F>(
     source: &Path,
     destination: &Path,
@@ -541,6 +538,7 @@ pub(crate) fn copy_dir(source: &Path, destination: &Path) -> Result<(), String> 
     copy_dir_inner(source, destination, &mut visited)
 }
 
+#[cfg(test)]
 fn copy_path_inner(
     source: &Path,
     destination: &Path,
@@ -581,6 +579,7 @@ fn copy_path_inner_progress(
     }
 }
 
+#[cfg(test)]
 fn copy_dir_inner(
     source: &Path,
     destination: &Path,
