@@ -34,6 +34,7 @@ pub enum ConfiguredHotkeyAction {
     Terminal,
     StackBrowser,
     Speech,
+    Snipping,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,28 +51,34 @@ struct RegistryBinding {
 }
 
 #[cfg(windows)]
-type ActiveBindings = [Option<RegistryBinding>; 4];
+type ActiveBindings = [Option<RegistryBinding>; 5];
 
 #[derive(Clone, Debug)]
 pub struct StandardHotkeyRegistry {
-    bindings: [RegistryBinding; 4],
+    bindings: [Option<RegistryBinding>; 5],
 }
 
 impl StandardHotkeyRegistry {
     fn from_settings(settings: &StandardHotkeySettings) -> Result<Self, String> {
-        let settings = crate::settings::validate_standard_hotkey_settings(settings.clone())?;
+        Self::from_loaded_settings(settings, false)
+    }
+    fn from_loaded_settings(settings: &StandardHotkeySettings, missing_snipping: bool) -> Result<Self, String> {
+        let settings = crate::settings::validate_loaded_hotkeys(settings.clone(), missing_snipping)?;
+        let disabled = missing_snipping && [&settings.search, &settings.terminal, &settings.stack_browser, &settings.speech_transcription]
+            .iter().any(|binding| binding.0 == settings.snipping.0);
         Ok(Self {
             bindings: [
-                registry_binding(&settings.search.0, ConfiguredHotkeyAction::Search)?,
-                registry_binding(&settings.terminal.0, ConfiguredHotkeyAction::Terminal)?,
-                registry_binding(
+                Some(registry_binding(&settings.search.0, ConfiguredHotkeyAction::Search)?),
+                Some(registry_binding(&settings.terminal.0, ConfiguredHotkeyAction::Terminal)?),
+                Some(registry_binding(
                     &settings.stack_browser.0,
                     ConfiguredHotkeyAction::StackBrowser,
-                )?,
-                registry_binding(
+                )?),
+                Some(registry_binding(
                     &settings.speech_transcription.0,
                     ConfiguredHotkeyAction::Speech,
-                )?,
+                )?),
+                if disabled { None } else { Some(registry_binding(&settings.snipping.0, ConfiguredHotkeyAction::Snipping)?) },
             ],
         })
     }
@@ -133,7 +140,7 @@ fn one_virtual_key() -> u32 {
 }
 
 #[cfg(windows)]
-const HOTKEY_IDS: [i32; 4] = [1, 2, 3, 4];
+const HOTKEY_IDS: [i32; 5] = [1, 2, 3, 4, 5];
 #[cfg(windows)]
 const WM_REPLACE_HOTKEYS: u32 = WM_APP + 41;
 #[cfg(windows)]
@@ -191,9 +198,7 @@ fn replace_registrations(
 ) -> Result<(), String> {
     let changed: Vec<usize> = (0..HOTKEY_IDS.len())
         .filter(|&index| {
-            current[index].is_none_or(|old| {
-                old.key != next.bindings[index].key || old.modifier != next.bindings[index].modifier
-            })
+            current[index] != next.bindings[index]
         })
         .collect();
     let previous = *current;
@@ -204,7 +209,8 @@ fn replace_registrations(
         }
     }
     for &index in &changed {
-        if let Err(error) = register(index, next.bindings[index]) {
+        let Some(binding) = next.bindings[index] else { continue; };
+        if let Err(error) = register(index, binding) {
             for &registered_index in &changed {
                 if current[registered_index].is_some() {
                     unregister(registered_index);
@@ -229,7 +235,7 @@ fn replace_registrations(
             }
             return Err(error);
         }
-        current[index] = Some(next.bindings[index]);
+        current[index] = Some(binding);
     }
     Ok(())
 }
@@ -282,6 +288,16 @@ fn dispatch_hotkey(app_handle: &AppHandle, id: i32, registry: &ActiveBindings) {
                 }
             }
         }
+        ConfiguredHotkeyAction::Snipping => {
+            // Bind foreground intent on the WM_HOTKEY thread, before scheduling
+            // can change focus. Capture and the renderer barrier stay off-thread.
+            let Some(runtime) = app_handle.try_state::<std::sync::Arc<crate::snipping::runtime::SnipRuntime>>() else { return; };
+            let runtime = runtime.inner().clone();
+            let Ok(ticket) = runtime.reserve_native_start() else { return; };
+            // The runtime owns the blocking task; the RAII ticket releases its
+            // reservation on completion or if task creation drops the closure.
+            tauri::async_runtime::spawn_blocking(move || { let _ = runtime.run_native_start(ticket); });
+        }
     }
 }
 
@@ -299,7 +315,7 @@ fn run_hotkey_thread(
     if ready.send(unsafe { GetCurrentThreadId() }).is_err() {
         return;
     }
-    let mut current: ActiveBindings = [None; 4];
+    let mut current: ActiveBindings = [None; 5];
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
         match message.message {
             WM_REPLACE_HOTKEYS => {
@@ -359,7 +375,11 @@ pub fn install_windows_key_hook(
     app_handle: AppHandle,
     hotkeys: StandardHotkeySettings,
 ) -> Result<(), String> {
-    let registry = StandardHotkeyRegistry::from_settings(&hotkeys)?;
+    install_loaded_windows_key_hook(app_handle, hotkeys, false)
+}
+#[cfg(windows)]
+pub fn install_loaded_windows_key_hook(app_handle: AppHandle, hotkeys: StandardHotkeySettings, missing_snipping: bool) -> Result<(), String> {
+    let registry = StandardHotkeyRegistry::from_loaded_settings(&hotkeys, missing_snipping)?;
     let mut guard = hotkey_thread()
         .lock()
         .map_err(|_| "hotkey thread lock is poisoned".to_string())?;
@@ -412,6 +432,16 @@ pub fn configure_standard_hotkeys(
     hotkeys: &StandardHotkeySettings,
 ) -> Result<(), String> {
     let registry = StandardHotkeyRegistry::from_settings(hotkeys)?;
+    configure_registry(registry)
+}
+/// Only trusted transaction rollback invokes the legacy exception; normal updates
+/// always build a strict registry before requesting any native registration.
+#[cfg(windows)]
+pub(crate) fn restore_loaded_standard_hotkeys(_app: &AppHandle, hotkeys: &StandardHotkeySettings) -> Result<(), String> {
+    configure_registry(StandardHotkeyRegistry::from_loaded_settings(hotkeys, true)?)
+}
+#[cfg(windows)]
+fn configure_registry(registry: StandardHotkeyRegistry) -> Result<(), String> {
     let mut guard = hotkey_thread()
         .lock()
         .map_err(|_| "hotkey thread lock is poisoned".to_string())?;
@@ -424,6 +454,13 @@ pub fn configure_standard_hotkeys(
     }
     request_replacement(thread, registry)
 }
+#[cfg(not(windows))]
+pub(crate) fn restore_loaded_standard_hotkeys(_app: &tauri::AppHandle, hotkeys: &StandardHotkeySettings) -> Result<(), String> {
+    StandardHotkeyRegistry::from_loaded_settings(hotkeys, true).map(|_| ())
+}
+
+#[cfg(test)]
+include!("../tests/fixtures/snipping_registry_acceptance.rs");
 
 #[cfg(not(windows))]
 pub fn configure_standard_hotkeys(
@@ -500,14 +537,16 @@ mod tests {
     use crate::settings::CanonicalHotkeyBinding;
 
     #[test]
-    fn defaults_map_all_four_distinct_actions_and_virtual_keys() {
+    fn defaults_map_all_five_distinct_actions_and_virtual_keys() {
         let registry =
             StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).unwrap();
-        assert_eq!(registry.bindings[0].key, space_virtual_key());
-        assert_eq!(registry.bindings[1].key, backquote_virtual_key());
-        assert_eq!(registry.bindings[2].key, one_virtual_key());
-        assert_eq!(registry.bindings[3].key, b'D' as u32);
-        assert_eq!(registry.bindings[3].action, ConfiguredHotkeyAction::Speech);
+        assert_eq!(registry.bindings[0].unwrap().key, space_virtual_key());
+        assert_eq!(registry.bindings[1].unwrap().key, backquote_virtual_key());
+        assert_eq!(registry.bindings[2].unwrap().key, one_virtual_key());
+        assert_eq!(registry.bindings[3].unwrap().key, b'D' as u32);
+        assert_eq!(registry.bindings[3].unwrap().action, ConfiguredHotkeyAction::Speech);
+        assert_eq!(registry.bindings[4].unwrap().key, b'S' as u32);
+        assert_eq!(registry.bindings[4].unwrap().action, ConfiguredHotkeyAction::Snipping);
     }
 
     #[test]
@@ -518,6 +557,7 @@ mod tests {
             StandardHotkeyRegistry::from_settings(&settings)
                 .unwrap()
                 .bindings[0]
+                .unwrap()
                 .key,
             b'K' as u32
         );
@@ -534,7 +574,7 @@ mod tests {
         next_settings.search = CanonicalHotkeyBinding("Ctrl+K".into());
         next_settings.terminal = CanonicalHotkeyBinding("Alt+9".into());
         let next = StandardHotkeyRegistry::from_settings(&next_settings).unwrap();
-        let mut active = old.bindings.map(Some);
+        let mut active = old.bindings;
         let mut attempts = 0;
         let error = replace_registrations(
             &mut active,
@@ -553,9 +593,10 @@ mod tests {
         assert!(error.contains("new chord occupied"));
         assert!(error.contains("old chord claimed during rollback"));
         assert_eq!(active[0], None);
-        assert_eq!(active[1], Some(old.bindings[1]));
-        assert_eq!(active[2], Some(old.bindings[2]));
-        assert_eq!(active[3], Some(old.bindings[3]));
+        assert_eq!(active[1], old.bindings[1]);
+        assert_eq!(active[2], old.bindings[2]);
+        assert_eq!(active[3], old.bindings[3]);
+        assert_eq!(active[4], old.bindings[4]);
     }
 
     #[cfg(windows)]

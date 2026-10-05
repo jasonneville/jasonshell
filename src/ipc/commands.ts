@@ -1,6 +1,17 @@
 import type { SpeechSessionNonce, SpeechStatusKind } from './events';
 
 export const IPC_COMMANDS = {
+  startSnip: 'start_snip',
+  snipBarReady: 'snip_bar_ready',
+  getSnipContext: 'get_snip_context',
+  getSnipImage: 'get_snip_image',
+  snipReady: 'snip_ready',
+  snipBeginSelection: 'snip_begin_selection',
+  completeSnip: 'complete_snip',
+  cancelSnip: 'cancel_snip',
+  copySnip: 'copy_snip',
+  saveSnip: 'save_snip',
+  dismissSnip: 'dismiss_snip',
   listPinnedTaskbarApps: 'list_pinned_taskbar_apps',
   launchPinnedTaskbarApp: 'launch_pinned_taskbar_app',
   listOpenTaskWindows: 'list_open_task_windows',
@@ -64,6 +75,7 @@ export const IPC_COMMANDS = {
   getSpeechStatus: 'get_speech_status',
   getSpeechModelStatus: 'get_speech_model_status',
   importSpeechModel: 'import_speech_model',
+  importSpeechModelFolder: 'import_speech_model_folder',
   getAudioState: 'get_audio_state',
   setMasterVolume: 'set_master_volume',
   setAppVolume: 'set_app_volume',

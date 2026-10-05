@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "legacy-shell-commands",
+  "description": "Preserve pre-app-ACL legacy IPC access for existing local shell surfaces. Rust handler owner and native identity guards still apply; snipping has separate capabilities.",
+  "local": true,
+  "windows": [
+    "top-bar", "bottom-bar", "quick-launch-panel", "task-gallery", "task-preview",
+    "search-panel", "stack-popup", "process-manager", "control-plane", "settings-panel",
+    "tray-panel", "terminal-panel", "command-panel", "audio-panel", "calendar-panel",
+    "speech-history-panel", "speech-indicator", "context-menu-overlay"
+  ],
+  "permissions": ["allow-legacy-shell-commands"]
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-quick-launch-panel"
+description = "Enables the hide_quick_launch_panel command without any pre-configured scope."
+commands.allow = ["hide_quick_launch_panel"]
+
+[[permission]]
+identifier = "deny-hide-quick-launch-panel"
+description = "Denies the hide_quick_launch_panel command without any pre-configured scope."
+commands.deny = ["hide_quick_launch_panel"]

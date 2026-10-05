@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-stack-item-properties"
+description = "Enables the show_stack_item_properties command without any pre-configured scope."
+commands.allow = ["show_stack_item_properties"]
+
+[[permission]]
+identifier = "deny-show-stack-item-properties"
+description = "Denies the show_stack_item_properties command without any pre-configured scope."
+commands.deny = ["show_stack_item_properties"]

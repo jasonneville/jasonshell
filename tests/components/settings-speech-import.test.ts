@@ -13,6 +13,7 @@ const missing: ModelStatus = { state: 'missing', source: null, error: null };
 const ready: ModelStatus = { state: 'ready', source: 'installed', error: null };
 let status: ModelStatus;
 let importModel: () => Promise<unknown>;
+let importFolder: () => Promise<unknown>;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -30,6 +31,7 @@ function mockStatusResponse(response: () => Promise<ModelStatus>) {
     if (command === 'load_shell_settings') return Promise.resolve(defaultShellSettings());
     if (command === 'get_speech_model_status') return response();
     if (command === 'import_speech_model') return importModel();
+    if (command === 'import_speech_model_folder') return importFolder();
     throw new Error(`Unexpected Settings IPC: ${command}`);
   });
 }
@@ -37,6 +39,7 @@ function mockStatusResponse(response: () => Promise<ModelStatus>) {
 beforeEach(() => {
   status = { ...missing };
   importModel = async () => ({ cancelled: true, model: status });
+  importFolder = async () => ({ cancelled: true, model: status });
   localStorage.clear();
   const tauri = tauriMocks();
   tauri.listen.mockResolvedValue(vi.fn());
@@ -44,6 +47,7 @@ beforeEach(() => {
     if (command === 'load_shell_settings') return Promise.resolve(defaultShellSettings());
     if (command === 'get_speech_model_status') return Promise.resolve(status);
     if (command === 'import_speech_model') return importModel();
+    if (command === 'import_speech_model_folder') return importFolder();
     throw new Error(`Unexpected Settings IPC: ${command}`);
   });
 });
@@ -56,6 +60,54 @@ async function mountSettings() {
 }
 
 describe('Settings speech model import acceptance (mocked native IPC)', () => {
+  it('folder import invokes no renderer path, shares busy lock, becomes installed ready and remounts ready', async () => {
+    const pending = deferred<unknown>(); importFolder = () => pending.promise;
+    const view = await mountSettings();
+    const folder = view.getByRole('button', { name: 'Import speech model folder' }) as HTMLButtonElement;
+    const archive = view.getByRole('button', { name: 'Import speech model' }) as HTMLButtonElement;
+    expect(folder.type).toBe('button');
+    expect(folder.closest('.settings-section')).toBe(archive.closest('.settings-section'));
+    await fireEvent.click(folder);
+    await waitFor(() => { expect(folder.disabled).toBe(true); expect(archive.disabled).toBe(true); });
+    await fireEvent.click(folder); await fireEvent.click(archive);
+    const imports = tauriMocks().invoke.mock.calls.filter(([command]) => String(command).startsWith('import_speech_model'));
+    expect(imports).toEqual([['import_speech_model_folder']]);
+    status = ready; pending.resolve({ cancelled: false, model: ready });
+    await waitFor(() => expect(view.getByRole('status').textContent).toMatch(/ready \(installed\)/i));
+    expect(folder.disabled).toBe(false); expect(archive.disabled).toBe(false);
+    view.unmount(); const remount = await mountSettings();
+    await waitFor(() => expect(remount.getByRole('status').textContent).toMatch(/ready \(installed\)/i));
+    expect(tauriMocks().invoke.mock.calls.filter(([command]) => command === 'import_speech_model_folder')).toHaveLength(1);
+  });
+  it('archive in flight disables folder action and does not issue a second import command', async () => {
+    const pending = deferred<unknown>(); importModel = () => pending.promise;
+    const view = await mountSettings();
+    const folder = view.getByRole('button', { name: 'Import speech model folder' }) as HTMLButtonElement;
+    await fireEvent.click(view.getByRole('button', { name: 'Import speech model' }));
+    await waitFor(() => expect(folder.disabled).toBe(true)); await fireEvent.click(folder);
+    expect(tauriMocks().invoke.mock.calls.filter(([command]) => command === 'import_speech_model_folder')).toHaveLength(0);
+    pending.resolve({ cancelled: true, model: missing });
+    await waitFor(() => expect(folder.disabled).toBe(false));
+  });
+  it('folder cancellation preserves ready state with no alert and reenables both imports', async () => {
+    status = ready; const view = await mountSettings();
+    await fireEvent.click(view.getByRole('button', { name: 'Import speech model folder' }));
+    await waitFor(() => expect(tauriMocks().invoke).toHaveBeenCalledWith('import_speech_model_folder'));
+    await waitFor(() => expect((view.getByRole('button', { name: 'Import speech model folder' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(view.getByRole('status').textContent).toMatch(/ready \(installed\)/i); expect(view.queryByRole('alert')).toBeNull();
+    expect((view.getByRole('button', { name: 'Import speech model' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it('folder error retains installed readiness, actionable alert, and allows successful retry', async () => {
+    status = ready; importFolder = async () => { throw new Error('Choose a folder containing all three required model files.'); };
+    const view = await mountSettings();
+    await fireEvent.click(view.getByRole('button', { name: 'Import speech model folder' }));
+    await waitFor(() => expect(view.getByRole('alert').textContent).toContain('all three required model files'));
+    expect(view.getByRole('status').textContent).toMatch(/ready \(installed\)/i);
+    expect((view.getByRole('button', { name: 'Import speech model' }) as HTMLButtonElement).disabled).toBe(false);
+    importFolder = async () => ({ cancelled: false, model: ready });
+    await fireEvent.click(view.getByRole('button', { name: 'Import speech model folder' }));
+    await waitFor(() => expect(view.queryByRole('alert')).toBeNull());
+  });
   it('opens Settings, imports once, becomes ready immediately, then remounts ready without another import', async () => {
     let finish!: (value: unknown) => void;
     importModel = () => new Promise((resolve) => { finish = resolve; });

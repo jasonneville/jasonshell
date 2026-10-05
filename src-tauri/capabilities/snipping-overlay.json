@@ -1,0 +1,5 @@
+{
+  "identifier": "snipping-overlay",
+  "windows": ["snip-overlay-*"],
+  "permissions": ["allow-get-snip-context", "allow-get-snip-image", "allow-snip-ready", "allow-snip-begin-selection", "allow-complete-snip", "allow-cancel-snip", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

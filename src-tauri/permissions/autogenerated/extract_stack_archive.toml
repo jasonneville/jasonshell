@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extract-stack-archive"
+description = "Enables the extract_stack_archive command without any pre-configured scope."
+commands.allow = ["extract_stack_archive"]
+
+[[permission]]
+identifier = "deny-extract-stack-archive"
+description = "Denies the extract_stack_archive command without any pre-configured scope."
+commands.deny = ["extract_stack_archive"]

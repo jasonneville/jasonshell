@@ -30,10 +30,24 @@ async function importPanelHelpers() {
 }
 
 function stripRustTestBlocks(source) {
-  return source.replace(/\n#\[cfg\(test\)\][\s\S]*$/m, '\n');
+  // Match rustfmt's top-level test module through its unindented closing brace,
+  // not function-level cfg(test) helpers or production items after the module.
+  return source.replace(/^#\[cfg\(test\)\]\r?\nmod tests \{\r?\n[\s\S]*?^\}(?=\r?$)/gm, '');
 }
 
 const productionGitStatusRs = stripRustTestBlocks(gitStatusRs);
+
+test('Rust panel contract extraction preserves cfg(test) helpers and production functions around test modules', () => {
+  const before = '#[cfg(test)]\nfn helper() { }\nfn production_before() { }\n';
+  const testModule = '#[cfg(test)]\nmod tests {\n    #[test]\n    fn contract() {\n        if true { }\n    }\n}\n';
+  const after = 'fn production_after() { }\n';
+  for (const newline of ['\n', '\r\n']) {
+    const source = (before + testModule + after).replace(/\n/g, newline);
+    assert.equal(stripRustTestBlocks(source), (before + '\n' + after).replace(/\n/g, newline));
+  }
+  assert.doesNotMatch(productionGitStatusRs, /mod tests \{/);
+  assert.match(productionGitStatusRs, /fn git_status_has_unstaged_change\(/);
+});
 
 test('loadDiff rejects old-folder success, error, and loading cleanup', () => {
   const start = panel.indexOf('async function loadDiff(');

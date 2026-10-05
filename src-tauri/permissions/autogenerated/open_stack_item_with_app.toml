@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-stack-item-with-app"
+description = "Enables the open_stack_item_with_app command without any pre-configured scope."
+commands.allow = ["open_stack_item_with_app"]
+
+[[permission]]
+identifier = "deny-open-stack-item-with-app"
+description = "Denies the open_stack_item_with_app command without any pre-configured scope."
+commands.deny = ["open_stack_item_with_app"]

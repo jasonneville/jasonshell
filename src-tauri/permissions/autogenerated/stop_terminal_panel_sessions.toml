@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-terminal-panel-sessions"
+description = "Enables the stop_terminal_panel_sessions command without any pre-configured scope."
+commands.allow = ["stop_terminal_panel_sessions"]
+
+[[permission]]
+identifier = "deny-stop-terminal-panel-sessions"
+description = "Denies the stop_terminal_panel_sessions command without any pre-configured scope."
+commands.deny = ["stop_terminal_panel_sessions"]

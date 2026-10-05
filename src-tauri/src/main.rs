@@ -21,6 +21,7 @@ mod search_panel;
 mod search_sources;
 mod settings;
 mod settings_panel;
+mod snipping;
 mod shell_paths;
 mod shell_windows;
 mod speech;
@@ -71,6 +72,16 @@ Terminal with Windows Node.js/Rust installed."
 
 #[cfg(target_os = "windows")]
 fn main() {
+    // Private clipboard owner must branch before any Tauri/AppBar/hook startup.
+    // Only exact Rust-owned helper arguments enter this metadata/binary pipe path.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["--internal-snip-clipboard-owner"] {
+        if snipping::clipboard_process::helper_main().is_err() { std::process::exit(1); }
+        return;
+    }
+    if args.iter().any(|arg| arg == "--internal-snip-clipboard-owner") { std::process::exit(2); }
+    if args == ["--internal-snip-composition-flush"] { std::process::exit(if snipping::composition::helper() { 0 } else { 1 }); }
+    if args.iter().any(|arg| arg == "--internal-snip-composition-flush") { std::process::exit(2); }
     match launchers::handle_launch_pinned_taskbar_helper_args() {
         Ok(true) => return,
         Ok(false) => {}
@@ -105,6 +116,17 @@ fn main() {
         .manage(diagnostics::diagnostics_state())
         .manage(speech_runtime::SpeechRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
+            snipping::runtime::start_snip,
+            snipping::runtime::get_snip_context,
+            snipping::runtime::get_snip_image,
+            snipping::runtime::snip_ready,
+            snipping::runtime::snip_begin_selection,
+            snipping::runtime::complete_snip,
+            snipping::runtime::cancel_snip,
+            snipping::runtime::copy_snip,
+            snipping::runtime::save_snip,
+            snipping::runtime::dismiss_snip,
+            snipping::runtime::snip_bar_ready,
             launchers::list_pinned_taskbar_apps,
             launchers::launch_pinned_taskbar_app,
             task_windows::list_open_task_windows,
@@ -189,6 +211,7 @@ fn main() {
             speech_runtime::get_speech_status,
             speech_runtime::get_speech_model_status,
             speech_runtime::import_speech_model,
+            speech_runtime::import_speech_model_folder,
             speech_runtime::copy_speech_history_transcript,
             system_tray::list_system_tray_icons,
             system_tray::invoke_system_tray_icon,
@@ -524,10 +547,13 @@ fn main() {
                 return Ok(());
             }
             let windows = shell_windows::create_shell_windows(app)?;
-            let shell_settings = settings::load_shell_settings_for_app(app.handle())?;
+            let snip_runtime = snipping::runtime::SnipRuntime::install(app.handle().clone(), windows.top.clone())
+                .map_err(|_| "snipping native initialization failed")?;
+            app.manage(snip_runtime);
+            let (shell_settings, missing_snipping) = settings::load_hotkey_startup_settings(app.handle())?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();
-            windows_key_hook::install_windows_key_hook(app.handle().clone(), shell_settings.hotkeys)
+            windows_key_hook::install_loaded_windows_key_hook(app.handle().clone(), shell_settings.hotkeys, missing_snipping)
                 .map_err(|error| format!("search hotkey hook is required: {error}"))?;
 
             #[cfg(target_os = "windows")]
@@ -556,6 +582,7 @@ fn main() {
     app.run(|app_handle, event| {
         #[cfg(target_os = "windows")]
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+            if let Some(runtime) = app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>() { runtime.shutdown(); }
             if let Some(state) = app_handle.try_state::<speech_runtime::SpeechRuntimeState>() {
                 speech_runtime::shutdown(&state);
             }

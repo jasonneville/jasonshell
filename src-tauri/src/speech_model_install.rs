@@ -43,6 +43,150 @@ impl Drop for Staging {
     }
 }
 
+fn create_staging(app_data: &Path) -> Result<(Staging, PathBuf), String> {
+    let root = app_data.join("speech-models");
+    fs::create_dir_all(&root).map_err(|_| STORAGE)?;
+    let previous = fs::read_dir(&root)
+        .map_err(|_| STORAGE)?
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_prefix("model-")?
+                .split('-')
+                .next()?
+                .parse::<u128>()
+                .ok()
+        })
+        .max()
+        .unwrap_or(0);
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| STORAGE)?
+        .as_nanos()
+        .max(previous.saturating_add(1));
+    let id = format!("{:030}-{:08}", clock, NEXT.fetch_add(1, Ordering::Relaxed));
+    let path = root.join(format!("staging-{id}"));
+    // Acquire ownership before constructing the cleanup guard. A collision is not ours.
+    fs::create_dir(&path).map_err(|_| STORAGE)?;
+    Ok((Staging(path), root.join(format!("model-{id}"))))
+}
+
+fn publish<F>(staging: &Staging, installed: PathBuf, validate: F) -> Result<PathBuf, String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    validate(&staging.0).map_err(|_| {
+        "Model could not load. Choose the matching Parakeet TDT 0.6b v2 int8 ONNX bundle."
+    })?;
+    fs::rename(&staging.0, &installed).map_err(|_| STORAGE)?;
+    Ok(installed)
+}
+
+fn is_reparse(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+fn open_source(path: &Path, directory: bool) -> Result<File, String> {
+    let before = fs::symlink_metadata(path).map_err(|_| FOLDER_INVALID)?;
+    if is_reparse(&before)
+        || (if directory {
+            !before.is_dir()
+        } else {
+            !before.is_file() || before.len() == 0
+        })
+    {
+        return Err(FOLDER_INVALID.into());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // OPEN_REPARSE_POINT validates the opened object, not only a prior path lookup.
+        // Deny concurrent write/delete sharing while copying from these handles.
+        options
+            .share_mode(1)
+            .custom_flags(0x00200000 | if directory { 0x02000000 } else { 0 });
+    }
+    let file = options.open(path).map_err(|_| FOLDER_INVALID)?;
+    let opened = file.metadata().map_err(|_| FOLDER_INVALID)?;
+    if is_reparse(&opened)
+        || (if directory {
+            !opened.is_dir()
+        } else {
+            !opened.is_file() || opened.len() == 0
+        })
+    {
+        return Err(FOLDER_INVALID.into());
+    }
+    Ok(file)
+}
+
+const FOLDER_INVALID: &str = "Choose a folder containing all three regular, nonempty required model files, without links or junctions.";
+
+/// Copies only the three root model files; extras are never traversed or opened.
+/// Opened Windows root/file handles reject reparse points and deny write/delete sharing.
+/// Ancestor path replacement is not claimed to be protected by these handle checks.
+pub fn install_directory<F>(
+    source: &Path,
+    app_data: &Path,
+    limits: InstallLimits,
+    validate: F,
+) -> Result<PathBuf, String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    let _root_handle = open_source(source, true)?;
+    let mut inputs = Vec::with_capacity(FILES.len());
+    let mut total = 0u64;
+    for name in FILES {
+        let file = open_source(&source.join(name), false)?;
+        let size = file.metadata().map_err(|_| FOLDER_INVALID)?.len();
+        total = total.checked_add(size).ok_or(FOLDER_INVALID)?;
+        if size > limits.max_file_bytes || total > limits.max_total_bytes {
+            return Err("Model folder exceeds safe size limits.".into());
+        }
+        inputs.push((name, file, size));
+    }
+    let (staging, installed) = create_staging(app_data)?;
+    let mut copied_total = 0u64;
+    for (name, mut input, size) in inputs {
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(staging.0.join(name))
+            .map_err(|_| STORAGE)?;
+        let cap = limits
+            .max_file_bytes
+            .min(limits.max_total_bytes - copied_total);
+        let copied = io::copy(
+            &mut (&mut input).take(cap.checked_add(1).ok_or(FOLDER_INVALID)?),
+            &mut output,
+        )
+        .map_err(|_| FOLDER_INVALID)?;
+        if copied == 0
+            || copied > cap
+            || copied != size
+            || input.metadata().map_err(|_| FOLDER_INVALID)?.len() != size
+        {
+            return Err(FOLDER_INVALID.into());
+        }
+        copied_total += copied;
+        output.flush().map_err(|_| STORAGE)?;
+        output.sync_all().map_err(|_| STORAGE)?;
+    }
+    publish(&staging, installed, validate)
+}
+
 fn regular_nonempty(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .ok()
@@ -158,30 +302,7 @@ where
         .and_then(|n| n.checked_add(1024 * 1024))
         .ok_or(INVALID)?;
     let mut tar = tar::Archive::new(reader.take(stream_limit.checked_add(1).ok_or(INVALID)?));
-    let root = app_data.join("speech-models");
-    fs::create_dir_all(&root).map_err(|_| STORAGE)?;
-    let previous = fs::read_dir(&root)
-        .map_err(|_| STORAGE)?
-        .filter_map(Result::ok)
-        .filter_map(|e| {
-            e.file_name()
-                .to_str()?
-                .strip_prefix("model-")?
-                .split('-')
-                .next()?
-                .parse::<u128>()
-                .ok()
-        })
-        .max()
-        .unwrap_or(0);
-    let clock = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| STORAGE)?
-        .as_nanos()
-        .max(previous.saturating_add(1));
-    let id = format!("{:030}-{:08}", clock, NEXT.fetch_add(1, Ordering::Relaxed));
-    let staging = Staging(root.join(format!("staging-{id}")));
-    fs::create_dir(&staging.0).map_err(|_| STORAGE)?;
+    let (staging, installed) = create_staging(app_data)?;
     let mut seen = HashSet::new();
     let mut candidates: HashMap<String, HashSet<String>> = HashMap::new();
     let mut total = 0u64;
@@ -259,10 +380,5 @@ where
     {
         return Err(INVALID.into());
     }
-    validate(&staging.0).map_err(|_| {
-        "Model could not load. Choose the matching Parakeet TDT 0.6b v2 int8 ONNX bundle."
-    })?;
-    let installed = root.join(format!("model-{id}"));
-    fs::rename(&staging.0, &installed).map_err(|_| STORAGE)?;
-    Ok(installed)
+    publish(&staging, installed, validate)
 }

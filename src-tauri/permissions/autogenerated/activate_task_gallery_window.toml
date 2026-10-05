@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-activate-task-gallery-window"
+description = "Enables the activate_task_gallery_window command without any pre-configured scope."
+commands.allow = ["activate_task_gallery_window"]
+
+[[permission]]
+identifier = "deny-activate-task-gallery-window"
+description = "Denies the activate_task_gallery_window command without any pre-configured scope."
+commands.deny = ["activate_task_gallery_window"]

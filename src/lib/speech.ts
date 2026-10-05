@@ -39,6 +39,10 @@ export function importSpeechModel(): Promise<ImportSpeechModelResponse> {
   return invoke<ImportSpeechModelResponse>(IPC_COMMANDS.importSpeechModel);
 }
 
+export function importSpeechModelFolder(): Promise<ImportSpeechModelResponse> {
+  return invoke<ImportSpeechModelResponse>(IPC_COMMANDS.importSpeechModelFolder);
+}
+
 export interface ShowSpeechHistoryPanelRequest {
   anchorLeft: number;
   anchorWidth: number;

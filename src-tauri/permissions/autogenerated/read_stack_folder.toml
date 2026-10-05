@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-stack-folder"
+description = "Enables the read_stack_folder command without any pre-configured scope."
+commands.allow = ["read_stack_folder"]
+
+[[permission]]
+identifier = "deny-read-stack-folder"
+description = "Denies the read_stack_folder command without any pre-configured scope."
+commands.deny = ["read_stack_folder"]

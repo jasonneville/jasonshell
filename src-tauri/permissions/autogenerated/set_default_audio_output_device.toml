@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-default-audio-output-device"
+description = "Enables the set_default_audio_output_device command without any pre-configured scope."
+commands.allow = ["set_default_audio_output_device"]
+
+[[permission]]
+identifier = "deny-set-default-audio-output-device"
+description = "Denies the set_default_audio_output_device command without any pre-configured scope."
+commands.deny = ["set_default_audio_output_device"]

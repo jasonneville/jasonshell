@@ -1,0 +1,5 @@
+{
+  "identifier": "snipping-preview",
+  "windows": ["snip-preview-*"],
+  "permissions": ["allow-get-snip-context", "allow-get-snip-image", "allow-copy-snip", "allow-save-snip", "allow-dismiss-snip", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

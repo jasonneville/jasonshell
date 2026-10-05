@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-stack-popup"
+description = "Enables the toggle_stack_popup command without any pre-configured scope."
+commands.allow = ["toggle_stack_popup"]
+
+[[permission]]
+identifier = "deny-toggle-stack-popup"
+description = "Denies the toggle_stack_popup command without any pre-configured scope."
+commands.deny = ["toggle_stack_popup"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stack-git-delete-branch"
+description = "Enables the stack_git_delete_branch command without any pre-configured scope."
+commands.allow = ["stack_git_delete_branch"]
+
+[[permission]]
+identifier = "deny-stack-git-delete-branch"
+description = "Denies the stack_git_delete_branch command without any pre-configured scope."
+commands.deny = ["stack_git_delete_branch"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-quick-launch-panel-on-focus-loss"
+description = "Enables the hide_quick_launch_panel_on_focus_loss command without any pre-configured scope."
+commands.allow = ["hide_quick_launch_panel_on_focus_loss"]
+
+[[permission]]
+identifier = "deny-hide-quick-launch-panel-on-focus-loss"
+description = "Denies the hide_quick_launch_panel_on_focus_loss command without any pre-configured scope."
+commands.deny = ["hide_quick_launch_panel_on_focus_loss"]

@@ -39,15 +39,18 @@ test('Centerline reuses the packaged top-bar mic artwork in quiet and speaking s
   const micAsset = mic.match(/new URL\(\s*'([^']*mic_[^']*\.svg)'/)?.[1];
   assert.ok(micAsset, 'top-bar mic art must be a packaged SVG');
   assert.doesNotMatch(indicator, /<div\b[^>]*class="scan-line"|@keyframes scan-line|\.scan-line\s*\{/i);
-  assert.ok(indicator.includes(micAsset) && /<img\b|background-image|url\(\$\{/.test(indicator),
-    'Centerline must render the same packaged mic art as the top-bar control');
+  assert.ok(indicator.includes(micAsset), 'Centerline must reference the same packaged SVG as the top-bar control');
+  assert.match(indicator, /(?:mask(?:-image)?\s*:|style:mask(?:-image)?\s*=)/,
+    'alloy treatment must use the original SVG alpha as its actual rendering mask');
+  assert.doesNotMatch(indicator, /<img\b[^>]*class="mic-glyph"/,
+    'fixed-color image is superseded by the volume-responsive masked artwork');
 });
 
-test('mic shell stays a fixed translucent 40px circle in quiet and speaking states', () => {
+test('mic shell stays a fixed opaque 40px circle in quiet and speaking states', () => {
   const indicator = indicatorSource();
   const css = indicator.split('<style>')[1] ?? '';
-  assert.match(indicator, /meterSnapshot\.showBars/, 'the existing meter gates the speaking edge');
-  assert.match(indicator, /<img\b[^>]*class="mic-glyph"/);
+  assert.match(indicator, /meterSnapshot\.level/, 'the existing tested meter drives mic fill');
+  assert.match(indicator, /<(?:span|div)\b[^>]*class="mic-glyph"/);
   assert.match(css, /border-radius:\s*(?:50%|999(?:9)?px|50vw)/i, 'quiet mic shell must be circular');
   const shell = css.match(/\.mic-shell\s*\{([^}]+)\}/)?.[1] ?? '';
   assert.match(shell, /(?:^|;)\s*width:\s*40px\b/);
@@ -55,46 +58,80 @@ test('mic shell stays a fixed translucent 40px circle in quiet and speaking stat
   const speaking = css.match(/\.mic-shell--speaking\s*\{([^}]+)\}/)?.[1] ?? '';
   assert.doesNotMatch(speaking, /(?:^|;)\s*(?:width|height|min-width|max-width|padding|gap|border-radius|transform):/i,
     'speaking must not override fixed circle geometry (old speaking width is 88px)');
-  assert.match(css, /background:\s*(?:color-mix\(in srgb,\s*var\(--js-color-surface-[\w-]+\)\s*(?:4\d|5\d|6\d)%\s*,\s*transparent\)|rgba?\([^;]*[,/]\s*0\.[4-6]\d*\s*\))/i,
-    'local surface-color backdrop should be about half transparent');
-  assert.doesNotMatch(shell, /(?:^|;)\s*opacity:\s*0\.[4-6]\b/i,
-    'translucency belongs to the backdrop, not the mic glyph or entire component');
+  const backdrop = shell.match(/(?:^|;)\s*background(?:-color)?:\s*([^;]+);/)?.[1] ?? '';
+  assert.ok(backdrop, 'shell must supply an opaque fallback even without the decorative GPU layer');
+  assert.match(backdrop, /var\(--js-color-accent\b/, 'opaque orb fallback follows existing selected-theme accent token');
+  assert.doesNotMatch(backdrop, /transparent|rgba\([^)]*,\s*0?\.\d+\s*\)|\/\s*(?:0?\.\d+|[1-9]?\d%)\s*\)/i,
+    'desktop must never show through the mic circle fallback');
+  for (const [, hex] of backdrop.matchAll(/#([\da-f]{3,8})\b/gi)) {
+    if (hex.length === 4) assert.equal(hex.slice(-1).toLowerCase(), 'f', 'short hex fallback alpha must be opaque');
+    if (hex.length === 8) assert.equal(hex.slice(-2).toLowerCase(), 'ff', 'hex fallback alpha must be opaque');
+  }
+  assert.doesNotMatch(shell, /(?:^|;)\s*opacity:\s*(?:0?\.\d+|0)\s*;/i,
+    'neither mic glyph nor the entire component may become translucent');
   assert.doesNotMatch(css, /transition:\s*[^;]*(?:\ball\b|width|height|padding|gap|border-radius|transform)/i,
     'geometry must not transition');
-  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?transition:\s*none/i);
+  const orb = source('src/lib/speechIndicatorOrb.ts');
+  assert.match(orb, /prefers-reduced-motion:\s*reduce/, 'orb still respects reduced motion even if glyph requires no transitions');
   assert.match(css, /@media\s*\(forced-colors:\s*active\)[\s\S]*?(?:Canvas|CanvasText|border:\s*\d+px)/i);
   assert.doesNotMatch(indicator, /scan-line|idle-pulse|Math\.random/i);
 });
 
-test('speaking adds a steady cyan edge with a short color and inset fade, never waves or pulses', () => {
+test('foreground mic retains its original 24px geometry above the decorative background', () => {
+  const css = indicatorSource().split('<style>')[1] ?? '';
+  const glyph = css.match(/\.mic-glyph\s*\{([^}]+)\}/)?.[1] ?? '';
+  assert.match(glyph, /(?:^|;)\s*height:\s*24px\b/);
+  assert.match(glyph, /(?:^|;)\s*width:\s*24px\b/);
+  assert.doesNotMatch(glyph, /(?:^|;)\s*(?:opacity:\s*(?:0?\.\d+|0)\s*;|mix-blend-mode:)/i,
+    'masked alloy mic must remain fully visible without blending into orb colors');
+});
+
+test('alloy paint is confined to original mic silhouette, without filled disks or shadows', () => {
+  const indicator = indicatorSource();
+  const css = indicatorSource().split('<style>')[1] ?? '';
+  const rules = [...css.matchAll(/\.mic-glyph\s*\{([^}]+)\}/g)];
+  assert.ok(rules.length, 'original mic artwork must retain its own foreground rule');
+  for (const [, glyph] of rules) {
+    for (const [, value] of glyph.matchAll(/(?:^|;)\s*(?:box-shadow|filter)\s*:\s*([^;]+)/gi)) {
+      assert.match(value.trim(), /^none(?:\s*!important)?$/i, 'selected alloy treatment must not add a shadow');
+    }
+  }
+  assert.match(indicator, /(?:mask(?:-image)?\s*:|style:mask(?:-image)?\s*=)/,
+    'a gradient background is valid only when clipped to original SVG alpha');
+});
+
+test('voice fills Cool alloy bottom-up, never adds a speaking ring, glow, waveform or pulse', () => {
   const indicator = indicatorSource();
   const css = indicator.split('<style>')[1] ?? '';
-  const speaking = css.match(/\.mic-shell--speaking\s*\{([^}]+)\}/)?.[1] ?? '';
-  assert.match(speaking, /(?:border(?:-color)?|outline(?:-color)?):[^;]*#8fe3ff/i,
-    'speech must brighten the edge to the steady cyan accent');
-  assert.match(speaking, /box-shadow:[^;]*inset[^;]*#8fe3ff/i,
-    'speech edge gets a restrained inset accent');
-  assert.match(css, /transition:[^;]*(?:border-color|outline-color)\s+160ms/i);
-  assert.match(css, /transition:[^;]*box-shadow\s+160ms/i);
-  assert.doesNotMatch(indicator, /class="(?:waveform|bar)"|barScale|--bar-scale|meterSnapshot\.level/,
-    'normalized volume must not drive presentation; internal showBars remains valid');
+  assert.doesNotMatch(indicator, /mic-shell--speaking/, 'all volume-detected outer ring feedback is removed');
+  for (const [, value] of css.matchAll(/(?:^|[;{])\s*box-shadow\s*:\s*([^;]+)/gi)) {
+    assert.match(value.trim(), /^none(?:\s*!important)?$/i, 'outer shell must not carry a glow or inset light');
+  }
+  assert.match(css, /linear-gradient\(\s*(?:to\s+bottom|180deg)/i, 'alloy progresses from navy top to silver bottom');
+  for (const color of ['#162d49', '#335371', '#a3c2e0', '#d7ebfa']) {
+    assert.ok(css.toLowerCase().includes(color), `selected Cool alloy requires ${color}`);
+  }
+  assert.match(css, /linear-gradient\([^;]*#162d49[^;]*#335371[^;]*#a3c2e0[^;]*#d7ebfa[^;]*\)/i,
+    'Cool alloy retains its selected navy-to-silver stop order');
+  assert.match(css, /linear-gradient\([^;]*var\(--mic-level\)[^;]*\)/i,
+    'normalized fill scalar must actually drive gradient styling');
+  assert.match(indicator, /meterSnapshot\.level/);
+  assert.doesNotMatch(indicator, /class="(?:waveform|bar)"|barScale|--bar-scale/);
   assert.doesNotMatch(css, /\.waveform\b|\.bar\b|@keyframes|animation:\s*(?!\s*none\b)[^;]+|pulse/i);
 });
 
-test('forced colors keeps a distinguishable speaking edge without geometry changes', () => {
+test('forced colors keeps static accessibility styling, never a volume-detected highlight ring', () => {
   const css = indicatorSource().split('@media (forced-colors: active)')[1] ?? '';
-  const speaking = css.match(/\.mic-shell--speaking\s*\{([^}]+)\}/)?.[1] ?? '';
-  assert.match(speaking, /(?:border(?:-color)?|outline(?:-color)?):[^;]*Highlight/i,
-    'forced-colors speech must have an explicit distinguishable system-color edge');
-  assert.doesNotMatch(speaking, /(?:^|;)\s*(?:width|height|padding|gap|border-radius|transform):/i);
+  assert.doesNotMatch(css, /mic-shell--speaking|Highlight/i);
+  assert.match(css, /CanvasText/, 'system-color mic remains distinguishable');
+  assert.doesNotMatch(css, /(?:^|[;{])\s*(?:width|height|padding|gap|border-radius|transform):/i);
 });
 
-test('forced colors replace the packaged image with a visible CanvasText mic mask', () => {
+test('forced colors renders original mic alpha in CanvasText without relying on the alloy palette', () => {
   const indicator = indicatorSource();
   const css = indicator.split('@media (forced-colors: active)')[1] ?? '';
-  assert.match(indicator, /<span\b[^>]*class="mic-glyph-contrast"/);
-  assert.match(css, /\.mic-glyph\s*\{[^}]*display:\s*none/);
-  assert.match(css, /\.mic-glyph-contrast\s*\{[^}]*background:\s*CanvasText[^}]*display:\s*block[^}]*mask:\s*url\('[^']*mic_[^']*\.svg'\)/);
+  assert.match(css, /\.mic-glyph(?:-contrast)?\s*\{[^}]*(?:background(?:-color)?|color):\s*CanvasText/i);
+  assert.match(indicator, /mask(?:-image)?/);
   assert.doesNotMatch(css, /object-position\s*:/, 'forced-colors mic must not rely on moving an image out of view');
 });
 
@@ -292,14 +329,14 @@ test('voice-level IPC contains only a bounded normalized level and session nonce
   assert.doesNotMatch(callback, /\.emit\(|emit_to\(|speech:voice-level|SPEECH_VOICE_LEVEL/);
 });
 
-test('quiet recording shows mic artwork; real voice levels gate the speaking edge with a silence hold', () => {
+test('quiet recording shows masked mic artwork; real voice levels drive alloy fill with a silence hold', () => {
   const indicator = indicatorSource();
-  assert.match(indicator, /<img\b[^>]*class="mic-glyph"/);
+  assert.match(indicator, /<(?:span|div)\b[^>]*class="mic-glyph"/);
   assert.doesNotMatch(indicator, /<div\b[^>]*class="scan-line"|@keyframes scan-line|\.scan-line\s*\{/i);
   assert.match(indicator, /(?:voiceLevel|voice_level|level)/);
   assert.match(indicator, /(?:threshold|noiseFloor|noise_floor)/i);
   assert.match(indicator, /(?:decay|holdMs|releaseMs)/i);
-  assert.match(indicator, /meterSnapshot\.showBars/);
+  assert.match(indicator, /meterSnapshot\.level/);
   assert.doesNotMatch(indicator, /Math\.random|fakeLevel|simulatedLevel|setInterval\([^)]*random/i);
   assert.doesNotMatch(indicator, /pauseSpeech|resumeSpeech|simulatePause|simulateResume/i);
 });
@@ -314,7 +351,7 @@ test('meter wiring filters stale nonce, uses a testable 300ms silence hold and c
 
 test('indicator respects reduced motion, forced colors and noninteractive accessibility', () => {
   const indicator = indicatorSource();
-  assert.match(indicator, /prefers-reduced-motion:\s*reduce/);
+  assert.match(indicator + source('src/lib/speechIndicatorOrb.ts'), /prefers-reduced-motion:\s*reduce/);
   assert.match(indicator, /forced-colors:\s*active/);
   assert.match(indicator, /aria-hidden|role="status"/);
   assert.doesNotMatch(indicator, /<button|tabindex="0"|autofocus/i);

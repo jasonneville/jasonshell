@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reveal-stack-item"
+description = "Enables the reveal_stack_item command without any pre-configured scope."
+commands.allow = ["reveal_stack_item"]
+
+[[permission]]
+identifier = "deny-reveal-stack-item"
+description = "Denies the reveal_stack_item command without any pre-configured scope."
+commands.deny = ["reveal_stack_item"]

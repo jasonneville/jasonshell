@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-invoke-system-tray-icon"
+description = "Enables the invoke_system_tray_icon command without any pre-configured scope."
+commands.allow = ["invoke_system_tray_icon"]
+
+[[permission]]
+identifier = "deny-invoke-system-tray-icon"
+description = "Denies the invoke_system_tray_icon command without any pre-configured scope."
+commands.deny = ["invoke_system_tray_icon"]

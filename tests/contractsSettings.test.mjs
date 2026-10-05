@@ -287,6 +287,10 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'search-panel:query',
     'search-panel:select',
     'search-panel:update',
+    'snip:context',
+    'snip:armed',
+    'snip:prepare_bar',
+    'snip:release_bar',
     'speech:toggle',
     'speech-history-panel:open',
     'speech-history-panel:closed',
@@ -380,7 +384,8 @@ test('settings wrapper declares versioned schema and stable command names', () =
       search: 'Ctrl+Space',
       terminal: 'Alt+Backquote',
       stackBrowser: 'Alt+1',
-      speechTranscription: 'Ctrl+D'
+      speechTranscription: 'Ctrl+D',
+      snipping: 'Alt+S'
     }
   });
 });
@@ -484,6 +489,8 @@ test('backend settings and diagnostics commands are registered with hardened app
       ['process-manager'],
       ['search-panel'],
       ['settings-panel'],
+      ['snip-overlay-*'],
+      ['snip-preview-*'],
       ['speech-history-panel'],
       ['speech-indicator'],
       ['stack-popup'],
@@ -491,6 +498,11 @@ test('backend settings and diagnostics commands are registered with hardened app
       ['task-preview'],
       ['terminal-panel'],
       ['top-bar', 'quick-launch-panel'],
+      ['top-bar', 'bottom-bar', 'quick-launch-panel', 'task-gallery', 'task-preview',
+        'search-panel', 'stack-popup', 'process-manager', 'control-plane', 'settings-panel',
+        'tray-panel', 'terminal-panel', 'command-panel', 'audio-panel', 'calendar-panel',
+        'speech-history-panel', 'speech-indicator', 'context-menu-overlay'],
+      ['top-bar'],
       ['tray-panel']
     ]
   );

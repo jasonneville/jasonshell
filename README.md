@@ -17,10 +17,13 @@ Current shell surfaces:
 - search panel
 - process manager
 - audio, calendar, settings, and tray surfaces
+- screen snipping with a native capture overlay and persistent preview
 
 Core shell rule: the top and bottom bars reserve primary-monitor AppBar work area.
 
 Current truth boundary: workspace restoration is reserved and not implemented; startup commands are not executed automatically; automation forwarding is planned and not wired; multi-monitor support is planning-only, with live shell ownership remaining a single-monitor runtime.
+
+Screen snipping is implemented as a scoped native flow, but its native Windows journey is not yet certified. The crop control is appended after Sound in the existing top-bar order; its configurable fifth hotkey defaults to `Alt+S`. A legacy `Alt+S` assigned to Search is preserved and reported as an actionable conflict rather than silently remapped (for example: “Legacy Alt+S on Search preserved; snipping inactive until shortcut conflict repaired”). The original four hotkeys and control order remain unchanged.
 
 ## What this repo is for
 
@@ -54,6 +57,8 @@ Fresh bootstrap and native builds do not require a model in the repository. Impo
 2. Open **Settings → Speech** and choose **Import speech model**.
 3. Select a trusted Parakeet TDT 0.6b v2 int8 ONNX `.tar`, `.tar.gz`, or `.tgz` archive.
 4. Wait for validation and installation to finish. The app validates the staged archive and loads the model before reporting it ready.
+
+Alternatively choose **Import speech model folder** and select a trusted extracted folder containing `encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, and `vocab.txt` directly at its root. Only these three regular, nonempty files are copied; extras such as `config.json` and `nemo128.onnx` are ignored. Linked/junction roots and required files are rejected. The folder is not modified or retained as an external model pointer; after successful import it is no longer needed.
 
 The installed model is kept in JasonShell's per-user local application data, is ready for the current session, and is reused after restart and app updates. You can delete the original archive after a successful import; it is not needed again. Installed files remain until the app's local data is deleted (for example, by an uninstall or profile cleanup). Audio and transcripts are not newly persisted by this setup.
 
@@ -183,6 +188,18 @@ npm run tauri dev
 - apps, windows, settings, folders, commands
 - Everything results when available
 
+### Screen snipping
+
+- starts only from the exact live top-bar instance or the trusted native snipping hotkey dispatcher
+- freezes all currently enumerated monitors before creating capture overlays; normal top/bottom bars, panels, and their tooltips remain in the capture, while snipping overlays and the prior preview are capture-excluded
+- binds the first backend-accepted monitor pointer-down to the generation; the crop is converted from trusted native monitor metadata
+- publishes automatic Copy immediately after hidden preview preparation and before showing the preview; the reported result remains truthful for committed, warning, rejected, or publication-unknown outcomes
+- keeps a non-activating preview with **Copy**, **Save**, and **Dismiss** actions; Save uses a backend native PNG picker and sibling-file atomic publication, and picker cancellation writes nothing
+- keeps save operations pinned to their generation/image and refuses replacement while the picker is active
+- uses path-free IPC, exact concrete-window authorization, binary per-monitor image responses, scoped snipping capabilities, bounded helper deadlines, and capture/staging budgets
+
+Snipping has no annotations, spanning mode, autosave, capture history, upload, or renderer-supplied paths/handles. The runtime remains scoped to the existing primary-monitor AppBar shell ownership; multi-monitor capture is a snipping capture operation, not multi-monitor AppBar ownership.
+
 ### Process manager
 
 - sortable process metrics
@@ -245,6 +262,7 @@ Validation note:
 
 - Windows native behavior still needs manual smoke
 - `npm run smoke:fullscreen` is part of the expected Windows smoke path
+- snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, and consumer paste remain unverified
 
 ## Caveats
 
@@ -256,6 +274,7 @@ Validation note:
 - automation forwarding is planned and not wired
 - tray behavior needs caution
 - native Windows behaviors require manual smoke
+- snipping's native journey remains pending; automated fixtures do not prove live HWND discovery, GDI capture, compositor timing, clipboard paste, or AppBar coexistence
 
 ## Documentation links
 
@@ -263,3 +282,7 @@ Validation note:
 - `package.json` - exact scripts and toolchain entrypoints
 - `scripts/bootstrap-windows.ps1` - first-run bootstrap path
 - `docs/` - repo docs and smoke references
+
+## Credits
+
+Speech indicator fluid background adapted in-app from [Rare UI](https://rareui.com)'s [Fluid Orb](https://rareui.com/components/fluidorb), copyright (c) 2026 Swami Malode. Native WebGL only; no added runtime dependencies. Full MIT + Commons Clause + Attribution terms: [`src/lib/speechIndicatorOrb.LICENSE`](src/lib/speechIndicatorOrb.LICENSE). Not distributed as a standalone component or component library.

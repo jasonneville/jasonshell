@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launch-pinned-taskbar-app"
+description = "Enables the launch_pinned_taskbar_app command without any pre-configured scope."
+commands.allow = ["launch_pinned_taskbar_app"]
+
+[[permission]]
+identifier = "deny-launch-pinned-taskbar-app"
+description = "Denies the launch_pinned_taskbar_app command without any pre-configured scope."
+commands.deny = ["launch_pinned_taskbar_app"]

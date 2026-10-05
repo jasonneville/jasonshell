@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-stack-basic-text-file"
+description = "Enables the save_stack_basic_text_file command without any pre-configured scope."
+commands.allow = ["save_stack_basic_text_file"]
+
+[[permission]]
+identifier = "deny-save-stack-basic-text-file"
+description = "Denies the save_stack_basic_text_file command without any pre-configured scope."
+commands.deny = ["save_stack_basic_text_file"]

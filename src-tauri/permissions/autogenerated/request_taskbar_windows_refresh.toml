@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-taskbar-windows-refresh"
+description = "Enables the request_taskbar_windows_refresh command without any pre-configured scope."
+commands.allow = ["request_taskbar_windows_refresh"]
+
+[[permission]]
+identifier = "deny-request-taskbar-windows-refresh"
+description = "Denies the request_taskbar_windows_refresh command without any pre-configured scope."
+commands.deny = ["request_taskbar_windows_refresh"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resize-shell-bar"
+description = "Enables the resize_shell_bar command without any pre-configured scope."
+commands.allow = ["resize_shell_bar"]
+
+[[permission]]
+identifier = "deny-resize-shell-bar"
+description = "Denies the resize_shell_bar command without any pre-configured scope."
+commands.deny = ["resize_shell_bar"]

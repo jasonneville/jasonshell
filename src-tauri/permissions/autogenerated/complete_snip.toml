@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-complete-snip"
+description = "Enables the complete_snip command without any pre-configured scope."
+commands.allow = ["complete_snip"]
+
+[[permission]]
+identifier = "deny-complete-snip"
+description = "Denies the complete_snip command without any pre-configured scope."
+commands.deny = ["complete_snip"]

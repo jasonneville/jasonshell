@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-new-stack-text-file"
+description = "Enables the new_stack_text_file command without any pre-configured scope."
+commands.allow = ["new_stack_text_file"]
+
+[[permission]]
+identifier = "deny-new-stack-text-file"
+description = "Denies the new_stack_text_file command without any pre-configured scope."
+commands.deny = ["new_stack_text_file"]

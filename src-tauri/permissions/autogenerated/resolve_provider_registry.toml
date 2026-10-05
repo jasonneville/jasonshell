@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-provider-registry"
+description = "Enables the resolve_provider_registry command without any pre-configured scope."
+commands.allow = ["resolve_provider_registry"]
+
+[[permission]]
+identifier = "deny-resolve-provider-registry"
+description = "Denies the resolve_provider_registry command without any pre-configured scope."
+commands.deny = ["resolve_provider_registry"]

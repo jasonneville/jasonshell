@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-stack-popup-focus-loss-hold"
+description = "Enables the begin_stack_popup_focus_loss_hold command without any pre-configured scope."
+commands.allow = ["begin_stack_popup_focus_loss_hold"]
+
+[[permission]]
+identifier = "deny-begin-stack-popup-focus-loss-hold"
+description = "Denies the begin_stack_popup_focus_loss_hold command without any pre-configured scope."
+commands.deny = ["begin_stack_popup_focus_loss_hold"]

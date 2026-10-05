@@ -1,4 +1,4 @@
-export const TOP_BAR_CONTROL_IDS = ['terminal', 'command', 'tray', 'mic', 'sound'] as const;
+export const TOP_BAR_CONTROL_IDS = ['terminal', 'command', 'tray', 'mic', 'sound', 'snip'] as const;
 export type TopBarControlId = (typeof TOP_BAR_CONTROL_IDS)[number];
 
 export const DEFAULT_TOP_BAR_CONTROL_ORDER: TopBarControlId[] = [...TOP_BAR_CONTROL_IDS];

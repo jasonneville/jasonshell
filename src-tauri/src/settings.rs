@@ -49,7 +49,10 @@ pub struct StandardHotkeySettings {
     pub stack_browser: CanonicalHotkeyBinding,
     #[serde(default = "default_speech_transcription_hotkey")]
     pub speech_transcription: CanonicalHotkeyBinding,
+    #[serde(default = "default_snipping_hotkey")]
+    pub snipping: CanonicalHotkeyBinding,
 }
+fn default_snipping_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+S".into()) }
 
 fn default_speech_transcription_hotkey() -> CanonicalHotkeyBinding {
     CanonicalHotkeyBinding("Ctrl+D".to_string())
@@ -61,6 +64,7 @@ fn default_standard_hotkeys() -> StandardHotkeySettings {
         terminal: CanonicalHotkeyBinding("Alt+Backquote".to_string()),
         stack_browser: CanonicalHotkeyBinding("Alt+1".to_string()),
         speech_transcription: default_speech_transcription_hotkey(),
+        snipping: default_snipping_hotkey(),
     }
 }
 
@@ -440,6 +444,20 @@ pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<Shel
     let path = settings_path(app_handle)?;
     load_settings_from_path(&path)
 }
+pub(crate) fn load_hotkey_startup_settings(app_handle: &AppHandle) -> Result<(ShellSettings, bool), String> {
+    let _guard = SETTINGS_WRITE_LOCK.lock().map_err(|_| "settings write lock is poisoned".to_string())?;
+    let path = settings_path(app_handle)?;
+    let missing = fs::read_to_string(&path).ok().and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .is_some_and(|value| value.get("hotkeys").and_then(|hotkeys| hotkeys.get("snipping")).is_none());
+    Ok((load_settings_from_path(&path)?, missing))
+}
+fn transaction_hotkey_configurer(app: &AppHandle) -> impl FnMut(&StandardHotkeySettings) -> Result<(), String> + '_ {
+    let mut registered = false;
+    move |hotkeys| {
+        if registered { crate::windows_key_hook::restore_loaded_standard_hotkeys(app, hotkeys) }
+        else { let result = crate::windows_key_hook::configure_standard_hotkeys(app, hotkeys); registered = result.is_ok(); result }
+    }
+}
 
 pub(crate) fn save_shell_settings_for_app(
     app_handle: &AppHandle,
@@ -450,7 +468,7 @@ pub(crate) fn save_shell_settings_for_app(
         &path,
         settings,
         |settings, _previous| settings,
-        |hotkeys| crate::windows_key_hook::configure_standard_hotkeys(app_handle, hotkeys),
+        transaction_hotkey_configurer(app_handle),
         save_settings_to_path,
     )
 }
@@ -467,7 +485,7 @@ fn save_settings_panel_for_app(
             settings.quick_commands = previous.quick_commands.clone();
             settings
         },
-        |hotkeys| crate::windows_key_hook::configure_standard_hotkeys(app_handle, hotkeys),
+        transaction_hotkey_configurer(app_handle),
         save_settings_to_path,
     )
 }
@@ -611,13 +629,14 @@ fn load_settings_from_path(path: &Path) -> Result<ShellSettings, String> {
             return Ok(ShellSettings::default());
         }
     };
+    let missing_snipping = value.get("hotkeys").and_then(|hotkeys| hotkeys.get("snipping")).is_none();
     let settings = migrate_settings_value(value)?;
     reject_secret_setting_keys(
         &serde_json::to_value(&settings)
             .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
         &[],
     )?;
-    validate_settings(settings)
+    validate_loaded_settings(settings, missing_snipping)
 }
 
 fn save_settings_to_path(
@@ -643,7 +662,10 @@ fn save_settings_to_path(
     Ok(settings)
 }
 
-fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, String> {
+fn validate_settings(settings: ShellSettings) -> Result<ShellSettings, String> {
+    validate_loaded_settings(settings, false)
+}
+fn validate_loaded_settings(mut settings: ShellSettings, missing_snipping: bool) -> Result<ShellSettings, String> {
     settings.search.result_limit = settings.search.result_limit.clamp(1, 100);
     settings.search.everything.max_results = settings.search.everything.max_results.clamp(1, 200);
     settings.ui.top_bar_height_logical = clamp_shell_bar_height_logical(
@@ -664,7 +686,7 @@ fn validate_settings(mut settings: ShellSettings) -> Result<ShellSettings, Strin
     }
     settings.workspaces = workspaces;
     settings.quick_commands = validate_quick_commands_settings(settings.quick_commands)?;
-    settings.hotkeys = validate_standard_hotkey_settings(settings.hotkeys)?;
+    settings.hotkeys = validate_loaded_hotkeys(settings.hotkeys, missing_snipping)?;
     Ok(settings)
 }
 
@@ -679,11 +701,15 @@ const MAX_HOTKEY_BINDING_LENGTH: usize = 32;
 pub(crate) fn validate_standard_hotkey_settings(
     hotkeys: StandardHotkeySettings,
 ) -> Result<StandardHotkeySettings, String> {
+    validate_loaded_hotkeys(hotkeys, false)
+}
+pub(crate) fn validate_loaded_hotkeys(hotkeys: StandardHotkeySettings, missing_snipping: bool) -> Result<StandardHotkeySettings, String> {
     let normalized = StandardHotkeySettings {
         search: canonicalize_hotkey_binding(&hotkeys.search.0)?,
         terminal: canonicalize_hotkey_binding(&hotkeys.terminal.0)?,
         stack_browser: canonicalize_hotkey_binding(&hotkeys.stack_browser.0)?,
         speech_transcription: canonicalize_hotkey_binding(&hotkeys.speech_transcription.0)?,
+        snipping: canonicalize_hotkey_binding(&hotkeys.snipping.0)?,
     };
     let mut unique = HashSet::new();
     for binding in [&normalized.search, &normalized.terminal, &normalized.stack_browser, &normalized.speech_transcription] {
@@ -691,8 +717,15 @@ pub(crate) fn validate_standard_hotkey_settings(
             return Err("standard hotkey bindings must be unique".to_string());
         }
     }
+    if !unique.insert(normalized.snipping.0.as_str())
+        && !(missing_snipping && normalized.snipping.0 == "Alt+S") {
+        return Err("standard hotkey bindings must be unique".into());
+    }
     Ok(normalized)
 }
+
+#[cfg(test)]
+include!("../tests/fixtures/snipping_settings_acceptance.rs");
 
 pub(crate) fn canonicalize_hotkey_binding(value: &str) -> Result<CanonicalHotkeyBinding, String> {
     let value = value.trim();
@@ -1451,6 +1484,7 @@ mod tests {
             terminal: CanonicalHotkeyBinding(terminal.to_string()),
             stack_browser: CanonicalHotkeyBinding(stack_browser.to_string()),
             speech_transcription: default_speech_transcription_hotkey(),
+            snipping: default_snipping_hotkey(),
         }
     }
 
@@ -1462,6 +1496,7 @@ mod tests {
         assert_eq!(defaults.terminal.0, "Alt+Backquote");
         assert_eq!(defaults.stack_browser.0, "Alt+1");
         assert_eq!(defaults.speech_transcription.0, "Ctrl+D");
+        assert_eq!(defaults.snipping.0, "Alt+S");
     }
 
     #[test]

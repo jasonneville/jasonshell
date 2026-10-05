@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-process-manager"
+description = "Enables the hide_process_manager command without any pre-configured scope."
+commands.allow = ["hide_process_manager"]
+
+[[permission]]
+identifier = "deny-hide-process-manager"
+description = "Denies the hide_process_manager command without any pre-configured scope."
+commands.deny = ["hide_process_manager"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-snip"
+description = "Enables the copy_snip command without any pre-configured scope."
+commands.allow = ["copy_snip"]
+
+[[permission]]
+identifier = "deny-copy-snip"
+description = "Denies the copy_snip command without any pre-configured scope."
+commands.deny = ["copy_snip"]

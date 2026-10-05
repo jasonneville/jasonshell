@@ -17,6 +17,8 @@ export type ShellSurface =
   | 'calendar-panel'
   | 'speech-indicator'
   | 'context-menu-overlay'
+  | 'snip-overlay'
+  | 'snip-preview'
   | 'unknown';
 
 type SurfaceMeta = {
@@ -25,6 +27,8 @@ type SurfaceMeta = {
 };
 
 export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
+  'snip-overlay': { title: 'Screen snip', subtitle: 'Screen region selection' },
+  'snip-preview': { title: 'Screen snip', subtitle: 'Captured region preview' },
   'bottom-bar': {
     subtitle: 'Primary workspace command rail',
     title: 'JasonShell Taskbar'
@@ -104,6 +108,13 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
 };
 
 export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface {
+  if (label === 'snip-overlay' || label === 'snip-preview') return label;
+  if (label && label.length <= 96 && /^[\x20-\x7e]+$/.test(label)) {
+    const match = /^(snip-overlay)-([1-9][0-9]*)-m(?:[0-9]|[12][0-9]|3[01])$/.exec(label)
+      ?? /^(snip-preview)-([1-9][0-9]*)$/.exec(label);
+    // Render routing only: native concrete-window registry owns authorization.
+    if (match && BigInt(match[2]) <= 18446744073709551615n) return match[1] as ShellSurface;
+  }
   if (
     label === 'top-bar'
     || label === 'bottom-bar'

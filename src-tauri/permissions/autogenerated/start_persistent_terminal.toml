@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-persistent-terminal"
+description = "Enables the start_persistent_terminal command without any pre-configured scope."
+commands.allow = ["start_persistent_terminal"]
+
+[[permission]]
+identifier = "deny-start-persistent-terminal"
+description = "Denies the start_persistent_terminal command without any pre-configured scope."
+commands.deny = ["start_persistent_terminal"]

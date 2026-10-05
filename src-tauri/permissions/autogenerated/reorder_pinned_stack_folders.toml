@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reorder-pinned-stack-folders"
+description = "Enables the reorder_pinned_stack_folders command without any pre-configured scope."
+commands.allow = ["reorder_pinned_stack_folders"]
+
+[[permission]]
+identifier = "deny-reorder-pinned-stack-folders"
+description = "Denies the reorder_pinned_stack_folders command without any pre-configured scope."
+commands.deny = ["reorder_pinned_stack_folders"]

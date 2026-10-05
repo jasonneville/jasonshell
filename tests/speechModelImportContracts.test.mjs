@@ -10,7 +10,7 @@ const api = read('src/lib/speech.ts');
 const commands = read('src/ipc/commands.ts');
 
 function body(source, name) {
-  const start = source.indexOf(`fn ${name}(`);
+  const start = source.search(new RegExp(`fn ${name}(?:<[^>]+>)?\\(`));
   assert.ok(start >= 0, `function ${name} exists`);
   const open = source.indexOf('{', start);
   let depth = 0;
@@ -35,6 +35,18 @@ test('registered native model commands authorize Settings and accept no renderer
   assert.match(main, /tauri_plugin_dialog::init\(\)/);
 });
 
+test('folder import command is registered Settings-owned and renderer supplies no source path', () => {
+  assert.match(commands, /importSpeechModelFolder: 'import_speech_model_folder'/);
+  assert.match(main, /speech_runtime::import_speech_model_folder/);
+  assert.match(body(runtime, 'import_speech_model_folder'), /require_model_settings\(&window\)\?/);
+  const start = runtime.indexOf('fn import_speech_model_folder(');
+  const signature = runtime.slice(start, runtime.indexOf(') ->', start));
+  assert.doesNotMatch(signature, /(?:path|source|directory|request)\s*:/);
+  assert.match(api, /export function importSpeechModelFolder\(\)/);
+  assert.match(api, /invoke<[^>]+>\(IPC_COMMANDS\.importSpeechModelFolder\)/);
+  // Inventory/registration checks only; actual generated ACL is shell_app_acl.
+});
+
 test('warmup resolves app-local installation before optional bundle and uses actual model loader', () => {
   const resolver = body(runtime, 'resolve_model_resource');
   assert.ok(resolver.indexOf('resolve_installed_model(&data)') < resolver.indexOf('resolve(MODEL_RESOURCE'));
@@ -47,15 +59,26 @@ test('warmup resolves app-local installation before optional bundle and uses act
 });
 
 test('import uses native filtered picker and ONNX loader callback before ready pool assignment', () => {
-  const importer = body(runtime, 'import_model_blocking');
-  assert.match(importer, /\.dialog\(\)[\s\S]*\.set_parent\(&window\)[\s\S]*\.add_filter\("Parakeet model archive", &\["tar", "tar.gz", "tgz"\]\)[\s\S]*\.blocking_pick_file\(\)/);
-  assert.match(importer, /app_local_data_dir\(\)/);
-  assert.match(importer, /install_archive\([\s\S]*\|path\|\s*\{[\s\S]*speech_model::load_parakeet_tdt\(path\)/);
-  assert.ok(importer.indexOf('speech_model::load_parakeet_tdt(path)') < importer.indexOf('WarmModelState::Ready(model)'));
+  const adapter = body(runtime, 'import_model_blocking');
+  assert.match(adapter, /import_model_with\(\s*&state,\s*kind,/);
+  assert.match(adapter, /app\.dialog\(\)\.file\(\)\.set_parent\(&window\)/);
+  assert.match(adapter, /ModelImportKind::Archive => picker\s*\.add_filter\("Parakeet model archive", &\["tar", "tar.gz", "tgz"\]\)\s*\.blocking_pick_file\(\)/);
+  assert.match(adapter, /ModelImportKind::Folder => picker\.blocking_pick_folder\(\)/);
+  assert.match(adapter, /app_local_data_dir\(\)/);
+  assert.match(adapter, /\|path\|\s*\{\s*crate::speech_model::load_parakeet_tdt\(path\)/);
+  assert.match(body(runtime, 'import_speech_model'), /import_model_blocking\(app, window, ModelImportKind::Archive\)/);
+  assert.match(body(runtime, 'import_speech_model_folder'), /import_model_blocking\(app, window, ModelImportKind::Folder\)/);
+  const transaction = body(runtime, 'import_model_with');
+  assert.match(transaction, /let validate = \|path: &std::path::Path\|\s*\{\s*loaded = Some\(load\(path\)\?\)/);
+  assert.match(transaction, /ModelImportKind::Archive => crate::speech_model_install::install_archive\(\s*&source, &data, limits, validate,/);
+  assert.match(transaction, /ModelImportKind::Folder => crate::speech_model_install::install_directory\(\s*&source, &data, limits, validate,/);
+  assert.ok(transaction.indexOf('load(path)?') < transaction.indexOf('install_archive('));
+  assert.ok(transaction.indexOf('install_directory(') < transaction.indexOf('loaded.ok_or_else'));
+  assert.ok(transaction.indexOf('loaded.ok_or_else') < transaction.indexOf('WarmModelState::Ready(model)'));
 });
 
 test('import/capture admission is serialized and late warmup epoch cannot publish', () => {
-  const importer = body(runtime, 'import_model_blocking');
+  const importer = body(runtime, 'import_model_with');
   assert.match(importer, /state\.commit\.lock\(\)/);
   for (const guard of [/operation\.importing/, /WarmModelState::InUse/, /inner\.capture\.is_some\(\)/, /SpeechStatusKind::Recording \| SpeechStatusKind::Transcribing/]) assert.match(importer, guard);
   assert.match(importer, /operation\.epoch = operation\.epoch\.wrapping_add\(1\)/);
@@ -66,8 +89,10 @@ test('import/capture admission is serialized and late warmup epoch cannot publis
   assert.ok(capture.indexOf('.importing') < capture.indexOf('create_capture_stream'));
   const warmup = body(runtime, 'spawn_warm_model_async');
   assert.match(warmup, /drop\(operation\);[\s\S]*spawn_blocking/);
-  assert.match(warmup, /if operation\.epoch != epoch[\s\S]*operation\.importing[\s\S]*shutting_down[\s\S]*return;/);
-  assert.ok(warmup.indexOf('operation.epoch != epoch') < warmup.indexOf('*slot = match loaded'));
+  assert.match(warmup, /finish_warm_model\(&state, epoch, source, missing, loaded\)/);
+  const finish = body(runtime, 'finish_warm_model');
+  assert.match(finish, /if operation\.epoch != epoch[\s\S]*operation\.importing[\s\S]*shutting_down[\s\S]*return;/);
+  assert.ok(finish.indexOf('operation.epoch != epoch') < finish.indexOf('std::mem::replace('));
 });
 
 test('missing/unloadable status stays truthful and cancelled/failed warmup can retry without replacing ready', () => {
@@ -75,7 +100,10 @@ test('missing/unloadable status stays truthful and cancelled/failed warmup can r
   assert.match(status, /WarmModelState::Failed if operation\.missing => "missing"/);
   assert.match(status, /WarmModelState::Failed => "error"/);
   assert.match(status, /WarmModelState::Loading => "loading"/);
-  const importer = body(runtime, 'import_model_blocking');
+  const importer = body(runtime, 'import_model_with');
   assert.match(importer, /if matches!\(\*slot, WarmModelState::Loading \| WarmModelState::Failed\)\s*\{\s*\*slot = WarmModelState::NotStarted;/);
-  assert.match(runtime, /impl Drop for ImportReservation[\s\S]*operation\.importing = false;[\s\S]*spawn_warm_model_async/);
+  assert.match(runtime, /struct ImportReservation[^]*state: &'a SpeechRuntimeState/);
+  assert.match(runtime, /Drop for ImportReservation[\s\S]*operation\.importing = false;[\s\S]*retry\(\)/);
+  assert.match(body(runtime, 'import_model_blocking'), /\|\| spawn_warm_model_async\(app\.clone\(\)\)/);
+  assert.match(importer, /drop\(reservation\);\s*let model = model_status\(&?state\)\?/);
 });

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-workspace-task-history"
+description = "Enables the list_workspace_task_history command without any pre-configured scope."
+commands.allow = ["list_workspace_task_history"]
+
+[[permission]]
+identifier = "deny-list-workspace-task-history"
+description = "Denies the list_workspace_task_history command without any pre-configured scope."
+commands.deny = ["list_workspace_task_history"]

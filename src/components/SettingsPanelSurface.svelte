@@ -7,7 +7,7 @@
   import MeltRadioGroup from './melt/MeltRadioGroup.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
   import MeltToggle from './melt/MeltToggle.svelte';
-  import { getSpeechModelStatus, importSpeechModel, type SpeechModelStatus } from '../lib/speech';
+  import { getSpeechModelStatus, importSpeechModel, importSpeechModelFolder, type SpeechModelStatus } from '../lib/speech';
   import {
     formatShellDate,
     formatShellTime,
@@ -99,7 +99,7 @@
       : speechModel?.state === 'missing'
         ? 'Speech model not installed.'
         : speechModel?.state === 'error'
-          ? 'Speech model unavailable. Import a compatible archive.'
+          ? 'Speech model unavailable. Import a compatible archive or folder.'
           : 'Checking speech model…';
 
   onMount(() => {
@@ -132,25 +132,33 @@
       if (!speechModelMounted || request !== speechModelRequest) return;
       speechModel = { state: 'error', source: null, error: null };
       if (!preserveImportError) {
-        speechModelError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Could not check speech model. Try importing a compatible archive.';
+        speechModelError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Could not check speech model. Try importing a compatible archive or folder.';
       }
     }
   }
 
   async function handleSpeechModelImport() {
+    await runSpeechModelImport(importSpeechModel);
+  }
+
+  async function handleSpeechModelFolderImport() {
+    await runSpeechModelImport(importSpeechModelFolder);
+  }
+
+  async function runSpeechModelImport(importModel: typeof importSpeechModel) {
     if (speechModelBusy) return;
     const request = ++speechModelRequest;
     clearTimeout(speechModelTimer);
     speechModelBusy = true;
     speechModelError = '';
     try {
-      const result = await importSpeechModel();
+      const result = await importModel();
       if (!speechModelMounted || request !== speechModelRequest) return;
       speechModel = result.model;
       speechModelError = result.model.error ?? '';
     } catch (error) {
       if (!speechModelMounted || request !== speechModelRequest) return;
-      speechModelError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Import failed. Choose a complete Parakeet v2 int8 archive and try again.';
+      speechModelError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Import failed. Choose a complete Parakeet v2 int8 archive or folder and try again.';
       if (!speechModel) {
         speechModelBusy = false;
         void refreshSpeechModel(true);
@@ -257,8 +265,12 @@
     search: 'Search',
     terminal: 'Terminal',
     stackBrowser: 'Stack Browser',
-    speechTranscription: 'Speech transcription'
+    speechTranscription: 'Speech transcription',
+    snipping: 'Screen snipping'
   };
+
+  $: snippingConflictAction = (Object.keys(hotkeyActionNames) as StandardHotkeyAction[])
+    .find((action) => action !== 'snipping' && shellSettings.hotkeys[action] === shellSettings.hotkeys.snipping);
 
   function canonicalKey(event: KeyboardEvent): string | null {
     if (event.code === 'Space') return 'Space';
@@ -533,15 +545,18 @@
   <section class="settings-section" aria-labelledby="speech-model-heading">
     <h2 id="speech-model-heading">Speech</h2>
     <p class="settings-help">
-      Choose a trusted Parakeet v2 int8 .tar, .tar.gz, or .tgz once. JasonShell installs it for offline use, including after restart. No manual extraction needed.
+       Choose a trusted Parakeet v2 int8 .tar, .tar.gz, .tgz, or folder once. JasonShell copies the model for offline use, including after restart. Archives need no manual extraction.
     </p>
     <div class="speech-model-actions" aria-busy={speechModelBusy}>
       <MeltActionButton disabled={speechModelBusy} onClick={handleSpeechModelImport}>
         {speechModelBusy ? 'Installing speech model…' : 'Import speech model'}
       </MeltActionButton>
+      <MeltActionButton disabled={speechModelBusy} onClick={handleSpeechModelFolderImport}>
+        Import speech model folder
+      </MeltActionButton>
     </div>
     <p class:settings-success={speechModel?.state === 'ready'} class="settings-help" role="status" aria-live="polite">
-      {speechModelBusy ? 'Choose an archive; installation and validation may take a minute.' : speechModelLabel}
+      {speechModelBusy ? 'Choose an archive or folder; installation and validation may take a minute.' : speechModelLabel}
     </p>
     {#if speechModelError}
       <p class="settings-error" role="alert">{speechModelError}</p>
@@ -576,7 +591,16 @@
           <kbd>{shellSettings.hotkeys.speechTranscription}</kbd>
         </button>
       </div>
+      <div class="hotkey-row">
+        <span>Screen snipping</span>
+        <button type="button" class="hotkey-capture" data-hotkey-action="snipping" aria-label="Capture Screen snipping shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
+          <kbd>{shellSettings.hotkeys.snipping}</kbd>
+        </button>
+      </div>
     </div>
+    {#if snippingConflictAction}
+      <p class="settings-error" role="alert">{shellSettings.hotkeys.snipping} is already assigned to {hotkeyActionNames[snippingConflictAction]}. Change either shortcut to enable Screen snipping.</p>
+    {/if}
     {#if hotkeyError}
       <p id="hotkey-error" class="settings-error" role="alert">{hotkeyError}</p>
     {/if}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-stack-terminal"
+description = "Enables the read_stack_terminal command without any pre-configured scope."
+commands.allow = ["read_stack_terminal"]
+
+[[permission]]
+identifier = "deny-read-stack-terminal"
+description = "Denies the read_stack_terminal command without any pre-configured scope."
+commands.deny = ["read_stack_terminal"]

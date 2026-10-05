@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-context-menu-overlay"
+description = "Enables the hide_context_menu_overlay command without any pre-configured scope."
+commands.allow = ["hide_context_menu_overlay"]
+
+[[permission]]
+identifier = "deny-hide-context-menu-overlay"
+description = "Denies the hide_context_menu_overlay command without any pre-configured scope."
+commands.deny = ["hide_context_menu_overlay"]

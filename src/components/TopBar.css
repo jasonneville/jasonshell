@@ -14,6 +14,10 @@
   width: 100%;
 }
 
+.top-bar.snip-preparing .melt-action-button-tooltip {
+  display: none !important;
+}
+
 .top-bar .bar-resize-handle {
   background: transparent;
   border: 0;

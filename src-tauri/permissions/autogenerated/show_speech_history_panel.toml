@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-speech-history-panel"
+description = "Enables the show_speech_history_panel command without any pre-configured scope."
+commands.allow = ["show_speech_history_panel"]
+
+[[permission]]
+identifier = "deny-show-speech-history-panel"
+description = "Denies the show_speech_history_panel command without any pre-configured scope."
+commands.deny = ["show_speech_history_panel"]

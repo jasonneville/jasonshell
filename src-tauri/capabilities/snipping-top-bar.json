@@ -1,0 +1,5 @@
+{
+  "identifier": "snipping-top-bar",
+  "windows": ["top-bar"],
+  "permissions": ["allow-start-snip", "allow-snip-bar-ready", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

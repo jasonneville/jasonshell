@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-allocate-task-preview-request-id"
+description = "Enables the allocate_task_preview_request_id command without any pre-configured scope."
+commands.allow = ["allocate_task_preview_request_id"]
+
+[[permission]]
+identifier = "deny-allocate-task-preview-request-id"
+description = "Denies the allocate_task_preview_request_id command without any pre-configured scope."
+commands.deny = ["allocate_task_preview_request_id"]

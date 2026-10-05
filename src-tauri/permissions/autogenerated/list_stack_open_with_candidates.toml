@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-stack-open-with-candidates"
+description = "Enables the list_stack_open_with_candidates command without any pre-configured scope."
+commands.allow = ["list_stack_open_with_candidates"]
+
+[[permission]]
+identifier = "deny-list-stack-open-with-candidates"
+description = "Denies the list_stack_open_with_candidates command without any pre-configured scope."
+commands.deny = ["list_stack_open_with_candidates"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-stack-item"
+description = "Enables the delete_stack_item command without any pre-configured scope."
+commands.allow = ["delete_stack_item"]
+
+[[permission]]
+identifier = "deny-delete-stack-item"
+description = "Denies the delete_stack_item command without any pre-configured scope."
+commands.deny = ["delete_stack_item"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-speech-model"
+description = "Enables the import_speech_model command without any pre-configured scope."
+commands.allow = ["import_speech_model"]
+
+[[permission]]
+identifier = "deny-import-speech-model"
+description = "Denies the import_speech_model command without any pre-configured scope."
+commands.deny = ["import_speech_model"]

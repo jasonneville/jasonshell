@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-task-gallery-on-focus-loss"
+description = "Enables the hide_task_gallery_on_focus_loss command without any pre-configured scope."
+commands.allow = ["hide_task_gallery_on_focus_loss"]
+
+[[permission]]
+identifier = "deny-hide-task-gallery-on-focus-loss"
+description = "Denies the hide_task_gallery_on_focus_loss command without any pre-configured scope."
+commands.deny = ["hide_task_gallery_on_focus_loss"]

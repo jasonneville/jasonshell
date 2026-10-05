@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-quick-command-artifact-location"
+description = "Enables the open_quick_command_artifact_location command without any pre-configured scope."
+commands.allow = ["open_quick_command_artifact_location"]
+
+[[permission]]
+identifier = "deny-open-quick-command-artifact-location"
+description = "Denies the open_quick_command_artifact_location command without any pre-configured scope."
+commands.deny = ["open_quick_command_artifact_location"]

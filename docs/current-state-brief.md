@@ -23,6 +23,8 @@ Reserved or planning-only behavior:
 - automation forwarding is planned and not wired
 - multi-monitor support is planning-only unless source/tests prove a narrower change
 
+Screen snipping is a current scoped surface with a pending native journey. It uses the existing primary-monitor AppBar shell scope, freezes all enumerated monitors for the capture, and does not change AppBar ownership. The native capture flow includes exact top-bar/overlay/preview instance authorization, binary image per monitor, first-monitor selection binding, truthful clipboard outcomes, a non-activating Copy/Save/Dismiss preview, and a path-free native picker save path. It has no annotations, spanning mode, autosave, history, upload, or renderer-controlled paths/handles. Legacy `Alt+S` bindings remain unchanged and disable the new fifth snipping binding until the conflict is repaired.
+
 ## Safety constraints
 
 - Preserve unrelated dirty worktree changes.
@@ -52,4 +54,5 @@ Use this map to find code, tests, and docs. Then inspect nearby files, not the w
 | Process manager | `src/lib/processManager*.ts`, `ProcessManagerSurface.svelte` | `src-tauri/src/process_manager.rs` | process manager tests | remediation plans 05 and 10 if still relevant |
 | Workspaces and automation | `src/lib/workspaces.ts`, `automation.ts`, `providerContracts.ts` | `src-tauri/src/workspaces.rs`, `automation.rs`, `providers.rs`, `dev_tools/` | `tests/workspaces.test.mjs`, `tests/automationProviders.test.mjs` | `README.md`, `master_spec.md` |
 | Audio, calendar, settings, tray | matching `src/lib` and surface files | matching `src-tauri/src` modules | matching `tests/*` files | `master_spec.md`, focused docs when present |
+| Screen snipping | `src/lib/snipping.ts`, `src/lib/shellSurface.ts`, `src/lib/surfaceLoader.ts`, `src/lib/topBarControls.ts`, `Snip*Surface.svelte` | `src-tauri/src/snipping/`, `settings.rs`, `windows_key_hook.rs`, scoped capabilities | snipping component/Node/Rust suites and `tests/snipping-product-handoff.md` | `README.md`, `master_spec.md` |
 | Bootstrap, smoke, validation policy | none unless UI affected | `scripts/`, Tauri config, Rust test modules | `tests/bootstrapWindowsContract.test.mjs`, docs-policy tests | `README.md`, `CHANGELOG_POLICY.md`, this brief |

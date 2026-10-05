@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-settings-panel"
+description = "Enables the hide_settings_panel command without any pre-configured scope."
+commands.allow = ["hide_settings_panel"]
+
+[[permission]]
+identifier = "deny-hide-settings-panel"
+description = "Denies the hide_settings_panel command without any pre-configured scope."
+commands.deny = ["hide_settings_panel"]

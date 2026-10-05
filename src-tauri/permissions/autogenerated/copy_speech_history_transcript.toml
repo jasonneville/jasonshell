@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-speech-history-transcript"
+description = "Enables the copy_speech_history_transcript command without any pre-configured scope."
+commands.allow = ["copy_speech_history_transcript"]
+
+[[permission]]
+identifier = "deny-copy-speech-history-transcript"
+description = "Denies the copy_speech_history_transcript command without any pre-configured scope."
+commands.deny = ["copy_speech_history_transcript"]

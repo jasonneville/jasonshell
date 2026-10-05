@@ -165,8 +165,48 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import TopBarMicControl from './TopBarMicControl.svelte';
+  import { startSnip, snipBarReady, isSnipToken, sameSnip, type SnipToken } from '../lib/snipping';
+  import { IPC_EVENTS } from '../ipc/events';
 
   let now = new Date();
+  let snipBarRoot: HTMLDivElement | null = null;
+  let snipPreparing: SnipToken | null = null;
+  let latestSnipBarToken: SnipToken | null = null;
+  let snipBarEpoch = 0;
+  let snipBarFrame: number | null = null;
+  let snipBarMounted = false;
+
+  function invalidateSnipBarFrame() {
+    ++snipBarEpoch;
+    if (snipBarFrame !== null) cancelAnimationFrame(snipBarFrame);
+    snipBarFrame = null;
+  }
+
+  async function prepareSnipBar(value: unknown) {
+    if (!snipBarMounted || !isSnipToken(value)) return;
+    if (latestSnipBarToken && BigInt(value.generation) <= BigInt(latestSnipBarToken.generation)) return;
+    invalidateSnipBarFrame();
+    const token = { generation: value.generation, captureId: value.captureId };
+    latestSnipBarToken = token;
+    snipPreparing = token;
+    const epoch = snipBarEpoch;
+    await tick();
+    if (!snipBarMounted || epoch !== snipBarEpoch || !sameSnip(snipPreparing, token)) return;
+    snipBarFrame = requestAnimationFrame(() => {
+      snipBarFrame = null;
+      if (!snipBarMounted || epoch !== snipBarEpoch || !sameSnip(snipPreparing, token)
+        || !snipBarRoot?.isConnected || !snipBarRoot.classList.contains('snip-preparing')) return;
+      const tooltips = snipBarRoot.querySelectorAll('.melt-action-button-tooltip');
+      if (Array.from(tooltips).some((tooltip) => getComputedStyle(tooltip).display !== 'none')) return;
+      void snipBarReady(token).catch(() => undefined);
+    });
+  }
+
+  function releaseSnipBar(value: unknown) {
+    if (!snipBarMounted || !isSnipToken(value) || !sameSnip(snipPreparing, value)) return;
+    invalidateSnipBarFrame();
+    snipPreparing = null;
+  }
   let shellPreferences: ShellPreferences = getInitialShellPreferences();
   let shellSettings: ShellSettings | null = null;
   let topBarHeightLogical = 23.4;
@@ -280,7 +320,8 @@
     { id: 'command' },
     { id: 'tray' },
     { id: 'mic' },
-    { id: 'sound' }
+    { id: 'sound' },
+    { id: 'snip' }
   ];
   type TopBarTerminalActivityPayload = {
     sessionId?: string;
@@ -1820,6 +1861,7 @@
   }
 
   onMount(() => {
+    snipBarMounted = true;
     const unlisteners: Array<() => void> = [];
     let disposed = false;
     railScrollButtonsDisposed = false;
@@ -1852,6 +1894,8 @@
     void loadSearchCatalog();
     void loadSearchMode();
     void loadStackPins();
+    registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipPrepareBar, (event) => { void prepareSnipBar(event.payload); }));
+    registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipReleaseBar, (event) => { releaseSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
       const index = resolveVisibleSearchRowResultIndex(searchResults, event.payload);
@@ -1992,6 +2036,9 @@
 
     return () => {
       disposed = true;
+      snipBarMounted = false;
+      invalidateSnipBarFrame();
+      snipPreparing = null;
       railScrollButtonsDisposed = true;
       window.clearInterval(timer);
       window.clearTimeout(runtimeMetricsTimer);
@@ -2019,7 +2066,7 @@
 
 <svelte:window on:pointerdown={handleTopBarPointerDown} on:keydown={handleTopBarKeydown} />
 
-<div class="surface top-bar" style={`--top-bar-height-logical: ${topBarHeightLogical}px;`}>
+<div class="surface top-bar" class:snip-preparing={snipPreparing !== null} bind:this={snipBarRoot} style={`--top-bar-height-logical: ${topBarHeightLogical}px;`}>
   <MeltActionButton
     class="shell-home-button"
     ariaHaspopup="dialog"
@@ -2133,12 +2180,20 @@
           </div>
         {:else if control.id === 'mic'}
           <TopBarMicControl bind:this={micControl} />
-        {:else}
+        {:else if control.id === 'sound'}
           <div class="sound-control" bind:this={soundControl}>
             <MeltActionButton class="sound-button" ariaLabel="Open sound controls" ariaHaspopup="dialog" ariaExpanded={audioOpen} ariaControls={SOUND_PANEL_ID} tooltip="Sound controls" onClick={(event) => void toggleSoundPanel(event.currentTarget)}>
               <MaterialSymbolIcon name="speaker" />
             </MeltActionButton>
           </div>
+        {:else if control.id === 'snip'}
+          <MeltActionButton class="sound-button" ariaLabel="Capture screen region" tooltip="Capture screen region" onClick={(event) => {
+            if (!shouldSuppressTopBarControlClick(suppressNextTopBarControlClickId, 'snip', event)) {
+              void startSnip().catch(() => undefined);
+            }
+          }}>
+            <MaterialSymbolIcon name="crop" />
+          </MeltActionButton>
         {/if}
       </div>
     {/each}

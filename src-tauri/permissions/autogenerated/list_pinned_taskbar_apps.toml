@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-pinned-taskbar-apps"
+description = "Enables the list_pinned_taskbar_apps command without any pre-configured scope."
+commands.allow = ["list_pinned_taskbar_apps"]
+
+[[permission]]
+identifier = "deny-list-pinned-taskbar-apps"
+description = "Denies the list_pinned_taskbar_apps command without any pre-configured scope."
+commands.deny = ["list_pinned_taskbar_apps"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-suggest-stack-paths"
+description = "Enables the suggest_stack_paths command without any pre-configured scope."
+commands.allow = ["suggest_stack_paths"]
+
+[[permission]]
+identifier = "deny-suggest-stack-paths"
+description = "Denies the suggest_stack_paths command without any pre-configured scope."
+commands.deny = ["suggest_stack_paths"]

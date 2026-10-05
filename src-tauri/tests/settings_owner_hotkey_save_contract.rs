@@ -53,10 +53,15 @@ fn settings_panel_hotkeys_reach_registration_aware_persistence() {
         .unwrap();
     assert!(
         owner.contains("save_settings_transaction(")
-            && owner.contains("configure_standard_hotkeys(app_handle, hotkeys)")
+            && owner.contains("transaction_hotkey_configurer(app_handle)")
             && owner.contains("save_settings_to_path"),
         "Settings Panel must register hotkeys and persist via the shared transaction"
     );
+    let configurer = source.split("fn transaction_hotkey_configurer(").nth(1).unwrap()
+        .split("pub(crate) fn save_shell_settings_for_app(").next().unwrap();
+    assert!(configurer.contains("configure_standard_hotkeys(app, hotkeys)"));
+    assert!(configurer.contains("restore_loaded_standard_hotkeys(app, hotkeys)"),
+        "rollback must restore exact legacy registrations, not use strict save validation");
     let transaction = source
         .split("fn save_settings_transaction(")
         .nth(1)

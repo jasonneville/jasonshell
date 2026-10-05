@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-command-panel-size"
+description = "Enables the save_command_panel_size command without any pre-configured scope."
+commands.allow = ["save_command_panel_size"]
+
+[[permission]]
+identifier = "deny-save-command-panel-size"
+description = "Denies the save_command_panel_size command without any pre-configured scope."
+commands.deny = ["save_command_panel_size"]

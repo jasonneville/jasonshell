@@ -494,29 +494,44 @@ pub(crate) fn spawn_warm_model_async(app: AppHandle) {
         let missing = resolved.is_err();
         let loaded = resolved.and_then(|(path, _)| preload_parakeet_tdt(&path));
         let state = app.state::<SpeechRuntimeState>();
-        let Ok(mut operation) = state.model_operation.lock() else {
-            return;
-        };
-        if operation.epoch != epoch
-            || operation.importing
-            || state.shutting_down.load(Ordering::Acquire)
-        {
-            return;
-        }
-        operation.source = source;
-        operation.missing = missing;
-        operation.error = if loaded.is_err() && !missing {
-            Some("Model could not load. Import a matching Parakeet TDT int8 bundle.".into())
-        } else {
-            None
-        };
-        if let Ok(mut slot) = state.model_pool.lock() {
-            *slot = match loaded {
+        finish_warm_model(&state, epoch, source, missing, loaded);
+    });
+}
+
+fn finish_warm_model(
+    state: &SpeechRuntimeState,
+    epoch: u64,
+    source: Option<&'static str>,
+    missing: bool,
+    loaded: Result<parakeet_rs::ParakeetTDT, String>,
+) {
+    let Ok(mut operation) = state.model_operation.lock() else {
+        return;
+    };
+    if operation.epoch != epoch
+        || operation.importing
+        || state.shutting_down.load(Ordering::Acquire)
+    {
+        return;
+    }
+    operation.source = source;
+    operation.missing = missing;
+    operation.error = if loaded.is_err() && !missing {
+        Some("Model could not load. Import a matching Parakeet TDT int8 bundle.".into())
+    } else {
+        None
+    };
+    let old = state.model_pool.lock().ok().map(|mut slot| {
+        std::mem::replace(
+            &mut *slot,
+            match loaded {
                 Ok(model) => WarmModelState::Ready(model),
                 Err(_) => WarmModelState::Failed,
-            };
-        };
+            },
+        )
     });
+    drop(operation);
+    drop(old);
 }
 
 fn model_status(state: &SpeechRuntimeState) -> Result<ModelStatus, String> {
@@ -556,14 +571,25 @@ pub(crate) fn get_speech_model_status(
     model_status(&state)
 }
 
-struct ImportReservation(AppHandle);
-impl Drop for ImportReservation {
+struct ImportReservation<'a, W: FnOnce()> {
+    state: &'a SpeechRuntimeState,
+    retry: Option<W>,
+}
+impl<W: FnOnce()> Drop for ImportReservation<'_, W> {
     fn drop(&mut self) {
-        if let Ok(mut operation) = self.0.state::<SpeechRuntimeState>().model_operation.lock() {
+        if let Ok(mut operation) = self.state.model_operation.lock() {
             operation.importing = false;
         }
-        spawn_warm_model_async(self.0.clone());
+        if let Some(retry) = self.retry.take() {
+            retry();
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+enum ModelImportKind {
+    Archive,
+    Folder,
 }
 
 #[tauri::command]
@@ -572,17 +598,79 @@ pub(crate) async fn import_speech_model(
     app: AppHandle,
 ) -> Result<ImportModelResponse, String> {
     require_model_settings(&window)?;
-    tauri::async_runtime::spawn_blocking(move || import_model_blocking(app, window))
-        .await
-        .map_err(|_| "Model import could not complete. Try again.".to_owned())?
+    tauri::async_runtime::spawn_blocking(move || {
+        import_model_blocking(app, window, ModelImportKind::Archive)
+    })
+    .await
+    .map_err(|_| "Model import could not complete. Try again.".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn import_speech_model_folder(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+) -> Result<ImportModelResponse, String> {
+    require_model_settings(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        import_model_blocking(app, window, ModelImportKind::Folder)
+    })
+    .await
+    .map_err(|_| "Model import could not complete. Try again.".to_owned())?
 }
 
 fn import_model_blocking(
     app: AppHandle,
     window: tauri::WebviewWindow,
+    kind: ModelImportKind,
 ) -> Result<ImportModelResponse, String> {
     use tauri_plugin_dialog::DialogExt;
     let state = app.state::<SpeechRuntimeState>();
+    import_model_with(
+        &state,
+        kind,
+        || {
+            let picker = app.dialog().file().set_parent(&window);
+            let selected = match kind {
+                ModelImportKind::Archive => picker
+                    .add_filter("Parakeet model archive", &["tar", "tar.gz", "tgz"])
+                    .blocking_pick_file(),
+                ModelImportKind::Folder => picker.blocking_pick_folder(),
+            };
+            selected
+                .map(|selected| {
+                    selected
+                        .into_path()
+                        .map_err(|_| "Choose a local model archive or folder.".to_owned())
+                })
+                .transpose()
+        },
+        || {
+            app.path()
+                .app_local_data_dir()
+                .map_err(|_| "App model storage is unavailable.".to_owned())
+        },
+        |path| {
+            crate::speech_model::load_parakeet_tdt(path)
+                .map_err(|_| "Model could not load.".to_owned())
+        },
+        || spawn_warm_model_async(app.clone()),
+    )
+}
+
+fn import_model_with<C, D, L, W>(
+    state: &SpeechRuntimeState,
+    kind: ModelImportKind,
+    choose: C,
+    app_data: D,
+    load: L,
+    retry_warmup: W,
+) -> Result<ImportModelResponse, String>
+where
+    C: FnOnce() -> Result<Option<PathBuf>, String>,
+    D: FnOnce() -> Result<PathBuf, String>,
+    L: FnOnce(&std::path::Path) -> Result<parakeet_rs::ParakeetTDT, String>,
+    W: FnOnce(),
+{
     {
         let _commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
         let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
@@ -603,52 +691,46 @@ fn import_model_blocking(
         // Invalidates startup work before releasing admission; no late warmup publication.
         operation.epoch = operation.epoch.wrapping_add(1);
     }
-    let reservation = ImportReservation(app.clone());
-    let selected = app
-        .dialog()
-        .file()
-        .set_parent(&window)
-        .add_filter("Parakeet model archive", &["tar", "tar.gz", "tgz"])
-        .blocking_pick_file();
-    let result = if let Some(selected) = selected {
-        let archive = selected
-            .into_path()
-            .map_err(|_| "Choose a local model archive.".to_owned());
-        archive.and_then(|archive| {
-            let data = app
-                .path()
-                .app_local_data_dir()
-                .map_err(|_| "App model storage is unavailable.".to_owned())?;
-            let mut loaded = None;
-            crate::speech_model_install::install_archive(
-                &archive,
-                &data,
-                crate::speech_model_install::InstallLimits::default(),
-                |path| {
-                    loaded = Some(
-                        crate::speech_model::load_parakeet_tdt(path)
-                            .map_err(|_| "Model could not load.".to_owned())?,
-                    );
-                    Ok(())
-                },
-            )?;
-            let model = loaded.ok_or_else(|| "Model could not load.".to_owned())?;
-            let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
-            let old = {
-                let mut slot = state.model_pool.lock().map_err(|_| GENERIC_ERROR)?;
-                std::mem::replace(&mut *slot, WarmModelState::Ready(model))
-            };
-            operation.source = Some("installed");
-            operation.error = None;
-            operation.missing = false;
-            drop(operation);
-            // Model destruction can be slow; never do it under the pool/global lock.
-            drop(old);
-            Ok(false)
-        })
-    } else {
-        Ok(true)
+    let reservation = ImportReservation {
+        state,
+        retry: Some(retry_warmup),
     };
+    let result = choose().and_then(|selected| {
+        if let Some(source) = selected {
+            (|| {
+                let data = app_data()?;
+                let mut loaded = None;
+                let validate = |path: &std::path::Path| {
+                    loaded = Some(load(path)?);
+                    Ok(())
+                };
+                let limits = crate::speech_model_install::InstallLimits::default();
+                match kind {
+                    ModelImportKind::Archive => crate::speech_model_install::install_archive(
+                        &source, &data, limits, validate,
+                    ),
+                    ModelImportKind::Folder => crate::speech_model_install::install_directory(
+                        &source, &data, limits, validate,
+                    ),
+                }?;
+                let model = loaded.ok_or_else(|| "Model could not load.".to_owned())?;
+                let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
+                let old = {
+                    let mut slot = state.model_pool.lock().map_err(|_| GENERIC_ERROR)?;
+                    std::mem::replace(&mut *slot, WarmModelState::Ready(model))
+                };
+                operation.source = Some("installed");
+                operation.error = None;
+                operation.missing = false;
+                drop(operation);
+                // Model destruction can be slow; never do it under the pool/global lock.
+                drop(old);
+                Ok(false)
+            })()
+        } else {
+            Ok(true)
+        }
+    });
     {
         let mut operation = state.model_operation.lock().map_err(|_| GENERIC_ERROR)?;
         if let Err(error) = &result {
@@ -1929,6 +2011,8 @@ fn resample_to_mono_16k(input: &[f32], source_rate: u32, channels: u16) -> Vec<f
 mod tests {
     use super::*;
     use crate::speech::MAX_SPEECH_OPERATION_DURATION;
+
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/speech_model_folder_runtime.rs"));
 
     #[test]
     fn focus_lease_shutdown_waits_for_admitted_focus_and_rejects_late_admission() {

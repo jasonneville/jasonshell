@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-tray-panel"
+description = "Enables the show_tray_panel command without any pre-configured scope."
+commands.allow = ["show_tray_panel"]
+
+[[permission]]
+identifier = "deny-show-tray-panel"
+description = "Denies the show_tray_panel command without any pre-configured scope."
+commands.deny = ["show_tray_panel"]

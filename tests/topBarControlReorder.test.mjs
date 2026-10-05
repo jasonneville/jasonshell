@@ -40,7 +40,8 @@ test('normalizes malformed, stale, and duplicate persisted order to all known co
     'tray',
     'terminal',
     'command',
-    'mic'
+    'mic',
+    'snip'
   ]);
   assert.deepEqual(normalizeTopBarControlOrder(JSON.stringify({ order })), DEFAULT_TOP_BAR_CONTROL_ORDER);
 });
@@ -77,7 +78,8 @@ test('captures a control pointer on the pressed button so a below-threshold rele
   assert.doesNotMatch(topBarSource, /topBarControlDragElement = event\.currentTarget as HTMLElement/);
 });
 
-test('TopBar wires exactly five controls to pointer reorder and renderer persistence', () => {
+test('TopBar wires six controls to pointer reorder and renderer persistence', () => {
+  assert.deepEqual(DEFAULT_TOP_BAR_CONTROL_ORDER, [...order, 'snip']);
   assert.match(topBarSource, /TOP_BAR_CONTROL_ORDER_STORAGE_KEY/);
   assert.match(topBarSource, /normalizeTopBarControlOrder\(\s*localStorage\.getItem\(TOP_BAR_CONTROL_ORDER_STORAGE_KEY\)\s*\)/);
   assert.match(topBarSource, /localStorage\.setItem\(TOP_BAR_CONTROL_ORDER_STORAGE_KEY, JSON\.stringify\(topBarControlOrder\)\)/);
@@ -91,7 +93,7 @@ test('TopBar wires exactly five controls to pointer reorder and renderer persist
 });
 
 test('TopBar keeps stable popup anchors and all requested control renderers', () => {
-  for (const id of order) {
+  for (const id of [...order, 'snip']) {
     assert.match(topBarSource, new RegExp(`id: '${id}'`));
   }
   assert.match(topBarSource, /bind:this=\{terminalControl\}/);

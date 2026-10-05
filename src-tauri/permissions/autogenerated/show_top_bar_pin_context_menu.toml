@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-top-bar-pin-context-menu"
+description = "Enables the show_top_bar_pin_context_menu command without any pre-configured scope."
+commands.allow = ["show_top_bar_pin_context_menu"]
+
+[[permission]]
+identifier = "deny-show-top-bar-pin-context-menu"
+description = "Denies the show_top_bar_pin_context_menu command without any pre-configured scope."
+commands.deny = ["show_top_bar_pin_context_menu"]

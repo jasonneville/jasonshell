@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-maximize-task-window"
+description = "Enables the maximize_task_window command without any pre-configured scope."
+commands.allow = ["maximize_task_window"]
+
+[[permission]]
+identifier = "deny-maximize-task-window"
+description = "Denies the maximize_task_window command without any pre-configured scope."
+commands.deny = ["maximize_task_window"]

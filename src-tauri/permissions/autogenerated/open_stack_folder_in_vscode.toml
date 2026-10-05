@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-stack-folder-in-vscode"
+description = "Enables the open_stack_folder_in_vscode command without any pre-configured scope."
+commands.allow = ["open_stack_folder_in_vscode"]
+
+[[permission]]
+identifier = "deny-open-stack-folder-in-vscode"
+description = "Denies the open_stack_folder_in_vscode command without any pre-configured scope."
+commands.deny = ["open_stack_folder_in_vscode"]

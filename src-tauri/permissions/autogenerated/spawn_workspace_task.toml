@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-spawn-workspace-task"
+description = "Enables the spawn_workspace_task command without any pre-configured scope."
+commands.allow = ["spawn_workspace_task"]
+
+[[permission]]
+identifier = "deny-spawn-workspace-task"
+description = "Denies the spawn_workspace_task command without any pre-configured scope."
+commands.deny = ["spawn_workspace_task"]

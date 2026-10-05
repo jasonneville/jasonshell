@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-snip-ready"
+description = "Enables the snip_ready command without any pre-configured scope."
+commands.allow = ["snip_ready"]
+
+[[permission]]
+identifier = "deny-snip-ready"
+description = "Denies the snip_ready command without any pre-configured scope."
+commands.deny = ["snip_ready"]

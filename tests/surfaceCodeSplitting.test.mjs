@@ -7,6 +7,8 @@ const loaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', import.
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 
 const expectedSurfaceImports = {
+  'snip-overlay': '../components/SnipOverlaySurface.svelte',
+  'snip-preview': '../components/SnipPreviewSurface.svelte',
   'top-bar': '../components/TopBar.svelte',
   'bottom-bar': '../components/BottomBar.svelte',
   'task-gallery': '../components/TaskGallerySurface.svelte',

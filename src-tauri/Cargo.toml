@@ -1,5 +1,6 @@
 [package]
 name = "jason-shell"
+default-run = "jason-shell"
 version = "0.1.0"
 description = "Windows shell foundation prototype with top and bottom reserved bars"
 authors = ["jnev1"]

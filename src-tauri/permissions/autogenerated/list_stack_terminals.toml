@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-stack-terminals"
+description = "Enables the list_stack_terminals command without any pre-configured scope."
+commands.allow = ["list_stack_terminals"]
+
+[[permission]]
+identifier = "deny-list-stack-terminals"
+description = "Denies the list_stack_terminals command without any pre-configured scope."
+commands.deny = ["list_stack_terminals"]

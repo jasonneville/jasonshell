@@ -1,4 +1,6 @@
 export const SHELL_SURFACES = {
+  snipOverlay: 'snip-overlay',
+  snipPreview: 'snip-preview',
   topBar: 'top-bar',
   bottomBar: 'bottom-bar',
   taskGallery: 'task-gallery',
@@ -23,6 +25,8 @@ export type KnownShellSurface = (typeof SHELL_SURFACES)[keyof typeof SHELL_SURFA
 export type ShellSurface = KnownShellSurface | 'unknown';
 
 export const SHELL_SURFACE_TITLES: Record<KnownShellSurface, string> = {
+  [SHELL_SURFACES.snipOverlay]: 'Screen snip',
+  [SHELL_SURFACES.snipPreview]: 'Screen snip preview',
   [SHELL_SURFACES.topBar]: 'JasonShell Top Bar',
   [SHELL_SURFACES.bottomBar]: 'JasonShell Taskbar',
   [SHELL_SURFACES.taskGallery]: 'Task Gallery',

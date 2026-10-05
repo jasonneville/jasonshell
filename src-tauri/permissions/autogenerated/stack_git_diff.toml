@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stack-git-diff"
+description = "Enables the stack_git_diff command without any pre-configured scope."
+commands.allow = ["stack_git_diff"]
+
+[[permission]]
+identifier = "deny-stack-git-diff"
+description = "Denies the stack_git_diff command without any pre-configured scope."
+commands.deny = ["stack_git_diff"]

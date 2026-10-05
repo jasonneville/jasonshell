@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-single-instance-forwarding-contract"
+description = "Enables the get_single_instance_forwarding_contract command without any pre-configured scope."
+commands.allow = ["get_single_instance_forwarding_contract"]
+
+[[permission]]
+identifier = "deny-get-single-instance-forwarding-contract"
+description = "Denies the get_single_instance_forwarding_contract command without any pre-configured scope."
+commands.deny = ["get_single_instance_forwarding_contract"]

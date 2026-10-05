@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-task-window-preview"
+description = "Enables the show_task_window_preview command without any pre-configured scope."
+commands.allow = ["show_task_window_preview"]
+
+[[permission]]
+identifier = "deny-show-task-window-preview"
+description = "Denies the show_task_window_preview command without any pre-configured scope."
+commands.deny = ["show_task_window_preview"]

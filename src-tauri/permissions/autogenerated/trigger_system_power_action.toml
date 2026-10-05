@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-trigger-system-power-action"
+description = "Enables the trigger_system_power_action command without any pre-configured scope."
+commands.allow = ["trigger_system_power_action"]
+
+[[permission]]
+identifier = "deny-trigger-system-power-action"
+description = "Denies the trigger_system_power_action command without any pre-configured scope."
+commands.deny = ["trigger_system_power_action"]

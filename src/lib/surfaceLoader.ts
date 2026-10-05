@@ -11,6 +11,8 @@ type LoadableShellSurface = Exclude<ShellSurface, 'unknown'>;
 export type SurfaceComponentLoader = () => Promise<SurfaceComponentModule>;
 
 export const surfaceComponentLoaders: Record<LoadableShellSurface, SurfaceComponentLoader> = {
+  'snip-overlay': () => import('../components/SnipOverlaySurface.svelte'),
+  'snip-preview': () => import('../components/SnipPreviewSurface.svelte'),
   'top-bar': () => import('../components/TopBar.svelte'),
   'bottom-bar': () => import('../components/BottomBar.svelte'),
   'task-gallery': () => import('../components/TaskGallerySurface.svelte'),

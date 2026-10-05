@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-build-editor-launch-plan"
+description = "Enables the build_editor_launch_plan command without any pre-configured scope."
+commands.allow = ["build_editor_launch_plan"]
+
+[[permission]]
+identifier = "deny-build-editor-launch-plan"
+description = "Denies the build_editor_launch_plan command without any pre-configured scope."
+commands.deny = ["build_editor_launch_plan"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-task-gallery"
+description = "Enables the show_task_gallery command without any pre-configured scope."
+commands.allow = ["show_task_gallery"]
+
+[[permission]]
+identifier = "deny-show-task-gallery"
+description = "Denies the show_task_gallery command without any pre-configured scope."
+commands.deny = ["show_task_gallery"]

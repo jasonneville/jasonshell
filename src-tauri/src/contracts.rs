@@ -43,6 +43,17 @@ pub mod surfaces {
 }
 
 pub mod commands {
+    pub const START_SNIP: &str = "start_snip";
+    pub const GET_SNIP_CONTEXT: &str = "get_snip_context";
+    pub const GET_SNIP_IMAGE: &str = "get_snip_image";
+    pub const SNIP_READY: &str = "snip_ready";
+    pub const SNIP_BEGIN_SELECTION: &str = "snip_begin_selection";
+    pub const COMPLETE_SNIP: &str = "complete_snip";
+    pub const CANCEL_SNIP: &str = "cancel_snip";
+    pub const COPY_SNIP: &str = "copy_snip";
+    pub const SAVE_SNIP: &str = "save_snip";
+    pub const DISMISS_SNIP: &str = "dismiss_snip";
+    pub const SNIP_BAR_READY: &str = "snip_bar_ready";
     pub const LIST_PINNED_TASKBAR_APPS: &str = "list_pinned_taskbar_apps";
     pub const LAUNCH_PINNED_TASKBAR_APP: &str = "launch_pinned_taskbar_app";
     pub const LIST_OPEN_TASK_WINDOWS: &str = "list_open_task_windows";
@@ -412,6 +423,10 @@ pub mod commands {
 }
 
 pub mod events {
+    pub const SNIP_CONTEXT: &str = "snip:context";
+    pub const SNIP_ARMED: &str = "snip:armed";
+    pub const SNIP_PREPARE_BAR: &str = "snip:prepare_bar";
+    pub const SNIP_RELEASE_BAR: &str = "snip:release_bar";
     pub const AUDIO_PANEL_OPEN: &str = "audio-panel:open";
     pub const AUDIO_PANEL_CLOSED: &str = "audio-panel:closed";
     pub const SPEECH_HISTORY_PANEL_OPEN: &str = "speech-history-panel:open";
@@ -468,6 +483,10 @@ pub mod events {
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
+        SNIP_CONTEXT,
+        SNIP_ARMED,
+        SNIP_PREPARE_BAR,
+        SNIP_RELEASE_BAR,
         AUDIO_PANEL_CLOSED,
         SPEECH_HISTORY_PANEL_OPEN,
         SPEECH_HISTORY_PANEL_CLOSED,
@@ -683,6 +702,10 @@ mod tests {
             events::ALL,
             &[
                 "audio-panel:open",
+                "snip:context",
+                "snip:armed",
+                "snip:prepare_bar",
+                "snip:release_bar",
                 "audio-panel:closed",
                 "speech-history-panel:open",
                 "speech-history-panel:closed",

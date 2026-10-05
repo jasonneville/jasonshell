@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-process-manager"
+description = "Enables the show_process_manager command without any pre-configured scope."
+commands.allow = ["show_process_manager"]
+
+[[permission]]
+identifier = "deny-show-process-manager"
+description = "Denies the show_process_manager command without any pre-configured scope."
+commands.deny = ["show_process_manager"]

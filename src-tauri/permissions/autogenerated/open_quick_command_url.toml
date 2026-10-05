@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-quick-command-url"
+description = "Enables the open_quick_command_url command without any pre-configured scope."
+commands.allow = ["open_quick_command_url"]
+
+[[permission]]
+identifier = "deny-open-quick-command-url"
+description = "Denies the open_quick_command_url command without any pre-configured scope."
+commands.deny = ["open_quick_command_url"]

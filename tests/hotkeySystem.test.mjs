@@ -6,17 +6,19 @@ function readSource(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('settings contract exposes four built-in hotkey actions with preserved existing defaults', () => {
+test('settings contract exposes fifth snipping hotkey while preserving original four defaults', () => {
   const settings = readSource('../src/lib/settings.ts');
   const rustSettings = readSource('../src-tauri/src/settings.rs');
 
-  assert.match(settings, /export type StandardHotkeyAction = 'search' \| 'terminal' \| 'stackBrowser' \| 'speechTranscription';/);
+  assert.match(settings, /export type StandardHotkeyAction = 'search' \| 'terminal' \| 'stackBrowser' \| 'speechTranscription' \| 'snipping';/);
   assert.match(settings, /export interface StandardHotkeySettings \{[^}]*search: CanonicalHotkeyBinding;[^}]*terminal: CanonicalHotkeyBinding;[^}]*stackBrowser: CanonicalHotkeyBinding;[^}]*speechTranscription: CanonicalHotkeyBinding;[^}]*\}/);
   assert.match(settings, /hotkeys: defaultStandardHotkeySettings\(\)/);
   assert.match(settings, /search: 'Ctrl\+Space'/);
   assert.match(settings, /terminal: 'Alt\+Backquote'/);
   assert.match(settings, /stackBrowser: 'Alt\+1'/);
   assert.match(settings, /speechTranscription: 'Ctrl\+D'/);
+  assert.match(settings, /snipping: 'Alt\+S'/);
+  assert.match(settings, /snipping: CanonicalHotkeyBinding/);
 
   assert.match(rustSettings, /pub struct StandardHotkeySettings \{[^}]*pub search: CanonicalHotkeyBinding,[^}]*pub terminal: CanonicalHotkeyBinding,[^}]*pub stack_browser: CanonicalHotkeyBinding,[^}]*pub speech_transcription: CanonicalHotkeyBinding,[^}]*\}/);
   assert.match(rustSettings, /fn default_standard_hotkeys\(\) -> StandardHotkeySettings/);
@@ -24,6 +26,7 @@ test('settings contract exposes four built-in hotkey actions with preserved exis
   assert.match(rustSettings, /terminal:[\s\S]*"Alt\+Backquote"/);
   assert.match(rustSettings, /stack_browser:[\s\S]*"Alt\+1"/);
   assert.match(rustSettings, /speech_transcription:[\s\S]*"Ctrl\+D"/);
+  assert.match(rustSettings, /pub snipping: CanonicalHotkeyBinding/);
   assert.doesNotMatch(settings + rustSettings, /customCommand|commandLine|scriptPath|arbitraryAction|shellCommand/);
 });
 
@@ -61,12 +64,14 @@ test('startup and successful settings saves apply hook configuration at runtime'
   const rustSettings = readSource('../src-tauri/src/settings.rs');
   const tsSettings = readSource('../src/lib/settings.ts');
 
-  assert.match(main, /let shell_settings = settings::load_shell_settings_for_app\(app\.handle\(\)\)/);
-  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\),\s*shell_settings\.hotkeys/);
+  assert.match(main, /let \(shell_settings, missing_snipping\) = settings::load_hotkey_startup_settings\(app\.handle\(\)\)/);
+  assert.match(main, /windows_key_hook::install_loaded_windows_key_hook\(app\.handle\(\)\.clone\(\),\s*shell_settings\.hotkeys, missing_snipping/);
   const save = rustSettings.slice(rustSettings.indexOf('fn save_settings_transaction('), rustSettings.indexOf('pub(crate) fn update_shell_settings_for_app('));
   assert.match(rustSettings, /save_shell_settings_for_app[\s\S]*save_settings_transaction\(/);
   assert.match(rustSettings, /save_settings_panel_for_app[\s\S]*save_settings_transaction\(/);
-  assert.match(rustSettings, /\|hotkeys\| crate::windows_key_hook::configure_standard_hotkeys\(app_handle, hotkeys\)/);
+  assert.match(rustSettings, /fn transaction_hotkey_configurer\(/);
+  assert.match(rustSettings, /transaction_hotkey_configurer\(app_handle\)/);
+  assert.match(rustSettings, /configure_standard_hotkeys\(app, hotkeys\)/);
   assert.ok(save.indexOf('configure(&settings.hotkeys)?') < save.indexOf('persist(path, settings.clone())'), 'OS registration must succeed before writing settings to disk');
   assert.match(save, /persist\(path, settings\.clone\(\)\)[\s\S]*configure\(&previous\.hotkeys\)/, 'disk-write failure must restore prior registrations');
   assert.match(tsSettings, /SETTINGS_COMMANDS[\s\S]*save: 'save_shell_settings'/);

@@ -10,7 +10,7 @@ export const CURRENT_SETTINGS_VERSION = 1;
 export const SHELL_SETTINGS_CHANNEL = 'jasonshell.settings.changed';
 export const SHELL_SETTINGS_CHANGED_EVENT = 'jasonshell:settings-changed';
 
-export type StandardHotkeyAction = 'search' | 'terminal' | 'stackBrowser' | 'speechTranscription';
+export type StandardHotkeyAction = 'search' | 'terminal' | 'stackBrowser' | 'speechTranscription' | 'snipping';
 export type CanonicalHotkeyBinding = string;
 
 export interface StandardHotkeySettings {
@@ -18,6 +18,7 @@ export interface StandardHotkeySettings {
   terminal: CanonicalHotkeyBinding;
   stackBrowser: CanonicalHotkeyBinding;
   speechTranscription: CanonicalHotkeyBinding;
+  snipping: CanonicalHotkeyBinding;
 }
 
 export function defaultStandardHotkeySettings(): StandardHotkeySettings {
@@ -25,7 +26,8 @@ export function defaultStandardHotkeySettings(): StandardHotkeySettings {
     search: 'Ctrl+Space',
     terminal: 'Alt+Backquote',
     stackBrowser: 'Alt+1',
-    speechTranscription: 'Ctrl+D'
+    speechTranscription: 'Ctrl+D',
+    snipping: 'Alt+S'
   };
 }
 

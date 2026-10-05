@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-snip-image"
+description = "Enables the get_snip_image command without any pre-configured scope."
+commands.allow = ["get_snip_image"]
+
+[[permission]]
+identifier = "deny-get-snip-image"
+description = "Denies the get_snip_image command without any pre-configured scope."
+commands.deny = ["get_snip_image"]

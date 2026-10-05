@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-quick-command"
+description = "Enables the run_quick_command command without any pre-configured scope."
+commands.allow = ["run_quick_command"]
+
+[[permission]]
+identifier = "deny-run-quick-command"
+description = "Denies the run_quick_command command without any pre-configured scope."
+commands.deny = ["run_quick_command"]

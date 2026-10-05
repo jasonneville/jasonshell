@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-build-terminal-launch-plan"
+description = "Enables the build_terminal_launch_plan command without any pre-configured scope."
+commands.allow = ["build_terminal_launch_plan"]
+
+[[permission]]
+identifier = "deny-build-terminal-launch-plan"
+description = "Denies the build_terminal_launch_plan command without any pre-configured scope."
+commands.deny = ["build_terminal_launch_plan"]

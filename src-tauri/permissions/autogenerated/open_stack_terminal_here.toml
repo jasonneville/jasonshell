@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-stack-terminal-here"
+description = "Enables the open_stack_terminal_here command without any pre-configured scope."
+commands.allow = ["open_stack_terminal_here"]
+
+[[permission]]
+identifier = "deny-open-stack-terminal-here"
+description = "Denies the open_stack_terminal_here command without any pre-configured scope."
+commands.deny = ["open_stack_terminal_here"]

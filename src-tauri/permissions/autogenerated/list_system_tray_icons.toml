@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-system-tray-icons"
+description = "Enables the list_system_tray_icons command without any pre-configured scope."
+commands.allow = ["list_system_tray_icons"]
+
+[[permission]]
+identifier = "deny-list-system-tray-icons"
+description = "Denies the list_system_tray_icons command without any pre-configured scope."
+commands.deny = ["list_system_tray_icons"]

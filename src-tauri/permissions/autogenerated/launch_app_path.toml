@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launch-app-path"
+description = "Enables the launch_app_path command without any pre-configured scope."
+commands.allow = ["launch_app_path"]
+
+[[permission]]
+identifier = "deny-launch-app-path"
+description = "Denies the launch_app_path command without any pre-configured scope."
+commands.deny = ["launch_app_path"]

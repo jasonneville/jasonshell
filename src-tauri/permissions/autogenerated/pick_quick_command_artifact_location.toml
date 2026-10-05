@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pick-quick-command-artifact-location"
+description = "Enables the pick_quick_command_artifact_location command without any pre-configured scope."
+commands.allow = ["pick_quick_command_artifact_location"]
+
+[[permission]]
+identifier = "deny-pick-quick-command-artifact-location"
+description = "Denies the pick_quick_command_artifact_location command without any pre-configured scope."
+commands.deny = ["pick_quick_command_artifact_location"]

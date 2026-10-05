@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-report-shell-surface-runtime-metrics"
+description = "Enables the report_shell_surface_runtime_metrics command without any pre-configured scope."
+commands.allow = ["report_shell_surface_runtime_metrics"]
+
+[[permission]]
+identifier = "deny-report-shell-surface-runtime-metrics"
+description = "Denies the report_shell_surface_runtime_metrics command without any pre-configured scope."
+commands.deny = ["report_shell_surface_runtime_metrics"]

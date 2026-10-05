@@ -121,7 +121,8 @@ test('Stack Browser toggle reopens latest request without emitting open event', 
 test('native hook installs during setup and cleans up on exit', () => {
   const main = readSource('../src-tauri/src/main.rs');
 
-  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys\)/);
+  assert.match(main, /let \(shell_settings, missing_snipping\) = settings::load_hotkey_startup_settings\(app\.handle\(\)\)/);
+  assert.match(main, /windows_key_hook::install_loaded_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys, missing_snipping\)/);
   assert.match(main, /windows_key_hook::uninstall_windows_key_hook\(\)/);
 });
 
@@ -163,7 +164,7 @@ test('startup fails when required search hotkey hook cannot install', () => {
 
   assert.doesNotMatch(main, /search hotkey hook disabled/);
   assert.match(main, /search hotkey hook is required: \{error\}/);
-  assert.match(main, /windows_key_hook::install_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys\)\s*\.map_err\(/);
+  assert.match(main, /windows_key_hook::install_loaded_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys, missing_snipping\)\s*\.map_err\(/);
 });
 
 test('native hotkeys do not install a low-level keyboard hook or consume Alt release', () => {

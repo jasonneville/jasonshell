@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-centered-search-panel"
+description = "Enables the show_centered_search_panel command without any pre-configured scope."
+commands.allow = ["show_centered_search_panel"]
+
+[[permission]]
+identifier = "deny-show-centered-search-panel"
+description = "Denies the show_centered_search_panel command without any pre-configured scope."
+commands.deny = ["show_centered_search_panel"]

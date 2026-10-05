@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-capture-speech-paste-target"
+description = "Enables the capture_speech_paste_target command without any pre-configured scope."
+commands.allow = ["capture_speech_paste_target"]
+
+[[permission]]
+identifier = "deny-capture-speech-paste-target"
+description = "Denies the capture_speech_paste_target command without any pre-configured scope."
+commands.deny = ["capture_speech_paste_target"]

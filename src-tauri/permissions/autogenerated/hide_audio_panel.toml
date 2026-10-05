@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-audio-panel"
+description = "Enables the hide_audio_panel command without any pre-configured scope."
+commands.allow = ["hide_audio_panel"]
+
+[[permission]]
+identifier = "deny-hide-audio-panel"
+description = "Denies the hide_audio_panel command without any pre-configured scope."
+commands.deny = ["hide_audio_panel"]

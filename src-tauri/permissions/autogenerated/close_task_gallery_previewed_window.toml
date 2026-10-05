@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-task-gallery-previewed-window"
+description = "Enables the close_task_gallery_previewed_window command without any pre-configured scope."
+commands.allow = ["close_task_gallery_previewed_window"]
+
+[[permission]]
+identifier = "deny-close-task-gallery-previewed-window"
+description = "Denies the close_task_gallery_previewed_window command without any pre-configured scope."
+commands.deny = ["close_task_gallery_previewed_window"]
