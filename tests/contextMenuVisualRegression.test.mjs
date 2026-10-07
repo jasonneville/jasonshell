@@ -53,6 +53,21 @@ test('shared menu uses a stable translucent theme backplate throughout opening a
     'opening animation must not additionally fade the translucent menu');
 });
 
+test('bar overlay backplate overrides theme surface alpha to fully opaque without changing generic menus', () => {
+  const selector = ':global(.js-context-menu.context-menu-overlay)';
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const panel = shared.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1]
+    ?? rule(shared, ':global(.js-context-menu)');
+  const background = panel.match(/(?:^|;)\s*background(?:-color)?\s*:\s*([^;]+)/)?.[1]?.trim();
+  // Raised surfaces vary by theme and already have alpha < 1. Setting element
+  // opacity: 1 or using the token directly cannot provide a fully opaque paint.
+  assert.match(background ?? '', /^rgba?\(from\s+var\(--js-color-surface-raised\)\s+r\s+g\s+b\s*\/\s*(?:1|100%)\s*\)$/,
+    `bar overlay background alpha remains <1 unless theme RGB is retained with explicit alpha 1; found ${background}`);
+  assert.match(theme, /--js-color-surface-raised\s*:/);
+  assert.doesNotMatch(rule(shared, '@keyframes js-context-menu-in'), /opacity\s*:/,
+    'opening animation must not fade the opaque backplate');
+});
+
 test('shared menu uses the established 8px backdrop blur without vendor override', () => {
   const panel = rule(shared, ':global(.js-context-menu)');
   assert.match(panel, /(?:^|;)\s*backdrop-filter\s*:\s*blur\(8px\);/);

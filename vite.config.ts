@@ -45,7 +45,11 @@ export default defineConfig(({ command }) => {
             port: 1421
           },
       port: 1420,
-      strictPort: true
+      strictPort: true,
+      watch: {
+        // Avoid traversing Rust build output during dev-server startup.
+        ignored: ['**/src-tauri/target', '**/src-tauri/target/**']
+      }
     }
   };
 });

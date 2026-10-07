@@ -170,6 +170,7 @@ fn main() {
             task_gallery::show_task_gallery_window_context_menu,
             task_gallery::show_task_gallery_window_preview,
             task_gallery::hide_task_gallery_window_preview,
+            task_gallery::close_task_gallery_window,
             task_gallery::close_task_gallery_previewed_window,
             control_plane::show_control_plane,
             control_plane::hide_control_plane,

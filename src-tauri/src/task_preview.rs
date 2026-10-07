@@ -21,11 +21,13 @@ use windows::Win32::Graphics::Dwm::{
 
 const TASK_PREVIEW_UPDATE_EVENT: &str = "task-preview:update";
 const TASK_PREVIEW_HIDE_EVENT: &str = "task-preview:hide";
-const TASK_PREVIEW_MARGIN_PHYSICAL: i32 = 0;
+const TASK_PREVIEW_MARGIN_LOGICAL: f64 = 8.0;
 const TASK_PREVIEW_EDGE_PADDING_PHYSICAL: i32 = 8;
+// Frontend interior: 1px outer border + 10px padding + 1px frame border;
+// top also includes the 36px header with no gap.
 const LIVE_PREVIEW_FRAME_TOP_LOGICAL: f64 = 48.0;
-const LIVE_PREVIEW_FRAME_SIDE_LOGICAL: f64 = 4.0;
-const LIVE_PREVIEW_FRAME_BOTTOM_LOGICAL: f64 = 4.0;
+const LIVE_PREVIEW_FRAME_SIDE_LOGICAL: f64 = 12.0;
+const LIVE_PREVIEW_FRAME_BOTTOM_LOGICAL: f64 = 12.0;
 const LIVE_THUMBNAIL_PLACEHOLDER_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 
 #[derive(Default)]
@@ -211,8 +213,9 @@ fn preview_position_from_host(
         - preview_width
         - TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
     let preview_x = (anchor_midpoint_physical - (preview_width / 2)).clamp(min_x, max_x.max(min_x));
-    let above_y = host_position.y - preview_height - TASK_PREVIEW_MARGIN_PHYSICAL;
-    let below_y = host_position.y + host_size.height as i32 + TASK_PREVIEW_MARGIN_PHYSICAL;
+    let margin = (TASK_PREVIEW_MARGIN_LOGICAL * scale_factor).round() as i32;
+    let above_y = host_position.y - preview_height - margin;
+    let below_y = host_position.y + host_size.height as i32 + margin;
     let min_y = monitor_position.y + TASK_PREVIEW_EDGE_PADDING_PHYSICAL;
     let max_y = monitor_position.y + monitor_size.height as i32
         - preview_height
@@ -592,13 +595,44 @@ mod tests {
         assert_eq!(
             frame,
             RECT {
-                left: 6,
+                left: 18,
                 top: 72,
-                right: 492,
-                bottom: 336
+                right: 480,
+                bottom: 324
             }
         );
     }
+    #[test]
+    fn inset_lens_frame_matches_renderer_content_at_supported_scales() {
+        for (scale, expected) in [
+            (1.0, RECT { left: 12, top: 48, right: 320, bottom: 216 }),
+            (1.25, RECT { left: 15, top: 60, right: 400, bottom: 270 }),
+            (1.5, RECT { left: 18, top: 72, right: 480, bottom: 324 }),
+            (2.0, RECT { left: 24, top: 96, right: 640, bottom: 432 }),
+        ] {
+            assert_eq!(live_thumbnail_frame_rect(332.0, 228.0, scale), expected, "scale {scale}");
+        }
+    }
+
+    #[test]
+    fn inset_lens_aspect_fit_is_centered_and_bounded_for_portrait_wide_and_square() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let frame = live_thumbnail_frame_rect(332.0, 228.0, scale);
+            for source in [SIZE { cx: 1080, cy: 1920 }, SIZE { cx: 3440, cy: 1440 }, SIZE { cx: 1000, cy: 1000 }] {
+                let fitted = fit_source_in_destination_frame(frame, source);
+                let width = fitted.right - fitted.left;
+                let height = fitted.bottom - fitted.top;
+                assert!(width > 0 && height > 0);
+                assert!(fitted.left >= frame.left && fitted.top >= frame.top);
+                assert!(fitted.right <= frame.right && fitted.bottom <= frame.bottom);
+                assert!(((fitted.left - frame.left) - (frame.right - fitted.right)).abs() <= 1);
+                assert!(((fitted.top - frame.top) - (frame.bottom - fitted.bottom)).abs() <= 1);
+                assert!(width == frame.right - frame.left || height == frame.bottom - frame.top);
+                assert!((width as f64 - height as f64 * source.cx as f64 / source.cy as f64).abs() <= 2.0);
+            }
+        }
+    }
+
     #[test]
     fn live_thumbnail_destination_preserves_source_aspect_ratio() {
         let frame = RECT {
@@ -630,8 +664,8 @@ mod tests {
             0.0,
         );
 
-        // Host ends at 50 + 32: a preview below it is flush, not 10px away.
-        assert_eq!((x, y), (8, 82));
+        // Host ends at 50 + 32; floating preview adds eight logical pixels.
+        assert_eq!((x, y), (8, 90));
         assert_eq!((width, height), (332, 228));
 
         let (_, above_y, _, above_height) = preview_position_from_host(
@@ -641,7 +675,7 @@ mod tests {
             PhysicalSize::new(1920, 1080),
             1.0, 0.0, 0.0,
         );
-        assert_eq!(above_y + above_height as i32, 400, "above preview touches host");
+        assert_eq!(above_y + above_height as i32, 392, "above preview floats eight pixels from host");
 
         let (edge_x, edge_y, edge_width, edge_height) = preview_position_from_host(
             PhysicalPosition::new(1800, 50),
@@ -654,6 +688,29 @@ mod tests {
         assert_eq!(edge_y, 8, "short monitor clamps vertically to top padding");
         assert_eq!(edge_height, 228);
     }
+    #[test]
+    fn floating_preview_gap_scales_above_and_below_without_changing_monitor_clamp() {
+        for scale in [1.0_f64, 1.1, 1.25, 1.3, 1.5, 2.0] {
+            let gap = (8.0 * scale).round() as i32;
+            let (_, above_y, _, height) = preview_position_from_host(
+                PhysicalPosition::new(100, 800), PhysicalSize::new(840, 64),
+                PhysicalPosition::new(0, 0), PhysicalSize::new(3840, 2160), scale, 0.0, 0.0,
+            );
+            assert_eq!(800 - above_y - height as i32, gap, "above scale {scale}");
+            let (_, below_y, _, _) = preview_position_from_host(
+                PhysicalPosition::new(100, 50), PhysicalSize::new(840, 64),
+                PhysicalPosition::new(0, 0), PhysicalSize::new(3840, 2160), scale, 0.0, 0.0,
+            );
+            assert_eq!(below_y - 114, gap, "below scale {scale}");
+            let (x, y, width, _) = preview_position_from_host(
+                PhysicalPosition::new(3800, 50), PhysicalSize::new(840, 64),
+                PhysicalPosition::new(0, 0), PhysicalSize::new(3840, 250), scale, 0.0, 420.0,
+            );
+            assert_eq!(x + width as i32, 3840 - 8, "right clamp scale {scale}");
+            assert_eq!(y, 8, "short monitor top clamp scale {scale}");
+        }
+    }
+
     #[test]
     fn live_thumbnail_properties_make_destination_visible() {
         let rect = RECT {

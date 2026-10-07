@@ -259,6 +259,27 @@ pub(crate) fn close_task_window_with_identity(
     close_window_with_identity(hwnd, expected_identity)
 }
 
+/// Accept one close request; a surviving window is not a dispatch failure.
+pub(crate) fn request_close_task_window_with_identity(
+    hwnd: String,
+    expected_identity: TaskWindowIdentity,
+) -> Result<(), String> {
+    let hwnd = parse_hwnd(&hwnd)?;
+    request_close_with(
+        || revalidate_close_target(hwnd, &expected_identity),
+        || unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
+            .map_err(|error| format!("Failed to request task window close: {error}")),
+    )
+}
+
+fn request_close_with(
+    validate: impl FnOnce() -> Result<(), String>,
+    dispatch: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    validate()?;
+    dispatch()
+}
+
 fn close_window_with_identity(
     hwnd: windows::Win32::Foundation::HWND,
     initial_identity: TaskWindowIdentity,
@@ -371,10 +392,22 @@ fn revalidate_close_target(
     hwnd: windows::Win32::Foundation::HWND,
     expected_identity: &TaskWindowIdentity,
 ) -> Result<(), String> {
-    if !window_exists(hwnd) {
+    revalidate_close_target_with(
+        expected_identity,
+        || window_exists(hwnd),
+        || current_task_window_identity(hwnd),
+    )
+}
+
+fn revalidate_close_target_with(
+    expected_identity: &TaskWindowIdentity,
+    exists: impl FnOnce() -> bool,
+    inspect: impl FnOnce() -> Result<TaskWindowIdentity, String>,
+) -> Result<(), String> {
+    if !exists() {
         return Err("Task window target became stale before close fallback".to_string());
     }
-    let current_identity = current_task_window_identity(hwnd)?;
+    let current_identity = inspect()?;
     if !task_window_identity_matches(
         &current_identity,
         expected_identity.process_id,
@@ -502,6 +535,64 @@ fn should_elevate_after_access_denied(status: u32) -> bool {
 mod tests {
     use super::*;
     use crate::task_windows::helper;
+    use std::cell::Cell;
+
+    fn request_identity_fixture() -> TaskWindowIdentity {
+        TaskWindowIdentity { process_id: 42, creation_time: 99,
+            canonical_image_path: PathBuf::from(r"C:\fixture.exe") }
+    }
+
+    #[test]
+    fn request_only_close_dead_target_rejects_before_inspection_or_dispatch() {
+        let expected = request_identity_fixture();
+        let result = request_close_with(
+            || revalidate_close_target_with(&expected, || false, || panic!("dead target inspected")),
+            || panic!("dead target dispatched"));
+        assert!(result.unwrap_err().contains("stale"));
+    }
+
+    #[test]
+    fn request_only_close_identity_mismatches_and_inspection_failure_never_dispatch() {
+        let expected = request_identity_fixture();
+        for current in [
+            TaskWindowIdentity { process_id: 43, ..expected.clone() },
+            TaskWindowIdentity { creation_time: 100, ..expected.clone() },
+            TaskWindowIdentity { canonical_image_path: PathBuf::from(r"C:\other.exe"), ..expected.clone() },
+        ] {
+            assert!(request_close_with(
+                || revalidate_close_target_with(&expected, || true, || Ok(current)),
+                || panic!("identity mismatch dispatched")).is_err());
+        }
+        let result = request_close_with(
+            || revalidate_close_target_with(&expected, || true, || Err("inspection denied".into())),
+            || panic!("uninspectable target dispatched"));
+        assert_eq!(result.unwrap_err(), "inspection denied");
+    }
+
+    #[test]
+    fn request_only_close_valid_identity_dispatches_once_and_failure_never_retries() {
+        let expected = request_identity_fixture();
+        for outcome in [Ok(()), Err("WM_CLOSE access denied".to_string()), Err("WM_CLOSE failed".to_string())] {
+            let dispatches = Cell::new(0);
+            let wanted = outcome.clone();
+            let result = request_close_with(
+                || revalidate_close_target_with(&expected, || true, || Ok(expected.clone())),
+                || { dispatches.set(dispatches.get() + 1); outcome });
+            assert_eq!(result, wanted);
+            assert_eq!(dispatches.get(), 1);
+        }
+    }
+
+    #[test]
+    fn request_only_close_malformed_handle_and_shell_admission_errors_never_dispatch() {
+        assert!(request_close_task_window_with_identity("not-an-hwnd".into(), request_identity_fixture()).is_err());
+        let shell_path = std::env::current_exe().unwrap();
+        let rejected = super::super::reject_internal_shell_process_path(&shell_path).unwrap();
+        assert!(rejected);
+        assert!(request_close_with(
+            || if rejected { Err("internal shell target".into()) } else { Ok(()) },
+            || panic!("shell target dispatched")).is_err());
+    }
 
     #[test]
     fn task_window_identity_matches_requires_exact_pid_time_and_path() {

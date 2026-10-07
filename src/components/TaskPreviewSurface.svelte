@@ -18,6 +18,8 @@
   import { maximizeTaskWindow } from '../lib/taskbarWindows';
 
   let preview: TaskPreviewPayload | null = null;
+  let failedIconUrl = '';
+  $: previewIconUrl = preview?.iconDataUrl?.trim() ?? '';
   $: isNativeLivePreview = preview ? isNativeLiveTaskPreviewPayload(preview) : false;
   $: previewSurfaceClass = `surface preview-surface${isNativeLivePreview ? ' preview-surface-native' : ''}`;
   $: previewPrimaryTitle = preview ? (preview.title || preview.processName) : '';
@@ -130,6 +132,19 @@
   >
   {#if preview}
     <div class="preview-header" aria-hidden="true">
+      {#if previewIconUrl && previewIconUrl !== failedIconUrl}
+        {#key previewIconUrl}
+          <img
+            class="preview-app-icon"
+            src={previewIconUrl}
+            alt=""
+            width="18"
+            height="18"
+            draggable="false"
+            on:error={(event) => { failedIconUrl = event.currentTarget.getAttribute('src') ?? ''; }}
+          />
+        {/key}
+      {/if}
       <div class="preview-copy">
         <div class="preview-title">{previewPrimaryTitle}</div>
         {#if previewSecondaryText}

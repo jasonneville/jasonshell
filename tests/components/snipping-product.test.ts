@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { defaultShellSettings } from '../../src/lib/settings';
+import quickCommandsTrashAssetUrl from '../../src/assets/icons/delete_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg?url';
 import { tauriMocks } from './setup';
 
 const native = vi.hoisted(() => ({ label: 'snip-overlay' }));
@@ -282,18 +283,32 @@ it('preview does not dismiss on blur and serializes Copy/Save/Dismiss while pick
   await waitFor(() => expect((view.getByRole('button', { name: 'Copy', exact: true }) as HTMLButtonElement).disabled).toBe(false));
 });
 
-it('preview exposes decorative SVG action icons below the image and a separate header close control', async () => {
+it('preview uses the exact decorative Quick Commands trash asset for Dismiss and keeps the separate header close icon', async () => {
   const view = await mountPreview();
   const image = view.getByRole('img', { name: 'Snip preview' });
   const actions = ['Copy', 'Save', 'Dismiss'].map(name => view.getByRole('button', { name, exact: true }));
   for (const button of actions) {
     expect(button.getAttribute('aria-label')).toBeTruthy();
-    expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
     expect(image.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }
+  for (const button of actions.slice(0, 2)) {
+    expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  }
+  const dismiss = actions[2];
+  const trash = dismiss.querySelector('img');
+  expect(trash).not.toBeNull();
+  // Vite may inline this SVG; compare its asset URL, not a dev-server pathname.
+  expect(trash!.getAttribute('src')).toBe(quickCommandsTrashAssetUrl);
+  expect(trash!.getAttribute('alt')).toBe('');
+  expect(trash!.getAttribute('aria-hidden')).toBe('true');
+  expect(dismiss.querySelector('svg')).toBeNull();
   const close = view.getByRole('button', { name: 'Close screen snip', exact: true });
   expect(close.closest('header')).not.toBeNull();
   expect(close.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  expect(close.querySelector('svg path')?.getAttribute('d')).toBe(
+    'm256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z'
+  );
+  expect(close.querySelector('img')).toBeNull();
   expect(actions).not.toContain(close);
   expect(calls('copy_snip')).toHaveLength(0);
 });

@@ -32,6 +32,7 @@ export const IPC_COMMANDS = {
   showTaskGalleryWindowContextMenu: 'show_task_gallery_window_context_menu',
   showTaskGalleryWindowPreview: 'show_task_gallery_window_preview',
   hideTaskGalleryWindowPreview: 'hide_task_gallery_window_preview',
+  closeTaskGalleryWindow: 'close_task_gallery_window',
   closeTaskGalleryPreviewedWindow: 'close_task_gallery_previewed_window',
   showLauncherContextMenu: 'show_launcher_context_menu',
   showQuickLaunchPanelContextMenu: 'show_quick_launch_panel_context_menu',

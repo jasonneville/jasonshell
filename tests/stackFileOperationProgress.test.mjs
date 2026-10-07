@@ -85,7 +85,7 @@ test('extract reports archive lifecycle and elapsed time, not invented percentag
   assert.doesNotMatch(extraction, /(?:percent|total_files|total_bytes)/i);
 });
 
-test('clipboard copy/cut gives immediate item-count feedback in existing accessible bottom status', () => {
+test('clipboard copy/cut gives immediate item-count feedback in accessible toolbar status', () => {
   assert.match(ui, /class="stack-status[^\"]*"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(ui, /Copied.*(?:length|count)|(?:length|count).*Copied/s);
   assert.match(ui, /Cut.*(?:length|count)|(?:length|count).*Cut/s);

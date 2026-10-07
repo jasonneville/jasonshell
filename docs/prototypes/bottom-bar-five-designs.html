@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Five compact, placement-preserving bottom bar concepts for JasonShell. Standalone offline visual study with static sample windows.">
+<title>JasonShell — Five quieter bottom bars</title>
+<style>
+* { box-sizing: border-box; }
+:root { color-scheme: light; --paper:#f3f2ed; --ink:#242b30; --muted:#58616a; --rule:#d2d5d3; --green:#315c48; }
+body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.6 'Segoe UI',system-ui,sans-serif; }
+main, .masthead, footer { width:min(1100px,calc(100% - 64px)); margin-inline:auto; }
+a { color:inherit; text-underline-offset:4px; }
+a:focus-visible, .preview-scroll:focus-visible { outline:3px solid #926026; outline-offset:4px; }
+.skip { position:absolute; top:-100px; left:16px; padding:10px 16px; background:white; z-index:10; }
+.skip:focus { top:12px; }
+.masthead { display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:24px 0; border-bottom:1px solid var(--rule); font-size:12px; letter-spacing:.1em; text-transform:uppercase; }
+.hero { padding:48px 0 24px; }
+.eyebrow { color:var(--green); font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+h1 { font:normal clamp(36px,5vw,62px)/1.08 Georgia,serif; letter-spacing:-.04em; margin:12px 0 20px; }
+.hero p { max-width:76ch; color:var(--muted); }
+.notice { padding:16px 20px; background:#e7ece5; border-left:3px solid var(--green); font-size:14px; }
+nav { display:flex; flex-wrap:wrap; gap:10px 24px; padding:22px 0; border-bottom:1px solid var(--rule); margin-bottom:34px; font-size:14px; }
+nav a { padding-block:8px; }
+.legend { font-size:14px; color:var(--muted); margin:0 0 34px; }
+.concept { padding-bottom:38px; margin-bottom:36px; border-bottom:1px solid var(--rule); scroll-margin-top:24px; }
+.heading { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:8px; }
+h2 { font-size:23px; letter-spacing:-.025em; font-weight:600; margin:0; }
+.tag { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:3px 9px; border:1px solid #9caaa0; border-radius:3px; }
+.tag.recommended { background:var(--green); color:#fff; border-color:var(--green); }
+.description { margin:0 0 20px; color:var(--muted); font-size:15px; max-width:85ch; }
+figure { margin:0; }
+.preview-scroll { overflow-x:auto; border:1px solid #444e60; background:#111722; border-radius:5px; }
+.desktop { min-width:940px; height:212px; position:relative; overflow:hidden; color:#eef3ff; background:radial-gradient(ellipse at 85% 20%,#344650 0,transparent 55%),linear-gradient(120deg,#192230,#111823); color-scheme:dark; }
+.desktop::before { content:'JASON / WORKBENCH'; position:absolute; top:22px; left:22px; color:#aebdcd; font-size:10px; letter-spacing:.16em; }
+.workspace { position:absolute; top:22px; right:52px; width:450px; height:170px; border:1px solid #465266; border-radius:5px 5px 0 0; background:#171e2a; box-shadow:0 12px 30px #0004; font-size:11px; }
+.window-title { padding:8px 12px; border-bottom:1px solid #354151; color:#becbdd; background:#202a38; }
+.window-body { display:grid; grid-template-columns:102px 1fr; height:132px; }
+.tree { border-right:1px solid #354151; padding:12px; color:#adbbcd; line-height:2; }
+.code { padding:14px 20px; font:11px/1.9 Consolas,monospace; color:#b8c9db; }
+.code b { color:#b1d3c6; font-weight:normal; }
+.context-note { position:absolute; bottom:58px; left:22px; color:#b2c1cf; font-size:11px; }
+/* Every sample is a static illustration, not a functioning shell toolbar. */
+.bar { position:absolute; bottom:0; left:0; right:0; height:32.4px; display:flex; align-items:stretch; background:#0d111b; border-top:1px solid #343b48; box-shadow:inset 0 1px #ffffff08; font:600 10px/1 'Segoe UI',system-ui,sans-serif; }
+.quick { display:flex; align-items:center; flex:0 0 90px; padding:0 10px; color:#c0cadb; border-right:1px solid #343b48; white-space:nowrap; }
+.tasks { display:flex; flex:1; min-width:0; align-items:stretch; }
+.task { flex:0 1 160px; width:160px; min-width:0; position:relative; display:flex; align-items:center; gap:6px; padding:0 9px; background:#ffffff0f; border-right:1px solid #ffffff12; box-shadow:inset 0 1px #ffffff08; }
+.task .title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:3px; }
+.task.active { background:#283444; box-shadow:inset 2px 0 #c0d8e7,inset 0 1px #ffffff0a; }
+.task.active .title { font-weight:700; }
+.task.group .title { padding-right:16px; }
+.task.minimized { color:#b5becd; background:#ffffff08; }
+.task.attention { box-shadow:inset 0 3px #e2bc65; }
+.count { position:absolute; top:3px; right:4px; display:grid; place-items:center; width:14px; height:14px; border-radius:9px; background:#604a26; border:1px solid #b18b44; color:#fff2d0; font-size:9px; }
+.process { flex:0 0 28px; display:grid; place-items:center; border-left:1px solid #343b48; background:#ffffff0c; color:#c0cadb; margin-left:auto; }
+.icon { width:15px; height:15px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.editor-icon { color:#8ac4e6; } .browser-icon { color:#aabce5; } .folder-icon { color:#e4c47d; } .terminal-icon { color:#acd1bf; }
+.process .icon { width:17px; height:17px; }
+/* 02: restrained gutters and inset surfaces; still edge-attached. */
+.inset .bar { height:36px; padding:3px 4px; gap:4px; background:linear-gradient(#202938,#111823); }
+.inset .quick { border:1px solid #ffffff13; border-radius:3px; background:#ffffff04; }
+.inset .tasks { gap:4px; }
+.inset .task { border:1px solid #ffffff12; border-radius:3px; background:linear-gradient(#ffffff0c,#ffffff04); }
+.inset .task.active { background:linear-gradient(#364657,#283644); box-shadow:inset 2px 0 #c0d8e7,inset 0 1px #ffffff19; }
+.inset .task.attention { box-shadow:inset 0 2px #e2bc65; }
+.inset .process { border:1px solid #ffffff13; border-radius:3px; }
+/* 03: unfilled idle tasks; underline carries the active state. */
+.underline .bar { height:34px; background:#151d29; }
+.underline .quick { border-right-color:#ffffff16; }
+.underline .task { background:transparent; box-shadow:none; border-right:0; margin-right:3px; }
+.underline .task::after { content:''; position:absolute; bottom:3px; left:10px; right:10px; height:1px; background:#ffffff18; }
+.underline .task.active { background:#c0d8e710; box-shadow:none; }
+.underline .task.active::after { height:2px; background:#c0d8e7; }
+.underline .task.attention { box-shadow:inset 0 2px #e2bc65; }
+.underline .task.minimized::after { right:auto; width:20px; background:#8a96a9; }
+.underline .count { top:5px; border-radius:2px; }
+.underline .process { background:transparent; }
+/* 04: hairline frames, no raised fill; continuous square geometry. */
+.outline .bar { height:34px; background:#101722; padding:3px 0; }
+.outline .quick { background:#25313d; border-block:1px solid #44505e; }
+.outline .tasks { padding-left:6px; gap:0; }
+.outline .task { background:transparent; box-shadow:none; border:1px solid #3d4859; margin-right:-1px; }
+.outline .task.active { background:#c0d8e70d; border-color:#91a8ba; box-shadow:inset 2px 0 #c0d8e7; z-index:1; }
+.outline .task.minimized { border-bottom-style:dashed; }
+.outline .task.attention { border-top:2px solid #e2bc65; box-shadow:none; }
+.outline .process { border:1px solid #44505e; border-right:0; background:#25313d; }
+/* 05: top-connected tabs and a continuous lower sill, not a floating dock. */
+.tabs .bar { height:36px; padding-top:3px; background:#101722; border-bottom:3px solid #344252; }
+.tabs .quick { background:#202b38; border-right:1px solid #435061; }
+.tabs .tasks { padding-left:5px; gap:3px; }
+.tabs .task { border:0; border-radius:5px 5px 0 0; background:#202a37; box-shadow:inset 0 1px #ffffff12; }
+.tabs .task.active { background:#344252; box-shadow:inset 0 2px #c0d8e7; }
+.tabs .task.minimized { background:#19222e; }
+.tabs .task.attention { box-shadow:inset 0 2px #e2bc65; }
+.tabs .process { background:#202b38; border-left:1px solid #435061; }
+figcaption { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 20px; font-size:12px; color:var(--muted); padding:10px 0 0; }
+.assessment { display:grid; grid-template-columns:1.4fr 1fr; gap:28px; margin-top:16px; font-size:14px; }
+.assessment p { margin:0; color:var(--muted); }
+.assessment strong { color:var(--ink); }
+.summary { padding:20px 24px; border:1px solid #aab5ab; background:#e7ece5; margin-bottom:38px; }
+.summary h2 { font-size:20px; margin-bottom:8px; }
+.summary p { margin:0; font-size:15px; }
+footer { font-size:12px; color:var(--muted); padding-bottom:32px; }
+.symbols { position:absolute; width:0; height:0; overflow:hidden; }
+@media (max-width:650px) { main,.masthead,footer { width:calc(100% - 32px); } .hero { padding-top:30px; } .assessment { grid-template-columns:1fr; gap:12px; } h2 { font-size:21px; } .concept { margin-bottom:26px; padding-bottom:26px; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to designs</a>
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="editor" viewBox="0 0 24 24"><path d="m15 3 6 3v12l-6 3-10-8-3 3V8l3 3 10-8Z M15 3v18 M5 11l10-5 M5 13l10 5"/></symbol>
+<symbol id="browser" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 8h8 M8.5 14l-4 6 M14 15l-4-12"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 3h10v12H3V7Z M3 10h18"/></symbol>
+<symbol id="terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 4 3-4 3 M13 15h5"/></symbol>
+<symbol id="process" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="15" rx="2"/><path d="M5 11h3l2-4 3 8 2-4h4 M9 22h6 M12 18v4"/></symbol>
+</defs></svg>
+<header class="masthead"><span>JasonShell / Visual studies</span><span>Bottom bar · five alternatives</span></header>
+<main id="main">
+<header class="hero"><div class="eyebrow">Small changes. Same muscle memory.</div><h1>A quieter edge to the desktop.</h1><p>Keep Quick Launch on the left, open windows in the middle, and process access at the far right. Refresh the treatment—not the arrangement. These five directions stay compact, dark, and attached to the bottom edge.</p></header>
+<div class="notice"><strong>Static sample content. No live shell connections.</strong> This is an offline visual concept document, not a runtime screenshot or working toolbar. All preview controls are illustrations. No window, launcher, or process actions are available.</div>
+<nav aria-label="Design index"><a href="#design-01">01 Refined original</a><a href="#design-02">02 Soft inset rail</a><a href="#design-03">03 Underline rhythm</a><a href="#design-04">04 Hairline cells</a><a href="#design-05">05 Shallow tabs</a></nav>
+<p class="legend"><strong>Fair comparison:</strong> every sample shows <strong>BottomBar.css — Code</strong> active, <strong>Browser</strong> grouped with 3 windows, <strong>Project files</strong> minimized, and <strong>Build — Terminal</strong> requesting attention. Gold count = grouped windows; gold top edge = attention. The full-width rail and four 160px task slots are consistent. Desktop fragments are identical. On a narrow screen, focus a preview and use the arrow keys to scroll horizontally.</p>
+<section class="concept" id="design-01" aria-labelledby="title-01">
+<div class="heading"><h2 id="title-01">01 / Refined original</h2><span class="tag">Closest to current</span></div>
+<p class="description">Adjoining square tiles, no gutters, and the familiar 2px left active marker. A slightly clearer active fill and quieter dividers are the only visual polish.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="Refined original desktop preview"><div class="desktop original">
+<div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="bar" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal requesting attention in the middle; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div>
+</div></div><figcaption><span>32.4px rail · square tiles · no gaps</span><span>Actual CSS size; not enlarged</span></figcaption></figure>
+<div class="assessment"><p><strong>Pros:</strong> Lowest visual migration cost. Existing density, left-edge active cue, golden badge, and attention strip remain recognizable.</p><p><strong>Trade-off:</strong> The continuous wall of filled tiles still feels broad when many windows are open.</p></div>
+</section>
+<section class="concept" id="design-02" aria-labelledby="title-02">
+<div class="heading"><h2 id="title-02">02 / Soft inset rail</h2><span class="tag recommended">Recommended</span></div>
+<p class="description">Small tile gutters and a quiet beveled background break up the sprawl. A 3px inset and restrained corners make each task legible without turning the bar into a dock.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="Soft inset rail desktop preview"><div class="desktop inset">
+<div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="bar" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal requesting attention in the middle; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div>
+</div></div><figcaption><span>36px rail · 4px gutters · 3px corners</span><span>Actual CSS size; not enlarged</span></figcaption></figure>
+<div class="assessment"><p><strong>Pros:</strong> Less visual sprawl, clearer active task, and the same positions. The inset highlight adds finish without blur, glow, or a new visual language.</p><p><strong>Trade-off:</strong> A few extra vertical pixels and gutters reduce available task space slightly.</p></div>
+</section>
+<section class="concept" id="design-03" aria-labelledby="title-03">
+<div class="heading"><h2 id="title-03">03 / Underline rhythm</h2><span class="tag">Lightest chrome</span></div>
+<p class="description">Remove idle tile fills and most dividers. Thin bottom rules establish a rhythm; the active window gets a brighter, thicker underline and a faint fill.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="Underline rhythm desktop preview"><div class="desktop underline">
+<div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="bar" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal requesting attention in the middle; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div>
+</div></div><figcaption><span>34px rail · unfilled idle tasks · active underline</span><span>Actual CSS size; not enlarged</span></figcaption></figure>
+<div class="assessment"><p><strong>Pros:</strong> Calmest desktop edge. Titles and icons do the work rather than large blocks of background; a short rule also distinguishes the minimized task.</p><p><strong>Trade-off:</strong> Task boundaries are less explicit. The active indicator moves from the left edge to the bottom.</p></div>
+</section>
+<section class="concept" id="design-04" aria-labelledby="title-04">
+<div class="heading"><h2 id="title-04">04 / Hairline cells</h2><span class="tag">Sharper structure</span></div>
+<p class="description">Keep the squared, adjoining geometry but replace raised fills with thin outlined cells. Slightly stronger utility endcaps anchor the rail; the active cell alone earns a bright outline.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="Hairline cells desktop preview"><div class="desktop outline">
+<div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="bar" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal requesting attention in the middle; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div>
+</div></div><figcaption><span>34px rail · 1px outlines · square cells</span><span>Actual CSS size; not enlarged</span></figcaption></figure>
+<div class="assessment"><p><strong>Pros:</strong> Crisp boundaries with less filled area. Keeps the left active marker and uses a dashed lower edge as an additional minimized cue.</p><p><strong>Trade-off:</strong> More linework than option 03. A large number of tasks can still read as a grid.</p></div>
+</section>
+<section class="concept" id="design-05" aria-labelledby="title-05">
+<div class="heading"><h2 id="title-05">05 / Shallow tabs</h2><span class="tag">Connected active state</span></div>
+<p class="description">Very shallow tabs meet a continuous bottom sill. The active task merges with that sill, while only the upper corners soften. Everything stays edge-attached and left-aligned.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="Shallow tabs desktop preview"><div class="desktop tabs">
+<div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="bar" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal requesting attention in the middle; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div>
+</div></div><figcaption><span>36px rail · top-only corners · connected lower sill</span><span>Actual CSS size; not enlarged</span></figcaption></figure>
+<div class="assessment"><p><strong>Pros:</strong> A more deliberate silhouette without moving anything. The connected active tab creates a stronger structural cue than color alone.</p><p><strong>Trade-off:</strong> Slightly more stylized. The active marker moves to the top and shares that edge with attention on other tasks.</p></div>
+</section>
+<aside class="summary" aria-labelledby="recommendation"><h2 id="recommendation">Start with 02. Keep 01 as the conservative fallback.</h2><p>Soft inset rail offers the best small refresh: enough separation to stop the tiles reading as one long slab, but no new placement, giant icons, or floating dock. Preserve the existing left active marker, grouped count, and attention edge. These are visual directions only—not implementation commitments or verified native sizing.</p></aside>
+</main>
+<footer>Source grounding: BottomBar.css geometry and states; established BottomBar.svelte placement; app.css dark tokens; themes.ts default base-dark. No pinned launcher strip is added: launchers remain in the Quick Launch popup. Inline SVG illustrations and system fonts only. No scripts, external assets, dependencies, network requests, or live shell actions.</footer>
+</body>
+</html>

@@ -64,7 +64,7 @@ test('terminal reader never blocks on an undrained fallback output queue', () =>
   assert.match(rustTerminal, /Err\(mpsc::TrySendError::Full\(_\)\) => \{\}/);
 });
 
-test('phase 1 terminal startup has visible nonblank lifecycle state before first output', () => {
+test('persistent terminal retains truthful lifecycle state with terminal-state-only presentation', () => {
   const terminalPanelSurface = readRepoFile('src/components/TerminalPanelSurface.svelte');
   const terminalPanelCss = readRepoFile('src/components/TerminalPanelSurface.css');
   assert.match(terminalPanelSurface, /type TerminalLifecycleState\s*=/);
@@ -76,6 +76,7 @@ test('phase 1 terminal startup has visible nonblank lifecycle state before first
   assert.match(terminalPanelSurface, /class="terminal-panel-status"/);
   assert.match(terminalPanelSurface, /session\?\.cwd/);
   assert.match(terminalPanelCss, /\.terminal-panel-status/);
+  assert.doesNotMatch(terminalPanelSurface, /\{#if paneRuntime && !paneRuntime\.outputReceived && paneRuntime\.lifecycle !== 'running'\}/);
   assert.doesNotMatch(
     terminalPanelSurface,
     /session\.output/,
@@ -365,7 +366,7 @@ test('persistent terminal starts on delayed idle or first open, accepts input, a
   assert.match(terminalPanelSurface, /writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanelSurface, /pollTimer = window\.setInterval/);
   assert.match(terminalPanelSurface, /stopStackTerminal\(oldSession\)/);
-  assert.match(terminalPanelSurface, /use:bindPaneHost=\{pane\}/);
+  assert.match(terminalPanelSurface, /use:bindPaneHost=\{\{ pane, runtimeId: paneRuntimeId \}\}/);
   assert.doesNotMatch(terminalPanelSurface, /writeTerminalOutput\(result\.output\)/);
   assert.doesNotMatch(terminalPanelSurface, /function anchorCommandLineToLastRow\(\)/);
   assert.doesNotMatch(terminalPanelSurface, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);

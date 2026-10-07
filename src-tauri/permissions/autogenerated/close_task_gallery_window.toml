@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-task-gallery-window"
+description = "Enables the close_task_gallery_window command without any pre-configured scope."
+commands.allow = ["close_task_gallery_window"]
+
+[[permission]]
+identifier = "deny-close-task-gallery-window"
+description = "Denies the close_task_gallery_window command without any pre-configured scope."
+commands.deny = ["close_task_gallery_window"]

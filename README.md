@@ -149,6 +149,8 @@ npm run tauri dev
 
 - shows Explorer taskbar pins as the launcher source
 - shows open-window task tiles and previews
+- grouped tiles (two or more windows) offer **Open in Process Manager**, **Pin to taskbar**, and **Close all windows** on right-click, without opening the gallery first
+- **Close all windows** sends normal close requests to the selected group's captured, still-current windows; apps can keep unsaved-work prompts open, and this action does not force-kill processes
 - includes process manager access
 - reserves AppBar work area on the primary monitor
 

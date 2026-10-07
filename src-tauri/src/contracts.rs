@@ -76,6 +76,7 @@ pub mod commands {
     pub const SHOW_TASK_GALLERY_WINDOW_CONTEXT_MENU: &str = "show_task_gallery_window_context_menu";
     pub const SHOW_TASK_GALLERY_WINDOW_PREVIEW: &str = "show_task_gallery_window_preview";
     pub const HIDE_TASK_GALLERY_WINDOW_PREVIEW: &str = "hide_task_gallery_window_preview";
+    pub const CLOSE_TASK_GALLERY_WINDOW: &str = "close_task_gallery_window";
     pub const CLOSE_TASK_GALLERY_PREVIEWED_WINDOW: &str = "close_task_gallery_previewed_window";
     pub const SHOW_TOP_BAR_PIN_CONTEXT_MENU: &str = "show_top_bar_pin_context_menu";
     pub const SHOW_CONTEXT_MENU_OVERLAY: &str = "show_context_menu_overlay";
@@ -261,6 +262,7 @@ pub mod commands {
         SHOW_TASK_GALLERY_WINDOW_CONTEXT_MENU,
         SHOW_TASK_GALLERY_WINDOW_PREVIEW,
         HIDE_TASK_GALLERY_WINDOW_PREVIEW,
+        CLOSE_TASK_GALLERY_WINDOW,
         CLOSE_TASK_GALLERY_PREVIEWED_WINDOW,
         SHOW_TOP_BAR_PIN_CONTEXT_MENU,
         SHOW_SEARCH_PANEL,
@@ -595,6 +597,8 @@ mod tests {
     fn new_command_contracts_are_unique_and_stable() {
         let unique = commands::ALL.iter().copied().collect::<HashSet<_>>();
         assert_eq!(unique.len(), commands::ALL.len());
+        assert_eq!(commands::CLOSE_TASK_GALLERY_WINDOW, "close_task_gallery_window");
+        assert!(unique.contains(commands::CLOSE_TASK_GALLERY_WINDOW));
         assert!(unique.contains("load_shell_settings"));
         assert!(unique.contains("save_shell_settings"));
         assert!(unique.contains("get_taskbar_runtime_diagnostics"));

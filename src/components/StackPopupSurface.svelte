@@ -2656,7 +2656,33 @@
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled={!hasSelection} onClick={() => void deleteSelected()}><MaterialSymbolIcon name="delete" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="New folder" tooltip="New folder" disabled={!currentPath} onClick={beginCreateFolder}><MaterialSymbolIcon name="create_new_folder" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Reveal selected item" tooltip="Reveal selected item" disabled={!selectedEntry} onClick={() => void revealSelected()}><MaterialSymbolIcon name="preview" /></MeltActionButton>
-      <MeltActionButton class="stack-action-icon-button" ariaLabel="Pin to quick bar" tooltip="Pin to quick bar" disabled={!currentPath} onClick={() => void pinCurrentFolderToQuickBar()}><MaterialSymbolIcon name="add_location" /></MeltActionButton>
+      <div class="stack-pin-status">
+        <MeltActionButton class="stack-action-icon-button" ariaLabel="Pin to quick bar" tooltip="Pin to quick bar" disabled={!currentPath} onClick={() => void pinCurrentFolderToQuickBar()}><MaterialSymbolIcon name="add_location" /></MeltActionButton>
+        <span class="stack-status-separator" aria-hidden="true"></span>
+        <div class="stack-status" class:error={!!errorMessage || activeOperation?.phase === 'failed'} class:info={!errorMessage} role="status" aria-live="polite">
+          {#if activeOperation}
+            <div class="stack-operation-status" title={operationStatusText(activeOperation)}>
+              {#if activeOperation.determinate}
+                <progress
+                  max="1"
+                  value={operationProgressValue(activeOperation)}
+                  aria-label={operationStatusText(activeOperation)}
+                ></progress>
+              {:else if activeOperation.phase !== 'completed' && activeOperation.phase !== 'failed'}
+                <span class="stack-operation-spinner" aria-hidden="true"></span>
+              {/if}
+              <span>{operationStatusText(activeOperation)}</span>
+            </div>
+          {:else}
+            <span title={errorMessage || stackState.statusMessage}>{errorMessage || stackState.statusMessage}</span>
+          {/if}
+          {#if !activeOperation && loadingPath}
+            <span title="Loading...">Loading...</span>
+          {:else if !activeOperation && iconHydrationStatusMessage}
+            <span title={iconHydrationStatusMessage}>{iconHydrationStatusMessage}</span>
+          {/if}
+        </div>
+      </div>
       <div class="stack-search">
         <div class="stack-search-input-wrapper">
           <MaterialSymbolIcon name="search" />
@@ -2679,30 +2705,6 @@
       </div>
     </div>
   </header>
-
-  <div class="stack-status surface-state" class:error={!!errorMessage || activeOperation?.phase === 'failed'} class:info={!errorMessage} role="status" aria-live="polite">
-    {#if activeOperation}
-      <div class="stack-operation-status" title={operationStatusText(activeOperation)}>
-        {#if activeOperation.determinate}
-          <progress
-            max="1"
-            value={operationProgressValue(activeOperation)}
-            aria-label={operationStatusText(activeOperation)}
-          ></progress>
-        {:else if activeOperation.phase !== 'completed' && activeOperation.phase !== 'failed'}
-          <span class="stack-operation-spinner" aria-hidden="true"></span>
-        {/if}
-        <span>{operationStatusText(activeOperation)}</span>
-      </div>
-    {:else}
-      <span title={errorMessage || stackState.statusMessage}>{errorMessage || stackState.statusMessage}</span>
-    {/if}
-    {#if !activeOperation && loadingPath}
-      <span title="Loading...">Loading...</span>
-    {:else if !activeOperation && iconHydrationStatusMessage}
-      <span title={iconHydrationStatusMessage}>{iconHydrationStatusMessage}</span>
-    {/if}
-  </div>
 
   {#if createFolderDraft !== null || renameDraft !== null}
     <form

@@ -62,10 +62,10 @@ test('task preview native window has no rectangular shadow behind rounded surfac
   assert.match(previewBuilder, /\.transparent\(true\)/);
   assert.match(previewBuilder, /\.decorations\(false\)/);
   assert.match(previewBuilder, /\.shadow\(false\)/);
-  assert.match(taskPreviewCssSource, /\.preview-surface\s*\{[^}]*border-radius:\s*var\(--js-radius-sm\);[^}]*overflow:\s*hidden;/);
+  assert.match(taskPreviewCssSource, /\.preview-surface\s*\{[^}]*border-radius:\s*8px;[^}]*overflow:\s*hidden;/);
 });
 
-test('taskbar preview connector keeps only the source tile seamless', () => {
+test('taskbar preview identity state stays safe without a visual seam connector', () => {
   const queuePreview = bottomBarSource.match(/function queuePreview\([\s\S]*?(?=\n  async function refreshTaskbarWindows\()/)?.[0];
   const hidePreview = bottomBarSource.match(/async function hidePreview\([\s\S]*?(?=\n  function schedulePreviewHide\()/)?.[0];
   assert.ok(queuePreview, 'queuePreview should exist');
@@ -89,10 +89,7 @@ test('taskbar preview connector keeps only the source tile seamless', () => {
   assert.match(barMarkup, /--preview-connector-left:/);
   assert.match(barMarkup, /--preview-connector-width:/);
   assert.match(barMarkup, /--preview-connector-color:/);
-  assert.match(bottomBarCssSource, /\.bottom-bar\.surface::(?:before|after)\s*\{[^}]*pointer-events:\s*none;[^}]*\}/);
-  assert.match(bottomBarCssSource, /--preview-connector-left/);
-  assert.match(bottomBarCssSource, /--preview-connector-width/);
-  assert.match(bottomBarCssSource, /--preview-connector-color/);
+  assert.doesNotMatch(bottomBarCssSource, /--preview-connector-(?:left|width|color)/, 'floating preview has no painted seam bridge');
   assert.match(bottomBarCssSource, /(?:height:\s*1px|border-top:\s*1px)/);
   assert.match(barRule ?? '', /border-top:\s*1px solid var\(--js-color-border-soft\)/);
   assert.doesNotMatch(barRule ?? '', /border-top:\s*(?:0|none)|border:\s*(?:0|none)/);
@@ -113,7 +110,7 @@ test('stale task preview hide cannot clear a newer tile connector', () => {
   );
 });
 
-test('task preview source tile removes its own top edge', () => {
+test('floating task preview leaves source tile normal border and bevel untouched', () => {
   const directTile = bottomBarSource.match(/\{#each group\.windows as taskWindow \(taskWindow\.hwnd\)\}([\s\S]*?)\{\/each\}/)?.[1];
   assert.ok(directTile, 'source task tile markup exists');
   assert.match(directTile, /class=\{`task-button[^`]*task-button-preview-connected[^`]*`\}/,
@@ -130,24 +127,18 @@ test('task preview source tile removes its own top edge', () => {
   assert.match(ordinary ?? '', /box-shadow:\s*var\(--js-inset-highlight\)/, 'ordinary tiles retain top highlight');
   assert.match(active ?? '', /box-shadow:[^;]*var\(--js-inset-highlight\)[^;]*var\(--js-color-accent-soft\)/,
     'ordinary active tiles retain highlight and accent');
-  assert.ok(connected, 'connected tile overrides its own top inset highlight');
-  assert.match(connected, /box-shadow:\s*[^;]+;/);
-  assert.doesNotMatch(connected, /var\(--js-inset-highlight\)/);
-  assert.match(connectedActive ?? '', /box-shadow:[^;]*var\(--js-color-accent-soft\)/,
-    'connected active tile retains accent outline');
-  assert.doesNotMatch(connectedActive ?? '', /var\(--js-inset-highlight\)/);
+  assert.equal(connected, undefined, 'preview state must not override ordinary tile chrome');
+  assert.equal(connectedActive, undefined, 'preview state must not override active tile chrome');
 });
 
 test('preview-connected task tile preserves attention styling', () => {
   const attention = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-window-attention\s*\{([^}]*)\}/)?.[1];
   const connectedAttention = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-window-attention\.task-button-preview-connected\s*\{([^}]*)\}/)?.[1];
   assert.match(attention ?? '', /box-shadow:\s*inset 0 4px 0 #ffd54f/);
-  assert.match(connectedAttention ?? '', /box-shadow:[^;]*#ffd54f/, 'connected attention tile keeps warning highlight');
-  assert.doesNotMatch(connectedAttention ?? '', /var\(--js-inset-highlight\)/, 'only top inset highlight is removed');
+  assert.equal(connectedAttention, undefined, 'preview state inherits normal attention styling');
   const connectedActiveAttention = bottomBarCssSource.match(/\.bottom-bar \.task-button\.task-button-active\.task-window-attention\.task-button-preview-connected\s*\{([^}]*)\}/)?.[1];
-  assert.match(connectedActiveAttention ?? '', /box-shadow:[^;]*#ffd54f[^;]*var\(--js-color-accent-soft\)|box-shadow:[^;]*var\(--js-color-accent-soft\)[^;]*#ffd54f/,
-    'active connected attention tile keeps both warning and accent');
-  assert.doesNotMatch(connectedActiveAttention ?? '', /var\(--js-inset-highlight\)/);
+  assert.equal(connectedActiveAttention, undefined, 'preview state inherits normal active attention styling');
+  assert.match(bottomBarCssSource, /\.task-button-active\.task-window-attention\s*\{[^}]*box-shadow:[^;]*#ffd54f[^;]*var\(--js-color-accent-soft\)/, 'active attention keeps warning and accent');
 });
 
 test('stale preview show cannot leave an unconnected native preview', () => {
@@ -216,8 +207,10 @@ test('task preview surface gives native DWM thumbnails an unobstructed frame', (
     /\{#if preview\.imageDataUrl\}[\s\S]*\{:else if isNativeLivePreview\}/
   );
   assert.match(taskPreviewSurfaceSource, /<div class="preview-frame preview-frame-native" aria-hidden="true"><\/div>/);
-  assert.match(taskPreviewCssSource, /\.preview-surface-native\s*\{[\s\S]*background:\s*transparent/);
-  assert.match(taskPreviewCssSource, /\.preview-surface-native \.preview-header\s*\{[\s\S]*background:\s*var\(--js-bg-surface\)/);
+  // Native DWM transparency belongs to the interior; inset chrome/perimeter stays visible.
+  assert.match(taskPreviewCssSource, /\.preview-surface-native\s*\{[^}]*background:\s*var\(--js-bg-surface\)/);
+  assert.match(taskPreviewCssSource, /\.preview-surface-native \.preview-frame-native\s*\{[^}]*background:\s*transparent;[^}]*border-color:\s*color-mix\(in srgb, var\(--js-bg-surface\)[^;]*var\(--js-color-text-muted\)/);
+  assert.match(taskPreviewCssSource, /\.preview-surface-native\s*\{[^}]*background:\s*var\(--js-bg-surface\) var\(--preview-chrome\)/);
   assert.match(shellWindowsSource, /TASK_PREVIEW_LABEL[\s\S]*\.transparent\(true\)[\s\S]*\.visible\(false\)/);
   assert.match(taskPreviewSurfaceSource, /await maximizeTaskWindow\(preview\.hwnd\)/);
   assert.match(taskbarPreviewSource, /galleryNonce\?: string \| null/);

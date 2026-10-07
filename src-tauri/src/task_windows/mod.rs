@@ -226,6 +226,28 @@ pub fn close_task_window(hwnd: String) -> Result<(), String> {
     }
 }
 
+pub(crate) fn request_task_window_close(
+    hwnd: String,
+    expected_process_id: Option<u32>,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let expected_process_id = expected_process_id
+            .filter(|pid| *pid != 0)
+            .ok_or_else(|| "A process id is required to request task window close".to_string())?;
+        let identity = task_window_identity(&hwnd)?;
+        if identity.process_id != expected_process_id {
+            return Err("Task window process identity does not match the close request".to_string());
+        }
+        request_close_task_window_with_identity(hwnd, identity)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (hwnd, expected_process_id);
+        Err("Taskbar window integration is only supported on Windows".to_string())
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn task_window_identity(hwnd: &str) -> Result<actions::TaskWindowIdentity, String> {
     actions::current_task_window_identity(parse_hwnd(hwnd)?)
@@ -243,6 +265,15 @@ pub(crate) fn close_task_window_with_identity(
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn task_window_identity(_hwnd: &str) -> Result<(), String> {
     Err("Taskbar window integration is only supported on Windows".to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn request_close_task_window_with_identity(
+    hwnd: String,
+    identity: TaskWindowIdentity,
+) -> Result<(), String> {
+    reject_internal_shell_hwnd(&hwnd)?;
+    actions::request_close_task_window_with_identity(hwnd, identity)
 }
 
 #[cfg(target_os = "windows")]

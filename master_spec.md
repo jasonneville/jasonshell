@@ -59,6 +59,24 @@ Feature clusters:
 - settings/tray/audio/calendar/process manager: matching `src/lib/*` and `src/components/*Surface.svelte`
 - snipping: `src/lib/snipping.ts`, `src/lib/shellSurface.ts`, `src/lib/surfaceLoader.ts`, `src/lib/topBarControls.ts`, `SnipOverlaySurface.svelte`, `SnipPreviewSurface.svelte`
 
+### Task preview presentation
+
+The single-window hover preview uses the inset-lens treatment: a theme-token beveled raised frame, softer corners, a recessed bordered thumbnail, and a decorative app icon beside the title/process caption. Blank or failed icons are omitted without affecting the caption or window actions. The existing activation and separate close controls, hover lifetime, gallery nonce handling, captured-image fallback, and unavailable state remain unchanged.
+
+The preview floats 8 logical pixels away from its host edge (scaled and rounded for DPI), above the taskbar or below its host on fallback placement; monitor-edge clamping still takes priority when space is insufficient. Opening a preview no longer paints a seam connector or removes the source tile's top border/bevel. Existing delayed hide and pointer-entry cancellation remain the hover-crossing mechanism.
+
+The native host remains 332×228 logical pixels. `TaskPreviewSurface.css` and `task_preview.rs` share the thumbnail content geometry: 12 logical pixels on the sides and bottom, and 48 on top; the source is aspect-fit inside that frame. The native viewport remains transparent while its inset perimeter stays visible. Browser fixture coverage in `tests/browser/task-preview-inset/` uses the production component/CSS with mocked IPC; it establishes DOM/style geometry, not live DWM compositing. Native shell smoke remains consent-gated.
+
+### Grouped taskbar context menu
+
+Bottom-bar gallery capsules (two or more windows) use the same external context-menu overlay and shared menu primitives as standalone task tiles. Their right-click menu exposes Open in Process Manager, Pin to taskbar, and Close all windows; gallery hover/click and drag behavior remain separate. The origin retains an opaque-token-scoped member snapshot; the overlay receives presentation state, not HWNDs or paths. Process and pin prefer the member that was active when the menu opened if it still survives, otherwise the first captured survivor (process lookup requires a valid PID). Selections recheck group membership and HWND/PID against current taskbar state and exclude newly joined windows. Close all rechecks each target, continues after individual failures, and uses the authorized `run_task_window_action` request-only `request-close` route: native identity/PID validation precedes WM_CLOSE dispatch, without termination or elevation fallback. App save prompts can therefore keep windows open. Existing standalone close behavior is unchanged. Rendered mocked-IPC coverage lives in `tests/components/taskbar-group-menu.test.ts`; native source safety contracts live in `tests/taskbarGroupMenuContract.test.mjs`. Live WebView2/native shell verification remains consent-gated.
+
+### Terminal panel startup and status presentation
+
+The persistent terminal panel keeps hidden mount lazy: it does not eagerly create xterm/ConPTY, and schedules the unchanged bounded `5000 ms` idle prewarm. A panel-open event or terminal-panel focus cancels the pending prewarm and starts or joins the shared startup promise. Existing backend sessions are reattached rather than duplicated; idle prewarm may start/list-attach the backend session without creating xterm. Visible startup still preserves attach/replay, focus, resize-before-input, tab/split, reuse, and cleanup behavior.
+
+Normal startup and output waiting never cover the terminal with a status notice. Genuine failure, exit, and explicit stopped-state diagnostics remain visible and accessible before a pane exists and after output, including startup rejection, PTY/read failure, exit-before-output, later exit, and stopping the final tab. Existing output remains visible alongside a later diagnostic, and retry clears the prior failure without duplicating notices. Rendered coverage is in `tests/components/terminal-panel-status.test.ts`; its mocked IPC/xterm environment is not native ConPTY or desktop Tauri certification. The focused policy and tradeoffs are documented in `docs/terminal-panel-prewarm-idle-policy.md`.
+
 ### Backend and native
 
 `src-tauri/src/main.rs` registers commands, windows, setup, and plugins. Rust modules own native integration:

@@ -164,6 +164,7 @@
   let idlePrewarmTimer: number | null = null;
   let terminalStartPromise: Promise<void> | null = null;
   let terminalSessionCreationInFlight = false;
+  let terminalStopNoticeGeneration = 0;
 
   let currentInputText = '';
   let currentInputSelectionActive = false;
@@ -382,9 +383,12 @@
     return null;
   }
 
-  function runtimeForPane(pane: TerminalPaneModel) {
-    const runtime = paneRuntimes.get(pane.paneId);
-    return runtime && runtime.session.sessionId === pane.sessionId && isRuntimeCurrent(runtime) ? runtime : null;
+  function noticeForPane(pane: TerminalPaneModel, runtimes: Map<string, TerminalPaneRuntime>) {
+    const runtime = runtimes.get(pane.paneId);
+    if (!runtime || runtime.session.sessionId !== pane.sessionId || !isRuntimeCurrent(runtime)) return null;
+    if (runtime.lifecycle !== 'failed' && runtime.lifecycle !== 'exited') return null;
+    // Snapshot mutable runtime fields so each map commit refreshes snippet presentation.
+    return { lifecycle: runtime.lifecycle, status: runtime.status };
   }
 
   function setActiveRuntime(runtime: TerminalPaneRuntime | null) {
@@ -564,6 +568,7 @@
   }
 
   async function startTerminalOnce(intent: TerminalStartupIntent) {
+    terminalStopNoticeGeneration += 1;
     status = intent === 'idle-prewarm' ? 'Prewarming terminal in the background...' : 'Starting terminal...';
     lifecycle = 'starting';
     outputReceived = false;
@@ -593,6 +598,12 @@
       clearStartupTimer();
       lifecycle = 'failed';
       status = errorMessage(error, 'Terminal failed to start');
+      const runtime = activeRuntime();
+      if (runtime) {
+        runtime.lifecycle = lifecycle;
+        runtime.status = status;
+        commitRuntime(runtime);
+      }
       console.error('Failed to start persistent terminal', error);
     }
   }
@@ -800,6 +811,7 @@
 
   async function createTerminalSession() {
     if (terminalSessionCreationInFlight) return;
+    terminalStopNoticeGeneration += 1;
     terminalSessionCreationInFlight = true;
     const tabCreationWorkbenchSessionId = currentWorkbenchTabSessionId();
     saveCurrentTerminalWorkbench(tabCreationWorkbenchSessionId);
@@ -1972,7 +1984,7 @@
 
   function stopAndForgetTerminalSessionsInBackground(sessionIds: Iterable<string>) {
     const stoppedSessionIds = new Set(sessionIds);
-    if (!stoppedSessionIds.size) return;
+    if (!stoppedSessionIds.size) return Promise.resolve([]);
     for (const runtime of [...paneRuntimes.values()]) {
       if (!stoppedSessionIds.has(runtime.session.sessionId)) continue;
       markPaneRuntimeDisposed(runtime);
@@ -1988,7 +2000,12 @@
     for (const stoppedSessionId of stoppedSessionIds) {
       clearStoppedTerminalSessionState(stoppedSessionId);
     }
-    void Promise.all([...stoppedSessionIds].map((stoppedSessionId) => stopStackTerminal(stoppedSessionId).catch((error) => console.debug('Persistent terminal tab close unavailable', error))));
+    return Promise.all([...stoppedSessionIds].map((stoppedSessionId) => stopStackTerminal(stoppedSessionId)
+      .then(() => null)
+      .catch((error: unknown) => {
+        console.debug('Persistent terminal tab close unavailable', error);
+        return { error };
+      })));
   }
 
   async function closeTerminalSessionTab(sessionId: string) {
@@ -2016,46 +2033,42 @@
         setActiveRuntime(null);
       }
     }
-    stopAndForgetTerminalSessionsInBackground(plan.stopBackendSessionIds.length ? plan.stopBackendSessionIds : [sessionId]);
+    const stopResult = stopAndForgetTerminalSessionsInBackground(plan.stopBackendSessionIds.length ? plan.stopBackendSessionIds : [sessionId]);
     orderTerminalSessionsByTabIds(plan.nextTabSessionIds);
+    return stopResult;
   }
 
   async function stopTerminal() {
     const runtime = activeRuntime();
     if (!runtime) return;
+    const noticeGeneration = ++terminalStopNoticeGeneration;
     const sessionId = runtime.session.sessionId;
+    let stopResult: ReturnType<typeof stopAndForgetTerminalSessionsInBackground>;
     if (terminalTabSessionIds.has(sessionId)) {
-      await closeTerminalSessionTab(sessionId);
-      return;
-    }
-    stopPollingForRuntime(runtime);
-    clearStartupTimerForRuntime(runtime);
-    runtime.lifecycle = 'exited';
-    runtime.status = 'Terminal stopped';
-    runtime.session = { ...runtime.session, running: false };
-    markPaneRuntimeDisposed(runtime);
-    await stopStackTerminal(sessionId).catch((error) => console.debug('Persistent terminal stop unavailable', error));
-    disposePaneRuntime(runtime);
-    if (paneRuntimes.get(runtime.paneId)?.runtimeId === runtime.runtimeId) {
-      paneRuntimes.delete(runtime.paneId);
-    }
-    paneRuntimes = new Map(paneRuntimes);
-    setTerminalPaneTree(removePaneFromTree(terminalPaneTree, runtime.paneId));
-    terminalSessions = terminalSessions.filter((item) => item.sessionId !== sessionId);
-    clearStoppedTerminalSessionState(sessionId);
-    if (!terminalPanes.length) {
-      splitOrientation = 'single';
-      const nextSession = currentVisibleTerminalTabs().find((item) => item.running) ?? currentVisibleTerminalTabs()[0] ?? null;
-      if (nextSession) {
-        activateTerminalTabWorkbench(nextSession);
+      stopResult = closeTerminalSessionTab(sessionId);
+    } else {
+      setTerminalPaneTree(removePaneFromTree(terminalPaneTree, runtime.paneId));
+      stopResult = stopAndForgetTerminalSessionsInBackground([sessionId]);
+      if (!terminalPanes.length) {
+        splitOrientation = 'single';
+        const nextSession = currentVisibleTerminalTabs().find((item) => item.running) ?? currentVisibleTerminalTabs()[0] ?? null;
+        if (nextSession) {
+          activateTerminalTabWorkbench(nextSession);
+        } else {
+          session = null;
+          setActiveRuntime(null);
+        }
       } else {
-        session = null;
-        setActiveRuntime(null);
+        activePaneId = terminalPanes[0].paneId;
+        activatePane(activePaneId);
       }
-      return;
     }
-    activePaneId = terminalPanes[0].paneId;
-    activatePane(activePaneId);
+    const stopWorkbenchGeneration = terminalWorkbenchGeneration;
+    const results = await stopResult;
+    if (listenersDisposed || noticeGeneration !== terminalStopNoticeGeneration || stopWorkbenchGeneration !== terminalWorkbenchGeneration || terminalPaneTree || session) return;
+    const failure = results.find((result) => result !== null);
+    lifecycle = failure ? 'failed' : 'exited';
+    status = failure ? errorMessage(failure.error, 'Terminal failed to stop') : 'Terminal stopped';
   }
 
   async function copySelectionFromContextMenu() {
@@ -2203,8 +2216,10 @@
     runtime.replayedSessionOutput = true;
     if (terminalOutputHasVisibleText(replay)) {
       runtime.outputReceived = true;
-      runtime.lifecycle = 'running';
-      runtime.status = '';
+      if (runtime.lifecycle !== 'failed' && runtime.lifecycle !== 'exited') {
+        runtime.lifecycle = 'running';
+        runtime.status = '';
+      }
       clearStartupTimerForRuntime(runtime);
     }
     runtime.terminal?.write(replay);
@@ -2290,8 +2305,8 @@
     return runtime;
   }
 
-  function bindPaneHost(node: HTMLDivElement, pane: TerminalPaneModel) {
-    let boundPane = pane;
+  function bindPaneHost(node: HTMLDivElement, binding: { pane: TerminalPaneModel; runtimeId: string | null }) {
+    let boundPane = binding.pane;
     let boundRuntimeId: string | null = null;
     const clearBoundHost = () => {
       if (!boundRuntimeId) return;
@@ -2304,12 +2319,15 @@
     };
     boundRuntimeId = attachPaneHost(node, boundPane)?.runtimeId ?? null;
     return {
-      update(nextPane: TerminalPaneModel) {
+      update(nextBinding: { pane: TerminalPaneModel; runtimeId: string | null }) {
         const previousPane = boundPane;
-        boundPane = nextPane;
-        if (previousPane.paneId !== nextPane.paneId || previousPane.sessionId !== nextPane.sessionId) {
+        boundPane = nextBinding.pane;
+        if (previousPane.paneId !== boundPane.paneId || previousPane.sessionId !== boundPane.sessionId) {
           clearBoundHost();
         }
+        const runtime = paneRuntimes.get(boundPane.paneId);
+        // Map commits can register a runtime after mount; already attached hosts need no work.
+        if (boundRuntimeId === nextBinding.runtimeId && runtime?.host === node && runtimeHasAttachedTerminal(runtime)) return;
         boundRuntimeId = attachPaneHost(node, boundPane)?.runtimeId ?? null;
       },
       destroy() {
@@ -2369,6 +2387,7 @@
   }
 
   async function restartTerminal() {
+    terminalStopNoticeGeneration += 1;
     const runtime = activeRuntime();
     if (!runtime) {
       await startTerminal();
@@ -2477,6 +2496,15 @@
   }
 </script>
 
+{#snippet renderTerminalNotice(noticeLifecycle: TerminalLifecycleState, noticeStatus: string)}
+  <div class="terminal-panel-status" class:error={noticeLifecycle === 'failed'} role={noticeLifecycle === 'failed' ? 'alert' : 'status'} aria-live={noticeLifecycle === 'failed' ? 'assertive' : 'polite'}>
+    <strong>{noticeStatus}</strong>
+    {#if noticeLifecycle === 'failed'}
+      <span>Restart terminal or check PowerShell startup.</span>
+    {/if}
+  </div>
+{/snippet}
+
 {#snippet renderPaneTree(node: TerminalPaneTreeNode)}
   {#if node.kind === 'split'}
     {#key node.splitId}
@@ -2488,7 +2516,8 @@
   {:else}
     {@const pane = node.pane}
     {#key paneDomKey(pane)}
-      {@const paneRuntime = runtimeForPane(pane)}
+      {@const paneNotice = noticeForPane(pane, paneRuntimes)}
+      {@const paneRuntimeId = paneRuntimes.get(pane.paneId)?.runtimeId ?? null}
       {@const displayTitle = paneDisplayTitle(pane)}
       <section class="terminal-pane" class:focused={pane.focused} data-pane-id={pane.paneId} aria-label={`Terminal pane ${displayTitle}`}>
         <div class="terminal-pane-chrome" title={displayTitle}>
@@ -2496,7 +2525,7 @@
         </div>
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions: xterm owns terminal interaction semantics; this handler only narrows triple-click selection. -->
         <div
-          use:bindPaneHost={pane}
+          use:bindPaneHost={{ pane, runtimeId: paneRuntimeId }}
           class="terminal-panel-output"
           role="log"
           aria-label="Terminal output"
@@ -2505,15 +2534,8 @@
           on:wheel|capture|nonpassive={handleTerminalFontZoomWheel}
           on:contextmenu={(event) => { activatePane(pane.paneId); openTerminalContextMenu(event); }}
         ></div>
-        {#if paneRuntime && !paneRuntime.outputReceived && paneRuntime.lifecycle !== 'running'}
-          <div class="terminal-panel-status" class:error={paneRuntime.lifecycle === 'failed'} role={paneRuntime.lifecycle === 'failed' ? 'alert' : 'status'} aria-live="polite">
-            <strong>{paneRuntime.status}</strong>
-            {#if paneRuntime.lifecycle === 'failed'}
-              <span>Restart terminal or check PowerShell startup.</span>
-            {:else}
-              <span>JasonShell terminal starts with the app and stays alive while hidden.</span>
-            {/if}
-          </div>
+        {#if paneNotice}
+          {@render renderTerminalNotice(paneNotice.lifecycle, paneNotice.status)}
         {/if}
       </section>
     {/key}
@@ -2595,6 +2617,8 @@
     <div class="terminal-pane-tree" data-split-orientation={splitOrientation}>
       {#if terminalPaneTree}
         {@render renderPaneTree(terminalPaneTree)}
+      {:else if lifecycle === 'failed' || lifecycle === 'exited'}
+        {@render renderTerminalNotice(lifecycle, status)}
       {/if}
     </div>
     {#if searchOpen}

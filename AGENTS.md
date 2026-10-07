@@ -1,5 +1,7 @@
 # JasonShell agent instructions
 
+YOU MUST READ C:\Users\jnev1\.pi\AGENTS.md AND C:\Users\jnev1\.pi\agent\agents\leader.md
+
 ## Intake
 
 1. Read this file and `docs/current-state-brief.md` for every task.

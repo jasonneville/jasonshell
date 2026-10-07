@@ -100,7 +100,7 @@ test('Stack Browser no longer owns the visible terminal panel xterm internals', 
   assert.doesNotMatch(stackPopup, /from '@xterm\/addon-fit'/);
 });
 
-test('terminal panel owns xterm, startup status, errors, and poll fallback', () => {
+test('terminal panel owns xterm, terminal-state notices, and poll fallback', () => {
   assert.match(terminalPanel, /import \{ Terminal \} from '@xterm\/xterm'/);
   assert.match(terminalPanel, /import \{ FitAddon \} from '@xterm\/addon-fit'/);
   assert.match(terminalPanel, /onMount\(\(\) => \{/);
@@ -120,7 +120,7 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.match(terminalPanel, /function ensureVisibleResizeBeforeInput/);
   assert.match(terminalPanel, /await ensureVisibleResizeBeforeInput\(\);[\s\S]{0,120}writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanel, /terminal-panel-status/);
-  assert.match(terminalPanel, /role=\{paneRuntime\.lifecycle === 'failed' \? 'alert' : 'status'\}/);
+  assert.doesNotMatch(terminalPanel, /\{#if paneRuntime && !paneRuntime\.outputReceived && paneRuntime\.lifecycle !== 'running'\}/, 'persistent notices must follow failed/exited lifecycle, not the absence of output');
   assert.match(terminalPanel, /readStackTerminal\(sessionId\)/);
   assert.match(terminalPanel, /writeStackTerminal\(sessionId, data\)/);
   assert.doesNotMatch(terminalPanel, /writeTerminalOutput\(result\.output\)/);
@@ -213,7 +213,7 @@ test('terminal panel owns xterm, startup status, errors, and poll fallback', () 
   assert.doesNotMatch(terminalPanel, /function anchorCommandLineToLastRow\(\)/);
   assert.doesNotMatch(terminalPanel, /terminal\.write\(`\\x1b\[\$\{terminal\.rows\};1H`\)/);
   assert.doesNotMatch(terminalPanel, /terminalOutputHasClear/);
-  assert.match(terminalPanel, /Still waiting for terminal output/);
+  // Rendered terminal-panel-status tests own silent startup/timer and failure visibility.
   assert.match(terminalPanelCss, /\.terminal-panel/);
   assert.match(terminalPanelCss, /\.terminal-panel-output/);
   assert.match(terminalPanelCss, /\.terminal-panel-context-menu/);
@@ -364,8 +364,14 @@ test('terminal tab close does not recreate a replacement session while other tab
   assert.doesNotMatch(terminalPanel, /async function closeVisibleTerminalWorkbench\(/);
   assert.match(terminalPanel, /async function closeTerminalSessionTab\(sessionId: string\)[\s\S]*planCloseTerminalTabWorkbench\([\s\S]*replaceTerminalTabWorkbenches\(plan\.workbenches\)[\s\S]*if \(closingActiveTab\) \{[\s\S]*setTerminalPaneTree\(plan\.visibleTree, true, false\)[\s\S]*restoreVisibleTerminalWorkbenchRuntimes\(\)[\s\S]*stopAndForgetTerminalSessionsInBackground\(plan\.stopBackendSessionIds\.length \? plan\.stopBackendSessionIds : \[sessionId\]\)/);
   assert.doesNotMatch(terminalPanel, /async function closeTerminalSessionTab\(sessionId: string\)[\s\S]{0,900}await stopStackTerminal/);
-  assert.match(terminalPanel, /function stopAndForgetTerminalSessionsInBackground\(sessionIds: Iterable<string>\)[\s\S]*terminalSessions = terminalSessions\.filter\(\(item\) => !stoppedSessionIds\.has\(item\.sessionId\)\)[\s\S]*clearStoppedTerminalSessionState\(stoppedSessionId\)[\s\S]*void Promise\.all\(\[\.\.\.stoppedSessionIds\]\.map[\s\S]*stopStackTerminal\(stoppedSessionId\)/);
-  assert.match(terminalPanel, /async function stopTerminal\(\)[\s\S]*if \(terminalTabSessionIds\.has\(sessionId\)\) \{[\s\S]*await closeTerminalSessionTab\(sessionId\)/);
+  const cleanupBody = terminalPanel.match(/function stopAndForgetTerminalSessionsInBackground\([\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(cleanupBody, /markPaneRuntimeDisposed\(runtime\);[\s\S]*stopPollingForRuntime\(runtime\);[\s\S]*clearStartupTimerForRuntime\(runtime\);[\s\S]*disposePaneRuntime\(runtime\)/);
+  assert.match(cleanupBody, /if \(paneRuntimes\.get\(runtime\.paneId\)\?\.runtimeId === runtime\.runtimeId\) \{\s*paneRuntimes\.delete\(runtime\.paneId\);/);
+  assert.match(cleanupBody, /terminalSessions = terminalSessions\.filter\(\(item\) => !stoppedSessionIds\.has\(item\.sessionId\)\)[\s\S]*clearStoppedTerminalSessionState\(stoppedSessionId\)[\s\S]*return Promise\.all\(\[\.\.\.stoppedSessionIds\]\.map[\s\S]*stopStackTerminal\(stoppedSessionId\)/);
+  assert.doesNotMatch(cleanupBody, /\bawait\b/, 'local removal/disposal must not await backend teardown');
+  assert.match(cleanupBody, /\.then\(\(\) => null\)[\s\S]*\.catch\(\(error: unknown\) => \{[\s\S]*return \{ error \}/, 'cleanup must return real success/failure outcomes instead of swallowing failures');
+  assert.match(terminalPanel, /async function closeTerminalSessionTab\(sessionId: string\)[\s\S]*const stopResult = stopAndForgetTerminalSessionsInBackground\([\s\S]*orderTerminalSessionsByTabIds\(plan\.nextTabSessionIds\);\s*return stopResult;/);
+  assert.match(terminalPanel, /async function stopTerminal\(\)[\s\S]*if \(terminalTabSessionIds\.has\(sessionId\)\) \{\s*stopResult = closeTerminalSessionTab\(sessionId\);[\s\S]*const results = await stopResult;/);
   assert.match(terminalPanel, /async function restartTerminal\(\)[\s\S]*const clearOldStoppedSession = \(\) => \{[\s\S]*clearStoppedTerminalSessionState\(oldSession\)[\s\S]*await stopStackTerminal\(oldSession\)[\s\S]*clearOldStoppedSession\(\)/);
   assert.match(terminalPanel, /async function restartTerminal\(\)[\s\S]*Persistent terminal stale restart cleanup unavailable[\s\S]*clearStoppedTerminalSessionState\(nextSession\.sessionId\)/);
   assert.doesNotMatch(terminalPanel, /if \(!terminalPanes\.length\) \{[\s\S]{0,160}await createTerminalSession\(\)/);
@@ -382,10 +388,15 @@ test('terminal split and tab lifecycle guards stale runtimes and DOM identity', 
   assert.match(terminalPanel, /async function createSplitPaneSession\(direction: TerminalSplitDirection\)[\s\S]*const splitStartGeneration = terminalWorkbenchGeneration[\s\S]*if \(isSplitStartStale\([\s\S]*await stopStackTerminal\(nextSession\.sessionId\)/);
   assert.match(terminalPanel, /function isSplitStartStale\([\s\S]*splitStartGeneration !== terminalWorkbenchGeneration[\s\S]*currentWorkbenchTabSessionId\(\) !== splitStartTabSessionId/);
   assert.match(terminalPanel, /function attachPaneHost\(node: HTMLDivElement, pane: TerminalPaneModel\)[\s\S]*runtime\.session\.sessionId !== pane\.sessionId/);
-  assert.match(terminalPanel, /function bindPaneHost\(node: HTMLDivElement, pane: TerminalPaneModel\)[\s\S]*let boundRuntimeId: string \| null = null[\s\S]*runtime\.runtimeId === boundRuntimeId/);
+  const bindPaneHostBody = terminalPanel.match(/function bindPaneHost\([\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(bindPaneHostBody, /binding: \{ pane: TerminalPaneModel; runtimeId: string \| null \}/);
+  assert.match(bindPaneHostBody, /let boundRuntimeId: string \| null = null/);
+  assert.match(bindPaneHostBody, /runtime\.runtimeId === boundRuntimeId/);
+  assert.match(bindPaneHostBody, /if \(previousRuntime\?\.host === node\) \{\s*previousRuntime\.host = null;\s*commitRuntime\(previousRuntime\);/);
+  assert.match(bindPaneHostBody, /destroy\(\) \{\s*clearBoundHost\(\);/);
   assert.match(terminalPanel, /function writeTerminalOutputForRuntime\(runtime: TerminalPaneRuntime, output: string\)[\s\S]*const hasAttachedTerminal = runtimeHasAttachedTerminal\(runtime\)[\s\S]*hasVisibleOutput && hasAttachedTerminal[\s\S]*hasVisibleOutput && !hasAttachedTerminal[\s\S]*Attaching terminal view/);
   assert.match(terminalPanel, /\{#key node\.splitId\}[\s\S]*class="terminal-pane-split"/);
-  assert.match(terminalPanel, /\{#key paneDomKey\(pane\)\}[\s\S]*use:bindPaneHost=\{pane\}/);
+  assert.match(terminalPanel, /\{#key paneDomKey\(pane\)\}[\s\S]*\{@const paneRuntimeId = paneRuntimes\.get\(pane\.paneId\)\?\.runtimeId \?\? null\}[\s\S]*use:bindPaneHost=\{\{ pane, runtimeId: paneRuntimeId \}\}/);
 });
 
 test('terminal tabs replay retained output and remember hidden-tab chunks', () => {
@@ -402,7 +413,11 @@ test('terminal tabs replay retained output and remember hidden-tab chunks', () =
   assert.match(terminalPanel, /function disposePaneRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*const shouldReplayRetainedOutputOnReattach = !runtime\.disposed && Boolean\(runtime\.terminal\);[\s\S]*runtime\.terminal\?\.dispose\(\);[\s\S]*if \(shouldReplayRetainedOutputOnReattach\) runtime\.replayedSessionOutput = false;/);
   assert.doesNotMatch(terminalPanel, /function disposePaneRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*renderedSequences\s*=\s*new Set/);
   assert.match(terminalPanel, /function attachPaneHost\(node: HTMLDivElement, pane: TerminalPaneModel\)[\s\S]*ensureTerminalViewForPane\(runtime\);[\s\S]*replayTerminalSessionOutput\(runtime\);[\s\S]*scheduleFitForRuntime\(runtime\)/);
-  assert.match(terminalPanel, /update\(nextPane: TerminalPaneModel\)[\s\S]*previousPane\.sessionId !== nextPane\.sessionId[\s\S]*attachPaneHost\(node, boundPane\)/);
+  const bindPaneHostBody = terminalPanel.match(/function bindPaneHost\([\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(bindPaneHostBody, /update\(nextBinding: \{ pane: TerminalPaneModel; runtimeId: string \| null \}\)[\s\S]*boundPane = nextBinding\.pane/);
+  assert.match(bindPaneHostBody, /previousPane\.paneId !== boundPane\.paneId \|\| previousPane\.sessionId !== boundPane\.sessionId[\s\S]*clearBoundHost\(\)/);
+  assert.match(bindPaneHostBody, /boundRuntimeId === nextBinding\.runtimeId && runtime\?\.host === node && runtimeHasAttachedTerminal\(runtime\)\) return/);
+  assert.match(bindPaneHostBody, /boundRuntimeId = attachPaneHost\(node, boundPane\)\?\.runtimeId \?\? null/);
   assert.match(terminalPanel, /\{#snippet renderPaneTree\(node: TerminalPaneTreeNode\)\}/);
   assert.match(terminalPanel, /renderedSequences: new Set<string>\(renderedSequenceKeysBySession\.get\(nextSession\.sessionId\) \?\? \[\]\)/);
 });
@@ -427,7 +442,7 @@ test('phase 7 terminal panel owns real per-pane xterm runtimes and split resize'
   assert.match(terminalPanel, /function resizeAllVisiblePanes\(\)[\s\S]*paneRuntimes\.values\(\)[\s\S]*resizeTerminalToFitForRuntime/);
   assert.match(terminalPanel, /resizeStackTerminal\(sessionId, cols, rows, width, height\)/);
   assert.match(terminalPanel, /function splitTerminal\(orientation: Exclude<TerminalSplitOrientation, 'single' \| 'mixed'>\)/);
-  assert.match(terminalPanel, /use:bindPaneHost=\{pane\}/);
+  assert.match(terminalPanel, /use:bindPaneHost=\{\{ pane, runtimeId: paneRuntimeId \}\}/);
   assert.match(terminalPanel, /class="terminal-pane-tree"/);
   assert.match(terminalPanel, /function closeTerminalSessionTab\(sessionId: string\)/);
   assert.doesNotMatch(terminalPanel, /class="terminal-split-grid"/);

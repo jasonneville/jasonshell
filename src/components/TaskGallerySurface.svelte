@@ -3,6 +3,7 @@
   import { onMount, tick } from 'svelte';
   import {
     activateTaskGalleryWindow,
+    closeTaskGalleryWindow,
     hideTaskGallery as hideTaskGalleryNative,
     hideTaskGalleryOnFocusLoss,
     hideTaskGalleryWindowPreview,
@@ -10,11 +11,13 @@
   } from '../lib/taskGallery';
   import ContextMenu from './ContextMenu.svelte';
   import ContextMenuItem from './ContextMenuItem.svelte';
+  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import { nextTaskGalleryFocusIndex, reconcileTaskGalleryFocus } from '../lib/taskGallery';
   import type { TaskbarWindow } from '../lib/taskbarWindows';
   import { allocateTaskPreviewRequestId } from '../lib/taskbarPreview';
   import {
     TASK_PREVIEW_HIDE_DELAY_MS,
+    TASKBAR_REFRESH_WINDOWS_EVENT,
     TASK_PREVIEW_HIDE_REQUEST_EVENT,
     TASK_PREVIEW_HOVER_ENTER_EVENT,
     type TaskPreviewHoverEnter,
@@ -34,6 +37,39 @@
   let disposed = false;
   let galleryHoverCloseTimer: number | null = null;
   let contextTask: { item: TaskbarWindow; x: number; y: number } | null = null;
+  let sessionEpoch = 0;
+  let snapshotRevision = 0;
+  let galleryClosing = false;
+  let pendingCloseHwnds = new Set<string>();
+  let closeDiagnostic = '';
+
+  function invalidateCloseRequests() {
+    sessionEpoch += 1;
+    pendingCloseHwnds = new Set();
+    closeDiagnostic = '';
+  }
+
+  async function requestWindowClose(item: TaskbarWindow) {
+    if (!payload || disposed || galleryClosing || pendingCloseHwnds.has(item.hwnd)) return;
+    const nonce = payload.nonce;
+    const hwnd = item.hwnd;
+    const epoch = sessionEpoch;
+    const isCurrent = () => !disposed && !galleryClosing && sessionEpoch === epoch && payload?.nonce === nonce;
+    pendingCloseHwnds = new Set([...pendingCloseHwnds, hwnd]);
+    closeDiagnostic = '';
+    try {
+      await closeTaskGalleryWindow(hwnd, nonce);
+      // Accepted WM_CLOSE is not proof of destruction: only snapshots remove rows.
+      if (isCurrent()) await emit(TASKBAR_REFRESH_WINDOWS_EVENT);
+    } catch (error) {
+      if (isCurrent()) {
+        closeDiagnostic = `Could not request close for ${item.title}. Try Close again.`;
+        console.error(`Failed to close gallery window ${hwnd}`, error);
+      }
+    } finally {
+      if (isCurrent()) pendingCloseHwnds = new Set([...pendingCloseHwnds].filter((target) => target !== hwnd));
+    }
+  }
 
   function cancelGalleryHoverClose() {
     if (galleryHoverCloseTimer === null) return;
@@ -68,8 +104,15 @@
     if (nextIndex < 0) return;
     focusedIndex = nextIndex;
     focusedHwnd = galleryItems[nextIndex].hwnd;
+    const hwnd = focusedHwnd;
+    const epoch = sessionEpoch;
     await tick();
-    rowButtons[nextIndex]?.focus();
+    if (!disposed && sessionEpoch === epoch && focusedHwnd === hwnd) rowButtons[focusedIndex]?.focus();
+  }
+
+  function focusItem(item: TaskbarWindow, control: HTMLButtonElement) {
+    focusedHwnd = item.hwnd;
+    void queuePreview(item, control.parentElement);
   }
 
   async function queuePreview(item: TaskbarWindow, anchor?: HTMLElement | null) {
@@ -118,6 +161,8 @@
 
   async function closeTaskGallery() {
     const nonce = activeNonce;
+    galleryClosing = true;
+    invalidateCloseRequests();
     try {
       await closePreview();
     } finally {
@@ -143,6 +188,7 @@
 
   async function handleTaskGalleryItemClick(item: TaskbarWindow) {
     if (!payload) return;
+    focusedHwnd = item.hwnd;
     await closePreview();
     await activateTaskGalleryWindow(item.hwnd, payload.nonce, rowClickMinimizeIfActive(item));
   }
@@ -166,6 +212,8 @@
       void closeTaskGallery();
       return;
     }
+    const target = event.target;
+    if (target instanceof Element && target.closest('[role="menu"]')) return;
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault();
       const item = galleryItems[focusedIndex];
@@ -177,11 +225,12 @@
       return;
     }
     const nextIndex = nextTaskGalleryFocusIndex(focusedIndex, galleryItems.length, event.key);
-    if (nextIndex !== focusedIndex && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
       void focusRow(nextIndex);
       return;
     }
+    if (target instanceof Element && target.closest('.task-gallery-close')) return;
     if ((event.key === 'Enter' || event.key === ' ') && focusedIndex >= 0) {
       event.preventDefault();
       void activateFocused(rowClickMinimizeIfActive(galleryItems[focusedIndex]));
@@ -195,21 +244,47 @@
     const unlistenOpen = listen<TaskGalleryPayload>('task-gallery:open', async (event: { payload: TaskGalleryPayload }) => {
       const sameNonce = activeNonce === event.payload.nonce;
       if (disposed) return;
-      if (sameNonce && currentPreviewHwnd && !event.payload.windows.some((item) => item.hwnd === currentPreviewHwnd)) {
-        await closePreview();
+      const revision = ++snapshotRevision;
+      const focusedControl = document.activeElement;
+      const focusedTile = focusedControl instanceof Element ? focusedControl.closest('[data-gallery-hwnd]') : null;
+      const removedFocusedControl = sameNonce && Boolean(focusedTile && panelElement?.contains(focusedTile)
+        && !event.payload.windows.some((item) => item.hwnd === focusedTile.getAttribute('data-gallery-hwnd')));
+      const previewHide = sameNonce && currentPreviewHwnd && !event.payload.windows.some((item) => item.hwnd === currentPreviewHwnd)
+        ? closePreview() : Promise.resolve();
+      if (!sameNonce) {
+        invalidateCloseRequests();
+        galleryClosing = false;
+        currentPreviewHwnd = null;
+        currentPreviewRequestId = 0;
+        contextTask = null;
+        cancelGalleryHoverClose();
+      } else if (contextTask && !event.payload.windows.some((item) => item.hwnd === contextTask?.item.hwnd)) {
+        contextTask = null;
       }
-      if (disposed) return;
       payload = event.payload;
       activeNonce = event.payload.nonce;
       const next = reconcileTaskGalleryFocus(sameNonce ? focusedHwnd : null, event.payload.windows);
       focusedHwnd = next.focusedHwnd;
       focusedIndex = next.focusedIndex;
       await tick();
-      if (disposed || activeNonce !== event.payload.nonce) return;
-      if (event.payload.focusGallery) panelElement?.focus();
+      if (disposed || activeNonce !== event.payload.nonce || snapshotRevision !== revision) return;
+      // Keyed rows retain either surviving control. Only repair genuinely removed
+      // control focus, never a hover-open gallery or a different foreground window.
+      if (removedFocusedControl && document.hasFocus() && document.activeElement === document.body) {
+        if (focusedIndex >= 0) rowButtons[focusedIndex]?.focus();
+        else panelElement?.focus();
+      }
+      if (!sameNonce) {
+        if (event.payload.focusGallery) panelElement?.focus();
+      }
+      await previewHide;
     });
     const unlistenClosed = listen<{ nonce: string | null }>('task-gallery:closed', (event: { payload: { nonce: string | null } }) => {
       if (activeNonce && event.payload.nonce && event.payload.nonce !== activeNonce) return;
+      invalidateCloseRequests();
+      snapshotRevision += 1;
+      contextTask = null;
+      cancelGalleryHoverClose();
       payload = null; activeNonce = null; focusedHwnd = null; focusedIndex = -1; rowButtons = []; currentPreviewHwnd = null; currentPreviewRequestId = 0;
     });
     const unlistenPreviewEnter = listen<TaskPreviewHoverEnter>(TASK_PREVIEW_HOVER_ENTER_EVENT, (event) => {
@@ -232,27 +307,49 @@
 
 {#if payload}
 <div bind:this={panelElement} class="task-gallery-panel surface" role="dialog" aria-modal="false" aria-label="Task window gallery" tabindex="0" on:pointerenter={handleGalleryPointerEnter} on:pointerleave={scheduleGalleryHoverClose}>
-  <div class="task-gallery-strip" role="listbox" aria-orientation="horizontal" aria-label={payload?.label ?? 'Task windows'}>
+  <div class="task-gallery-strip" role="group" aria-label={payload?.label ?? 'Task windows'}>
     {#each galleryItems as item, index (item.hwnd)}
-      <button
-        bind:this={rowButtons[index]}
-        role="option"
-        aria-selected={index === focusedIndex}
+      <div
+        class="task-gallery-tile"
+        role="group"
+        aria-label={taskGalleryTabLabel(item)}
+        data-gallery-hwnd={item.hwnd}
         class:focused={index === focusedIndex}
         class:active={item.isActive}
         class:minimized={item.isMinimized}
+      >
+      <button
+        bind:this={rowButtons[index]}
+        type="button"
+        class="task-gallery-activate"
+        aria-label={`Activate ${taskGalleryTabLabel(item)}`}
         title={item.title}
         tabindex={index === focusedIndex ? 0 : -1}
-        on:focus={(event) => { focusedHwnd = item.hwnd; void queuePreview(item, event.currentTarget); }}
-        on:mouseenter={(event) => void queuePreview(item, event.currentTarget)}
+        on:focus={(event) => focusItem(item, event.currentTarget)}
+        on:mouseenter={(event) => void queuePreview(item, event.currentTarget.parentElement)}
         on:click={() => void handleTaskGalleryItemClick(item)}
         on:contextmenu={(event) => handleTaskGalleryItemContextMenu(event, item)}
       >
         <img src={item.iconDataUrl} alt="" draggable="false" />
         <span class="task-gallery-tab-title">{item.title}</span>
       </button>
+      <button
+        type="button"
+        class="task-gallery-close"
+        aria-label={`Close ${item.title}`}
+        aria-disabled={pendingCloseHwnds.has(item.hwnd)}
+        aria-busy={pendingCloseHwnds.has(item.hwnd)}
+        title={`Close ${item.title}`}
+        tabindex={index === focusedIndex ? 0 : -1}
+        on:focus={(event) => focusItem(item, event.currentTarget)}
+        on:mouseenter={(event) => void queuePreview(item, event.currentTarget.parentElement)}
+        on:click={() => { focusedHwnd = item.hwnd; void requestWindowClose(item); }}
+        on:contextmenu={(event) => handleTaskGalleryItemContextMenu(event, item)}
+      ><MaterialSymbolIcon name="close" /></button>
+      </div>
     {/each}
   </div>
+  <span class="task-gallery-status" role="status">{closeDiagnostic}</span>
   {#if contextTask}
     <ContextMenu
       ariaLabel={`${contextTask.item.title} actions`}
@@ -268,60 +365,131 @@
 
 <style>
   .task-gallery-panel {
-    background: var(--js-color-surface);
-    border: 1px solid var(--js-color-border-soft);
+    background: var(--js-bg-bar);
+    background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
+    border: 0;
+    box-shadow: inset 0 0 0 1px var(--js-color-border-soft);
     box-sizing: border-box;
     color: var(--js-color-text);
     display: flex;
     flex-direction: column;
     gap: 0;
     height: 100%;
+    min-height: 24px;
     overflow: hidden;
-    padding: 0;
+    padding: 2px 4px;
   }
   .task-gallery-strip {
     align-items: stretch;
     display: flex;
     flex: 1 1 auto;
-    gap: 0;
-    min-height:0;
-    overflow:hidden;
+    gap: 3px;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Keep scrolling without consuming the minimum-height control space. */
+    scrollbar-width: none;
   }
-  .task-gallery-strip > button {
+  .task-gallery-strip::-webkit-scrollbar {
+    display: none;
+    height: 0;
+  }
+  .task-gallery-tile {
     align-items:center;
     background: var(--js-color-control);
-    border: 0;
-    border-left: 1px solid var(--js-color-border-soft);
-    border-radius: 0;
+    background-color: color-mix(in srgb, var(--js-bg-bar) 93%, var(--js-color-text) 7%);
+    background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
+    border: 1px solid var(--js-color-border);
+    border-radius: 2px;
     box-shadow: var(--js-inset-highlight);
     color: inherit;
     display:flex;
     flex: 1 1 10rem;
     font-size: 0.62rem;
     font-weight: 600;
-    gap: 0.28rem;
-    min-width: 0;
+    min-width: 48px;
     min-height: 0;
     overflow:hidden;
-    padding: 0 0.38rem;
+    padding: 0;
     text-align:left;
     transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
   }
-  .task-gallery-strip > button:hover,
-  .task-gallery-strip > button:focus-visible,
-  .task-gallery-strip > button.focused {
+  .task-gallery-tile:hover,
+  .task-gallery-tile:focus-within,
+  .task-gallery-tile.focused {
     background: var(--js-color-control-hover);
   
   }
-  .task-gallery-strip > button.active {
+  .task-gallery-tile.active {
     background: var(--js-bg-active);
+    background-color: color-mix(in srgb, var(--js-bg-bar) 76%, var(--js-color-accent) 24%);
+    background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
     border-color: var(--js-color-accent-border);
+    box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
   }
-  .task-gallery-strip > button.minimized {
+  .task-gallery-tile.minimized {
     color: var(--js-color-text-muted);
+  }
+  .task-gallery-tile.minimized .task-gallery-activate {
     opacity: .84;
   }
-  .task-gallery-strip > button img {
+  .task-gallery-activate {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: inherit;
+    display: flex;
+    flex: 1 1 auto;
+    font: inherit;
+    gap: 0.28rem;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 0.38rem;
+    text-align: left;
+  }
+  .task-gallery-close {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: var(--js-color-text);
+    display: flex;
+    flex: 0 0 24px;
+    height: min(24px, 100%);
+    justify-content: center;
+    opacity: 0;
+    padding: 0;
+    pointer-events: none;
+    width: 24px;
+  }
+  .task-gallery-tile:hover .task-gallery-close,
+  .task-gallery-tile:focus-within .task-gallery-close {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .task-gallery-close:hover {
+    background: var(--js-color-control-hover);
+  }
+  .task-gallery-close[aria-disabled="true"] {
+    color: var(--js-color-text-muted);
+    cursor: progress;
+  }
+  .task-gallery-activate:focus-visible,
+  .task-gallery-close:focus-visible {
+    outline: 2px solid var(--js-color-accent);
+    outline-offset: -2px;
+  }
+  .task-gallery-status {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+  .task-gallery-activate img {
     display:block;
     flex: 0 0 auto;
     height: 0.74rem;
@@ -340,20 +508,16 @@
     line-height: normal;
     letter-spacing: 0;
   }
-  .task-gallery-strip > button.active::before {
-    background: var(--js-color-accent);
-    border-radius: inherit;
-    content: '';
-    inset: 0 auto 0 0;
-    pointer-events: none;
-    position: absolute;
-    width: 2px;
-  }
-  .task-gallery-strip > button.active {
+  .task-gallery-tile.active {
     position: relative;
   }
-  .task-gallery-strip > button:focus-visible,
-  .task-gallery-strip > button.focused {
+  .task-gallery-tile:focus-within,
+  .task-gallery-tile.focused {
     position: relative;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .task-gallery-tile,
+    .task-gallery-activate,
+    .task-gallery-close { transition: none; }
   }
 </style>

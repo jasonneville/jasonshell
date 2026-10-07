@@ -96,23 +96,24 @@ test('stack browser toolbar styling never depends on generated child order', () 
   );
 });
 
-test('stack browser status is anchored at the bottom with reserved content space', () => {
+test('stack browser entire status sits inline after Pin before Search without footer reservation', () => {
   const popupStyles = sourceBetween(stackPopupStyles, '.stack-popup {', '.stack-popup.resizing');
   const statusStyles = sourceBetween(stackPopupStyles, '.stack-status {', '.inline-editor');
-  const statusSource = sourceBetween(stackPopupSource, '<div class="stack-status surface-state"', '{#if createFolderDraft');
+  const statusSource = sourceBetween(stackToolbarSource, '<div class="stack-status"', '<div class="stack-search">');
 
-  assert.match(popupStyles, /padding-bottom:\s*calc\(/, 'popup reserves space for bottom status');
-  assert.match(statusStyles, /position:\s*absolute/, 'status leaves the content grid');
-  assert.match(statusStyles, /height:\s*var\(--stack-status-height\)/, 'status height cannot grow beyond reserved space');
+  assert.doesNotMatch(popupStyles, /padding-bottom:/, 'popup no longer reserves footer space');
+  assert.doesNotMatch(stackPopupStyles, /--stack-status-height/, 'desktop and mobile footer reservation removed');
+  assert.doesNotMatch(statusStyles, /position:\s*absolute|bottom:/, 'status stays in toolbar flow');
+  assert.doesNotMatch(statusSource, /surface-state/, 'shared boxed/tinted state styling is not used');
   assert.match(statusStyles, /overflow:\s*hidden/, 'long status stays inside its reserved line');
   assert.match(statusStyles, /white-space:\s*nowrap/, 'narrow status does not wrap over file controls');
   assert.match(statusStyles, /text-overflow:\s*ellipsis/, 'long status has a visible truncation cue');
-  assert.match(statusStyles, /bottom:\s*var\(--js-space-4\)/, 'status is anchored to popup bottom inset');
-  assert.match(statusStyles, /left:\s*var\(--js-space-4\)/);
-  assert.match(statusStyles, /right:\s*var\(--js-space-4\)/);
   assert.match(statusSource, /title=\{errorMessage \|\| stackState\.statusMessage\}/, 'full long error or status remains available on hover');
   assert.match(statusSource, /title=\{iconHydrationStatusMessage\}/, 'full secondary status remains available on hover');
-  assert.match(stackPopupStyles, /@media \(max-width: 720px\)[\s\S]*padding-bottom:\s*calc\(var\(--js-space-3\) \+ var\(--stack-status-height\)\)/, 'mobile padding keeps status clear of content');
+  assert.match(statusSource, /title=\{operationStatusText\(activeOperation\)\}/, 'full operation text remains available');
+  assert.match(statusSource, /role="status"\s+aria-live="polite"/, 'entire inline status remains a live region');
+  assert.ok(stackToolbarSource.indexOf('ariaLabel="Pin to quick bar"') < stackToolbarSource.indexOf('<div class="stack-status"'));
+  assert.equal((stackPopupSource.match(/class="stack-status(?:\s|")/g) ?? []).length, 1, 'no duplicate footer status');
   assert.match(stackPopupStyles, /\.inline-editor\s*\{[\s\S]*?grid-row:\s*2;/, 'inline editor keeps its own row above content');
 });
 
@@ -158,7 +159,7 @@ test('stack browser pins the current folder from a shared 1rem Material Symbol i
   );
   assert.match(
     stackToolbarSource,
-    /ariaLabel="Reveal selected item"[\s\S]*?<\/MeltActionButton>\s*<MeltActionButton\s+class="stack-action-icon-button"\s+ariaLabel="Pin to quick bar"\s+tooltip="Pin to quick bar"\s+disabled=\{!currentPath\}\s+onClick=\{\(\) => void pinCurrentFolderToQuickBar\(\)\}>\s*<MaterialSymbolIcon\s+name="add_location"\s*\/\>/
+    /ariaLabel="Reveal selected item"[\s\S]*?<\/MeltActionButton>\s*(?:<div\b[^>]*>\s*)?<MeltActionButton\s+class="stack-action-icon-button"\s+ariaLabel="Pin to quick bar"\s+tooltip="Pin to quick bar"\s+disabled=\{!currentPath\}\s+onClick=\{\(\) => void pinCurrentFolderToQuickBar\(\)\}>\s*<MaterialSymbolIcon\s+name="add_location"\s*\/\>/
   );
 });
 

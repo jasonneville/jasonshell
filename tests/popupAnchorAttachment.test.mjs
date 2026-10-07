@@ -33,14 +33,13 @@ test('Stack Browser popup opens flush below top bar', () => {
   assert.match(compact(rust('stack_popup/popup_window.rs')), /let y = top_position\.y \+ top_size\.height as i32;/);
 });
 
-test('task preview touches bottom bar both above and on fallback below', () => {
+test('task preview floats eight logical pixels above host or below fallback at scaled DPI', () => {
   const source = rust('task_preview.rs');
   const normalized = compact(source);
-  assert.match(normalized, /let above_y = host_position\.y - preview_height(?: - TASK_PREVIEW_MARGIN_PHYSICAL)?;/);
-  assert.match(normalized, /let below_y = host_position\.y \+ host_size\.height as i32(?: \+ TASK_PREVIEW_MARGIN_PHYSICAL)?;/);
-  if (normalized.includes('TASK_PREVIEW_MARGIN_PHYSICAL;')) {
-    assert.match(source, /const TASK_PREVIEW_MARGIN_PHYSICAL: i32 = 0;/);
-  }
+  assert.match(source, /const TASK_PREVIEW_MARGIN_LOGICAL: f64 = 8\.0;/);
+  assert.match(normalized, /let margin = \(TASK_PREVIEW_MARGIN_LOGICAL \* scale_factor\)\.round\(\) as i32;/);
+  assert.match(normalized, /let above_y = host_position\.y - preview_height - margin;/);
+  assert.match(normalized, /let below_y = host_position\.y \+ host_size\.height as i32 \+ margin;/);
 });
 
 test('process manager touches bottom bar above', () => {

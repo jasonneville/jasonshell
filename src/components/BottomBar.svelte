@@ -55,6 +55,7 @@
     hasTaskbarGroupDragStarted,
     buildTaskWindowGroups,
     taskGroupDisplayMode,
+    taskWindowGroupKey,
     taskGroupGalleryItems,
     taskbarGroupDragDelta,
     taskbarGroupDropTargetFromDisplacement,
@@ -101,6 +102,34 @@
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   let taskContextMenu: { taskWindow: TaskbarWindow; token: string } | null = null;
   let launcherContextMenu: { launcher: PinnedTaskbarLauncher; token: string } | null = null;
+  type TaskGroupMenuContext = {
+    token: string;
+    groupKey: string;
+    windows: Pick<TaskbarWindow, 'hwnd' | 'processId' | 'isActive'>[];
+  };
+  let taskGroupContextMenu: TaskGroupMenuContext | null = null;
+  let latestContextMenuToken: string | null = null;
+
+  function reserveContextMenuToken() {
+    const token = crypto.randomUUID();
+    latestContextMenuToken = token;
+    taskContextMenu = null;
+    taskGroupContextMenu = null;
+    launcherContextMenu = null;
+    return token;
+  }
+
+  function currentCapturedGroupWindow(context: TaskGroupMenuContext, captured: TaskGroupMenuContext['windows'][number]) {
+    return openWindows.find((item) => item.hwnd === captured.hwnd
+      && item.processId === captured.processId
+      && taskWindowGroupKey(item) === context.groupKey);
+  }
+
+  function groupMenuRepresentative(context: TaskGroupMenuContext, requireProcessId = false) {
+    const survivors = context.windows.filter((item) => currentCapturedGroupWindow(context, item)
+      && (!requireProcessId || normalizeTaskGalleryProcessId(item.processId)));
+    return survivors.find((item) => item.isActive) ?? survivors[0];
+  }
   const TASKBAR_LAUNCHER_ORDER_STORAGE_KEY = 'jasonshell:bottom-bar:launcher-order:v1';
   const TASKBAR_WINDOWS_SNAPSHOT_EVENT = 'taskbar:windows-snapshot';
   let launcherMessage = 'Loading Explorer taskbar pins…';
@@ -612,10 +641,11 @@
   async function openTaskMenu(taskWindow: TaskbarWindow, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    await hidePreview();
-    const token = crypto.randomUUID();
+    const token = reserveContextMenuToken();
     taskContextMenu = { taskWindow, token };
-    void showContextMenuOverlay({ source: 'bottom-bar', kind: 'task-window', token, x: event.clientX, y: event.clientY, isMinimized: taskWindow.isMinimized, processId: normalizeTaskGalleryProcessId(taskWindow.processId) })
+    await hidePreview();
+    if (latestContextMenuToken !== token) return;
+    void showContextMenuOverlay({ source: 'bottom-bar', kind: 'task-window', token, x: event.clientX, y: event.clientY, isMinimized: taskWindow.isMinimized, processId: normalizeTaskGalleryProcessId(taskWindow.processId) }, () => latestContextMenuToken === token)
       .catch((error) => {
         if (taskContextMenu?.token === token) taskContextMenu = null;
         console.error('Failed to show task context menu overlay', error);
@@ -624,18 +654,78 @@
   async function openLauncherMenu(launcher: PinnedTaskbarLauncher, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    await hidePreview();
-    const token = crypto.randomUUID();
+    const token = reserveContextMenuToken();
     launcherContextMenu = { launcher, token };
-    void showContextMenuOverlay({ source: 'bottom-bar', kind: 'launcher', token, x: event.clientX, y: event.clientY })
+    await hidePreview();
+    if (latestContextMenuToken !== token) return;
+    void showContextMenuOverlay({ source: 'bottom-bar', kind: 'launcher', token, x: event.clientX, y: event.clientY }, () => latestContextMenuToken === token)
       .catch((error) => {
         if (launcherContextMenu?.token === token) launcherContextMenu = null;
         console.error('Failed to show launcher context menu overlay', error);
       });
   }
 
+  async function openTaskGroupMenu(group: TaskWindowGroup, event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const token = reserveContextMenuToken();
+    const context: TaskGroupMenuContext = {
+      token,
+      groupKey: group.key,
+      windows: Array.from(new Map(group.windows.map((item) => [item.hwnd, {
+        hwnd: item.hwnd, processId: item.processId, isActive: item.isActive
+      }])).values())
+    };
+    taskGroupContextMenu = context;
+    cancelTaskGalleryOpen();
+    cancelTaskGalleryClose();
+    await Promise.all([closeTaskGallery(), hidePreview()]);
+    if (latestContextMenuToken !== token) return;
+    const representative = groupMenuRepresentative(context, true);
+    void showContextMenuOverlay({
+      source: 'bottom-bar', kind: 'task-group', token,
+      x: event.clientX, y: event.clientY,
+      processId: normalizeTaskGalleryProcessId(representative?.processId)
+    }, () => latestContextMenuToken === token).catch((error) => {
+      if (taskGroupContextMenu?.token === token) taskGroupContextMenu = null;
+      console.error('Failed to show task group context menu overlay', error);
+    });
+  }
+
   async function handleContextMenuOverlaySelection(selection: ContextMenuOverlaySelection) {
-    if (selection.source !== 'bottom-bar') return;
+    if (selection.source !== 'bottom-bar' || selection.token !== latestContextMenuToken) return;
+    if (selection.kind === 'task-group' && selection.token === taskGroupContextMenu?.token) {
+      if (selection.action !== 'process' && selection.action !== 'pin' && selection.action !== 'closeAll') return;
+      const context = taskGroupContextMenu;
+      taskGroupContextMenu = null;
+      if (selection.action === 'closeAll') {
+        let requested = 0;
+        let failed = 0;
+        let skipped = 0;
+        for (const captured of context.windows) {
+          const processId = normalizeTaskGalleryProcessId(captured.processId);
+          if (!processId || !currentCapturedGroupWindow(context, captured)) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            await runTaskWindowAction(captured.hwnd, 'request-close', processId);
+            requested += 1;
+          } catch (error) {
+            failed += 1;
+            console.error(`Failed to request close for task window ${captured.hwnd}`, error);
+          }
+        }
+        taskbarMessage = `Close requests: ${requested}; failed: ${failed}; skipped: ${skipped}. Windows may remain open for app prompts.`;
+        return;
+      }
+      const representative = groupMenuRepresentative(context, selection.action === 'process');
+      if (representative) {
+        await runTaskWindowAction(representative.hwnd, selection.action,
+          selection.action === 'process' ? normalizeTaskGalleryProcessId(representative.processId) : null);
+      }
+      return;
+    }
     if (selection.kind === 'task-window' && selection.token === taskContextMenu?.token) {
       const { taskWindow } = taskContextMenu;
       taskContextMenu = null;
@@ -715,12 +805,14 @@
     if (draggingGroupKey === group.key && taskGroupDragStarted) {
       return;
     }
+    const menuTokenAtOpen = latestContextMenuToken;
     const rect = anchor?.getBoundingClientRect();
     const nonce = crypto.randomUUID();
     const windows = taskGroupGalleryItems(group);
     if (taskGalleryOpenNonce) {
       await closeTaskGallery();
     }
+    if (latestContextMenuToken !== menuTokenAtOpen) return;
     taskGalleryOpenGroupKey = group.key;
     taskGalleryOpenNonce = nonce;
     taskGalleryClickTransitionNonce = focusGallery ? nonce : null;
@@ -1285,6 +1377,7 @@
                 ariaExpanded={taskGalleryOpenGroupKey === group.key}
                 ariaHaspopup="dialog"
                 onClick={(event) => handleTaskGalleryClick(group, event)}
+                onContextMenu={(event) => void openTaskGroupMenu(group, event)}
                 onMouseEnter={(event) => scheduleTaskGalleryOpen(group, event)}
                 onMouseLeave={() => scheduleTaskGalleryClose(group.key)}
               >

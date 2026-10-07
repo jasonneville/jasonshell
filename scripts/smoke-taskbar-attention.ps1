@@ -156,6 +156,7 @@ $receiver = $null
 
 $env = @{
     'JASONSHELL_TASKBAR_NATIVE_HOOKS' = '1'
+    'JASONSHELL_TASKBAR_NATIVE_HOOK_LOG' = '1'
 }
 
 $cases = @(

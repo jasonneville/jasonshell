@@ -55,8 +55,12 @@ test('native and captured preview frames keep unobstructed dominant layout', () 
     previewSource,
     /\{#if isNativeLivePreview\}[\s\S]*class="preview-frame preview-frame-native"[\s\S]*\{:else if preview\.imageDataUrl\}/
   );
-  assert.match(previewCss, /\.preview-surface-native\s*\{[\s\S]*background:\s*transparent/);
-  assert.match(previewCss, /\.preview-surface-native \.preview-frame-native\s*\{[\s\S]*border-color:\s*transparent/);
+  // Inset lens preserves transparent DWM interior and a visible themed perimeter.
+  assert.match(cssRule(previewCss, '.preview-surface-native'), /background:\s*var\(--js-bg-surface\)/);
+  assert.match(cssRule(previewCss, '.preview-surface-native .preview-frame-native'), /background:\s*transparent/);
+  const nativeFrameRule = cssRule(previewCss, '.preview-surface-native .preview-frame-native');
+  assert.match(nativeFrameRule, /border-color:\s*color-mix\(in srgb, var\(--js-bg-surface\)[^;]*var\(--js-color-text-muted\)/);
+  assert.doesNotMatch(nativeFrameRule, /border-color:\s*transparent/);
   assert.match(previewCss, /\.preview-image\s*\{[\s\S]*object-fit:\s*contain/);
   assert.match(previewCss, /\.preview-frame,\s*\.preview-empty\s*\{[\s\S]*min-height:\s*0/);
 });

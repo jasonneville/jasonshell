@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gallery close DOM fixture</title>
+<style>
+body { margin:0; padding:24px; overflow:auto!important; background:#18212c; color:#eee; font:14px system-ui; }
+#controls { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
+#controls button,#controls select,#controls input { color:#111; background:#fff; padding:4px; }
+#surface { width:480px; height:32.4px; margin-bottom:24px; }
+#ledger,#geometry { white-space:pre-wrap; max-height:300px; overflow:auto; font:12px monospace; }
+</style></head><body>
+<h1>Gallery close — DOM/IPC fixture only</h1><p>No native calls, HWNDs, shell startup, or Win32 proof.</p>
+<div id="controls">
+<label>Height <select id="height"><option>32.4</option><option>24</option></select></label>
+<label>Width <select id="width"><option>480</option><option>240</option><option>144</option><option>960</option></select></label>
+<label>Theme <select id="theme"><option>dark</option><option>light</option></select></label>
+<button id="open">Open/reset three windows</button><button id="replace">Replace session</button>
+<button id="focus-activate">Focus activation</button><button id="focus-close">Focus X</button><button id="many">Snapshot 30 windows</button>
+<button id="resolve">Accept pending WM_CLOSE requests</button><button id="reject">Reject pending requests</button>
+<button id="remove">Authoritative snapshot removes Beta</button><button id="closed">Native closed event (mock)</button>
+<button id="unmount">Unmount</button><button id="measure">Measure geometry</button>
+</div><div id="surface"></div><h2>Summary</h2><pre id="summary"></pre><h2>Geometry</h2><pre id="geometry"></pre><h2>IPC ledger</h2><pre id="ledger"></pre>
+<script type="module" src="./main.ts"></script><script type="module" src="./tight-seams-checks.js"></script></body></html>

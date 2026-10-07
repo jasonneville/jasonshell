@@ -49,6 +49,13 @@ pub struct TaskGalleryClosePreviewedWindowArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskGalleryCloseWindowArgs {
+    pub nonce: String,
+    pub hwnd: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskGalleryContextMenuArgs {
     pub nonce: String,
     pub hwnd: String,
@@ -173,12 +180,8 @@ fn validate_nonce(args_nonce: &str) -> Result<(), String> {
 fn snapshot_window(args_nonce: &str, hwnd: &str) -> Result<TaskGalleryAuthorizedWindow, String> {
     let authorized = {
         let state = state().lock().unwrap();
-        if state.nonce.as_deref() != Some(args_nonce) {
-            return Err("Stale task gallery nonce".to_string());
-        }
-        state.windows_by_hwnd.get(hwnd).cloned()
-    }
-    .ok_or_else(|| "Task gallery hwnd not allowed".to_string())?;
+        snapshot_window_from_runtime(&state, args_nonce, hwnd)?
+    };
     #[cfg(target_os = "windows")]
     {
         let current = task_windows::task_window_identity(hwnd)?;
@@ -187,6 +190,29 @@ fn snapshot_window(args_nonce: &str, hwnd: &str) -> Result<TaskGalleryAuthorized
         }
     }
     Ok(authorized)
+}
+
+fn snapshot_window_from_runtime(
+    runtime: &TaskGalleryRuntimeState,
+    nonce: &str,
+    hwnd: &str,
+) -> Result<TaskGalleryAuthorizedWindow, String> {
+    if runtime.nonce.as_deref() != Some(nonce) {
+        return Err("Stale task gallery nonce".to_string());
+    }
+    runtime.windows_by_hwnd.get(hwnd).cloned()
+        .ok_or_else(|| "Task gallery hwnd not allowed".to_string())
+}
+
+fn request_gallery_close_with(
+    caller: &str,
+    snapshot: impl FnOnce() -> Result<TaskGalleryAuthorizedWindow, String>,
+    dispatch: impl FnOnce(TaskGalleryAuthorizedWindow) -> Result<(), String>,
+) -> Result<(), String> {
+    if caller != TASK_GALLERY_LABEL {
+        return Err("Unauthorized caller for command close_task_gallery_window".to_string());
+    }
+    dispatch(snapshot()?)
 }
 
 fn hide_task_gallery_window(gallery: &WebviewWindow) {
@@ -531,6 +557,21 @@ pub fn show_task_gallery_window_preview(
 }
 
 #[tauri::command]
+pub fn close_task_gallery_window(
+    window: WebviewWindow,
+    args: TaskGalleryCloseWindowArgs,
+) -> Result<(), String> {
+    if window.label() != TASK_GALLERY_LABEL {
+        return Err("Unauthorized caller for command close_task_gallery_window".to_string());
+    }
+    request_gallery_close_with(
+        window.label(),
+        || snapshot_window(&args.nonce, &args.hwnd),
+        |authorized| task_windows::request_close_task_window_with_identity(authorized.row.hwnd, authorized.identity),
+    )
+}
+
+#[tauri::command]
 pub fn close_task_gallery_previewed_window(
     window: WebviewWindow,
     args: TaskGalleryClosePreviewedWindowArgs,
@@ -565,7 +606,77 @@ pub fn hide_task_gallery_window_preview(
 
 #[cfg(test)]
 mod tests {
-    use super::task_gallery_width_logical;
+    use super::*;
+    use std::cell::Cell;
+
+    fn close_fixture() -> TaskGalleryRuntimeState {
+        let row = TaskGalleryWindowRow {
+            hwnd: "101".into(), title: "Fixture".into(), process_id: Some(42),
+            process_name: "Fixture".into(), icon_data_url: String::new(),
+            is_active: false, is_minimized: false,
+        };
+        let authorized = TaskGalleryAuthorizedWindow {
+            row,
+            #[cfg(target_os = "windows")]
+            identity: task_windows::TaskWindowIdentity {
+                process_id: 42, creation_time: 99,
+                canonical_image_path: std::path::PathBuf::from(r"C:\fixture.exe"),
+            },
+        };
+        TaskGalleryRuntimeState {
+            nonce: Some("fixture-session".into()),
+            windows_by_hwnd: BTreeMap::from([("101".into(), authorized)]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn gallery_close_wrong_caller_never_snapshots_or_dispatches() {
+        for caller in ["", BOTTOM_BAR_LABEL, crate::shell_windows::TASK_PREVIEW_LABEL] {
+            let result = request_gallery_close_with(caller,
+                || panic!("unauthorized caller inspected target"),
+                |_| panic!("unauthorized caller dispatched close"));
+            assert!(result.unwrap_err().contains("Unauthorized caller"));
+        }
+    }
+
+    #[test]
+    fn gallery_close_stale_missing_nonce_or_membership_never_dispatches() {
+        let mut runtime = close_fixture();
+        for (nonce, hwnd) in [("old-session", "101"), ("", "101"), ("fixture-session", "999")] {
+            let result = request_gallery_close_with(TASK_GALLERY_LABEL,
+                || snapshot_window_from_runtime(&runtime, nonce, hwnd),
+                |_| panic!("invalid session target dispatched"));
+            assert!(result.is_err());
+        }
+        runtime.nonce = None;
+        assert!(request_gallery_close_with(TASK_GALLERY_LABEL,
+            || snapshot_window_from_runtime(&runtime, "fixture-session", "101"),
+            |_| panic!("hidden session dispatched")).is_err());
+    }
+
+    #[test]
+    fn gallery_close_success_and_failure_retain_authorization_for_retry() {
+        let runtime = close_fixture();
+        let calls = Cell::new(0);
+        for outcome in [Ok(()), Err("dispatch access denied".to_string()), Ok(())] {
+            let expected = outcome.clone();
+            let result = request_gallery_close_with(TASK_GALLERY_LABEL,
+                || snapshot_window_from_runtime(&runtime, "fixture-session", "101"),
+                |authorized| {
+                    assert_eq!(authorized.row.hwnd, "101");
+                    #[cfg(target_os = "windows")]
+                    assert_eq!(authorized.identity.process_id, 42);
+                    calls.set(calls.get() + 1);
+                    outcome
+                });
+            assert_eq!(result, expected);
+            assert_eq!(runtime.nonce.as_deref(), Some("fixture-session"));
+            assert_eq!(runtime.windows_by_hwnd.len(), 1);
+            assert!(snapshot_window_from_runtime(&runtime, "fixture-session", "101").is_ok());
+        }
+        assert_eq!(calls.get(), 3);
+    }
 
     #[test]
     fn task_gallery_width_scales_from_tab_count_and_clamps_to_monitor() {

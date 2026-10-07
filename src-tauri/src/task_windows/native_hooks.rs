@@ -122,6 +122,10 @@ pub fn taskbar_native_hooks_enabled_from_env() -> bool {
     std::env::var("JASONSHELL_TASKBAR_NATIVE_HOOKS").map_or(true, |value| value != "0")
 }
 
+fn taskbar_native_hook_log_enabled_from_env() -> bool {
+    matches!(std::env::var("JASONSHELL_TASKBAR_NATIVE_HOOK_LOG"), Ok(v) if v == "1")
+}
+
 pub fn native_hooks_diagnostics_snapshot() -> super::diagnostics::NativeHooksDiagnosticsSnapshot {
     let (shell_hook, win_event, last_signal) = STATE
         .get()
@@ -464,11 +468,13 @@ fn handle_event(event: HookEvent) {
     {
         crate::explorer::request_taskbar_reconcile();
     }
-    println!(
-        "{{\"kind\":\"nativeHook\",\"signal\":\"{}\",\"hwnd\":{},\"timestampMs\":{}}}",
-        signal, event.hwnd, event.timestamp_ms
-    );
-    let _ = io::stdout().flush();
+    if taskbar_native_hook_log_enabled_from_env() {
+        println!(
+            "{{\"kind\":\"nativeHook\",\"signal\":\"{}\",\"hwnd\":{},\"timestampMs\":{}}}",
+            signal, event.hwnd, event.timestamp_ms
+        );
+        let _ = io::stdout().flush();
+    }
 }
 
 fn process_native_signal(signal: NativeTaskbarLifecycleEvent, hwnd: isize) {

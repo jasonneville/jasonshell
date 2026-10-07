@@ -1,13 +1,16 @@
 .bottom-bar.surface {
   align-items: stretch;
   background: var(--js-bg-bar);
+  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border-top: 1px solid var(--js-color-border-soft);
+  box-sizing: border-box;
   box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
   color: var(--js-color-text);
   display: flex;
   height: 100%;
   min-height: var(--bottom-bar-height-logical, 32.4px);
-  padding: 0;
+  gap: 3px;
+  padding: 2px 4px;
   position: relative;
   width: 100%;
 }
@@ -36,8 +39,8 @@
   align-self: stretch;
   display: flex;
   flex: 1;
-  gap: 0;
-  height: 100%;
+  gap: 3px;
+  height: auto;
   min-width: 0;
 }
 
@@ -45,15 +48,17 @@
   align-items: center;
   align-self: stretch;
   background: var(--js-color-surface-overlay);
-  border: 0;
-  border-left: 1px solid var(--js-color-border);
+  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
+  border: 1px solid var(--js-color-border);
+  border-radius: 2px;
+  box-shadow: var(--js-inset-highlight);
   color: var(--js-color-text-muted);
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 1.55rem;
   font-size: 0.86rem;
   font-weight: 800;
-  height: 100%;
+  height: auto;
   justify-content: center;
   line-height: 1;
   padding: 0;
@@ -67,7 +72,7 @@
 }
 
 .bottom-bar .process-manager-button:focus-visible {
-  outline: 2px solid var(--js-color-accent-border);
+  outline: 2px solid var(--js-color-accent);
   outline-offset: -2px;
 }
 
@@ -86,9 +91,11 @@
 }
 
 .bottom-bar .quick-launch-button {
-  background: transparent;
-  border: 0;
-  border-right: 1px solid var(--js-color-border);
+  background: var(--js-color-surface-overlay);
+  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
+  border: 1px solid var(--js-color-border);
+  border-radius: 2px;
+  box-shadow: var(--js-inset-highlight);
   color: var(--js-color-text-muted);
   cursor: pointer;
   display: inline-flex;
@@ -105,14 +112,9 @@
   outline: none;
 }
 
-.bottom-bar .launcher-strip::after {
-  background: var(--js-color-border);
-  content: '';
-  height: 100%;
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 1px;
+.bottom-bar .quick-launch-button:focus-visible {
+  outline: 2px solid var(--js-color-accent);
+  outline-offset: -2px;
 }
 
 .bottom-bar .launcher-button {
@@ -156,7 +158,7 @@
 }
 
 .bottom-bar .task-button:focus-visible {
-  outline: 2px solid var(--js-color-accent-border);
+  outline: 2px solid var(--js-color-accent);
   outline-offset: -2px;
 }
 
@@ -178,8 +180,8 @@
   align-self: stretch;
   display: flex;
   flex: 1;
-  gap: 0;
-  height: 100%;
+  gap: 3px;
+  height: auto;
   min-width: 0;
   overflow: hidden;
   position: relative;
@@ -202,15 +204,13 @@
 .bottom-bar .task-group {
   align-items: stretch;
   align-self: stretch;
-  border: 1px solid var(--js-color-border-soft);
-  border-radius: 0;
-  border-top: 0;
-  border-bottom: 0;
+  border: 0;
+  border-radius: 2px;
   display: inline-flex;
   flex: var(--task-window-count, 1) 1 0;
   max-width: calc(10rem * var(--task-window-count, 1));
-  gap: 0;
-  height: 100%;
+  gap: 3px;
+  height: auto;
   min-width: 0;
   overflow: hidden;
   padding: 0;
@@ -221,18 +221,6 @@
     background 140ms ease,
     opacity 140ms ease,
     transform 140ms ease;
-}
-
-.bottom-bar.surface::after {
-  background: var(--preview-connector-color);
-  content: '';
-  height: 1px;
-  left: var(--preview-connector-left);
-  pointer-events: none;
-  position: absolute;
-  top: -1px;
-  width: var(--preview-connector-width);
-  z-index: 21;
 }
 
 .bottom-bar .task-group-direct {
@@ -250,17 +238,13 @@
   border-color: var(--js-color-accent-border);
 }
 
-.bottom-bar .task-group-active::before {
-  background: var(--js-color-accent);
-  content: '';
-  inset: 0 auto 0 0;
-  pointer-events: none;
-  position: absolute;
-  width: 2px;
-}
-
 .bottom-bar .task-window-attention,
 .bottom-bar .task-group-toasted {
+  box-shadow: inset 0 2px 0 var(--js-color-warning-border);
+}
+
+/* Opaque inset faces must not cover the group's toast cue. */
+.bottom-bar .task-group-toasted .task-button {
   box-shadow: inset 0 2px 0 var(--js-color-warning-border);
 }
 
@@ -282,6 +266,11 @@
 
 .bottom-bar .task-group-drop-target {
   background: var(--js-color-accent-soft);
+  outline: 1px solid var(--js-color-accent-border);
+  outline-offset: -1px;
+}
+
+.bottom-bar .task-group-drop-target .task-button {
   border-color: var(--js-color-accent-border);
 }
 
@@ -361,9 +350,11 @@
   align-items: center;
   align-self: stretch;
   background: var(--js-color-control);
-  border: 0;
-  border-left: 1px solid var(--js-color-border-soft);
-  border-radius: 0;
+  /* Keep inset tile faces opaque and theme-derived. */
+  background-color: color-mix(in srgb, var(--js-bg-bar) 93%, var(--js-color-text) 7%);
+  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
+  border: 1px solid var(--js-color-border);
+  border-radius: 2px;
   box-shadow: var(--js-inset-highlight);
   color: var(--js-color-text);
   cursor: pointer;
@@ -372,7 +363,7 @@
   font-size: 0.62rem;
   font-weight: 600;
   gap: 0.28rem;
-  height: 100%;
+  height: auto;
   min-height: 0;
   min-width: 0;
   padding: 0 0.38rem;
@@ -384,7 +375,7 @@
 
 .bottom-bar .task-capsule {
   min-width: 0;
-  padding-right: 0.22rem;
+  padding-right: 1.2rem;
 }
 
 .bottom-bar .task-button:hover:not(:disabled) {
@@ -398,24 +389,14 @@
 
 .bottom-bar .task-button-active {
   background: var(--js-bg-active);
+  background-color: color-mix(in srgb, var(--js-bg-bar) 76%, var(--js-color-accent) 24%);
+  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
 }
 
-.bottom-bar .task-button.task-button-preview-connected {
-  box-shadow: none;
-}
-
-.bottom-bar .task-button.task-button-active.task-button-preview-connected {
-  box-shadow: inset 0 0 0 1px var(--js-color-accent-soft);
-}
-
-.bottom-bar .task-button.task-window-attention.task-button-preview-connected {
-  box-shadow: inset 0 4px 0 #ffd54f;
-}
-
-.bottom-bar .task-button.task-button-active.task-window-attention.task-button-preview-connected {
-  box-shadow: inset 0 4px 0 #ffd54f, inset 0 0 0 1px var(--js-color-accent-soft);
+.bottom-bar .task-button.task-button-active.task-window-attention {
+  box-shadow: inset 0 4px 0 #ffd54f, var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
 }
 
 .bottom-bar .task-button-minimized {
@@ -441,6 +422,10 @@
 }
 
 .bottom-bar .strip-fallback {
+  align-self: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--js-color-text-muted);
   font-size: 0.62rem;
   font-weight: 600;

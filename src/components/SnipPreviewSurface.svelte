@@ -4,6 +4,8 @@
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import { observeSnipContext, snipImageUrl, decodeSnipImage, sameSnip, copySnip, saveSnip, dismissSnip, type SnipContext } from '../lib/snipping';
 
+  const deleteIconUrl = new URL('../assets/icons/delete_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg', import.meta.url).href;
+
   let context = $state.raw<SnipContext | null>(null);
   let url = $state('');
   let image = $state<HTMLImageElement>();
@@ -83,7 +85,7 @@
   <div class="preview-actions">
     <MeltActionButton class="preview-action-button" ariaLabel="Copy" disabled={pending || !decoded} onClick={() => void action('copy')}><MaterialSymbolIcon name="file_copy" /></MeltActionButton>
     <MeltActionButton class="preview-action-button" ariaLabel="Save" disabled={pending || !decoded} onClick={() => void action('save')}><MaterialSymbolIcon name="save" /></MeltActionButton>
-    <MeltActionButton class="preview-action-button" ariaLabel="Dismiss" disabled={pending || !context} onClick={() => void action('dismiss')}><MaterialSymbolIcon name="close" /></MeltActionButton>
+    <MeltActionButton class="preview-action-button" ariaLabel="Dismiss" disabled={pending || !context} onClick={() => void action('dismiss')}><img class="preview-delete-icon" src={deleteIconUrl} alt="" aria-hidden="true" draggable="false" /></MeltActionButton>
   </div>
 </section>
 
@@ -94,7 +96,8 @@
   .preview-title { font-size: .72rem; font-weight: 750; }
   .preview-process { font-size: .58rem; font-weight: 600; color: var(--js-color-text-muted); }
   .preview-frame { background: var(--js-color-surface-sunken); border: 1px solid var(--js-color-border-soft); border-radius: calc(var(--js-radius-sm) - 1px); flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; }
-  img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .preview-delete-icon { display: block; width: 16px; height: 16px; pointer-events: none; }
   .preview-status { flex: 0 0 auto; min-height: 1rem; font-size: .64rem; color: var(--js-color-text-muted); overflow-wrap: anywhere; }
   .preview-status[role='alert'] { color: var(--js-color-error-text); }
   .preview-actions { display: flex; justify-content: flex-end; flex: 0 0 auto; gap: var(--js-space-2); }

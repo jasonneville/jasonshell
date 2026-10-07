@@ -56,6 +56,10 @@ export function activateTaskGalleryWindow(hwnd: string, nonce: string, minimizeI
   return invoke(IPC_COMMANDS.activateTaskGalleryWindow, { args: { hwnd, nonce, minimizeIfActive } });
 }
 
+export function closeTaskGalleryWindow(hwnd: string, nonce: string): Promise<void> {
+  return invoke(IPC_COMMANDS.closeTaskGalleryWindow, { args: { hwnd, nonce } });
+}
+
 export function showTaskGalleryWindowContextMenu(args: TaskGalleryContextMenuRequest): Promise<void> {
   return invoke(IPC_COMMANDS.showTaskGalleryWindowContextMenu, { args });
 }

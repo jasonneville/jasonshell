@@ -128,6 +128,11 @@
       <ContextMenuItem icon="code_blocks" onClick={() => select('openInVscode')}>Open in VS Code</ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem icon="delete" destructive onClick={() => select('unpin')}>Unpin</ContextMenuItem>
+    {:else if request.kind === 'task-group'}
+      <ContextMenuItem icon="monitor_heart" onClick={() => select('process')} disabled={!request.processId}>Open in Process Manager</ContextMenuItem>
+      <ContextMenuItem icon="add_location" onClick={() => select('pin')}>Pin to taskbar</ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem icon="close" destructive onClick={() => select('closeAll')}>Close all windows</ContextMenuItem>
     {:else if request.kind === 'task-window'}
       <ContextMenuItem icon="preview" onClick={() => select('focus')}>{request.isMinimized ? 'Restore' : 'Switch to'}</ContextMenuItem>
       <ContextMenuItem icon="preview" onClick={() => select('minimize')} disabled={request.isMinimized}>Minimize</ContextMenuItem>

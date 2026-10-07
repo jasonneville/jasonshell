@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Five subtle refinements of JasonShell's selected Soft inset rail. Offline static design study with normal and enlarged previews.">
+<title>JasonShell — Soft inset rail variations</title>
+<style>
+* { box-sizing:border-box; }
+:root { color-scheme:light; --paper:#f3f2ed; --ink:#242b30; --muted:#58616a; --rule:#d2d5d3; --green:#315c48; }
+body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.6 'Segoe UI',system-ui,sans-serif; }
+main,.masthead,footer { width:min(1100px,calc(100% - 64px)); margin-inline:auto; }
+a { color:inherit; text-underline-offset:4px; }
+a:focus-visible,.preview-scroll:focus-visible { outline:3px solid #926026; outline-offset:4px; }
+.skip { position:absolute; top:-100px; left:16px; padding:10px 16px; background:white; z-index:10; }
+.skip:focus { top:12px; }
+.masthead { display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:24px 0; border-bottom:1px solid var(--rule); font-size:12px; letter-spacing:.1em; text-transform:uppercase; }
+.hero { padding:44px 0 24px; }
+.eyebrow { color:var(--green); font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+h1 { font:normal clamp(36px,5vw,62px)/1.08 Georgia,serif; letter-spacing:-.04em; margin:12px 0 20px; }
+.hero p { max-width:78ch; color:var(--muted); }
+.notice { padding:16px 20px; background:#e7ece5; border-left:3px solid var(--green); font-size:14px; }
+nav { display:flex; flex-wrap:wrap; gap:8px 24px; padding:20px 0; border-bottom:1px solid var(--rule); margin-bottom:26px; font-size:14px; }
+nav a { padding-block:8px; }
+.legend { font-size:14px; color:var(--muted); margin:0 0 32px; }
+.concept { padding-bottom:32px; margin-bottom:32px; border-bottom:1px solid var(--rule); scroll-margin-top:24px; }
+.heading { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:8px; }
+h2 { font-size:23px; letter-spacing:-.025em; font-weight:600; margin:0; }
+.tag { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:3px 9px; border:1px solid #9caaa0; border-radius:3px; }
+.favorite { background:var(--green); color:white; border-color:var(--green); }
+.description { margin:0 0 18px; color:var(--muted); font-size:15px; max-width:90ch; }
+figure { margin:0; }
+.preview-scroll { overflow-x:auto; border:1px solid #444e60; border-radius:5px; background:#111722; }
+.desktop { min-width:940px; height:180px; position:relative; overflow:hidden; color:#eef3ff; background:radial-gradient(ellipse at 85% 20%,#344650 0,transparent 55%),linear-gradient(120deg,#192230,#111823); color-scheme:dark; }
+.desktop::before { content:'JASON / WORKBENCH'; position:absolute; top:20px; left:22px; color:#aebdcd; font-size:10px; letter-spacing:.16em; }
+.workspace { position:absolute; top:18px; right:52px; width:450px; height:145px; border:1px solid #465266; border-radius:5px 5px 0 0; background:#171e2a; box-shadow:0 12px 30px #0004; font-size:11px; }
+.window-title { padding:8px 12px; border-bottom:1px solid #354151; color:#becbdd; background:#202a38; }
+.window-body { display:grid; grid-template-columns:102px 1fr; height:112px; }
+.tree { border-right:1px solid #354151; padding:12px; color:#adbbcd; line-height:2; }
+.code { padding:10px 20px; font:11px/1.9 Consolas,monospace; color:#b8c9db; }
+.code b { color:#b1d3c6; font-weight:normal; }
+.context-note { position:absolute; bottom:52px; left:22px; color:#b2c1cf; font-size:11px; }
+/* Shared selected Soft inset rail family: all dimensions below are unscaled CSS pixels. */
+.rail { --inset:3px; --gutter:4px; --radius:3px; --edge:#ffffff12; display:flex; height:36px; padding:var(--inset) 4px; gap:var(--gutter); align-items:stretch; border-top:1px solid #343b48; background:linear-gradient(#202938,#111823); color:#eef3ff; font:600 10px/1 'Segoe UI',system-ui,sans-serif; }
+.desktop .rail { position:absolute; bottom:0; left:0; right:0; }
+.quick,.process { border:1px solid #ffffff13; border-radius:var(--radius); background:#ffffff04; color:#c0cadb; }
+.quick { display:flex; align-items:center; flex:0 0 90px; padding:0 9px; white-space:nowrap; }
+.tasks { display:flex; flex:1; min-width:0; gap:var(--gutter); align-items:stretch; }
+.task { flex:0 0 160px; width:160px; min-width:0; position:relative; display:flex; align-items:center; gap:6px; padding:0 9px; border:1px solid var(--edge); border-radius:var(--radius); background:linear-gradient(#ffffff0c,#ffffff04); box-shadow:inset 0 1px #ffffff08; }
+.title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:3px; }
+.task.active { background:linear-gradient(#364657,#283644); box-shadow:inset 2px 0 #c0d8e7,inset 0 1px #ffffff19; }
+.active .title { font-weight:700; }
+.group .title { padding-right:16px; }
+.task.minimized { color:#b5becd; }
+.task.attention { box-shadow:inset 0 2px #e2bc65; }
+.count { position:absolute; top:3px; right:4px; display:grid; place-items:center; width:14px; height:14px; border-radius:9px; background:#604a26; border:1px solid #b18b44; color:#fff2d0; font-size:9px; }
+.process { flex:0 0 28px; display:grid; place-items:center; margin-left:auto; }
+.icon { width:15px; height:15px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.editor-icon { color:#8ac4e6; } .browser-icon { color:#aabce5; } .folder-icon { color:#e4c47d; } .terminal-icon { color:#acd1bf; }
+.process .icon { width:17px; height:17px; }
+/* 01: closest refinement — keep geometry; give tiles a cleaner lower edge. */
+.bevel .task:not(.active):not(.attention) { box-shadow:inset 0 1px #ffffff0d,inset 0 -1px #0005; }
+/* 02: deeper channel without changing the outer rail height. */
+.pocket .rail { --inset:4px; box-shadow:inset 0 2px 3px #0009,inset 0 -1px #ffffff0b; }
+.pocket .task { box-shadow:inset 0 1px #ffffff0b,0 1px 1px #0007; }
+.pocket .task.active { box-shadow:inset 2px 0 #c0d8e7,inset 0 1px #ffffff19,0 1px 1px #0007; }
+.pocket .task.attention { box-shadow:inset 0 2px #e2bc65,0 1px 1px #0007; }
+/* 03: same spacing, quietly recessed matte faces; no added glow. */
+.matte .rail { background:#18212e; box-shadow:inset 0 1px 2px #0005; }
+.matte .task { background:#1c2735; box-shadow:inset 0 1px 2px #0004; }
+.matte .task.active { background:#2d3d4e; box-shadow:inset 2px 0 #c0d8e7,inset 0 1px 2px #0004; }
+.matte .task.attention { box-shadow:inset 0 2px #e2bc65,inset 0 1px 2px #0004; }
+.matte .quick,.matte .process { background:#1c2735; }
+/* 04: shallower inset, closer seams and slightly squarer corners. */
+.tight .rail { --inset:2px; --gutter:3px; --radius:2px; }
+.tight .task { border-color:#ffffff18; }
+/* 05: soft framed utilities and a shortened, inset active marker. */
+.framed .rail { --radius:4px; --edge:#ffffff20; }
+.framed .quick,.framed .process { border-color:#ffffff26; background:linear-gradient(#ffffff09,#ffffff03); box-shadow:inset 0 1px #ffffff09; }
+.framed .task.active { box-shadow:inset 0 1px #ffffff19; padding-left:12px; }
+.framed .task.active::before { content:''; position:absolute; left:3px; top:5px; bottom:5px; width:2px; border-radius:1px; background:#c0d8e7; }
+figcaption { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 20px; font-size:12px; color:var(--muted); padding:9px 0 0; }
+.detail-label { margin:16px 0 7px; color:var(--muted); font-size:12px; font-weight:600; }
+.detail-canvas { width:850px; height:106px; padding:8px 10px; background:#111722; color-scheme:dark; }
+.detail-canvas .rail { width:332px; transform:scale(2.5); transform-origin:top left; }
+.detail-canvas .tasks { flex:1; }
+.assessment { display:grid; grid-template-columns:1.4fr 1fr; gap:28px; margin-top:16px; font-size:14px; }
+.assessment p { margin:0; color:var(--muted); }
+.assessment strong { color:var(--ink); }
+.compare { margin-bottom:32px; }
+.compare h2 { margin-bottom:12px; font-size:20px; }
+.comparison { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); border:1px solid var(--rule); }
+.comparison p { margin:0; padding:14px; font-size:13px; color:var(--muted); border-right:1px solid var(--rule); }
+.comparison p:last-child { border:0; }
+.comparison strong { display:block; color:var(--ink); }
+.summary { padding:20px 24px; border:1px solid #aab5ab; background:#e7ece5; margin-bottom:32px; }
+.summary h2 { font-size:20px; margin-bottom:8px; }
+.summary p { margin:0; font-size:15px; }
+footer { font-size:12px; color:var(--muted); padding-bottom:32px; }
+.symbols { position:absolute; width:0; height:0; overflow:hidden; }
+@media (max-width:650px) { main,.masthead,footer { width:calc(100% - 32px); } .hero { padding-top:28px; } h2 { font-size:21px; } .assessment { grid-template-columns:1fr; gap:10px; } .comparison { grid-template-columns:1fr; } .comparison p { border-right:0; border-bottom:1px solid var(--rule); } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to variations</a>
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="editor" viewBox="0 0 24 24"><path d="m15 3 6 3v12l-6 3-10-8-3 3V8l3 3 10-8Z M15 3v18 M5 11l10-5 M5 13l10 5"/></symbol>
+<symbol id="browser" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 8h8 M8.5 14l-4 6 M14 15l-4-12"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 3h10v12H3V7Z M3 10h18"/></symbol>
+<symbol id="terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 4 3-4 3 M13 15h5"/></symbol>
+<symbol id="process" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="15" rx="2"/><path d="M5 11h3l2-4 3 8 2-4h4 M9 22h6 M12 18v4"/></symbol>
+</defs></svg>
+<header class="masthead"><span>JasonShell / Visual studies</span><span>Soft inset rail · refinements</span></header>
+<main id="main">
+<header class="hero"><div class="eyebrow">One family. Five small adjustments.</div><h1>Find the right amount of inset.</h1><p>You chose <strong>02 Soft inset rail</strong>. These are five close variations of that direction—not five new layouts. Keep the dark, attached rail and separated task tiles; fine-tune the pocket, bevel, corners, and active edge.</p></header>
+<div class="notice"><strong>Static sample content. No live shell connections.</strong> All controls are illustrations. This offline document does not launch apps, manage windows, or inspect processes. The original study is unchanged.</div>
+<nav aria-label="Variation index"><a href="#variation-01">01 Quiet bevel</a><a href="#variation-02">02 Deep pocket</a><a href="#variation-03">03 Matte inset</a><a href="#variation-04">04 Tight seams</a><a href="#variation-05">05 Soft frames</a></nav>
+<p class="legend"><strong>Selected design reference:</strong> 36px rail, 3px vertical / 4px horizontal padding, 4px gaps, 3px tile corners, fine 1px border, quiet gradient, and a full-height 2px silver-blue active edge. Every full preview keeps Quick Launch left; Code active, Browser grouped (3), Project files minimized, and Terminal requesting attention in the middle; process access far right. Same content, palette, 160px task widths, and desktop fragment throughout. Gold count means grouped windows; gold top edge means attention. Each detail repeats the same active and grouped tiles at <strong>2.5× CSS scale</strong>, not a pixelated screenshot. Focus a preview and use arrow keys to scroll on narrow screens.</p>
+<section class="concept bevel" id="variation-01" aria-labelledby="title-01">
+<div class="heading"><h2 id="title-01">01 / Quiet bevel</h2><span class="tag">Closest refinement</span></div>
+<p class="description"><strong>Changed from selected design:</strong> a slightly cleaner top highlight and dark 1px lower inner edge on idle tiles. All spacing, gradients, corners, utilities, and active treatment stay as selected.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="01 Quiet bevel normal-scale desktop preview"><div class="desktop"><div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="rail" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal attention; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div></div></div><figcaption><span>Normal scale · 36px rail · 3px vertical inset · 4px gaps · 3px corners</span><span>1px border · quiet double-edge bevel</span></figcaption></figure>
+<p class="detail-label" id="detail-01">Enlarged detail · 2.5× · active + grouped tiles and surrounding inset</p>
+<div class="preview-scroll" tabindex="0" role="region" aria-labelledby="detail-01"><div class="detail-canvas"><div class="rail" role="img" aria-label="Quiet bevel detail: full-height left active edge, light upper bevel and dark lower bevel on grouped Browser tile"><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div></div></div></div></div>
+<div class="assessment"><p><strong>Pros:</strong> A little more finish without changing the chosen silhouette. The lower edge makes the gentle bevel easier to read.</p><p><strong>Trade-off:</strong> Very subtle at normal size; still has the selected design’s slightly raised appearance.</p></div>
+</section>
+<section class="concept pocket" id="variation-02" aria-labelledby="title-02">
+<div class="heading"><h2 id="title-02">02 / Deep pocket</h2><span class="tag">More recessed</span></div>
+<p class="description"><strong>Changed from selected design:</strong> vertical inset increases from 3px to 4px. A recessed channel shadow and tiny tile shadow add depth; outer height and 4px gaps stay unchanged.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="02 Deep pocket normal-scale desktop preview"><div class="desktop"><div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="rail" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal attention; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div></div></div><figcaption><span>Normal scale · 36px rail · 4px vertical inset · 4px gaps · 3px corners</span><span>1px border · recessed channel + 1px tile shadow</span></figcaption></figure>
+<p class="detail-label" id="detail-02">Enlarged detail · 2.5× · active + grouped tiles and surrounding inset</p>
+<div class="preview-scroll" tabindex="0" role="region" aria-labelledby="detail-02"><div class="detail-canvas"><div class="rail" role="img" aria-label="Deep pocket detail: deeper top and bottom inset, channel shadow, and slight shadow beneath active and grouped tiles"><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div></div></div></div></div>
+<div class="assessment"><p><strong>Pros:</strong> The inset reads as an intentional pocket rather than empty padding. Adds tactile depth without a floating bar.</p><p><strong>Trade-off:</strong> Tiles become 2px shorter than selected, and the shadows make the rail a touch busier.</p></div>
+</section>
+<section class="concept matte" id="variation-03" aria-labelledby="title-03">
+<div class="heading"><h2 id="title-03">03 / Matte inset</h2><span class="tag favorite">Favorite</span></div>
+<p class="description"><strong>Changed from selected design:</strong> remove face gradients and the raised highlight. Flat dark faces receive a shallow inner shadow; the active task keeps its stronger fill and familiar 2px left edge. Spacing stays exactly selected.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="03 Matte inset normal-scale desktop preview"><div class="desktop"><div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="rail" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal attention; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div></div></div><figcaption><span>Normal scale · 36px rail · 3px vertical inset · 4px gaps · 3px corners</span><span>1px border · matte faces + shallow inner shadow</span></figcaption></figure>
+<p class="detail-label" id="detail-03">Enlarged detail · 2.5× · active + grouped tiles and surrounding inset</p>
+<div class="preview-scroll" tabindex="0" role="region" aria-labelledby="detail-03"><div class="detail-canvas"><div class="rail" role="img" aria-label="Matte inset detail: flat tile faces with shallow recessed shadow, stronger active fill, full-height left active edge, and gold grouped count"><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div></div></div></div></div>
+<div class="assessment"><p><strong>Pros:</strong> The calmest finish within the chosen family. Tile separation stays clear, but the active fill—not chrome—gets the emphasis.</p><p><strong>Trade-off:</strong> Less tactile than the bevel and pocket options; shallow depth is deliberately understated.</p></div>
+</section>
+<section class="concept tight" id="variation-04" aria-labelledby="title-04">
+<div class="heading"><h2 id="title-04">04 / Tight seams</h2><span class="tag">Denser fit</span></div>
+<p class="description"><strong>Changed from selected design:</strong> vertical inset drops to 2px, gaps to 3px, and corners to 2px. Idle borders become slightly more defined; the chosen gradient and full-height active edge remain.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="04 Tight seams normal-scale desktop preview"><div class="desktop"><div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="rail" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal attention; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div></div></div><figcaption><span>Normal scale · 36px rail · 2px vertical inset · 3px gaps · 2px corners</span><span>1px border · slightly firmer edges</span></figcaption></figure>
+<p class="detail-label" id="detail-04">Enlarged detail · 2.5× · active + grouped tiles and surrounding inset</p>
+<div class="preview-scroll" tabindex="0" role="region" aria-labelledby="detail-04"><div class="detail-canvas"><div class="rail" role="img" aria-label="Tight seams detail: taller tiles, narrower gutters, squarer corners and firmer edges around active and grouped tiles"><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div></div></div></div></div>
+<div class="assessment"><p><strong>Pros:</strong> Slightly taller faces and tighter grouping feel practical and compact. Still has real gutters, not adjoining full-height tiles.</p><p><strong>Trade-off:</strong> Less breathing room; the firmer edges move closer to the original bar’s dense feel.</p></div>
+</section>
+<section class="concept framed" id="variation-05" aria-labelledby="title-05">
+<div class="heading"><h2 id="title-05">05 / Soft frames</h2><span class="tag">Gentler active edge</span></div>
+<p class="description"><strong>Changed from selected design:</strong> corners increase to 4px and fine borders become a little stronger. Quick Launch and process access get matching beveled frames; the active marker becomes a short 2px inset stroke instead of touching the tile’s upper and lower edges.</p>
+<figure><div class="preview-scroll" tabindex="0" role="region" aria-label="05 Soft frames normal-scale desktop preview"><div class="desktop"><div class="workspace" aria-hidden="true"><div class="window-title">JasonShell / BottomBar.css — Code</div><div class="window-body"><div class="tree">src<br>components<br>BottomBar.css</div><div class="code">.bottom-bar {<br>&nbsp; <b>display</b>: flex;<br>&nbsp; <b>align-items</b>: stretch;<br>}</div></div></div><span class="context-note" aria-hidden="true">Static desktop fragment · bottom edge</span>
+<div class="rail" role="img" aria-label="Quick Launch left; Code active, Browser 3 windows, Project files minimized, Terminal attention; Process Manager far right"><div class="quick">Quick Launch</div><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div><div class="task minimized"><svg class="icon folder-icon" aria-hidden="true"><use href="#folder"/></svg><span class="title">Project files</span></div><div class="task attention"><svg class="icon terminal-icon" aria-hidden="true"><use href="#terminal"/></svg><span class="title">Build — Terminal</span></div></div><div class="process"><svg class="icon" aria-hidden="true"><use href="#process"/></svg></div></div></div></div><figcaption><span>Normal scale · 36px rail · 3px vertical inset · 4px gaps · 4px corners</span><span>1px stronger border · active stroke inset 3px left / 5px vertically</span></figcaption></figure>
+<p class="detail-label" id="detail-05">Enlarged detail · 2.5× · active + grouped tiles and surrounding inset</p>
+<div class="preview-scroll" tabindex="0" role="region" aria-labelledby="detail-05"><div class="detail-canvas"><div class="rail" role="img" aria-label="Soft frames detail: rounder corners, stronger fine borders and a short inset silver-blue stroke on active tile beside grouped Browser"><div class="tasks"><div class="task active"><svg class="icon editor-icon" aria-hidden="true"><use href="#editor"/></svg><span class="title">BottomBar.css — Code</span></div><div class="task group"><svg class="icon browser-icon" aria-hidden="true"><use href="#browser"/></svg><span class="title">Browser</span><span class="count">3</span></div></div></div></div></div>
+<div class="assessment"><p><strong>Pros:</strong> Utility controls look intentionally related to task tiles. The shortened active stroke feels less severe while retaining its left-side position.</p><p><strong>Trade-off:</strong> More visible framing and a smaller active cue. Extra left padding slightly shortens the active title’s available space.</p></div>
+</section>
+<aside class="compare" aria-labelledby="comparison-title"><h2 id="comparison-title">The differences, at a glance</h2><div class="comparison"><p><strong>01 Quiet bevel</strong>3px inset / 4px gaps<br>3px corners<br>Clean double-edge bevel</p><p><strong>02 Deep pocket</strong>4px inset / 4px gaps<br>3px corners<br>Recessed channel shadow</p><p><strong>03 Matte inset</strong>3px inset / 4px gaps<br>3px corners<br>Flat, shallow inner shadow</p><p><strong>04 Tight seams</strong>2px inset / 3px gaps<br>2px corners<br>Denser, firmer borders</p><p><strong>05 Soft frames</strong>3px inset / 4px gaps<br>4px corners<br>Framed utilities, short cue</p></div></aside>
+<aside class="summary" aria-labelledby="recommendation"><h2 id="recommendation">My pick: 03 Matte inset.</h2><p>Keep the selected design’s breathing room and familiar active edge; quiet the surface finish. It feels refreshed without drawing more attention to the desktop chrome. Prefer a more tactile finish? Choose 01 for the smallest refinement or 02 for a clearer pocket.</p></aside>
+</main>
+<footer>Standalone visual concepts, not production behavior or native sizing certification. Inline SVG, CSS, and system fonts only; no scripts, dependencies, external assets, or network connections. Enlarged details use the same tile CSS as normal previews. Launchers remain in the Quick Launch popup; no pinned strip is added.</footer>
+</body>
+</html>

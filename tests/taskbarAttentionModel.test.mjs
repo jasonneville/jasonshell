@@ -22,6 +22,39 @@ const attentionSource = readSourceOrEmpty('../src-tauri/src/task_windows/attenti
 const windowsSource = readSourceOrEmpty('../src-tauri/src/task_windows/windows.rs');
 const bottomBarSource = readSourceOrEmpty('../src/components/BottomBar.svelte');
 const taskbarGroupsSource = readSourceOrEmpty('../src/lib/taskbarGroups.ts');
+const attentionSmokeSource = readSourceOrEmpty('../scripts/smoke-taskbar-attention.ps1');
+
+test('native hook event logging is exact opt-in, not the default-enabled hooks flag', () => {
+  // Source contract only: either idiom rejects unset, "0", "true", and all values other than "1".
+  assert.match(nativeHooksSource, /fn taskbar_native_hook_log_enabled_from_env\(\) -> bool \{\s*(?:std::env::var\("JASONSHELL_TASKBAR_NATIVE_HOOK_LOG"\)\s*\.map_or\(false, \|value\| value == "1"\)|matches!\(std::env::var\("JASONSHELL_TASKBAR_NATIVE_HOOK_LOG"\), Ok\((\w+)\) if \1 == "1"\))\s*\}/);
+});
+
+test('nativeHook printing and flush are gated without gating signal processing or reconciliation', () => {
+  const handler = nativeHooksSource.match(/fn handle_event\(event: HookEvent\) \{([\s\S]*?)\n\}\n/)?.[1];
+  assert.ok(handler, 'handle_event must remain present');
+  const gate = handler.match(/if taskbar_native_hook_log_enabled_from_env\(\) \{([\s\S]*?)\n    \}/);
+  assert.ok(gate, 'nativeHook event printing must have its own opt-in gate');
+  assert.match(gate[1], /println!\([\s\S]*nativeHook/);
+  assert.match(gate[1], /io::stdout\(\)\.flush\(\)/);
+
+  const outsideLogging = handler.replace(gate[0], '');
+  assert.doesNotMatch(outsideLogging, /println!|io::stdout\(\)\.flush\(\)/);
+  assert.match(outsideLogging, /if taskbar_native_hooks_enabled_from_env\(\) \{\s*process_native_signal\(event\.event, event\.hwnd\);\s*super::windows::request_taskbar_snapshot_refresh_native\(Instant::now\(\)\);\s*\}/);
+  assert.match(outsideLogging, /guard\.last_signal = Some\(HookSignalSnapshot/);
+  assert.match(outsideLogging, /explorer_suppression_v2_enabled_from_env\(\)/);
+  assert.match(outsideLogging, /crate::explorer::request_taskbar_reconcile\(\)/);
+  assert.doesNotMatch(outsideLogging, /taskbar_native_hook_log_enabled_from_env\(\)/);
+});
+
+test('attention smoke explicitly enables nativeHook evidence in the receiver environment', () => {
+  const receiverEnvironment = attentionSmokeSource.match(/\$env = @\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(receiverEnvironment, 'smoke must configure its receiver environment');
+  assert.match(receiverEnvironment, /'JASONSHELL_TASKBAR_NATIVE_HOOKS'\s*=\s*'1'/);
+  assert.match(receiverEnvironment, /'JASONSHELL_TASKBAR_NATIVE_HOOK_LOG'\s*=\s*'1'/);
+  assert.match(attentionSmokeSource, /Start-ReceiverProcess -Exe \$exe -Env \$env/);
+  assert.match(attentionSmokeSource, /nativeHookInit/);
+  assert.match(attentionSmokeSource, /\$_.kind -eq 'nativeHook'/);
+});
 
 test('phase 0 native attention contract stays independent from phase 2/4 fields', () => {
   assert.match(contractsSource, /TASKBAR_WINDOW/);

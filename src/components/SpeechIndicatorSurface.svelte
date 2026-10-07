@@ -146,13 +146,13 @@
     border-radius: 50%;
     box-sizing: border-box;
     display: flex;
-    height: 40px;
+    height: 35px;
     justify-content: center;
     padding: 8px;
     position: relative;
     overflow: hidden;
     isolation: isolate;
-    width: 40px;
+    width: 35px;
   }
   .mic-keyline { display: block; height: 100%; width: 100%; fill: none; stroke: #162d49; stroke-width: 40; stroke-linejoin: round; }
   .mic-glyph {

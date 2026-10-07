@@ -36,6 +36,17 @@ test('top and bottom bars request the same external overlay; neither renders an 
   }
 });
 
+test('pin, task-window and launcher rows share the same bar-only backplate styling hook', () => {
+  const overlay = read(`src/components/${overlayName}`);
+  const menus = [...overlay.matchAll(/<ContextMenu\b[^>]*>([\s\S]*?)<\/ContextMenu>/g)];
+  assert.equal(menus.length, 1, 'all bar menu kinds must share one visual primitive');
+  assert.match(menus[0][0], /className="context-menu-overlay"/);
+  assert.match(menus[0][1], /request\.kind === 'pin'/);
+  assert.match(menus[0][1], /request\.kind === 'task-window'/);
+  assert.match(menus[0][1], /\{:else\}[\s\S]*?select\('launch'\)/,
+    'launcher fallback must remain inside the same styled menu');
+});
+
 test('overlay clamps multirow menus within its own viewport and closes on dismiss or selection', () => {
   assert.ok(overlayName, 'shared overlay surface required');
   const overlay = read(`src/components/${overlayName}`);

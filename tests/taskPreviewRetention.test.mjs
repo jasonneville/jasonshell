@@ -75,7 +75,8 @@ test('preview close button is accessible, token-styled, and does not activate pr
   assert.match(closeButtonRule, /position:\s*absolute/);
   assert.match(closeButtonRule, /top:/);
   assert.match(closeButtonRule, /right:/);
-  assert.match(closeButtonRule, /background:\s*none/);
+  assert.match(closeButtonRule, /background:\s*var\(--js-bg-control\)/);
+  assert.match(closeButtonRule, /border:\s*1px solid var\(--js-color-border-soft\)/);
   assert.match(closeButtonRule, /color:\s*var\(--js-color-text\)/);
   const hoverRule = cssRule(previewCss, '.preview-close-button:hover');
   assert.match(hoverRule, /background:\s*var\(--js-color-accent-soft\)/);

@@ -26,14 +26,15 @@ test('native capsule wiring imports and uses gallery helpers', () => {
   assert.match(bottomBarSource, /hideTaskGalleryNative/);
 });
 
-test('capsule renders native gallery affordance only', () => {
+test('capsule retains native gallery affordance and exposes shared group context menu', () => {
   assert.match(bottomBarSource, /class={`task-group \$\{taskGroupDisplayClass\(group\)\}`}/);
   assert.match(bottomBarSource, /class={`task-button task-capsule/);
   assert.match(bottomBarSource, /ariaHaspopup="dialog"/);
   assert.match(bottomBarSource, /ariaExpanded=\{taskGalleryOpenGroupKey === group.key\}/);
   const capsuleButton = bottomBarSource.match(/class={`task-button task-capsule[\s\S]*?<\/MeltActionButton>/)?.[0] ?? '';
   assert.ok(capsuleButton);
-  assert.doesNotMatch(capsuleButton, /onContextMenu/);
+  assert.match(capsuleButton, /onContextMenu=\{\(event\) => (?:void )?openTaskGroupMenu\(group, event\)\}/,
+    'capsule right-click must open group menu, not a representative single-window menu');
 });
 
 test('capsule outer width follows the shared equal flex contract', () => {
@@ -187,8 +188,11 @@ test('gallery closes after pointer leaves both tabs and task preview', () => {
 
 test('gallery surface is one horizontal tab strip with exact window labels', () => {
   assert.match(gallerySource, /class="task-gallery-strip"/);
-  assert.match(gallerySource, /role="listbox" aria-orientation="horizontal"/);
-  assert.match(gallerySource, /role="option"/);
+  assert.match(gallerySource, /class="task-gallery-strip" role="group" aria-label=/);
+  assert.match(gallerySource, /role="group"[\s\S]*?aria-label=\{taskGalleryTabLabel\(item\)\}/);
+  assert.match(gallerySource, /class="task-gallery-activate"/);
+  assert.match(gallerySource, /class="task-gallery-close"/);
+  assert.match(gallerySource, /aria-label=\{`Close \$\{item\.title\}`\}/);
   assert.match(gallerySource, /class:active=\{item\.isActive\}/);
   assert.match(gallerySource, /class:minimized=\{item\.isMinimized\}/);
   assert.match(gallerySource, /title=\{item\.title\}/);
@@ -201,9 +205,10 @@ test('gallery surface is one horizontal tab strip with exact window labels', () 
 
 test('gallery tabs match bottom-bar task button styling', () => {
   assert.match(gallerySource, /background:\s*var\(--js-color-control\)/);
-  assert.match(gallerySource, /border:\s*0;/);
-  assert.match(gallerySource, /border-left:\s*1px solid var\(--js-color-border-soft\)/);
-  assert.match(gallerySource, /border-radius:\s*0;/);
+  assert.match(gallerySource, /border:\s*0;/, 'activation and close controls keep their independent borderless layout');
+  const galleryTileRule = gallerySource.match(/\.task-gallery-tile\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(galleryTileRule, /border-radius:\s*2px;/, 'gallery tile matches Tight seams corners');
+  assert.match(galleryTileRule, /border:\s*1px solid var\(--js-color-border\)/, 'gallery tile uses the same firm theme border as the bar');
   assert.match(gallerySource, /font-size:\s*0\.62rem;/);
   assert.match(gallerySource, /font-weight:\s*600;/);
   assert.match(gallerySource, /gap:\s*0\.28rem;/);

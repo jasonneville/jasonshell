@@ -293,6 +293,7 @@ pub fn run_task_window_action(
         "focus" => task_windows::perform_task_window_action(request.hwnd, TaskWindowAction::Focus),
         "minimize" => task_windows::perform_task_window_action(request.hwnd, TaskWindowAction::Minimize),
         "close" => task_windows::perform_task_window_action(request.hwnd, TaskWindowAction::Close),
+        "request-close" => task_windows::request_task_window_close(request.hwnd, request.process_id),
         "pin" => launchers::pin_task_window_to_taskbar(request.hwnd),
         "process" => {
             let focus_pid = request.process_id.filter(|pid| *pid != 0)

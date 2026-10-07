@@ -1,5 +1,4 @@
 .stack-popup {
-  --stack-status-height: 1.45rem;
   background: var(--js-bg-surface);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-lg);
@@ -10,7 +9,6 @@
   height: 100%;
   overflow: hidden;
   padding: var(--js-space-4);
-  padding-bottom: calc(var(--js-space-4) + var(--stack-status-height));
   position: relative;
   width: 100%;
 }
@@ -22,6 +20,7 @@
 
 .stack-toolbar {
   display: grid;
+  min-width: 0;
   padding-right: 3rem;
 }
 
@@ -657,6 +656,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .stack-view-toggle {
@@ -795,11 +795,15 @@
   display: inline-flex;
   gap: 0.22rem;
   margin-left: auto;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .stack-search-input-wrapper {
   display: inline-flex;
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .stack-search-input-wrapper .material-symbol-icon {
@@ -819,6 +823,7 @@
   font-size: 0.68rem;
   min-height: 1.45rem;
   min-width: 10rem;
+  max-width: 100%;
   padding: 0 1.8rem 0 1.8rem;
 }
 
@@ -852,22 +857,38 @@
   outline: 0;
 }
 
+.stack-pin-status {
+  align-items: center;
+  display: flex;
+  flex: 1 1 12rem;
+  gap: 0.42rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.stack-status-separator {
+  background: var(--js-color-border-soft);
+  flex: 0 0 1px;
+  height: 0.8rem;
+}
+
 .stack-status {
   align-items: center;
-  bottom: var(--js-space-4);
   box-sizing: border-box;
+  color: var(--js-color-text-muted);
   display: flex;
-  font-size: 0.62rem;
+  flex: 1 1 auto;
+  font-size: 0.72rem;
   gap: 0.5rem;
-  height: var(--stack-status-height);
-  justify-content: space-between;
-  left: var(--js-space-4);
+  line-height: 1.35;
+  min-width: 0;
   overflow: hidden;
-  padding: 0 1.25rem 0 0.05rem;
-  position: absolute;
-  right: var(--js-space-4);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stack-status.error {
+  color: var(--js-color-error-text);
 }
 
 .stack-status span {
@@ -1481,13 +1502,6 @@
 @media (max-width: 720px) {
   .stack-popup {
     padding: var(--js-space-3);
-    padding-bottom: calc(var(--js-space-3) + var(--stack-status-height));
-  }
-
-  .stack-status {
-    bottom: var(--js-space-3);
-    left: var(--js-space-3);
-    right: var(--js-space-3);
   }
 
   .details-header,

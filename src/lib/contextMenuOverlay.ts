@@ -7,7 +7,7 @@ export const CONTEXT_MENU_OVERLAY_OPEN_EVENT = 'context-menu-overlay:open';
 export const CONTEXT_MENU_OVERLAY_SELECT_EVENT = 'context-menu-overlay:select';
 
 export type ContextMenuOverlaySource = 'top-bar' | 'bottom-bar';
-export type ContextMenuOverlayKind = 'pin' | 'task-window' | 'launcher';
+export type ContextMenuOverlayKind = 'pin' | 'task-window' | 'task-group' | 'launcher';
 
 export type ContextMenuOverlayRequest = {
   source: ContextMenuOverlaySource;
@@ -23,8 +23,15 @@ export type ContextMenuOverlaySelection = Pick<ContextMenuOverlayRequest, 'sourc
   action: string;
 };
 
-export async function showContextMenuOverlay(request: ContextMenuOverlayRequest): Promise<void> {
+export async function showContextMenuOverlay(
+  request: ContextMenuOverlayRequest,
+  isCurrent: () => boolean = () => true
+): Promise<void> {
+  if (!isCurrent()) return;
   await invoke(IPC_COMMANDS.showContextMenuOverlay, { request });
+  // Native preparation can finish after a newer origin request. Never publish
+  // that obsolete presentation back into the shared overlay.
+  if (!isCurrent()) return;
   await emitTo(CONTEXT_MENU_OVERLAY_LABEL, CONTEXT_MENU_OVERLAY_OPEN_EVENT, request);
 }
 

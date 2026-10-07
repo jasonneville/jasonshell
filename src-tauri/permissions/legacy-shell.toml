@@ -14,6 +14,7 @@ commands.allow = [
     "cancel_workspace_task",
     "capture_speech_paste_target",
     "close_task_gallery_previewed_window",
+    "close_task_gallery_window",
     "close_task_window",
     "copy_speech_history_transcript",
     "copy_stack_items",

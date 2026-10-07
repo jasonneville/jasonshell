@@ -405,7 +405,7 @@
 
 .top-bar .mic-button:hover {
   background: var(--js-color-accent-soft);
-  border-color: var(--js-color-accent-border);
+  border-color: transparent;
 }
 
 .top-bar .mic-glyph {
