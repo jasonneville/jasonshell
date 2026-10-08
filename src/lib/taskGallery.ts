@@ -9,6 +9,44 @@ import {
   type TaskGalleryItem
 } from '../features/bottom-bar/taskbarUxState';
 import type { TaskbarWindow } from './taskbarWindows';
+import type { TaskGalleryBounds, TaskGalleryLayout } from './taskGalleryLayout';
+export type { TaskGalleryBounds, TaskGalleryLayout, TaskGalleryMode } from './taskGalleryLayout';
+
+export type TaskGalleryPayload = {
+  nonce: string;
+  groupKey: string;
+  label: string;
+  focusGallery: boolean;
+  revision: number;
+  layout: TaskGalleryLayout;
+  windows: TaskbarWindow[];
+};
+
+export type TaskGalleryThumbnail = {
+  hwnd: string;
+  source: 'live' | 'captured' | 'unavailable';
+  imageDataUrl?: string | null;
+  error?: string | null;
+};
+
+export type TaskGalleryThumbnailSync = {
+  nonce: string;
+  revision: number;
+  requestId: number;
+  viewport: TaskGalleryBounds;
+  frames: Array<{ hwnd: string; bounds: TaskGalleryBounds }>;
+};
+
+export type TaskGalleryThumbnailResult = {
+  nonce: string;
+  revision: number;
+  requestId: number;
+  thumbnails: TaskGalleryThumbnail[];
+};
+
+export function syncTaskGalleryThumbnails(args: TaskGalleryThumbnailSync): Promise<TaskGalleryThumbnailResult> {
+  return invoke(IPC_COMMANDS.syncTaskGalleryThumbnails, { args });
+}
 
 export type TaskGalleryOpenPayload = {
   nonce: string;
@@ -40,7 +78,7 @@ export function normalizeTaskGalleryProcessId(processId?: number | null): number
   return typeof processId === 'number' && processId > 0 ? processId : null;
 }
 
-export function showTaskGallery(request: TaskGalleryOpenPayload): Promise<void> {
+export function showTaskGallery(request: TaskGalleryOpenPayload): Promise<TaskGalleryLayout | null> {
   return invoke(IPC_COMMANDS.showTaskGallery, { args: request });
 }
 

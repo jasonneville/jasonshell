@@ -47,9 +47,24 @@ test('process manager touches bottom bar above', () => {
   assertEdge(source, 'bottom_position.y - height as i32', 'PROCESS_MANAGER_MARGIN_PHYSICAL', 'process manager');
 });
 
-for (const name of ['quick_launch_panel.rs', 'task_gallery.rs']) {
-  test(`${name} touches bottom bar above`, () => {
-    assert.match(compact(rust(name)), /bottom_position\.y - height as i32/);
-    assert.doesNotMatch(compact(rust(name)), /bottom_position\.y - height as i32 - [A-Z_]*MARGIN/);
-  });
-}
+test('quick_launch_panel.rs touches bottom bar above', () => {
+  assert.match(compact(rust('quick_launch_panel.rs')), /bottom_position\.y - height as i32/);
+  assert.doesNotMatch(compact(rust('quick_launch_panel.rs')), /bottom_position\.y - height as i32 - [A-Z_]*MARGIN/);
+});
+
+test('task gallery floats eight logical pixels above bar with DPI scaling and safe monitor clamp', () => {
+  const source = compact(rust('task_gallery.rs'));
+  assert.match(source, /let scale_factor = bottom_bar\.scale_factor\(\)/);
+  assert.match(source, /if !scale_factor\.is_finite\(\) \|\| scale_factor <= 0\.0/);
+  assert.match(source, /let bottom_position = bottom_bar\.outer_position\(\)/);
+  assert.match(source, /let padding = \(8\.0 \* scale_factor\)\.round\(\) as i32;/);
+  assert.match(source, /let height = \(layout\.panel_height \* scale_factor\)\.round\(\) as u32;/);
+  assert.match(source, /let min_y = monitor\.position\(\)\.y \+ padding;/);
+  assert.match(source, /let available_height = \(\(bottom_position\.y - padding - min_y\) as f64 \/ scale_factor\)\.max\(0\.0\);/);
+  assert.match(source, /let y = \(bottom_position\.y - padding - height as i32\)\.max\(min_y\);/);
+  assert.match(source, /PhysicalPosition::new\(x, y\)/);
+  // Insufficient safe host space fails closed instead of falling below the bar
+  // or overlapping it. Monitor-edge clamping still takes precedence.
+  assert.match(source, /if available_width < 60\.0 \|\| available_height < 80\.0 \{ return Err\("Insufficient safe space for task gallery"\.into\(\)\); \}/);
+  assert.doesNotMatch(source, /let y = .*bottom_position\.y \+ .*height/);
+});

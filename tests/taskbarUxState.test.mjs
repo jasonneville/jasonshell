@@ -68,7 +68,7 @@ test('summarizes inactive attention and toast state with combined labels', () =>
   assert.equal(label, 'Code, 2 windows, 4 toasts, needs attention, activity detected, minimized');
 });
 
-test('renders attentive task groups with toast badge, amber cue, and active suppression', () => {
+test('renders attentive task groups with neutral quantity, amber toast cue, and active suppression', () => {
   assert.match(bottomBarSource, /taskWindowHasVisibleAttention\(taskWindow\) \? ' task-window-attention' : ''/);
   assert.match(bottomBarSource, /return taskWindow\.attentionState === 'requested' && !taskWindow\.isActive;/);
   assert.match(bottomBarSource, /class:task-group-toasted=\{taskGroupHasToast\(group\)\}/);
@@ -81,8 +81,15 @@ test('renders attentive task groups with toast badge, amber cue, and active supp
   assert.ok(Number(attentionShadow.match(/inset\s+\S+\s+([\d.]+)px/)?.[1]) > 0, 'attention cue has visible thickness');
   assert.match(attentionShadow, /(?:var\(--[\w-]+\)|#[\da-f]{3,8}|rgba?\()/i, 'attention cue has a visible color');
   assert.doesNotMatch(bottomBarCss, /taskbar-attention-flash/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-count \{[\s\S]*background: var\(--js-color-warning\);[\s\S]*color: var\(--js-color-text-strong\);/);
-  assert.match(bottomBarCss, /\.bottom-bar \.task-group-toasted \.task-count \{[\s\S]*box-shadow: 0 0 0 1px var\(--js-color-warning-border\), 0 0 0\.55rem rgba\(245, 191, 92, 0\.28\);/);
+  const quantity = cssRule(bottomBarCss, '.bottom-bar .task-count');
+  assert.match(quantity, /background:\s*transparent;/, 'quantity is not an attention badge');
+  assert.match(quantity, /color:\s*var\(--js-color-text\);/);
+  assert.match(quantity, /border:\s*0;/);
+  assert.match(quantity, /border-radius:\s*0;/);
+  assert.doesNotMatch(quantity, /(?:warning|box-shadow)/, 'quantity stays neutral even for toast groups');
+  const toastFace = cssRule(bottomBarCss, '.bottom-bar .task-group-toasted .task-button');
+  assert.match(toastFace, /box-shadow:\s*inset 0 2px 0 var\(--js-color-warning-border\);/,
+    'toast attention remains visibly amber on the task face');
   assert.match(bottomBarCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.bottom-bar \.task-group-busy::after \{[\s\S]*animation: none;[\s\S]*background: var\(--js-color-warning-border\);/);
 });
 

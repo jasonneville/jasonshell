@@ -19,6 +19,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import TaskGallerySurface from '../../src/components/TaskGallerySurface.svelte';
 import { TASKBAR_REFRESH_WINDOWS_EVENT } from '../../src/lib/taskbarUi';
+import { taskGalleryLayout } from '../../src/lib/taskGalleryLayout';
+let revision = 0;
 
 const windows = ['Alpha', 'Beta', 'Gamma'].map((title, index) => ({
   hwnd: String(101 + index), title, processName: 'Editor', processId: 42,
@@ -27,7 +29,8 @@ const windows = ['Alpha', 'Beta', 'Gamma'].map((title, index) => ({
 type Row = typeof windows[number];
 async function publish(nonce = 'session-A', rows: Row[] = windows, focusGallery = false) {
   await bridge.handlers.get('task-gallery:open')?.({ payload: {
-    nonce, groupKey: 'editor', label: 'Editor', focusGallery, windows: rows
+    nonce, revision: ++revision, layout: taskGalleryLayout(rows.length, 584, 328),
+    groupKey: 'editor', label: 'Editor', focusGallery, windows: rows
   } });
   await tick();
 }
@@ -48,6 +51,11 @@ function close(title: string): HTMLButtonElement {
 function calls(command: string) {
   return bridge.invoke.mock.calls.filter(([name]) => name === command);
 }
+function mockResult(name: string, request: any) {
+  if (name === 'allocate_task_preview_request_id') return ++bridge.sequence;
+  if (name === 'sync_task_gallery_thumbnails') return { ...request.args, thumbnails: [] };
+  return undefined;
+}
 function deferred() {
   let resolve!: () => void;
   let reject!: (error: Error) => void;
@@ -55,8 +63,8 @@ function deferred() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
-  bridge.handlers.clear(); bridge.invoke.mockReset(); bridge.emit.mockReset(); bridge.sequence = 0;
-  bridge.invoke.mockImplementation(async (name: string) => name === 'allocate_task_preview_request_id' ? ++bridge.sequence : undefined);
+  bridge.handlers.clear(); bridge.invoke.mockReset(); bridge.emit.mockReset(); bridge.sequence = 0; revision = 0;
+  bridge.invoke.mockImplementation(async (name: string, request: any) => mockResult(name, request));
   bridge.emit.mockResolvedValue(undefined);
 });
 
@@ -116,7 +124,7 @@ it('resolved close emits refresh but keeps all three tiles and gallery until aut
 
 it('pending duplicate suppression is per target; rejection leaves rows and allows retry', async () => {
   const pending = deferred();
-  bridge.invoke.mockImplementation((name: string) => name === 'close_task_gallery_window' ? pending.promise : Promise.resolve(++bridge.sequence));
+  bridge.invoke.mockImplementation((name: string, request: any) => name === 'close_task_gallery_window' ? pending.promise : Promise.resolve(mockResult(name, request)));
   await open();
   close('Alpha').focus();
   await tick();
@@ -132,42 +140,48 @@ it('pending duplicate suppression is per target; rejection leaves rows and allow
   expect(screen.getByRole('status').textContent).toMatch(/could not|failed|error|denied/i);
   expect(bridge.emit.mock.calls.filter(([name]) => name === TASKBAR_REFRESH_WINDOWS_EVENT)).toHaveLength(0);
   expect(screen.getAllByRole('button', { name: /^Close / })).toHaveLength(3);
-  bridge.invoke.mockResolvedValue(undefined);
+  bridge.invoke.mockImplementation(async (name: string, request: any) => mockResult(name, request));
   await fireEvent.click(close('Alpha'));
   await waitFor(() => expect(calls('close_task_gallery_window')).toHaveLength(3));
 });
 
-it('same-session removal preserves surviving DOM focus/preview and clears stale context menu', async () => {
+it('same-session removal preserves surviving DOM focus and clears stale context menu without separate preview', async () => {
   await open();
   activation('Gamma').focus();
-  await waitFor(() => expect(calls('show_task_gallery_window_preview').length).toBeGreaterThan(0));
+  await tick();
   await fireEvent.contextMenu(activation('Beta'));
-  expect(screen.getByRole('menu', { name: 'Beta actions' })).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole('menu', { name: 'Beta actions' })).toBeTruthy());
   const survivingButton = activation('Gamma');
   survivingButton.focus();
-  const shownBefore = calls('show_task_gallery_window_preview').length;
   await publish('session-A', [windows[0], windows[2]]);
   expect(screen.queryByRole('menu')).toBeNull();
   expect(document.activeElement).toBe(survivingButton);
   expect(close('Gamma').tabIndex).toBe(0);
   expect(calls('hide_task_gallery_window_preview')).toHaveLength(0);
-  expect(calls('show_task_gallery_window_preview')).toHaveLength(shownBefore);
+  expect(calls('show_task_gallery_window_preview')).toHaveLength(0);
+  // Inline resource membership is replaced by the current snapshot sync.
+  await waitFor(() => expect(calls('sync_task_gallery_thumbnails').at(-1)?.[1].args.revision).toBe(revision));
+  const latest = calls('sync_task_gallery_thumbnails').at(-1)![1].args;
+  expect(latest).toMatchObject({ nonce: 'session-A', revision });
+  expect(latest.frames.some((frame: any) => frame.hwnd === '102')).toBe(false);
 });
 
-it('authoritative removal of previewed target hides that preview and reconciles selected pair', async () => {
+it('authoritative removal replaces inline membership and reconciles selected pair', async () => {
   await open();
   activation('Beta').focus();
-  await waitFor(() => expect(calls('show_task_gallery_window_preview').length).toBeGreaterThan(0));
+  await tick();
   await publish('session-A', [windows[0], windows[2]]);
-  expect(calls('hide_task_gallery_window_preview')).toHaveLength(1);
-  expect(calls('hide_task_gallery_window_preview')[0][1]).toMatchObject({ nonce: 'session-A', hwnd: '102' });
+  await waitFor(() => expect(calls('sync_task_gallery_thumbnails').at(-1)?.[1].args.revision).toBe(revision));
+  expect(calls('sync_task_gallery_thumbnails').at(-1)![1].args.frames.some((frame: any) => frame.hwnd === '102')).toBe(false);
+  expect(calls('show_task_gallery_window_preview')).toHaveLength(0);
+  expect(calls('hide_task_gallery_window_preview')).toHaveLength(0);
   expect(activation('Alpha').tabIndex).toBe(0);
   expect(close('Alpha').tabIndex).toBe(0);
 });
 
 it.each(['replacement', 'closed', 'Escape hide', 'unmount'] as const)('late settlement after %s is inert', async (boundary) => {
   const pending = deferred();
-  bridge.invoke.mockImplementation((name: string) => name === 'close_task_gallery_window' ? pending.promise : Promise.resolve(++bridge.sequence));
+  bridge.invoke.mockImplementation((name: string, request: any) => name === 'close_task_gallery_window' ? pending.promise : Promise.resolve(mockResult(name, request)));
   const view = await open();
   await fireEvent.click(close('Alpha'));
   if (boundary === 'replacement') {
@@ -192,7 +206,7 @@ it.each(['replacement', 'closed', 'Escape hide', 'unmount'] as const)('late sett
 
 it('late rejection after replacement cannot report old error or disturb a new session', async () => {
   const pending = deferred();
-  bridge.invoke.mockImplementation((name: string) => name === 'close_task_gallery_window' ? pending.promise : Promise.resolve(++bridge.sequence));
+  bridge.invoke.mockImplementation((name: string, request: any) => name === 'close_task_gallery_window' ? pending.promise : Promise.resolve(mockResult(name, request)));
   await open();
   await fireEvent.click(close('Alpha'));
   await publish('session-B');
@@ -200,7 +214,7 @@ it('late rejection after replacement cannot report old error or disturb a new se
   pending.reject(new Error('old session denied'));
   await tick(); await Promise.resolve(); await tick();
   expect(errors).not.toHaveBeenCalled();
-  expect(screen.getByRole('status').textContent).toBe('');
+  expect(screen.queryByRole('status')?.textContent ?? '').toBe('');
   expect(close('Alpha').getAttribute('aria-busy')).toBe('false');
   expect(close('Alpha').disabled).toBe(false);
   expect(bridge.emit.mock.calls.filter(([name]) => name === TASKBAR_REFRESH_WINDOWS_EVENT)).toHaveLength(0);

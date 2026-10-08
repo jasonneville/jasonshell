@@ -106,14 +106,27 @@ export function filterTaskGalleryItems(
 export function nextTaskGalleryFocusIndex(
   currentIndex: number,
   itemCount: number,
-  key: string
+  key: string,
+  columns?: number
 ): number {
   if (itemCount <= 0) return -1;
   const boundedIndex = Math.min(Math.max(currentIndex, 0), itemCount - 1);
   if (key === 'Home') return 0;
   if (key === 'End') return itemCount - 1;
-  if (key === 'ArrowRight' || key === 'ArrowDown') return Math.min(itemCount - 1, boundedIndex + 1);
-  if (key === 'ArrowLeft' || key === 'ArrowUp') return Math.max(0, boundedIndex - 1);
+  // Omitted columns retain the legacy linear helper contract for other callers.
+  if (columns === undefined) {
+    if (key === 'ArrowRight' || key === 'ArrowDown') return Math.min(itemCount - 1, boundedIndex + 1);
+    if (key === 'ArrowLeft' || key === 'ArrowUp') return Math.max(0, boundedIndex - 1);
+    return boundedIndex;
+  }
+  const stride = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 1;
+  const rowStart = Math.floor(boundedIndex / stride) * stride;
+  const rowEnd = Math.min(itemCount - 1, rowStart + stride - 1);
+  if (key === 'ArrowRight') return Math.min(rowEnd, boundedIndex + 1);
+  if (key === 'ArrowLeft') return Math.max(rowStart, boundedIndex - 1);
+  if (key === 'ArrowUp') return rowStart === 0 ? boundedIndex : boundedIndex - stride;
+  if (key === 'ArrowDown') return rowStart + stride >= itemCount
+    ? boundedIndex : Math.min(itemCount - 1, boundedIndex + stride);
   return boundedIndex;
 }
 

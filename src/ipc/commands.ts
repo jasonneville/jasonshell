@@ -26,6 +26,7 @@ export const IPC_COMMANDS = {
   hideTaskWindowPreview: 'hide_task_window_preview',
   showTaskWindowContextMenu: 'show_task_window_context_menu',
   showTaskGallery: 'show_task_gallery',
+  syncTaskGalleryThumbnails: 'sync_task_gallery_thumbnails',
   hideTaskGallery: 'hide_task_gallery',
   hideTaskGalleryOnFocusLoss: 'hide_task_gallery_on_focus_loss',
   activateTaskGalleryWindow: 'activate_task_gallery_window',

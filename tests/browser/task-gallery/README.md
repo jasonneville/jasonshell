@@ -1,48 +1,41 @@
-# Isolated gallery close fixture
+# Ribbon/Matrix production browser acceptance
 
-## Tight-seams browser acceptance
+**Evidence boundary:** real `BottomBar.svelte`, `TaskGallerySurface.svelte`, shared menu components, and production global/component CSS; mocked Tauri IPC only. Captured-image responses are explicitly synthetic test PNGs. No real HWND discovery, DWM composition, WM_CLOSE delivery, immutable native identity, WebView2 behavior, or shell/AppBar certification. Native live-shell E2E is skipped pending explicit human consent. Never launch Tauri from this fixture.
 
-```sh
+## Run after implementation handoff
+
+Use preexisting Vite and agent-browser; no installs. Separate terminals:
+
+```powershell
 node node_modules/vite/bin/vite.js --config tests/browser/task-gallery/vite.config.ts
 node tests/browser/task-gallery/run-tight-seams.mjs
 ```
 
-Uses actual mounted `TaskGallerySurface.svelte` and production global CSS with existing Tauri mock aliases, not a restyled facsimile. Isolated agent-browser session `task-gallery-tight-seams`; JSON results; exit 1 if any assertion fails. No installs/native IPC.
+URL: `http://127.0.0.1:4179/`. Runner uses isolated `task-gallery-ribbon-matrix` browser session and closes that session afterward. Outputs JSON, JUnit XML, HTML, and screenshots under ignored `test-results/task-gallery/`. Nonzero exit preserves every failed assertion. Current file name `run-tight-seams.mjs` is retained as the existing entrypoint; its old tab-strip acceptance has intentionally been replaced.
 
-Matrix: dark/light × 24/32.4px × normal 960px/3 windows, narrow 240px/3 windows, stress 240px/30 windows. Asserts unchanged panel height; 2px vertical/4px horizontal inset; 3px tile gaps; 2px corners; firm theme border/beveled face; no painted active left stripe; distinct active fill/border; horizontal scroll; 24px close width with vertical containment; icon containment; long-title truncation. Scrollbar stress must not clip close/icon targets vertically. Close height may shrink to actual available height, width stays 24px.
+Preparation phase: browser acceptance authored but not yet executed. Initial component RED: nine legacy-runtime failures. Additional RED: failed captured-image error did not degrade to unavailable. Do not interpret these artifacts as GREEN or coverage percentages. Final full `npm run validate` belongs solely to the same E2E runner after both implementation reports.
 
-Initial RED: 600 checks, 240 failures on legacy gallery appearance, including clipped many-window controls. Final production rerun: 600/600 pass. At 24px, actual hover exposes a 24×18px close target fully within strip; activation height is 18px. Actual Tab from activation to close + Enter keeps keyboard focus/ring, dispatches one nonce/HWND close with no activation, sets aria-busy/aria-disabled, and preserves tile/close geometry while pending. Focused Node regressions 47/47 and gallery-close/group-menu component regressions 58/58 pass. Optional task-preview component suite independently reproduces an unrelated header-icon failure at line 154 (13/14 pass); no preview source/test modified or assertion weakened. Source contract `tests/taskbarGalleryContract.test.mjs` now checks tile-specific 2px corners and firm 1px theme border rather than legacy square/left-only borders. Existing close, preview, keyboard and mocked IPC tests remain final regression requirements.
+## Geometry and scenarios
 
-Full native E2E skipped for styling-only change; mocked component browser required. Live Windows compositing/WM_CLOSE/shell smoke remains consent-gated.
+Native-sized hosts follow authoritative layout, never the superseded 24/32.4px gallery strip. The **bottom bar** still uses 24px in mocked settings; it does not control gallery height.
 
+- Ribbon 2/3: `384×184` / `572×184` when fitting.
+- Matrix 4+: at most three columns and two visible rows; `584×328` at full width.
+- Narrow wrapping: available widths 396 and 144; small groups also wrap into Matrix.
+- Insets 8, header 24 plus gap 8, card gap 8, cards 180×136, thumbnail 172×96, footer 32, independent 24×24 Close. Matrix reserves 12px vertical scrollbar; undersized width reduces card/thumbnail, not Close target.
+- Dark/light × 2/3/4/6/30 × wide/two-column/undersized-width matrix. Tests measure actual DOM dimensions, vertical scroll, horizontal containment, title truncation, exact snapshot order, theme colors and visible Close targets.
+- Spatial ArrowUp/Down, short final-row clamping, Home/End scrolling, 3→4→3 preserving surviving Close DOM focus, 6→30 overflow.
+- Inline current-revision sync, bounded fully contained native frame set, scroll/resize newer request IDs, empty native set before context overlays and cleanup.
+- Captured/minimized/unavailable states, failed app/capture images, no separate hover preview.
+- Exact close nonce/HWND, duplicate suppression, visible failure and focus preservation, successful close retaining card until authoritative snapshot removal.
+- Stale snapshot/async capture responses inert, Escape/context dismissal, unmount cleanup.
+- Production BottomBar tile → native mock show → gallery → activate/close → authoritative BottomBar snapshot removal → stale update rejection.
+- Browser-generated click/Tab/Enter on sibling Close; separate reduced-motion geometry/animation check.
 
-```powershell
-npx vite --config tests/browser/task-gallery/vite.config.ts
-```
+Selectors use accessible controls for browser-generated actions; card/viewport geometry uses stable component hooks where roles cannot express layout. No gallery CSS is copied or overridden in the fixture. `#surface` sets only native host dimensions; fixture controls/ledger live outside it.
 
-URL: http://127.0.0.1:4179/. Production component + global CSS; test-only Tauri aliases, no native calls or shell startup. No added dependency.
+## Controllable test-only state
 
-Repeatable setup via URL: `/?height=24&width=240&theme=light` (validated against the selectable fixture choices).
+`window.galleryFixture` exposes `open`, `snapshot`, `bottomSnapshot`, `configure`, `measure`, `publish`, `unmount`, `mountGallery`, `settle`, `pendingSync`, and the IPC ledger. `snapshot(rows, revision)` can inject an older revision without resizing the host. `state.deferSync` enables explicit late-response tests; resolve using the captured request's nonce/revision/requestId. Mock close acceptance never removes rows. Only snapshots do.
 
-Controls: native-height simulation 24/32.4px, width 144/240/480/960px, dark/light colors, three windows (long title), deferred close success/failure, same-nonce removal, replacement, hide, unmount. IPC ledger and `window.galleryFixture.measure()` expose control geometry/truncation/focus/busy state. `window.galleryFixture.settle()` accepts pending requests without removing tiles; `.snapshot([rows[0],rows[2]])` alone removes Beta.
-
-Theme selects actual production `data-theme="base-dark"` / `base-light`; no partial fixture token overrides. **Focus activation** and **Focus X** invoke actual first-control DOM `.focus()` and report focus-within/reveal state (not real hardware Tab/Enter/Space). **Snapshot 30 windows** publishes a same-session stress snapshot. Summary reports count, zero-width titles, scroll/client dimensions, focused control, theme, and completely visible close targets; full geometry reports actual target bounds and colors. If the visible panel has not advanced animation frames, Capture then **Measure geometry** resamples settled opacity without modifying CSS.
-
-## Historical stress limit (resolved by production CSS)
-
-The measurements below describe the legacy gallery before Tight-seams styling, not current behavior.
-
-| Snapshot / fixture width / height | Historical production browser result |
-|---|---|
-| 3 / 144px / 24px | Three 48px tiles; title widths zero, icons/X intact; all X boxes 24×24px and within strip. |
-| 3 / 240px / 24px | Three 80px tiles; long title truncates; all three X targets fit. |
-| 30 / 144px or 240px / 24px | Existing horizontal scrollbar; scrollWidth 1440px, clientHeight ~14px (tile ~13.6px). All title widths zero; 24px-tall X boxes vertically clipped. Zero fully visible X targets. |
-| 30 / 240px / 32.4px | Existing scrollbar; clientHeight 22px; X boxes extend 1px above tiles, vertically clipped. Zero fully visible X targets. |
-
-Production CSS resolved vertical clipping with the new insets, non-space-taking horizontal scrollbars, and close controls fitted to available tile height while retaining 24px width. This is a production fix, not a fixture scrollbar/target/overflow workaround. Current 600/600 browser acceptance verifies vertical close/icon containment for the documented matrix, including 30 windows at 240px width and both heights; horizontally offscreen tiles still require scrolling. These results do not certify native monitor geometry or actual native user reachability. The historical 144px cases above were not rerun as part of the current acceptance matrix.
-
-Original close investigation used a visible browser. Tight-seams acceptance explicitly authorizes agent-browser against this mocked localhost fixture; never start Tauri.
-
-Check 24px right slot and hit target at both heights, title truncation, no layout shift on hover/focus, selected activation→X Tab pair, arrow/Home/End navigation, exact nonce/HWND close without activation, pending duplicate suppression, successful dispatch keeping all tiles, authoritative removal preserving surviving focus/preview, replacement/hide/unmount late settlement. Fixture settings buttons steal DOM focus intentionally; use `window.galleryFixture` in visible-browser eval for focus-preservation samples. Mock hide emits closed; pointer departure may auto-dismiss, so Open resets a fresh session.
-
-This is DOM/layout/IPC evidence only. It cannot certify real HWND identity, WM_CLOSE delivery, save prompts, Win32 focus, UAC absence, or native shell coexistence. Actual destructive cross-native journey remains consent-gated and unauthorized.
+The mock owns no OS resources; `state.liveFrames` is a command ledger aid, not evidence of native resource cleanup. Native pure tests separately cover serialized geometry and request/frame admission. Injectable fake-resource ownership remains a requested seam; static Drop/source guards alone cannot establish native lifecycle behavior.

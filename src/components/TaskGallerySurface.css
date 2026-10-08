@@ -1,0 +1,179 @@
+/* Geometry is shared with taskGalleryLayout.ts and the native layout payload.
+   Inset borders do not consume thumbnail/client coordinates. */
+.task-gallery-panel {
+  background: var(--js-bg-surface) linear-gradient(
+    color-mix(in srgb, var(--js-bg-surface) 88%, var(--js-color-accent)),
+    var(--js-bg-surface)
+  );
+  border: 0;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--js-bg-surface) 65%, var(--js-color-text-muted)),
+    var(--js-shadow-raised), var(--js-inset-highlight);
+  box-sizing: border-box;
+  color: var(--js-color-text);
+  height: 100%;
+  overflow: hidden;
+  padding: 8px;
+  position: relative;
+}
+.task-gallery-header {
+  align-items: center;
+  display: flex;
+  font-size: 11px;
+  gap: 12px;
+  height: 24px;
+  margin-bottom: 8px;
+  position: relative;
+}
+.task-gallery-app-label { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-gallery-count { color: var(--js-color-text-muted); flex: 0 0 auto; font-size: 10px; margin-left: auto; }
+.task-gallery-status {
+  align-items: center;
+  background: var(--js-bg-bar);
+  color: var(--js-color-error-text);
+  display: block;
+  font-size: 10px;
+  inset: 0;
+  line-height: 24px;
+  overflow: hidden;
+  position: absolute;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-gallery-viewport {
+  box-sizing: border-box;
+  height: var(--gallery-viewport-height);
+  max-height: calc(100% - 32px);
+  overflow: hidden;
+  scroll-behavior: auto;
+  width: var(--gallery-viewport-width);
+}
+.task-gallery-matrix .task-gallery-viewport {
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Override the global thin scrollbar: native reserves an exact 12px rail.
+     Chromium's standard thin/color properties otherwise ignore WebKit sizing. */
+  scrollbar-color: auto;
+  scrollbar-width: auto;
+  scrollbar-gutter: stable;
+}
+.task-gallery-matrix .task-gallery-viewport::-webkit-scrollbar { width: 12px; }
+.task-gallery-matrix .task-gallery-viewport::-webkit-scrollbar-track { background: var(--js-color-surface-sunken); }
+.task-gallery-matrix .task-gallery-viewport::-webkit-scrollbar-thumb {
+  background: var(--js-color-text-muted);
+  border: 3px solid var(--js-bg-bar);
+  border-radius: 6px;
+}
+.task-gallery-strip {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(var(--gallery-columns), var(--gallery-card-width));
+  width: max-content;
+}
+.task-gallery-tile {
+  background: var(--js-color-control);
+  background-color: color-mix(in srgb, var(--js-bg-bar) 93%, var(--js-color-text) 7%);
+  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
+  border: 0;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--js-color-border), var(--js-inset-highlight);
+  box-sizing: border-box;
+  height: var(--gallery-card-height);
+  overflow: hidden;
+  position: relative;
+  width: var(--gallery-card-width);
+}
+.task-gallery-tile:hover, .task-gallery-tile:focus-within {
+  background-color: var(--js-color-control-hover);
+  box-shadow: inset 0 0 0 1px var(--js-color-accent), var(--js-inset-highlight);
+}
+.task-gallery-tile.active {
+  background-color: color-mix(in srgb, var(--js-bg-bar) 76%, var(--js-color-accent) 24%);
+  box-shadow: inset 0 -2px var(--js-color-accent), inset 0 0 0 1px var(--js-color-border), var(--js-inset-highlight);
+}
+.task-gallery-matrix .task-gallery-tile.active {
+  box-shadow: inset 0 0 0 1px var(--js-color-accent), var(--js-inset-highlight);
+}
+.task-gallery-tile.minimized .task-gallery-copy { color: var(--js-color-text-muted); }
+.task-gallery-activate {
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+  box-sizing: border-box;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  height: 100%;
+  padding: 4px;
+  text-align: left;
+  width: 100%;
+}
+.task-gallery-thumbnail {
+  background: var(--js-color-surface-sunken);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--js-color-border-soft);
+  display: block;
+  height: var(--gallery-thumbnail-height);
+  overflow: hidden;
+  position: relative;
+  width: var(--gallery-thumbnail-width);
+}
+.task-gallery-captured-image { display: block; height: 100%; object-fit: contain; width: 100%; }
+.task-gallery-placeholder {
+  align-items: center;
+  color: var(--js-color-text-muted);
+  display: flex;
+  font-size: 10px;
+  height: 100%;
+  justify-content: center;
+  padding: 4px;
+  text-align: center;
+}
+.task-gallery-caption {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  gap: 5px;
+  height: var(--gallery-footer-height);
+  padding-right: 28px;
+  width: var(--gallery-thumbnail-width);
+}
+.task-gallery-app-icon { display: block; flex: 0 0 12px; height: 12px; width: 12px; }
+.task-gallery-copy { display: block; min-width: 0; }
+.task-gallery-tab-title { display: block; font-size: 10px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-gallery-window-state { color: var(--js-color-text-muted); display: block; font-size: 9px; line-height: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-gallery-close {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
+  color: var(--js-color-text);
+  cursor: pointer;
+  display: flex;
+  height: 24px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 4px;
+  top: calc(4px + var(--gallery-thumbnail-height) + 4px);
+  width: 24px;
+}
+.task-gallery-close:hover { background: var(--js-color-control-hover); }
+.task-gallery-close[aria-disabled='true'] { color: var(--js-color-text-muted); cursor: progress; }
+.task-gallery-activate:focus-visible, .task-gallery-close:focus-visible { outline: 2px solid var(--js-color-accent); outline-offset: -2px; }
+/* Measured local menus stay inside the native gallery client. Disable the shared
+   scale-in so its measured box and final clickable box have identical geometry. */
+.task-gallery-panel .task-gallery-context-menu {
+  animation: none;
+  box-sizing: border-box;
+  max-height: var(--gallery-menu-max-height);
+  max-width: var(--gallery-menu-max-width);
+  min-width: min(8rem, var(--gallery-menu-max-width));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+@media (forced-colors: active) {
+  .task-gallery-tile { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .task-gallery-tile.active { outline: 2px solid Highlight; }
+}

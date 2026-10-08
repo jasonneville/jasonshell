@@ -11,6 +11,7 @@ const wrapper = source('src/lib/taskGallery.ts');
 const commands = source('src/ipc/commands.ts');
 const main = source('src-tauri/src/main.rs');
 const surface = source('src/components/TaskGallerySurface.svelte');
+const css = source('src/components/TaskGallerySurface.css');
 
 function functionBody(text, name) {
   const start = text.search(new RegExp(`(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`));
@@ -65,9 +66,11 @@ test('preview X keeps legacy close policy and existing authorization removal sem
   assert.match(body, /windows_by_hwnd\.remove\(&args\.hwnd\)/);
 });
 
-test('tile X permanently reserves a 24px slot and reveals on hover and keyboard focus', () => {
-  assert.match(surface, /(?:width|min-width|flex-basis|grid-template-columns|flex):[^;\n]*24px/);
-  assert.match(surface, /:hover[^{]*[\s\S]*?(?:opacity|visibility)/);
-  assert.match(surface, /:focus-within[^{]*[\s\S]*?(?:opacity|visibility)/);
-  assert.doesNotMatch(surface, /\.task-gallery[^{}]*close[^{}]*\{[^}]*display:\s*none/s);
+test('gallery Close is independent sibling with fixed 24x24 footer target and visible keyboard ring', () => {
+  assert.match(surface, /class="task-gallery-close"[\s\S]*?aria-label=\{`Close \$\{item\.title\}`\}/);
+  const rule = css.match(/\.task-gallery-close\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rule, /width:\s*24px/);
+  assert.match(rule, /height:\s*24px/);
+  assert.match(css, /\.task-gallery-close:focus-visible[^}]*outline:/);
+  assert.doesNotMatch(rule, /display:\s*none|height:\s*min\(/);
 });

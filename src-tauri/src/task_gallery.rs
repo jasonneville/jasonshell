@@ -1,7 +1,13 @@
 use crate::shell_windows::{
-    BOTTOM_BAR_LABEL, TASK_GALLERY_HEIGHT_LOGICAL, TASK_GALLERY_LABEL, TASK_GALLERY_WIDTH_LOGICAL,
+    BOTTOM_BAR_LABEL, TASK_GALLERY_LABEL, TASK_GALLERY_WIDTH_LOGICAL,
 };
 use crate::{task_preview, task_windows, taskbar_menu};
+pub mod layout;
+pub mod thumbnails;
+pub mod resources;
+use resources::{ResourceOwner, ResourceSet};
+use layout::{task_gallery_layout, TaskGalleryLayout};
+use thumbnails::{Resource, SyncArgs, SyncResponse, Thumbnail, LiveThumbnail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -86,6 +92,8 @@ pub struct TaskGalleryOpenPayload {
     pub label: String,
     pub focus_gallery: bool,
     pub windows: Vec<TaskGalleryWindowRow>,
+    pub revision: u64,
+    pub layout: TaskGalleryLayout,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -106,6 +114,23 @@ struct TaskGalleryRuntimeState {
     cancelled_nonces: VecDeque<String>,
     windows_by_hwnd: BTreeMap<String, TaskGalleryAuthorizedWindow>,
     focus_loss_hold_count: u32,
+    revision: u64,
+    latest_thumbnail_request_id: u64,
+    layout: Option<TaskGalleryLayout>,
+    thumbnail_scale: Option<f64>,
+    thumbnail_order: Vec<String>,
+    thumbnails: ResourceOwner<ThumbnailGeneration, Resource>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ThumbnailGeneration {
+    nonce: String,
+    revision: u64,
+    request_id: u64,
+}
+
+fn thumbnail_generation(args: &SyncArgs) -> ThumbnailGeneration {
+    ThumbnailGeneration { nonce: args.nonce.clone(), revision: args.revision, request_id: args.request_id }
 }
 
 #[derive(Clone)]
@@ -120,11 +145,27 @@ fn state() -> &'static Mutex<TaskGalleryRuntimeState> {
     STATE.get_or_init(|| Mutex::new(TaskGalleryRuntimeState::default()))
 }
 
+// Serializes native side effects, NOT runtime state access. Capture, DWM and
+// Tauri operations never hold the runtime mutex. Commands are async so waiting
+// for this lane cannot block the Tauri UI thread's window-operation dispatch.
+fn native_lane() -> &'static Mutex<()> {
+    static LANE: Mutex<()> = Mutex::new(());
+    &LANE
+}
+
 fn reset_state() {
-    let mut state = state().lock().unwrap();
-    state.nonce = None;
-    state.windows_by_hwnd.clear();
-    state.focus_loss_hold_count = 0;
+    let resources = {
+        let mut runtime = state().lock().unwrap();
+        runtime.nonce = None;
+        runtime.windows_by_hwnd.clear();
+        runtime.focus_loss_hold_count = 0;
+        runtime.layout = None;
+        runtime.thumbnail_scale = None;
+        runtime.thumbnail_order.clear();
+        runtime.latest_thumbnail_request_id = 0;
+        runtime.thumbnails.clear()
+    };
+    drop(resources);
 }
 
 fn record_cancelled_nonce(runtime: &mut TaskGalleryRuntimeState, nonce: String) {
@@ -145,7 +186,8 @@ fn take_cancelled_nonce(runtime: &mut TaskGalleryRuntimeState, nonce: &str) -> b
     else {
         return false;
     };
-    runtime.cancelled_nonces.remove(index);
+    let _ = index;
+    // Keep bounded tombstones: delayed repeated refreshes cannot resurrect it.
     true
 }
 
@@ -171,7 +213,8 @@ fn validate(args_nonce: &str, hwnd: &str) -> Result<(), String> {
 }
 
 fn validate_nonce(args_nonce: &str) -> Result<(), String> {
-    if state().lock().unwrap().nonce.as_deref() != Some(args_nonce) {
+    let runtime = state().lock().unwrap();
+    if runtime.nonce.as_deref() != Some(args_nonce) || runtime.cancelled_nonces.iter().any(|n| n == args_nonce) {
         return Err("Stale task gallery nonce".to_string());
     }
     Ok(())
@@ -197,7 +240,7 @@ fn snapshot_window_from_runtime(
     nonce: &str,
     hwnd: &str,
 ) -> Result<TaskGalleryAuthorizedWindow, String> {
-    if runtime.nonce.as_deref() != Some(nonce) {
+    if runtime.nonce.as_deref() != Some(nonce) || runtime.cancelled_nonces.iter().any(|n| n == nonce) {
         return Err("Stale task gallery nonce".to_string());
     }
     runtime.windows_by_hwnd.get(hwnd).cloned()
@@ -233,10 +276,12 @@ fn hide_gallery_and_reset(app_handle: &AppHandle) {
     let nonce = {
         let mut state = state().lock().unwrap();
         let nonce = state.nonce.take();
-        state.windows_by_hwnd.clear();
-        state.focus_loss_hold_count = 0;
+        if let Some(ref nonce) = nonce {
+            record_cancelled_nonce(&mut state, nonce.clone());
+        }
         nonce
     };
+    reset_state();
     if nonce.is_some() {
         let preview_state = app_handle.state::<Mutex<task_preview::TaskPreviewRuntimeState>>();
         if let Ok(request_id) = task_preview::next_task_preview_request_id(&preview_state) {
@@ -281,171 +326,253 @@ fn show_task_gallery_window(gallery: &WebviewWindow, activate: bool) -> Result<(
 }
 
 #[tauri::command]
-pub fn show_task_gallery(
+pub async fn show_task_gallery(
     window: WebviewWindow,
     app_handle: AppHandle,
     args: TaskGalleryShowArgs,
-) -> Result<(), String> {
+) -> Result<Option<TaskGalleryLayout>, String> {
     if window.label() != BOTTOM_BAR_LABEL {
-        return Err("Unauthorized caller for command show_task_gallery".to_string());
+        return Err("Unauthorized caller for command show_task_gallery".into());
     }
-    {
+    // Pin the generation at receipt, not after waiting for native work.
+    let expected_revision = state().lock().unwrap().revision;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+        let nonce = args.nonce.clone();
+        let result = show_gallery(&app_handle, args, expected_revision);
+        if result.is_err() && state().lock().unwrap().nonce.as_deref() == Some(nonce.as_str()) {
+            hide_gallery_and_reset(&app_handle);
+        }
+        result
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn show_gallery(app_handle: &AppHandle, args: TaskGalleryShowArgs, expected_revision: u64) -> Result<Option<TaskGalleryLayout>, String> {
+    let same_session = {
         let mut runtime = state().lock().unwrap();
-        if take_cancelled_nonce(&mut runtime, &args.nonce) {
-            return Ok(());
+        if take_cancelled_nonce(&mut runtime, &args.nonce)
+            || (args.refresh_existing && (runtime.nonce.as_deref() != Some(args.nonce.as_str()) || runtime.revision != expected_revision)) {
+            return Ok(None);
         }
-        if args.refresh_existing && runtime.nonce.as_deref() != Some(args.nonce.as_str()) {
-            return Ok(());
-        }
+        let same = runtime.nonce.as_deref() == Some(args.nonce.as_str());
+        if !same && runtime.nonce.is_some() { return Err("Another task gallery session is active".into()); }
+        same
+    };
+    if args.nonce.is_empty() || !args.anchor_left.is_finite() || !args.anchor_width.is_finite() || args.anchor_width < 0.0 {
+        return Err("Invalid task gallery show arguments".into());
     }
-    let gallery = app_handle
-        .get_webview_window(TASK_GALLERY_LABEL)
-        .ok_or_else(|| "Task gallery window is unavailable".to_string())?;
-    let bottom_bar = app_handle
-        .get_webview_window(BOTTOM_BAR_LABEL)
-        .ok_or_else(|| "Bottom bar window is unavailable".to_string())?;
-    let allowed_hwnds = args
-        .windows
-        .iter()
-        .cloned()
-        .map(|row| {
-            let hwnd = row.hwnd.clone();
+    let gallery = app_handle.get_webview_window(TASK_GALLERY_LABEL).ok_or("Task gallery window is unavailable")?;
+    let bottom_bar = app_handle.get_webview_window(BOTTOM_BAR_LABEL).ok_or("Bottom bar window is unavailable")?;
+    let scale_factor = bottom_bar.scale_factor().map_err(|e| e.to_string())?;
+    if !scale_factor.is_finite() || scale_factor <= 0.0 { return Err("Invalid gallery scale".into()); }
+    let bottom_position = bottom_bar.outer_position().map_err(|e| e.to_string())?;
+    let monitor = bottom_bar.current_monitor().map_err(|e| e.to_string())?.ok_or("Gallery monitor unavailable")?;
+    let padding = (8.0 * scale_factor).round() as i32;
+    let min_x = monitor.position().x + padding;
+    let min_y = monitor.position().y + padding;
+    let available_width = (monitor.size().width as f64 / scale_factor - 16.0).max(0.0);
+    let available_height = ((bottom_position.y - padding - min_y) as f64 / scale_factor).max(0.0);
+    if available_width < 60.0 || available_height < 80.0 { return Err("Insufficient safe space for task gallery".into()); }
+    let layout = task_gallery_layout(args.windows.len(), available_width, available_height);
+    let mut allowed_hwnds = BTreeMap::new();
+    for row in &args.windows {
+        #[cfg(target_os = "windows")]
+        let identity = task_windows::task_window_identity(&row.hwnd)?;
+        if allowed_hwnds.insert(row.hwnd.clone(), TaskGalleryAuthorizedWindow {
+            row: row.clone(),
             #[cfg(target_os = "windows")]
-            let identity = task_windows::task_window_identity(&hwnd)?;
-            Ok((
-                hwnd,
-                TaskGalleryAuthorizedWindow {
-                    row,
-                    #[cfg(target_os = "windows")]
-                    identity,
-                },
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let same_session = state().lock().unwrap().nonce.as_deref() == Some(args.nonce.as_str());
-    {
+            identity,
+        }).is_some() { return Err("Duplicate gallery HWND".into()); }
+    }
+    // Revoke stale work without dropping unchanged same-session destinations.
+    // Changed layout/order/identity must retire overlays before host mutation.
+    let (revision, old) = {
         let mut runtime = state().lock().unwrap();
-        if take_cancelled_nonce(&mut runtime, &args.nonce) {
-            return Ok(());
-        }
-        if args.refresh_existing && runtime.nonce.as_deref() != Some(args.nonce.as_str()) {
-            return Ok(());
-        }
-        if !same_session && runtime.nonce.is_some() {
-            return Err("Another task gallery session is active".to_string());
-        }
+        if take_cancelled_nonce(&mut runtime, &args.nonce) { return Ok(None); }
+        let next_revision = runtime.revision.checked_add(1).filter(|n| *n <= thumbnails::MAX_SAFE_INTEGER).ok_or("Gallery revision exhausted")?;
+        let reusable: Vec<String> = if same_session && runtime.layout.as_ref() == Some(&layout)
+            && runtime.thumbnail_scale == Some(scale_factor) {
+            args.windows.iter().enumerate().filter_map(|(index, row)| {
+                if runtime.thumbnail_order.get(index) != Some(&row.hwnd) { return None; }
+                let previous = runtime.windows_by_hwnd.get(&row.hwnd)?;
+                let current = allowed_hwnds.get(&row.hwnd)?;
+                #[cfg(target_os = "windows")]
+                if previous.identity != current.identity { return None; }
+                if previous.row.is_minimized != current.row.is_minimized { return None; }
+                Some(row.hwnd.clone())
+            }).collect()
+        } else { Vec::new() };
+        let old = runtime.thumbnails.retain_visible(reusable.iter().map(String::as_str));
+        runtime.thumbnails.cancel();
+        runtime.revision = next_revision;
         runtime.nonce = Some(args.nonce.clone());
-        runtime.windows_by_hwnd = allowed_hwnds.clone();
-    }
-    let scale_factor = match bottom_bar.scale_factor() {
-        Ok(scale_factor) => scale_factor,
-        Err(error) => {
-            reset_state();
-            return Err(format!("Failed to read bottom-bar scale factor: {error}"));
-        }
+        runtime.windows_by_hwnd = allowed_hwnds;
+        runtime.layout = Some(layout.clone());
+        runtime.thumbnail_scale = Some(scale_factor);
+        runtime.thumbnail_order = args.windows.iter().map(|row| row.hwnd.clone()).collect();
+        if !same_session { runtime.latest_thumbnail_request_id = 0; }
+        (runtime.revision, old)
     };
-    let bottom_position = match bottom_bar.outer_position() {
-        Ok(position) => position,
-        Err(error) => {
-            reset_state();
-            return Err(format!("Failed to read bottom-bar position: {error}"));
-        }
-    };
-    let anchor_mid = (args.anchor_left + (args.anchor_width / 2.0)) * scale_factor;
-    let monitor = bottom_bar
-        .current_monitor()
-        .ok()
-        .and_then(|monitor| monitor);
-    let monitor_x = monitor
-        .as_ref()
-        .map(|monitor| monitor.position().x)
-        .unwrap_or(bottom_position.x);
-    let monitor_width = monitor
-        .as_ref()
-        .map(|monitor| monitor.size().width)
-        .unwrap_or((TASK_GALLERY_WIDTH_LOGICAL * scale_factor).round() as u32);
-    let monitor_width_logical = monitor
-        .as_ref()
-        .map(|monitor| monitor.size().width as f64 / scale_factor)
-        .unwrap_or(
-            bottom_bar
-                .outer_size()
-                .map(|size| size.width as f64 / scale_factor)
-                .unwrap_or(TASK_GALLERY_WIDTH_LOGICAL * 3.0),
-        );
-    let width = (task_gallery_width_logical(args.windows.len(), monitor_width_logical)
-        * scale_factor)
-        .round() as u32;
-    let height = bottom_bar
-        .outer_size()
-        .map(|size| size.height)
-        .unwrap_or_else(|_| (TASK_GALLERY_HEIGHT_LOGICAL * scale_factor).round() as u32);
-    let min_x = monitor_x;
-    let max_x = monitor_x + monitor_width.saturating_sub(width) as i32;
-    let x = (bottom_position.x + anchor_mid.round() as i32 - (width as i32 / 2))
-        .clamp(min_x, max_x.max(min_x));
-    let monitor_y = monitor
-        .as_ref()
-        .map(|monitor| monitor.position().y)
-        .unwrap_or(bottom_position.y - height as i32);
-    let y = (bottom_position.y - height as i32).max(monitor_y);
-    if let Err(e) = gallery.set_size(PhysicalSize::new(width, height)) {
-        reset_state();
-        return Err(format!("Failed to size task gallery: {e}"));
-    }
-    if let Err(e) = gallery.set_position(PhysicalPosition::new(x, y)) {
-        reset_state();
-        return Err(format!("Failed to position task gallery: {e}"));
-    }
-    if state().lock().unwrap().nonce.as_deref() != Some(args.nonce.as_str()) {
-        return Ok(());
-    }
-    if same_session {
-        return app_handle
-            .emit_to(
-                TASK_GALLERY_LABEL,
-                TASK_GALLERY_OPEN_EVENT,
-                TaskGalleryOpenPayload {
-                    nonce: args.nonce,
-                    group_key: args.group_key,
-                    label: args.label,
-                    focus_gallery: args.focus_gallery,
-                    windows: args.windows,
-                },
-            )
-            .map_err(|e| format!("Failed to refresh task gallery: {e}"));
-    }
-    if let Err(e) = show_task_gallery_window(&gallery, args.focus_gallery) {
-        reset_state();
-        return Err(e);
-    }
-    if args.focus_gallery {
-        if let Err(e) = gallery.set_focus() {
-            hide_task_gallery_window(&gallery);
-            reset_state();
-            return Err(format!("Failed to focus task gallery: {e}"));
-        }
-    }
-    if let Err(e) = app_handle.emit_to(
-        TASK_GALLERY_LABEL,
-        TASK_GALLERY_OPEN_EVENT,
-        TaskGalleryOpenPayload {
-            nonce: args.nonce,
-            group_key: args.group_key,
-            label: args.label,
-            focus_gallery: args.focus_gallery,
-            windows: args.windows,
-        },
-    ) {
+    drop(old);
+    let width = (layout.panel_width * scale_factor).round() as u32;
+    let height = (layout.panel_height * scale_factor).round() as u32;
+    let max_x = monitor.position().x + monitor.size().width as i32 - padding - width as i32;
+    let anchor = bottom_position.x + ((args.anchor_left + args.anchor_width / 2.0) * scale_factor).round() as i32;
+    let x = (anchor - width as i32 / 2).clamp(min_x, max_x.max(min_x));
+    let y = (bottom_position.y - padding - height as i32).max(min_y);
+    let result = (|| {
+        validate_nonce(&args.nonce)?;
+        gallery.set_size(PhysicalSize::new(width, height)).map_err(|e| e.to_string())?;
+        validate_nonce(&args.nonce)?;
+        gallery.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+        validate_nonce(&args.nonce)?;
+        if !same_session { show_task_gallery_window(&gallery, args.focus_gallery)?; }
+        validate_nonce(&args.nonce)?;
+        if args.focus_gallery && !same_session { gallery.set_focus().map_err(|e| e.to_string())?; }
+        validate_nonce(&args.nonce)?;
+        app_handle.emit_to(TASK_GALLERY_LABEL, TASK_GALLERY_OPEN_EVENT, TaskGalleryOpenPayload {
+            nonce: args.nonce.clone(), group_key: args.group_key, label: args.label,
+            focus_gallery: args.focus_gallery, windows: args.windows, revision, layout: layout.clone(),
+        }).map_err(|e| e.to_string())
+    })();
+    if let Err(error) = result {
+        let cancelled = state().lock().unwrap().cancelled_nonces.contains(&args.nonce);
+        record_cancelled_nonce(&mut state().lock().unwrap(), args.nonce.clone());
         hide_task_gallery_window(&gallery);
         reset_state();
-        return Err(format!("Failed to publish task gallery open event: {e}"));
+        emit_closed_event(app_handle, Some(args.nonce));
+        return if cancelled { Ok(None) } else { Err(error) };
+    }
+    Ok(Some(layout))
+}
+
+#[tauri::command]
+pub async fn sync_task_gallery_thumbnails(window: WebviewWindow, args: SyncArgs) -> Result<SyncResponse, String> {
+    if window.label() != TASK_GALLERY_LABEL {
+        return Err("Unauthorized caller for command sync_task_gallery_thumbnails".into());
+    }
+    {
+        let mut runtime = state().lock().unwrap();
+        thumbnails::admit_request(runtime.nonce.as_deref(), runtime.revision, runtime.latest_thumbnail_request_id, &args)?;
+        if runtime.cancelled_nonces.contains(&args.nonce) { return Err("Cancelled gallery session".into()); }
+        let layout = runtime.layout.as_ref().ok_or("Gallery layout unavailable")?;
+        thumbnails::validate_frames(&args, layout, layout.panel_width, layout.panel_height)?;
+        for frame in &args.frames { snapshot_window_from_runtime(&runtime, &args.nonce, &frame.hwnd)?; }
+        runtime.latest_thumbnail_request_id = args.request_id;
+        runtime.thumbnails.advance(thumbnail_generation(&args));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = sync_thumbnails(&window, &args);
+        if result.is_err() {
+            let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+            let old = {
+                let mut runtime = state().lock().unwrap();
+                runtime.thumbnails.take_if_current(&thumbnail_generation(&args)).unwrap_or_default()
+            };
+            drop(old);
+        }
+        result
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn thumbnail_work_is_current(args: &SyncArgs) -> Result<(), String> {
+    let runtime = state().lock().unwrap();
+    if runtime.nonce.as_deref() != Some(args.nonce.as_str()) || runtime.revision != args.revision
+        || runtime.latest_thumbnail_request_id != args.request_id || runtime.cancelled_nonces.contains(&args.nonce)
+        || !runtime.thumbnails.is_current(&thumbnail_generation(args)) {
+        return Err("Stale task gallery thumbnail work".into());
     }
     Ok(())
 }
 
+fn sync_thumbnails(window: &WebviewWindow, args: &SyncArgs) -> Result<SyncResponse, String> {
+    let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+    thumbnail_work_is_current(&args)?;
+    let layout = {
+        let runtime = state().lock().unwrap();
+        for frame in &args.frames { snapshot_window_from_runtime(&runtime, &args.nonce, &frame.hwnd)?; }
+        runtime.layout.clone().ok_or("Gallery layout unavailable")?
+    };
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    if !scale.is_finite() || scale <= 0.0 { return Err("Invalid gallery scale".into()); }
+    let client = window.inner_size().map_err(|e| e.to_string())?;
+    thumbnails::validate_frames(&args, &layout, client.width as f64 / scale, client.height as f64 / scale)?;
+    if !args.frames.is_empty() && !window.is_visible().map_err(|e| e.to_string())? {
+        return Err("Gallery is hidden".into());
+    }
+    let mut old = {
+        let mut runtime = state().lock().unwrap();
+        runtime.thumbnails.take_if_current(&thumbnail_generation(args))
+            .ok_or("Stale task gallery thumbnail work")?
+    };
+    // Drop omitted overlays before processing replacements. Native lane prevents
+    // hide/refresh/new sync from racing a checked native update or publication.
+    drop(old.retain_visible(args.frames.iter().map(|frame| frame.hwnd.as_str())));
+    let mut staged = ResourceSet::default();
+    let mut results = Vec::with_capacity(args.frames.len());
+    for frame in &args.frames {
+        let mut resource = old.remove(&frame.hwnd);
+        let work = (|| -> Result<Resource, String> {
+            thumbnail_work_is_current(&args)?;
+            snapshot_window(&args.nonce, &frame.hwnd)?;
+            if let Some(existing) = resource.take() {
+                if let Some(ref live) = existing.live {
+                    if live.update(frame.bounds, scale).is_ok() {
+                        snapshot_window(&args.nonce, &frame.hwnd)?;
+                        return Ok(existing);
+                    }
+                    // Failed update unregisters before capture, never leaves an
+                    // old destination painting across frontend chrome.
+                    drop(existing);
+                } else {
+                    snapshot_window(&args.nonce, &frame.hwnd)?;
+                    return Ok(existing);
+                }
+            }
+            let live = LiveThumbnail::register(window, &frame.hwnd)
+                .and_then(|live| {
+                    thumbnail_work_is_current(&args)?;
+                    snapshot_window(&args.nonce, &frame.hwnd)?;
+                    live.update(frame.bounds, scale)?;
+                    snapshot_window(&args.nonce, &frame.hwnd)?;
+                    Ok(live)
+                });
+            snapshot_window(&args.nonce, &frame.hwnd)?;
+            thumbnail_work_is_current(&args)?;
+            let captured = task_windows::capture_task_window_preview(frame.hwnd.clone());
+            thumbnail_work_is_current(&args)?;
+            snapshot_window(&args.nonce, &frame.hwnd)?;
+            match live {
+                Ok(live) => Ok(Resource { live: Some(live), result: Thumbnail {
+                    hwnd: frame.hwnd.clone(), source: "live",
+                    image_data_url: captured.ok().map(|image| image.image_data_url), error: None,
+                }}),
+                Err(_) => captured.map(|image| Resource { live: None, result: Thumbnail {
+                    hwnd: frame.hwnd.clone(), source: "captured", image_data_url: Some(image.image_data_url), error: None,
+                }}),
+            }
+        })();
+        match work {
+            Ok(resource) => { results.push(resource.result.clone()); drop(staged.replace(frame.hwnd.clone(), resource)); }
+            Err(error) => {
+                drop(resource);
+                // Do not cache identity failures or transient unavailable sources.
+                results.push(Thumbnail { hwnd: frame.hwnd.clone(), source: "unavailable", image_data_url: None, error: Some(error) });
+            }
+        }
+    }
+    let completion = {
+        let mut runtime = state().lock().unwrap();
+        runtime.thumbnails.finish(&thumbnail_generation(args), staged)
+    };
+    let accepted = completion.accepted;
+    drop(completion.retired);
+    if !accepted { return Err("Stale task gallery thumbnail work".into()); }
+    Ok(SyncResponse { nonce: args.nonce.clone(), revision: args.revision, request_id: args.request_id, thumbnails: results })
+}
+
 #[tauri::command]
-pub fn hide_task_gallery(
+pub async fn hide_task_gallery(
     window: Window,
     app_handle: AppHandle,
     nonce: Option<String>,
@@ -453,9 +580,18 @@ pub fn hide_task_gallery(
     if window.label() != BOTTOM_BAR_LABEL && window.label() != TASK_GALLERY_LABEL {
         return Err("Unauthorized caller for command hide_task_gallery".to_string());
     }
-    if let Some(nonce) = nonce {
-        record_cancelled_nonce(&mut state().lock().unwrap(), nonce);
-    }
+    let target_nonce = {
+        let mut runtime = state().lock().unwrap();
+        let target = nonce.or_else(|| runtime.nonce.clone());
+        if let Some(ref nonce) = target {
+            record_cancelled_nonce(&mut runtime, nonce.clone());
+            if runtime.nonce.as_deref() == Some(nonce.as_str()) { runtime.thumbnails.cancel(); }
+        }
+        target
+    };
+    let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+    let current_nonce = state().lock().unwrap().nonce.clone();
+    if current_nonce.is_some() && current_nonce != target_nonce { return Ok(()); }
     hide_gallery_and_reset(&app_handle);
     Ok(())
 }
@@ -471,11 +607,19 @@ pub fn hide_task_gallery_on_focus_loss(
     if focus_hold_active() {
         return Ok(());
     }
-    hide_task_gallery(window, app_handle, None)
+    // Native event callback executes on UI thread; never wait for the native
+    // worker lane there. Pin this session so delayed focus loss cannot hide next.
+    let nonce = state().lock().unwrap().nonce.clone();
+    if nonce.is_some() {
+        tauri::async_runtime::spawn(async move {
+            let _ = hide_task_gallery(window, app_handle, nonce).await;
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn activate_task_gallery_window(
+pub async fn activate_task_gallery_window(
     window: WebviewWindow,
     app_handle: AppHandle,
     args: TaskGalleryActivateArgs,
@@ -485,12 +629,13 @@ pub fn activate_task_gallery_window(
     }
     validate(&args.nonce, &args.hwnd)?;
     let result = task_windows::activate_task_window(args.hwnd, args.minimize_if_active);
-    hide_gallery_and_reset(&app_handle);
+    let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+    if validate_nonce(&args.nonce).is_ok() { hide_gallery_and_reset(&app_handle); }
     result
 }
 
 #[tauri::command]
-pub fn show_task_gallery_window_context_menu(
+pub async fn show_task_gallery_window_context_menu(
     window: WebviewWindow,
     app_handle: AppHandle,
     args: TaskGalleryContextMenuArgs,
@@ -519,7 +664,8 @@ pub fn show_task_gallery_window_context_menu(
         .and_then(|gallery| gallery.is_focused().ok())
         .unwrap_or(false);
     if !gallery_focused {
-        hide_gallery_and_reset(&app_handle);
+        let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+        if validate_nonce(&args.nonce).is_ok() { hide_gallery_and_reset(&app_handle); }
     }
     result
 }
@@ -572,7 +718,7 @@ pub fn close_task_gallery_window(
 }
 
 #[tauri::command]
-pub fn close_task_gallery_previewed_window(
+pub async fn close_task_gallery_previewed_window(
     window: WebviewWindow,
     args: TaskGalleryClosePreviewedWindowArgs,
 ) -> Result<(), String> {
@@ -583,7 +729,14 @@ pub fn close_task_gallery_previewed_window(
     }
     let authorized = snapshot_window(&args.nonce, &args.hwnd)?;
     task_windows::close_task_window_with_identity(authorized.row.hwnd, authorized.identity)?;
-    state().lock().unwrap().windows_by_hwnd.remove(&args.hwnd);
+    let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
+    let removed = {
+        let mut runtime = state().lock().unwrap();
+        if runtime.nonce.as_deref() != Some(args.nonce.as_str()) { return Ok(()); }
+        runtime.windows_by_hwnd.remove(&args.hwnd);
+        runtime.thumbnails.remove(&args.hwnd)
+    };
+    drop(removed);
     Ok(())
 }
 

@@ -191,6 +191,7 @@ commands.allow = [
     "stop_stack_terminal",
     "stop_terminal_panel_sessions",
     "suggest_stack_paths",
+    "sync_task_gallery_thumbnails",
     "toggle_stack_popup",
     "trigger_system_power_action",
     "unpin_stack_folder",

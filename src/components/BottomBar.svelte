@@ -4,6 +4,7 @@
   import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import MeltActionButton from './melt/MeltActionButton.svelte';
+  import OverflowTicker from './OverflowTicker.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import {
     addShellSettingsChangeListener,
@@ -44,7 +45,7 @@
     hideTaskGallery as hideTaskGalleryNative,
     showTaskGallery as showTaskGalleryNative
   } from '../lib/taskGallery';
-  import { normalizeTaskGalleryProcessId } from '../lib/taskGallery';
+  import { normalizeTaskGalleryProcessId, type TaskGalleryLayout } from '../lib/taskGallery';
   import { runTaskbarLauncherAction, runTaskWindowAction } from '../lib/taskbarMenus';
   import {
     CONTEXT_MENU_OVERLAY_SELECT_EVENT,
@@ -190,6 +191,8 @@
   let taskGalleryOpenNonce: string | null = null;
   let taskGalleryClickTransitionNonce: string | null = null;
   let taskGalleryOpenAnchor: { left: number; width: number } | null = null;
+  let taskGalleryOpenLayout: TaskGalleryLayout | null = null;
+  let taskGalleryLayoutRequest = 0;
   let taskStripEl: HTMLDivElement | null = null;
   let quickLaunchPanelOpen = false;
   let quickLaunchSessionNonce: string | null = null;
@@ -762,6 +765,10 @@
   function taskGroupDisplayClass(group: TaskWindowGroup) {
     return taskGroupDisplay(group) === 'capsule' ? 'task-group-capsule' : 'task-group-direct';
   }
+  function taskGroupGalleryMode(group: TaskWindowGroup) {
+    return taskGalleryOpenGroupKey === group.key && taskGalleryOpenLayout
+      ? taskGalleryOpenLayout.mode : group.windows.length <= 3 ? 'ribbon' : 'matrix';
+  }
   function resolveTaskGalleryOpenGroup(groupKey: string) {
     const nextGroup = taskWindowGroups.find((group) => group.key === groupKey);
     return nextGroup && taskGroupDisplay(nextGroup) === 'capsule' ? nextGroup : null;
@@ -795,6 +802,8 @@
     taskGalleryOpenNonce = null;
     taskGalleryClickTransitionNonce = null;
     taskGalleryOpenAnchor = null;
+    taskGalleryOpenLayout = null;
+    taskGalleryLayoutRequest += 1;
     if (!nonce) return;
     await hideTaskGalleryNative(nonce).catch((error) => {
       console.error('Failed to hide task gallery', error);
@@ -817,8 +826,10 @@
     taskGalleryOpenNonce = nonce;
     taskGalleryClickTransitionNonce = focusGallery ? nonce : null;
     taskGalleryOpenAnchor = rect ? { left: rect.left, width: rect.width } : null;
+    taskGalleryOpenLayout = null;
+    const layoutRequest = ++taskGalleryLayoutRequest;
     try {
-      await showTaskGalleryNative({
+      const nativeLayout = await showTaskGalleryNative({
         nonce,
         groupKey: group.key,
         label: group.label,
@@ -828,12 +839,16 @@
         refreshExisting: false,
         windows
       });
+      if (taskGalleryOpenNonce === nonce && taskGalleryLayoutRequest === layoutRequest && nativeLayout) {
+        taskGalleryOpenLayout = nativeLayout;
+      }
     } catch (error) {
       if (taskGalleryOpenNonce === nonce) {
         taskGalleryOpenGroupKey = null;
         taskGalleryOpenNonce = null;
         taskGalleryClickTransitionNonce = null;
         taskGalleryOpenAnchor = null;
+        taskGalleryOpenLayout = null;
       }
       console.error(`Failed to show task gallery for ${group.key}`, error);
     }
@@ -1224,8 +1239,10 @@
         const galleryElement = document.querySelector<HTMLElement>(`[data-task-group-key="${CSS.escape(galleryGroup.key)}"] .task-capsule`);
         const galleryRect = galleryElement?.getBoundingClientRect();
         taskGalleryOpenAnchor = galleryRect ? { left: galleryRect.left, width: galleryRect.width } : taskGalleryOpenAnchor;
+        const nonce = taskGalleryOpenNonce;
+        const layoutRequest = ++taskGalleryLayoutRequest;
         void showTaskGalleryNative({
-          nonce: taskGalleryOpenNonce,
+          nonce,
           groupKey: galleryGroup.key,
           label: galleryGroup.label,
           anchorLeft: galleryRect?.left ?? taskGalleryOpenAnchor?.left ?? 0,
@@ -1233,6 +1250,10 @@
           focusGallery: false,
           refreshExisting: true,
           windows: taskGroupGalleryItems(galleryGroup)
+        }).then((nativeLayout) => {
+          if (taskGalleryOpenNonce === nonce && taskGalleryLayoutRequest === layoutRequest && nativeLayout) {
+            taskGalleryOpenLayout = nativeLayout;
+          }
         }).catch((error) => console.error(`Failed to refresh task gallery for ${galleryGroup.key}`, error));
       }
     }));
@@ -1250,6 +1271,8 @@
       taskGalleryOpenNonce = null;
       taskGalleryClickTransitionNonce = null;
       taskGalleryOpenAnchor = null;
+      taskGalleryOpenLayout = null;
+      taskGalleryLayoutRequest += 1;
     }));
 
     registerAsyncUnlistener(listen(TASKBAR_REFRESH_LAUNCHERS_EVENT, () => {
@@ -1367,12 +1390,12 @@
                   onContextMenu={(event) => void openTaskMenu(taskWindow, event)}
                 >
                   <img class="task-icon" src={taskWindow.iconDataUrl} alt="" draggable="false" />
-                  <span class="task-label">{taskWindowLabel(taskWindow)}</span>
+                  <span class="task-label"><OverflowTicker text={taskWindowLabel(taskWindow)} /></span>
                 </MeltActionButton>
               {/each}
             {:else}
               <MeltActionButton
-                class={`task-button task-capsule${group.isActive ? ' task-button-active' : ''}${group.isMinimized ? ' task-button-minimized' : ''}`}
+                class={`task-button task-capsule task-capsule-${taskGroupGalleryMode(group)}${group.isActive ? ' task-button-active' : ''}${group.isMinimized ? ' task-button-minimized' : ''}`}
                 type="button"
                 ariaExpanded={taskGalleryOpenGroupKey === group.key}
                 ariaHaspopup="dialog"
@@ -1382,8 +1405,16 @@
                 onMouseLeave={() => scheduleTaskGalleryClose(group.key)}
               >
                 <img class="task-icon" src={taskGroupGalleryItems(group)[0]?.iconDataUrl ?? ''} alt="" draggable="false" />
-                <span class="task-label">{group.label}</span>
+                {#if taskGroupGalleryMode(group) === 'matrix'}
+                  <span class="task-group-glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                {/if}
+                <span class="task-label"><OverflowTicker text={group.label} /></span>
                 <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
+                {#if taskGroupGalleryMode(group) === 'ribbon'}
+                  <span class="task-ribbon-marks" aria-hidden="true">
+                    {#each group.windows.slice(0, 3) as taskWindow (taskWindow.hwnd)}<i></i>{/each}
+                  </span>
+                {/if}
               </MeltActionButton>
             {/if}
           </div>

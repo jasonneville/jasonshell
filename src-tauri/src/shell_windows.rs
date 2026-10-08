@@ -267,10 +267,12 @@ fn build_task_gallery_window(app: &mut App) -> AppResult<WebviewWindow> {
     .focused(false)
     .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
     .inner_size(TASK_GALLERY_WIDTH_LOGICAL, TASK_GALLERY_HEIGHT_LOGICAL)
+    .transparent(true)
     .maximizable(false)
     .minimizable(false)
     .resizable(false)
-    .shadow(true)
+    // CSS owns rounded chrome; Windows native shadow adds a rectangular 1px border.
+    .shadow(false)
     .skip_taskbar(true)
     .theme(Some(Theme::Dark))
     .title("JasonShell Task Gallery")

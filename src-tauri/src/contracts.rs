@@ -70,6 +70,7 @@ pub mod commands {
     pub const SHOW_LAUNCHER_CONTEXT_MENU: &str = "show_launcher_context_menu";
     pub const SHOW_QUICK_LAUNCH_PANEL_CONTEXT_MENU: &str = "show_quick_launch_panel_context_menu";
     pub const SHOW_TASK_GALLERY: &str = "show_task_gallery";
+    pub const SYNC_TASK_GALLERY_THUMBNAILS: &str = "sync_task_gallery_thumbnails";
     pub const HIDE_TASK_GALLERY: &str = "hide_task_gallery";
     pub const HIDE_TASK_GALLERY_ON_FOCUS_LOSS: &str = "hide_task_gallery_on_focus_loss";
     pub const ACTIVATE_TASK_GALLERY_WINDOW: &str = "activate_task_gallery_window";
@@ -256,6 +257,7 @@ pub mod commands {
         SHOW_LAUNCHER_CONTEXT_MENU,
         SHOW_QUICK_LAUNCH_PANEL_CONTEXT_MENU,
         SHOW_TASK_GALLERY,
+        SYNC_TASK_GALLERY_THUMBNAILS,
         HIDE_TASK_GALLERY,
         HIDE_TASK_GALLERY_ON_FOCUS_LOSS,
         ACTIVATE_TASK_GALLERY_WINDOW,

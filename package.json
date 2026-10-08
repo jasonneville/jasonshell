@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:node": "node scripts/clean-dist-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
-    "test:component": "vitest run --config vitest.config.ts",
+    "test:component": "node scripts/run-component-tests.mjs",
     "test:search": "npm run test:node",
     "p03:experiment": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stack-text-editor/launch-p03-experiment.ps1",
     "cargo:check": "cargo check --manifest-path src-tauri/Cargo.toml",

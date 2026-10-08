@@ -320,31 +320,54 @@
 
 .bottom-bar .task-count {
   align-items: center;
-  background: var(--js-color-warning);
-  border: 1px solid var(--js-color-warning-border);
-  border-radius: 999px;
-  color: var(--js-color-text-strong);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--js-color-text);
   display: inline-flex;
+  flex: 0 0 auto;
   font-size: 0.54rem;
-  font-weight: 800;
-  height: 0.88rem;
+  font-weight: 700;
   justify-content: center;
-  min-width: 0.88rem;
-  padding: 0 0.16rem;
-  position: absolute;
-  right: 0.12rem;
-  top: 0.12rem;
-  z-index: 1;
+  min-width: 0.7rem;
+  padding: 0;
+  position: static;
 }
+
+.bottom-bar .task-group-glyph {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  grid-template-columns: repeat(2, 3px);
+  pointer-events: none;
+}
+.bottom-bar .task-group-glyph i {
+  background: var(--js-color-text-muted);
+  height: 3px;
+  width: 3px;
+}
+.bottom-bar .task-group-glyph i:first-child { background: var(--js-color-accent); }
+.bottom-bar .task-ribbon-marks {
+  bottom: 3px;
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
+  position: absolute;
+  right: 6px;
+}
+.bottom-bar .task-ribbon-marks i {
+  background: var(--js-color-text-muted);
+  height: 2px;
+  width: 8px;
+}
+.bottom-bar .task-ribbon-marks i:first-child { background: var(--js-color-accent); }
 
 .bottom-bar .task-button.task-window-attention,
 .bottom-bar .task-group-toasted .task-button {
   border-top: 2px solid transparent;
 }
 
-.bottom-bar .task-group-toasted .task-count {
-  box-shadow: 0 0 0 1px var(--js-color-warning-border), 0 0 0.55rem rgba(245, 191, 92, 0.28);
-}
+/* Quantity is neutral; attention stays on the existing group's top cue. */
 
 .bottom-bar .task-button {
   align-items: center;
@@ -375,7 +398,8 @@
 
 .bottom-bar .task-capsule {
   min-width: 0;
-  padding-right: 1.2rem;
+  padding-right: 0.38rem;
+  position: relative;
 }
 
 .bottom-bar .task-button:hover:not(:disabled) {

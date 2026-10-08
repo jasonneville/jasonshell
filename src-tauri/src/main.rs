@@ -164,6 +164,7 @@ fn main() {
             quick_launch_panel::run_quick_launch_panel_as_admin,
             quick_launch_panel::show_quick_launch_panel_context_menu,
             task_gallery::show_task_gallery,
+            task_gallery::sync_task_gallery_thumbnails,
             task_gallery::hide_task_gallery,
             task_gallery::hide_task_gallery_on_focus_loss,
             task_gallery::activate_task_gallery_window,

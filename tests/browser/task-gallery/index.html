@@ -1,21 +1,30 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gallery close DOM fixture</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ribbon/Matrix production DOM acceptance</title>
 <style>
 body { margin:0; padding:24px; overflow:auto!important; background:#18212c; color:#eee; font:14px system-ui; }
 #controls { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
-#controls button,#controls select,#controls input { color:#111; background:#fff; padding:4px; }
-#surface { width:480px; height:32.4px; margin-bottom:24px; }
-#ledger,#geometry { white-space:pre-wrap; max-height:300px; overflow:auto; font:12px monospace; }
+#controls button,#controls select { color:#111; background:#fff; padding:4px; }
+/* Only native host dimensions; no production gallery/card/thumbnail CSS overrides. */
+#surface { width:572px; height:184px; margin-bottom:24px; }
+#bottom-bar-host { position:fixed; bottom:0; left:0; width:100%; height:24px; }
+#ledger,#summary { white-space:pre-wrap; max-height:220px; overflow:auto; font:12px monospace; }
+/* Isolated native-client coordinate harness. Only fixture chrome is hidden. */
+html[data-surface-only] body { padding:0; }
+html[data-surface-only] #controls,html[data-surface-only] #bottom-bar-host,
+html[data-surface-only] #menu-host,html[data-surface-only] h1,html[data-surface-only] h2,
+html[data-surface-only] p,html[data-surface-only] pre { display:none; }
+html[data-surface-only] #surface { margin:0; }
 </style></head><body>
-<h1>Gallery close — DOM/IPC fixture only</h1><p>No native calls, HWNDs, shell startup, or Win32 proof.</p>
+<h1>Ribbon/Matrix — DOM/IPC only</h1><p>Production BottomBar → gallery. Synthetic captured mock responses; no native HWND, DWM, or shell certification.</p>
 <div id="controls">
-<label>Height <select id="height"><option>32.4</option><option>24</option></select></label>
-<label>Width <select id="width"><option>480</option><option>240</option><option>144</option><option>960</option></select></label>
+<label>Available height <select id="height"><option>600</option><option>220</option></select></label>
+<label>Available width <select id="width"><option>960</option><option>584</option><option>572</option><option>396</option><option>240</option><option>144</option></select></label>
 <label>Theme <select id="theme"><option>dark</option><option>light</option></select></label>
 <button id="open">Open/reset three windows</button><button id="replace">Replace session</button>
 <button id="focus-activate">Focus activation</button><button id="focus-close">Focus X</button><button id="many">Snapshot 30 windows</button>
 <button id="resolve">Accept pending WM_CLOSE requests</button><button id="reject">Reject pending requests</button>
 <button id="remove">Authoritative snapshot removes Beta</button><button id="closed">Native closed event (mock)</button>
 <button id="unmount">Unmount</button><button id="measure">Measure geometry</button>
-</div><div id="surface"></div><h2>Summary</h2><pre id="summary"></pre><h2>Geometry</h2><pre id="geometry"></pre><h2>IPC ledger</h2><pre id="ledger"></pre>
+</div><div id="surface"></div><div id="bottom-bar-host"></div><div id="menu-host"></div><h2>Summary</h2><pre id="summary"></pre><h2>IPC ledger</h2><pre id="ledger"></pre>
+<script>if(new URLSearchParams(location.search).has('surfaceOnly'))document.documentElement.setAttribute('data-surface-only','');</script>
 <script type="module" src="./main.ts"></script><script type="module" src="./tight-seams-checks.js"></script></body></html>

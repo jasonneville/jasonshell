@@ -10,6 +10,7 @@ import {
 const bottomBarSource = readFileSync(new URL('../src/components/BottomBar.svelte', import.meta.url), 'utf8');
 const bottomBarCssSource = readFileSync(new URL('../src/components/BottomBar.css', import.meta.url), 'utf8');
 const gallerySource = readFileSync(new URL('../src/components/TaskGallerySurface.svelte', import.meta.url), 'utf8');
+const galleryCssSource = readFileSync(new URL('../src/components/TaskGallerySurface.css', import.meta.url), 'utf8');
 const taskPreviewSurfaceSource = readFileSync(new URL('../src/components/TaskPreviewSurface.svelte', import.meta.url), 'utf8');
 const nativeGallerySource = readFileSync(new URL('../src-tauri/src/task_gallery.rs', import.meta.url), 'utf8');
 
@@ -118,10 +119,12 @@ test('direct task buttons keep existing action semantics', () => {
   assert.match(bottomBarSource, /onMouseEnter=\{\(event\) => queuePreview\(taskWindow, event\)\}/);
 });
 
-test('gallery preview generations use shared allocation and native pass-through', () => {
-  assert.match(gallerySource, /allocateTaskPreviewRequestId/);
-  assert.doesNotMatch(gallerySource, /let previewSequence\s*=/);
-  assert.match(gallerySource, /hideTaskGalleryWindowPreview\(\{ nonce, requestId, hwnd \}\)/);
+test('inline gallery uses guarded sync rather than on-demand separate preview', () => {
+  assert.match(gallerySource, /syncTaskGalleryThumbnails/);
+  assert.doesNotMatch(gallerySource, /showTaskGalleryWindowPreview\s*\(/);
+  assert.match(gallerySource, /revision/);
+  assert.match(gallerySource, /requestId/);
+  // Legacy native preview routes still must pass caller generations through safely.
   assert.match(nativeGallerySource, /request_id: args\.request_id/);
   assert.match(nativeGallerySource, /hide_task_window_preview\(app_handle, state, request_id\)/);
   assert.doesNotMatch(nativeGallerySource, /let request_id = task_preview::next_task_preview_request_id\(&state\)\?/);
@@ -130,13 +133,13 @@ test('gallery preview generations use shared allocation and native pass-through'
 });
 
 test('gallery blur honors native context-menu focus hold', () => {
-  assert.match(gallerySource, /const blurHandler = \(\) => \{ if \(!disposed\) void hideTaskGalleryOnFocusLoss\(\); \}/);
+  assert.match(gallerySource, /const blurHandler = \(\) => \{[\s\S]*?if \(disposed\) return;[\s\S]*?clearNativeFrames\(\);[\s\S]*?hideTaskGalleryOnFocusLoss\(\)/);
 });
 
 test('gallery preview close is nonce-scoped to the exact window', () => {
   assert.match(taskPreviewSurfaceSource, /closePreviewedTaskWindow\(preview\.hwnd, preview\.galleryNonce\)/);
   assert.match(nativeGallerySource, /gallery_nonce: Some\(args\.nonce\)/);
-  assert.match(nativeGallerySource, /pub fn close_task_gallery_previewed_window/);
+  assert.match(nativeGallerySource, /pub (?:async )?fn close_task_gallery_previewed_window/);
   assert.match(nativeGallerySource, /snapshot_window\(&args\.nonce, &args\.hwnd\)/);
   assert.match(nativeGallerySource, /task_windows::close_task_window_with_identity\(authorized\.row\.hwnd, authorized\.identity\)/);
   assert.match(nativeGallerySource, /TaskGalleryAuthorizedWindow/);
@@ -146,7 +149,7 @@ test('gallery preview close is nonce-scoped to the exact window', () => {
 test('closing a gallery preview retains the gallery until snapshot count leaves capsule mode', () => {
   assert.match(taskPreviewSurfaceSource, /const preserveGallery = Boolean\(preview\.galleryNonce\);[\s\S]*?requestPreviewHide\('immediate', preserveGallery\)/);
   assert.match(gallerySource, /if \(event\.payload\.mode === 'immediate'\) \{[\s\S]*?if \(!event\.payload\.preserveGallery\) void closeTaskGallery\(\)/);
-  const closeCommand = nativeGallerySource.match(/pub fn close_task_gallery_previewed_window[\s\S]*?\n\}/)?.[0] ?? '';
+  const closeCommand = nativeGallerySource.match(/pub (?:async )?fn close_task_gallery_previewed_window[\s\S]*?\n\}/)?.[0] ?? '';
   assert.ok(closeCommand);
   assert.match(closeCommand, /windows_by_hwnd\.remove\(&args\.hwnd\)/);
   assert.doesNotMatch(closeCommand, /hide_gallery_and_reset/);
@@ -165,11 +168,11 @@ test('hover-open gallery does not steal native focus', () => {
   assert.match(bottomBarSource, /openTaskGallery\(group, event\.currentTarget as HTMLElement \| null, true\)/);
   assert.match(nativeGallerySource, /ShowWindow\(hwnd, SW_SHOWNOACTIVATE\)/);
   assert.match(nativeGallerySource, /show_task_gallery_window\(&gallery, args\.focus_gallery\)/);
-  assert.match(nativeGallerySource, /if args\.focus_gallery \{[\s\S]*?gallery\.set_focus\(\)/);
-  assert.match(gallerySource, /if \(event\.payload\.focusGallery\) panelElement\?\.focus\(\)/);
+  assert.match(nativeGallerySource, /if args\.focus_gallery && !same_session \{[\s\S]*?gallery\.set_focus\(\)/);
+  assert.match(gallerySource, /if \(!sameNonce && incoming\.focusGallery\) panelElement\?\.focus\(\)/);
 });
 
-test('gallery closes after pointer leaves both tabs and task preview', () => {
+test('inline gallery keeps pointer-crossing lifetime without separate preview dependency', () => {
   assert.match(gallerySource, /function\s+scheduleGalleryHoverClose\s*\(/);
   assert.match(gallerySource, /function\s+cancelGalleryHoverClose\s*\(/);
   assert.match(gallerySource, /TASK_PREVIEW_HOVER_ENTER_EVENT/);
@@ -180,15 +183,13 @@ test('gallery closes after pointer leaves both tabs and task preview', () => {
   assert.match(taskPreviewSurfaceSource, /emit(?:<TaskPreviewHoverEnter>)?\(TASK_PREVIEW_HOVER_ENTER_EVENT, \{ source: 'preview' \}\)/);
   assert.match(bottomBarSource, /type TaskPreviewHoverEnter/);
   assert.match(bottomBarSource, /listen<\s*TaskPreviewHoverEnter\s*>\(TASK_PREVIEW_HOVER_ENTER_EVENT, \(event\) => \{/s);
-  assert.match(gallerySource, /if \(event\.payload\.source === 'preview'\) \{/);
+  assert.doesNotMatch(gallerySource, /showTaskGalleryWindowPreview\s*\(/);
   assert.doesNotMatch(gallerySource, /listen\(TASK_PREVIEW_HOVER_ENTER_EVENT, cancelGalleryHoverClose\)/);
   assert.match(gallerySource, /on:pointerenter=\{handleGalleryPointerEnter\}/);
   assert.match(gallerySource, /on:pointerleave=\{scheduleGalleryHoverClose\}/);
 });
 
-test('gallery surface is one horizontal tab strip with exact window labels', () => {
-  assert.match(gallerySource, /class="task-gallery-strip"/);
-  assert.match(gallerySource, /class="task-gallery-strip" role="group" aria-label=/);
+test('image-first gallery retains exact labels and sibling action controls', () => {
   assert.match(gallerySource, /role="group"[\s\S]*?aria-label=\{taskGalleryTabLabel\(item\)\}/);
   assert.match(gallerySource, /class="task-gallery-activate"/);
   assert.match(gallerySource, /class="task-gallery-close"/);
@@ -198,34 +199,37 @@ test('gallery surface is one horizontal tab strip with exact window labels', () 
   assert.match(gallerySource, /title=\{item\.title\}/);
   assert.match(gallerySource, /const parts = \[item\.title, item\.processName\]/);
   assert.doesNotMatch(gallerySource, /HWND \$\{item\.hwnd\}/);
-  assert.match(gallerySource, /min-width: 0;/);
+  assert.match(galleryCssSource, /min-width: 0;/);
   assert.match(gallerySource, /task-gallery-tab-title/);
-  assert.doesNotMatch(gallerySource, /task-gallery-search|task-gallery-heading|task-gallery-meta|task-gallery-list/);
+  assert.match(gallerySource, /thumbnail/i);
+  assert.match(gallerySource, /layout/);
 });
 
-test('gallery tabs match bottom-bar task button styling', () => {
-  assert.match(gallerySource, /background:\s*var\(--js-color-control\)/);
-  assert.match(gallerySource, /border:\s*0;/, 'activation and close controls keep their independent borderless layout');
-  const galleryTileRule = gallerySource.match(/\.task-gallery-tile\s*\{([^}]*)\}/)?.[1] ?? '';
-  assert.match(galleryTileRule, /border-radius:\s*2px;/, 'gallery tile matches Tight seams corners');
-  assert.match(galleryTileRule, /border:\s*1px solid var\(--js-color-border\)/, 'gallery tile uses the same firm theme border as the bar');
-  assert.match(gallerySource, /font-size:\s*0\.62rem;/);
-  assert.match(gallerySource, /font-weight:\s*600;/);
-  assert.match(gallerySource, /gap:\s*0\.28rem;/);
-  assert.match(gallerySource, /padding:\s*0 0\.38rem;/);
-  assert.match(nativeGallerySource, /bottom_bar[\s\S]*outer_size\(\)[\s\S]*size\.height/);
+test('gallery uses shared theme control and text tokens, not fixed palette or bar-height targets', () => {
+  assert.match(galleryCssSource, /background:\s*var\(--js-color-control\)/);
+  assert.match(galleryCssSource, /border:\s*0;/, 'activation and close controls keep their independent borderless layout');
+  assert.match(galleryCssSource, /var\(--js-color-border/);
+  assert.match(galleryCssSource, /var\(--js-color-text/);
+  // No motion is also valid reduced-motion behavior; browser acceptance measures it.
+  for (const declaration of galleryCssSource.matchAll(/(?:animation|transition)\s*:\s*([^;]+);/g)) {
+    assert.equal(declaration[1].trim(), 'none', 'gallery motion declarations must explicitly disable animation/transition');
+  }
+  assert.doesNotMatch(galleryCssSource, /height:\s*min\(24px,\s*100%\)/,
+    'gallery Close targets must not shrink with the bottom bar');
+  assert.match(nativeGallerySource, /bottom_bar\.outer_position\(\)/);
+  assert.match(nativeGallerySource, /bottom_position\.y - padding - height as i32/);
 });
 
-test('same-session refresh preserves focus and updates native geometry from tab count', () => {
-  assert.match(gallerySource, /const next = reconcileTaskGalleryFocus\(sameNonce \? focusedHwnd : null, event\.payload\.windows\);/);
+test('same-session refresh preserves focus and updates native authoritative geometry', () => {
+  assert.match(gallerySource, /const next = reconcileTaskGalleryFocus\(sameNonce \? focusedHwnd : null, incoming\.windows\);/);
   assert.match(gallerySource, /panelElement\?\.focus\(\)/);
-  assert.match(nativeGallerySource, /task_gallery_width_logical\(/);
-  assert.match(nativeGallerySource, /TASK_GALLERY_HEIGHT_LOGICAL/);
-  assert.match(nativeGallerySource, /let same_session[\s\S]*gallery\.set_position[\s\S]*if same_session/);
+  assert.match(nativeGallerySource, /task_gallery_layout\(/);
+  assert.match(nativeGallerySource, /revision/);
+  assert.match(nativeGallerySource, /let same_session[\s\S]*gallery\.set_position[\s\S]*if !same_session/);
   assert.match(bottomBarSource, /refreshExisting: true/);
-  assert.match(nativeGallerySource, /if args\.refresh_existing[\s\S]*?nonce\.as_deref\(\) != Some\(args\.nonce\.as_str\(\)\)[\s\S]*?return Ok\(\(\)\)/);
-  assert.match(nativeGallerySource, /let same_session[\s\S]*?runtime\.nonce = Some\(args\.nonce\.clone\(\)\)[\s\S]*?runtime\.windows_by_hwnd = allowed_hwnds\.clone\(\)/);
-  assert.match(nativeGallerySource, /gallery\.set_position[\s\S]*?nonce\.as_deref\(\) != Some\(args\.nonce\.as_str\(\)\)[\s\S]*?return Ok\(\(\)\)[\s\S]*?show_task_gallery_window/);
+  assert.match(nativeGallerySource, /args\.refresh_existing && \(runtime\.nonce\.as_deref\(\) != Some\(args\.nonce\.as_str\(\)\) \|\| runtime\.revision != expected_revision\)[\s\S]*?return Ok\(None\)/);
+  assert.match(nativeGallerySource, /let same_session[\s\S]*?runtime\.nonce = Some\(args\.nonce\.clone\(\)\)[\s\S]*?runtime\.windows_by_hwnd = allowed_hwnds/);
+  assert.match(nativeGallerySource, /gallery\.set_position[\s\S]*?validate_nonce\(&args\.nonce\)\?;[\s\S]*?show_task_gallery_window/);
 });
 
 test('snapshot closes gallery when its group leaves capsule mode', () => {

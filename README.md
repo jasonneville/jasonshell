@@ -149,6 +149,11 @@ npm run tauri dev
 
 - shows Explorer taskbar pins as the launcher source
 - shows open-window task tiles and previews
+- grouped tiles use neutral inline counts with Ribbon window marks for small groups and a Matrix collection glyph for larger groups, retaining the app icon
+- grouped-window galleries show inline thumbnail cards: Ribbon for two or three windows when width permits; otherwise Matrix with at most three columns and two visible rows, scrolling vertically for additional windows
+- overflowing task tile labels and individual gallery titles scroll on hover or keyboard focus after 600ms: 40px/sec to the end, hold 2s, return at the same speed, hold 3s, then repeat. Fitting titles stay still; leaving both hover and focus restores ellipsis. Reduced motion keeps titles still and full title text remains accessible
+- gallery arrows navigate spatially; Home/End reach first/last windows, and Tab reaches the selected window’s separate activation and Close controls
+- inline thumbnails can be live, captured, or unavailable; window actions remain available when preview capture fails. Live Windows/DWM and mixed-DPI verification remains consent-gated
 - grouped tiles (two or more windows) offer **Open in Process Manager**, **Pin to taskbar**, and **Close all windows** on right-click, without opening the gallery first
 - **Close all windows** sends normal close requests to the selected group's captured, still-current windows; apps can keep unsaved-work prompts open, and this action does not force-kill processes
 - includes process manager access
@@ -262,6 +267,7 @@ npm run tauri
 
 Validation note:
 
+- `npm run test:component` uses `scripts/run-component-tests.mjs` to canonicalize the Windows Vitest CLI drive letter, preventing Node/Vite path-case differences from creating duplicate test collectors. Public commands and forwarded test arguments are unchanged
 - Windows native behavior still needs manual smoke
 - `npm run smoke:fullscreen` is part of the expected Windows smoke path
 - snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, and consumer paste remain unverified
