@@ -10,6 +10,16 @@ vi.mock('@tauri-apps/api/window', async () => {
   return { getCurrentWindow: () => ({ label: native.label, listen: tauriMocks().listen,
     onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()) }) };
 });
+vi.mock('@tauri-apps/api/webviewWindow', async () => {
+  const { tauriMocks } = await import('./setup');
+  return { getCurrentWebviewWindow: () => {
+    const label = native.label;
+    // Preserve official SDK listen's observable target options at the same
+    // transport mock. A global production listen receives NO automatic scope.
+    return { label, listen: (event: string, callback: (event: { payload: unknown }) => void) =>
+      tauriMocks().listen(event, callback, { target: { kind: 'WebviewWindow', label } }) };
+  } };
+});
 
 type Context = { generation: string; captureId: string; phase: 'selecting' | 'preview'; monitorId: string;
   width: number; height: number; scaleFactor?: number; originX?: number; originY?: number };
@@ -80,6 +90,71 @@ beforeEach(() => {
 });
 
 afterEach(() => { vi.unstubAllGlobals(); });
+
+it.each(['snip-overlay-7-m0', 'snip-overlay-7-m1', 'snip-preview-7'])('production context helper scopes both subscriptions to its concrete WebviewWindow %s', async (label) => {
+  native.label = label;
+  context = label.startsWith('snip-preview') ? { ...preview } : { ...selecting };
+  const { observeSnipContext } = await import('../../src/lib/snipping');
+  const updated = vi.fn(); const stop = observeSnipContext(context.phase, updated);
+  try {
+    await waitFor(() => expect(calls('get_snip_context')).toHaveLength(1));
+    const registrations = tauriMocks().listen.mock.calls.filter(([name]) => name === 'snip:context' || name === 'snip:armed');
+    expect(registrations.map(([name, , options]) => [name, options])).toEqual([
+      ['snip:context', { target: { kind: 'WebviewWindow', label } }],
+      ['snip:armed', { target: { kind: 'WebviewWindow', label } }]
+    ]);
+    const subscriptionOrder = tauriMocks().listen.mock.invocationCallOrder;
+    const lookupOrder = tauriMocks().invoke.mock.invocationCallOrder[0];
+    expect(subscriptionOrder[0]).toBeLessThan(subscriptionOrder[1]);
+    expect(subscriptionOrder[1]).toBeLessThan(lookupOrder);
+    expect(updated).toHaveBeenCalledWith(context);
+  } finally { stop(); }
+});
+
+it('production context helper keeps event revision ahead of pending lookup, rejects stale context, and disposes both listeners', async () => {
+  const pending = deferred<Context>();
+  tauriMocks().invoke.mockImplementation(() => pending.promise);
+  const { observeSnipContext } = await import('../../src/lib/snipping');
+  const update = vi.fn(); const armed = vi.fn();
+  const stop = observeSnipContext('selecting', update, armed);
+  let stopped = false;
+  try {
+    await waitFor(() => expect(calls('get_snip_context')).toHaveLength(1));
+    const newer = { ...selecting, generation: '8' };
+    handlers.get('snip:context')!({ payload: newer });
+    pending.resolve({ ...selecting });
+    await Promise.resolve(); await Promise.resolve();
+    handlers.get('snip:context')!({ payload: { ...selecting, generation: '6' } });
+    handlers.get('snip:context')!({ payload: { ...newer, captureId: '88888888888888888888888888888888' } });
+    expect(update).toHaveBeenCalledTimes(1); expect(update).toHaveBeenLastCalledWith(newer);
+    handlers.get('snip:armed')!({ payload: newer }); expect(armed).toHaveBeenCalledTimes(1);
+    const unlisteners = await Promise.all(tauriMocks().listen.mock.results.map(result => result.value));
+    stop(); stopped = true;
+    for (const unlisten of unlisteners) expect(unlisten).toHaveBeenCalledTimes(1);
+    handlers.get('snip:context')!({ payload: { ...newer, generation: '9' } });
+    handlers.get('snip:armed')!({ payload: newer });
+    expect(update).toHaveBeenCalledTimes(1); expect(armed).toHaveBeenCalledTimes(1);
+  } finally { if (!stopped) stop(); pending.resolve({ ...selecting }); }
+});
+
+it('production context helper disposal during subscription removes late registration without lookup or failure callback', async () => {
+  const pending = deferred<() => void>(); const unlisten = vi.fn(); const failed = vi.fn();
+  tauriMocks().listen.mockImplementationOnce(() => pending.promise);
+  const { observeSnipContext } = await import('../../src/lib/snipping');
+  const stop = observeSnipContext('selecting', vi.fn(), vi.fn(), failed);
+  stop(); pending.resolve(unlisten);
+  await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(1));
+  expect(tauriMocks().listen).toHaveBeenCalledTimes(1);
+  expect(calls('get_snip_context')).toHaveLength(0); expect(failed).not.toHaveBeenCalled();
+});
+
+it('production context helper reports active subscription rejection without starting lookup', async () => {
+  tauriMocks().listen.mockRejectedValueOnce(new Error('synthetic registration failure'));
+  const { observeSnipContext } = await import('../../src/lib/snipping');
+  const failed = vi.fn(); const stop = observeSnipContext('selecting', vi.fn(), vi.fn(), failed);
+  try { await waitFor(() => expect(failed).toHaveBeenCalledTimes(1)); expect(calls('get_snip_context')).toHaveLength(0); }
+  finally { stop(); }
+});
 
 async function overlay() {
   native.label = 'snip-overlay-7-m0'; context = { ...selecting };

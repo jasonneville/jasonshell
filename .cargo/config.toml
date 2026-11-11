@@ -1,0 +1,4 @@
+# Keep the user's workspace wrapper (including Blaze) for application code.
+# Build scripts must run their real compiled executable, not a Windows JIT stub.
+[build]
+rustc-wrapper = ".local/rustc-build-script-wrapper.exe"

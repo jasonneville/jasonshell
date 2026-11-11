@@ -96,8 +96,14 @@ fn main() {
 fn journey() -> Result<(), Box<dyn std::error::Error>> {
     let approved = PathBuf::from(std::env::var("LOCALAPPDATA")?).join("Temp/opencode");
     if !approved.is_dir() { return Err("approved synthetic output root missing".into()); }
-    let fixture_id = format!("snip-journey-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
-    let directory = approved.join(&fixture_id); std::fs::create_dir(&directory)?;
+    // Parent allocates/guards this exact directory before spawn, so pre-READY
+    // crashes cannot leave an undiscoverable WebView profile behind.
+    let fixture_id = std::env::var("JASONSHELL_SNIP_JOURNEY_FIXTURE_ID")?;
+    let parts: Vec<_> = fixture_id.strip_prefix("snip-journey-").ok_or("invalid fixture ID")?.split('-').collect();
+    if parts.len() != 2 || parts.iter().any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit())) { return Err("invalid fixture ID".into()); }
+    let directory = approved.join(&fixture_id);
+    if std::fs::symlink_metadata(&directory)?.file_type().is_symlink()
+        || std::fs::read(directory.join("parent-owner"))? != fixture_id.as_bytes() { return Err("unowned fixture directory".into()); }
     let owned_output = OwnedOutput(directory.clone());
     let mut child = Command::new(std::env::current_exe()?).arg("--synthetic-target").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
     let pid = child.id(); let stdout = child.stdout.take().ok_or("target stdout unavailable")?;
@@ -179,6 +185,8 @@ fn action(app: &tauri::AppHandle, op: &str) -> Result<(), &'static str> {
         _ => return Err("unknown operation"),
     };
     let window = app.get_webview_window(&label).ok_or("owned surface unavailable")?;
-    let script = format!(r#"(async()=>{{const invoke=window.__TAURI_INTERNALS__.invoke;const report=payload=>invoke('plugin:event|emit',{{event:'synthetic:journey-report',payload}});const wait=async check=>{{const end=performance.now()+8000;while(!check()){{if(performance.now()>end)throw Error('timeout');await new Promise(r=>setTimeout(r,16))}}}};try{{{body}}}catch{{report({{op:'{op}',error:'journey-action-failed'}})}}}})();"#);
+    // Only allowlisted error codes leave the renderer. Never dump OS/profile
+    // paths or arbitrary exception messages to diagnose a synthetic failure.
+    let script = format!(r#"(async()=>{{const invoke=window.__TAURI_INTERNALS__.invoke;const report=payload=>invoke('plugin:event|emit',{{event:'synthetic:journey-report',payload}});const wait=async check=>{{const end=performance.now()+8000;while(!check()){{if(performance.now()>end)throw Error('timeout');await new Promise(r=>setTimeout(r,16))}}}};try{{{body}}}catch(error){{const value=typeof error==='string'?error:error?.message;const known=['inactive','unauthorized','stale','busy','invalid-selection','topology-changed','capture-failed','readiness-timeout','window-failed','image-failed','timeout','not-accepted'];const code=known.includes(value)?value:typeof value==='string'&&/not allowed|permission|forbidden/i.test(value)?'acl-denied':'unclassified';report({{op:'{op}',error:'journey-action-failed',code}})}}}})();"#);
     window.eval(&script).map_err(|_| "owned webview evaluation failed")
 }

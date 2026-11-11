@@ -158,11 +158,11 @@ const fn crc_table_data() -> [u32; 256] {
     }
     t
 }
-static CRC_TABLE: [u32; 256] = crc_table_data();
-fn crc_table(b: &[u8]) -> u32 {
+static REFERENCE_CRC_TABLE: [u32; 256] = crc_table_data();
+fn reference_crc_table(b: &[u8]) -> u32 {
     let mut v = u32::MAX;
     for b in b {
-        v = (v >> 8) ^ CRC_TABLE[((v ^ u32::from(*b)) & 255) as usize]
+        v = (v >> 8) ^ REFERENCE_CRC_TABLE[((v ^ u32::from(*b)) & 255) as usize]
     }
     !v
 }

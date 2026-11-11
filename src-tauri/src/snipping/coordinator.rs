@@ -1,4 +1,6 @@
 //! Adapter-facing production lifecycle. Native effects occur outside the state lock.
+#[cfg(test)]
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/snipping_image_concurrency.rs"));
 use super::{geometry::{self, CroppedImage, LogicalRect, PhysicalRect, MAX_FROZEN_BYTES, MAX_STAGING_BYTES}, save::SaveError};
 pub use super::session::Caller;
 pub use super::clipboard_process::Outcome as ClipboardOutcome;
@@ -56,7 +58,18 @@ struct Current {
     ready: Vec<String>, armed: bool, selected: Option<String>, preview: Option<Preview>, busy: bool,
 }
 #[derive(Default)]
-struct Inner { next: u64, active: Option<Current>, previous: Option<Preview>, last_publication: Option<Publication> }
+struct Inner { next: u64, active: Option<Current>, previous: Option<Preview>, last_publication: Option<Publication>, image_reservations: usize }
+enum ImageSource { Frame(Arc<Frame>), Crop(Arc<CroppedImage>) }
+/// Independent read ownership survives cancellation, without pinning mutation busy.
+/// Charge both the borrowed source and PNG output, conservatively even when the
+/// source is also retained by the active generation. Retired generations stay charged.
+struct ImageRead<'a> { coordinator: &'a Coordinator, source: Option<ImageSource>, charge: usize }
+impl Drop for ImageRead<'_> {
+    fn drop(&mut self) {
+        drop(self.source.take());
+        if let Ok(mut inner) = self.coordinator.inner.lock() { inner.image_reservations -= self.charge; }
+    }
+}
 pub struct Coordinator {
     capture: Arc<dyn CapturePort>, windows: Arc<dyn WindowPort>, clipboard: Arc<dyn ClipboardPort>,
     picker: Arc<dyn PickerPort>, publisher: Arc<dyn PublisherPort>, clock: Arc<dyn ClockPort>, inner: Mutex<Inner>,
@@ -78,7 +91,8 @@ impl Coordinator {
             let generation = inner.next.checked_add(1).ok_or(SnipError::Inactive)?;
             inner.next = generation;
             inner.previous = inner.active.take().and_then(|mut current| current.preview.take());
-            let retained = inner.previous.as_ref().map_or(0, |previous| previous.crop.pixels.capacity());
+            let retained = inner.previous.as_ref().map_or(0, |previous| previous.crop.pixels.capacity())
+                .checked_add(inner.image_reservations).ok_or(SnipError::ImageFailed)?;
             let old_window = inner.previous.as_ref().map(|previous| previous.window.clone());
             let token = Token { generation: generation.to_string(), capture_id };
             inner.active = Some(Current { token: token.clone(), phase: Phase::Preparing, deadline: now + Duration::from_secs(5),
@@ -117,8 +131,11 @@ impl Coordinator {
                 self.windows.emit_context(&window, &context)?;
             }
             self.check_deadline(&token)?;
-            let mut inner = self.lock()?;
-            active_mut(&mut inner, &token)?.phase = Phase::Selecting;
+            {
+                let mut inner = self.lock()?;
+                active_mut(&mut inner, &token)?.phase = Phase::Selecting;
+            }
+            self.arm_if_ready(&token)?;
             Ok(token.clone())
         })();
         if result.is_err() { self.rollback(&token); }
@@ -138,56 +155,85 @@ impl Coordinator {
     }
     pub fn image(&self, caller: Caller, token: Token, monitor_id: String) -> Result<Vec<u8>, SnipError> {
         self.live(&caller)?;
-        enum Source { Frame(Arc<Frame>), Crop(Arc<CroppedImage>) }
-        let (source, retained) = {
+        self.expire();
+        let (read, output_limit) = {
             let mut inner = self.lock()?;
             let retained = retained_bytes(&inner);
             let current = active_mut(&mut inner, &token)?;
             if current.busy { return Err(SnipError::Busy); }
             let source = if let Some(preview) = &current.preview {
                 if preview.window.caller != caller || preview.monitor.id != monitor_id { return Err(SnipError::Unauthorized); }
-                Source::Crop(preview.crop.clone())
+                ImageSource::Crop(preview.crop.clone())
             } else {
                 authorize_overlay(current, &caller, &monitor_id)?;
-                Source::Frame(current.frames.iter().find(|frame| frame.monitor.id == monitor_id).cloned().ok_or(SnipError::Unauthorized)?)
+                ImageSource::Frame(current.frames.iter().find(|frame| frame.monitor.id == monitor_id).cloned().ok_or(SnipError::Unauthorized)?)
             };
-            current.busy = true;
-            (source, retained)
+            let source_bytes = match &source { ImageSource::Frame(frame) => frame.rgba.capacity(), ImageSource::Crop(crop) => crop.pixels.capacity() };
+            // The stored-block PNG codec borrows RGBA and adds at most one filter
+            // byte per row, five bytes per 65535-byte block, and 63 fixed bytes.
+            // With validated dimensions <=16384, 64KiB bounds all that overhead.
+            let output_limit = source_bytes.checked_add(65_536).ok_or(SnipError::ImageFailed)?;
+            let charge = source_bytes.checked_add(output_limit).ok_or(SnipError::ImageFailed)?;
+            if retained.checked_add(charge).is_none_or(|bytes| bytes > MAX_STAGING_BYTES) { return Err(SnipError::ImageFailed); }
+            inner.image_reservations += charge;
+            (ImageRead { coordinator: self, source: Some(source), charge }, output_limit)
         };
-        let encoded = match &source {
-            Source::Frame(frame) => frame.monitor.rect.dimensions().map_err(|_| SnipError::ImageFailed)
-                .and_then(|(width, height)| super::clipboard::png_rgba(width, height, &frame.rgba, retained).map_err(|_| SnipError::ImageFailed)),
-            Source::Crop(crop) => super::clipboard::png_rgba(crop.width, crop.height, &crop.pixels, retained).map_err(|_| SnipError::ImageFailed),
+        #[cfg(test)]
+        image_concurrency_verification::before_encode(&token, &monitor_id);
+        // Give the codec only this reservation's output allowance, including its
+        // actual Vec capacity check. No state lock is held during allocation/encode.
+        let codec_retained = MAX_STAGING_BYTES - output_limit;
+        let encoded = match read.source.as_ref().ok_or(SnipError::Inactive)? {
+            ImageSource::Frame(frame) => frame.monitor.rect.dimensions().map_err(|_| SnipError::ImageFailed)
+                .and_then(|(width, height)| super::clipboard::png_rgba_transport(width, height, &frame.rgba, codec_retained).map_err(|_| SnipError::ImageFailed)),
+            ImageSource::Crop(crop) => super::clipboard::png_rgba_transport(crop.width, crop.height, &crop.pixels, codec_retained).map_err(|_| SnipError::ImageFailed),
         };
-        self.unpin(&token);
         self.expire();
-        { let mut inner = self.lock()?; active_mut(&mut inner, &token)?; }
+        {
+            let mut inner = self.lock()?;
+            let current = active_mut(&mut inner, &token)?;
+            if (current.phase == Phase::Preparing || (current.phase == Phase::Selecting && !current.armed))
+                && self.clock.now() >= current.deadline { return Err(SnipError::ReadinessTimeout); }
+        }
+        self.live(&caller)?;
         encoded
     }
     pub fn ready(&self, caller: Caller, token: Token, monitor_id: String) -> Result<bool, SnipError> {
         self.live(&caller)?;
         self.check_deadline(&token)?;
-        let windows = {
+        {
             let mut inner = self.lock()?;
             let current = active_mut(&mut inner, &token)?;
             authorize_overlay(current, &caller, &monitor_id)?;
             if current.armed { return Ok(true); }
-            if current.phase != Phase::Selecting || current.busy { return Err(SnipError::Busy); }
+            if current.busy { return Err(SnipError::Busy); }
             if !current.ready.contains(&monitor_id) { current.ready.push(monitor_id); }
+            // A fast first renderer may finish while later overlays are still
+            // being constructed. Start will arm after the full set is installed.
+            if current.phase == Phase::Preparing { return Ok(false); }
+        }
+        self.arm_if_ready(&token)
+    }
+    fn arm_if_ready(&self, token: &Token) -> Result<bool, SnipError> {
+        let windows = {
+            let mut inner = self.lock()?;
+            let current = active_mut(&mut inner, token)?;
+            if current.armed { return Ok(true); }
+            if current.phase != Phase::Selecting || current.busy { return Ok(false); }
             if current.ready.len() != current.windows.len() { return Ok(false); }
             current.busy = true;
             current.windows.clone()
         };
         let result = (|| {
             for window in &windows { self.windows.show(window)?; }
-            for window in &windows { self.windows.emit_armed(window, &token)?; }
+            for window in &windows { self.windows.emit_armed(window, token)?; }
             Ok(())
         })();
-        self.unpin(&token);
-        if let Err(error) = result { self.rollback(&token); return Err(error); }
-        self.check_deadline(&token)?;
+        self.unpin(token);
+        if let Err(error) = result { self.rollback(token); return Err(error); }
+        self.check_deadline(token)?;
         let mut inner = self.lock()?;
-        active_mut(&mut inner, &token)?.armed = true;
+        active_mut(&mut inner, token)?.armed = true;
         Ok(true)
     }
     pub fn begin_selection(&self, caller: Caller, token: Token, monitor_id: String) -> Result<bool, SnipError> {
@@ -276,7 +322,8 @@ impl Coordinator {
         let crop = self.pin_preview(&caller, &token, false)?;
         let result = (|| {
             self.validate_pinned_preview(&caller, &token)?;
-            let outcome = self.clipboard.publish(&crop, crop.pixels.capacity());
+            let retained = retained_bytes(&*self.lock()?);
+            let outcome = self.clipboard.publish(&crop, retained);
             self.record_publication(&token, outcome.clone())?;
             Ok(outcome)
         })();
@@ -288,7 +335,8 @@ impl Coordinator {
         let result = (|| {
             self.validate_pinned_preview(&caller, &token).map_err(|_| SaveCode::Failed)?;
             let Some(path) = self.picker.pick_png()? else { return Ok(SaveOutcome::Cancelled); };
-            let png = super::clipboard::png_rgba(crop.width, crop.height, &crop.pixels, crop.pixels.capacity()).map_err(|_| SaveCode::Failed)?;
+            let retained = retained_bytes(&*self.lock().map_err(|_| SaveCode::Failed)?);
+            let png = super::clipboard::png_rgba(crop.width, crop.height, &crop.pixels, retained).map_err(|_| SaveCode::Failed)?;
             // Check immediately before publication; save pin prevents replacement.
             self.validate_pinned_preview(&caller, &token).map_err(|_| SaveCode::Failed)?;
             self.publisher.publish_png(&path, &png)?;
@@ -428,7 +476,7 @@ fn authorize_overlay(current: &Current, caller: &Caller, monitor: &str) -> Resul
 fn retained_bytes(inner: &Inner) -> usize {
     inner.active.as_ref().map_or(0, |current| current.frames.iter().map(|frame| frame.rgba.capacity()).sum::<usize>()
         + current.preview.as_ref().map_or(0, |preview| preview.crop.pixels.capacity()))
-        + inner.previous.as_ref().map_or(0, |preview| preview.crop.pixels.capacity())
+        + inner.previous.as_ref().map_or(0, |preview| preview.crop.pixels.capacity()) + inner.image_reservations
 }
 fn context_for(token: &Token, phase: Phase, monitor: &MonitorSnapshot, (width, height): (u32, u32)) -> Context {
     Context { token: token.clone(), phase, monitor_id: monitor.id.clone(), width, height,
@@ -437,11 +485,16 @@ fn context_for(token: &Token, phase: Phase, monitor: &MonitorSnapshot, (width, h
 fn validate_monitors(monitors: &[MonitorSnapshot], retained: usize) -> Result<(), SnipError> {
     if monitors.is_empty() || monitors.len() > 32 { return Err(SnipError::CaptureFailed); }
     let mut total = 0usize;
+    let mut largest = 0usize;
     for (index, monitor) in monitors.iter().enumerate() {
         if monitor.id != format!("m{index}") || monitor.identity == 0 || !monitor.scale.is_finite() || monitor.scale <= 0.0 { return Err(SnipError::CaptureFailed); }
-        total = total.checked_add(geometry::checked_monitor_len(monitor.rect, MAX_FROZEN_BYTES).map_err(|_| SnipError::CaptureFailed)?).ok_or(SnipError::CaptureFailed)?;
+        let bytes = geometry::checked_monitor_len(monitor.rect, MAX_FROZEN_BYTES).map_err(|_| SnipError::CaptureFailed)?;
+        total = total.checked_add(bytes).ok_or(SnipError::CaptureFailed)?;
+        largest = largest.max(bytes);
     }
-    if total > MAX_FROZEN_BYTES || total.checked_add(retained).is_none_or(|n| n > MAX_STAGING_BYTES) { return Err(SnipError::CaptureFailed); }
+    // Native capture retains the frozen buffers while one GDI DIB is live.
+    // Include that transient alongside retired image-read reservations BEFORE freeze.
+    if total > MAX_FROZEN_BYTES || total.checked_add(largest).and_then(|n| n.checked_add(retained)).is_none_or(|n| n > MAX_STAGING_BYTES) { return Err(SnipError::CaptureFailed); }
     Ok(())
 }
 fn random_token() -> Result<String, SnipError> {

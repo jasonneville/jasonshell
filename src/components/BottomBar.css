@@ -335,18 +335,18 @@
 }
 
 .bottom-bar .task-group-glyph {
-  display: grid;
+  display: block;
   flex: 0 0 auto;
-  gap: 2px;
-  grid-template-columns: repeat(2, 3px);
+  height: 8px;
+  /* Avoid antialiasing the outer cells against a fractional SVG viewport clip. */
+  overflow: visible;
   pointer-events: none;
+  width: 8px;
 }
-.bottom-bar .task-group-glyph i {
-  background: var(--js-color-text-muted);
-  height: 3px;
-  width: 3px;
+.bottom-bar .task-group-glyph rect {
+  fill: var(--js-color-text-muted);
 }
-.bottom-bar .task-group-glyph i:first-child { background: var(--js-color-accent); }
+.bottom-bar .task-group-glyph rect:first-child { fill: var(--js-color-accent); }
 .bottom-bar .task-ribbon-marks {
   bottom: 3px;
   display: flex;

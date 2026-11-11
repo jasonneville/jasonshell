@@ -1,7 +1,7 @@
 //! Production ports for the existing coordinator. Not wired into startup here.
 use super::{coordinator::*, geometry::{self, CroppedImage, PhysicalRect}, native_registry::NativeRegistry};
 use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, mpsc, atomic::{AtomicBool, AtomicUsize, Ordering}}, time::{Duration, Instant}};
-use tauri::{AppHandle, Emitter, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, EventTarget, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 use windows::Win32::{Foundation::*, Graphics::Gdi::*, UI::WindowsAndMessaging::*};
 
@@ -88,7 +88,7 @@ impl NativeWindowPort {
         let result = self.dispatch(move || {
             let _dpi = super::windows::PhysicalDpi::enter().map_err(|_| SnipError::WindowFailed)?;
             let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-                .visible(false).focused(false).decorations(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false)
+                .visible(false).focused(false).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false)
                 .inner_size(if preview { 320.0 } else { f64::from(rect.right - rect.left) / scale }, if preview { 264.0 } else { f64::from(rect.bottom - rect.top) / scale });
             let builder = if let Some(directory) = data_directory { builder.data_directory(directory) } else { builder };
             let window = builder.build().map_err(|_| SnipError::WindowFailed)?;
@@ -108,6 +108,11 @@ impl NativeWindowPort {
                     unsafe { let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE); SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE.0 as isize); }
                 }
                 unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).map_err(|_| SnipError::WindowFailed)?;
+                    // Settle the hidden HWND on the target monitor first. Crossing DPI
+                    // boundaries synchronously runs Tao's WM_DPICHANGED resize, which
+                    // can otherwise overwrite the final physical dimensions below.
+                    // A tiny staging rect avoids the old size selecting another monitor.
+                    SetWindowPos(hwnd, Some(HWND_TOPMOST), left, top, 1, 1, SWP_NOACTIVATE | SWP_FRAMECHANGED).map_err(|_| SnipError::WindowFailed)?;
                     SetWindowPos(hwnd, Some(HWND_TOPMOST), left, top, width, height, SWP_NOACTIVATE | SWP_FRAMECHANGED).map_err(|_| SnipError::WindowFailed)?; }
                 let mut bounds = RECT::default();
                 unsafe { GetWindowRect(hwnd, &mut bounds) }.map_err(|_| SnipError::WindowFailed)?;
@@ -129,12 +134,14 @@ impl WindowPort for NativeWindowPort {
     fn create_preview(&self, token: &Token, monitor: &MonitorSnapshot, _: u32, _: u32) -> Result<WindowRef, SnipError> { self.create(token, monitor, true) }
     fn emit_context(&self, reference: &WindowRef, context: &Context) -> Result<(), SnipError> {
         let entry = self.registry.entry(reference)?; entry.commit(context)?;
-        entry.window()?.emit("snip:context", context_json(context)).map_err(|_| SnipError::WindowFailed)
+        let window = entry.window()?;
+        window.emit_to(EventTarget::WebviewWindow { label: window.label().into() }, "snip:context", context_json(context)).map_err(|_| SnipError::WindowFailed)
     }
     fn emit_armed(&self, reference: &WindowRef, token: &Token) -> Result<(), SnipError> {
         let entry = self.registry.entry(reference)?;
         if entry.token.as_ref() != Some(token) { return Err(SnipError::Unauthorized); }
-        entry.window()?.emit("snip:armed", serde_json::json!({"generation":token.generation,"captureId":token.capture_id})).map_err(|_| SnipError::WindowFailed)
+        let window = entry.window()?;
+        window.emit_to(EventTarget::WebviewWindow { label: window.label().into() }, "snip:armed", serde_json::json!({"generation":token.generation,"captureId":token.capture_id})).map_err(|_| SnipError::WindowFailed)
     }
     fn show(&self, reference: &WindowRef) -> Result<(), SnipError> {
         let entry = self.registry.entry(reference)?;

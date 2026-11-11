@@ -97,27 +97,39 @@ unsafe extern "system" {
 }
 impl Drop for Global { fn drop(&mut self) { unsafe { let _ = GlobalFree(self.handle); } GLOBALS.fetch_sub(1, Ordering::SeqCst); } }
 
-fn crc(bytes: &[u8]) -> u32 {
-    static TABLE: [u32; 256] = {
-        let mut table = [0; 256];
-        let mut index = 0;
-        while index < table.len() {
-            let mut value = index as u32;
-            let mut bit = 0;
-            while bit < 8 {
-                value = (value >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(value & 1));
-                bit += 1;
-            }
-            table[index] = value;
-            index += 1;
+const fn crc_table() -> [u32; 256] {
+    let mut table = [0; 256];
+    let mut index = 0;
+    while index < table.len() {
+        let mut value = index as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            value = (value >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(value & 1));
+            bit += 1;
         }
-        table
-    };
+        table[index] = value;
+        index += 1;
+    }
+    table
+}
+static CRC_TABLE: [u32; 256] = crc_table();
+
+fn crc(bytes: &[u8]) -> u32 {
     let mut value = u32::MAX;
     for byte in bytes {
-        value = (value >> 8) ^ TABLE[((value ^ u32::from(*byte)) & 255) as usize];
+        value = (value >> 8) ^ CRC_TABLE[((value ^ u32::from(*byte)) & 255) as usize];
     }
     !value
+}
+
+fn update_adler(bytes: &[u8], a: &mut u32, b: &mut u32) {
+    // Start each chunk with a,b < 65521. For n <= 5552 and bytes <= 255,
+    // b <= 65520 + n*65520 + 255*n*(n+1)/2 <= 4294690200 < u32::MAX.
+    for chunk in bytes.chunks(5552) {
+        for byte in chunk { *a += u32::from(*byte); *b += *a; }
+        *a %= 65_521;
+        *b %= 65_521;
+    }
 }
 
 fn png_lengths(image: &CroppedImage) -> Result<(usize, usize, usize), Failure> {
@@ -155,7 +167,8 @@ fn encode_rgba(width: u32, height: u32, pixels: &[u8], output: &mut Vec<u8>) -> 
     output.extend_from_slice(b"IDAT");
     output.extend_from_slice(&[0x78, 0x01]);
     let stride = width as usize * 4;
-    let mut bytes = pixels.chunks_exact(stride).flat_map(|row| std::iter::once(0u8).chain(row.iter().copied()));
+    let filtered_stride = stride + 1;
+    let mut filtered_offset = 0usize;
     let mut remaining = raw_len;
     let (mut a, mut b) = (1u32, 0u32);
     while remaining != 0 {
@@ -164,10 +177,21 @@ fn encode_rgba(width: u32, height: u32, pixels: &[u8], output: &mut Vec<u8>) -> 
         output.push(if remaining == 0 { 1 } else { 0 });
         output.extend_from_slice(&count.to_le_bytes());
         output.extend_from_slice(&(!count).to_le_bytes());
-        for _ in 0..count {
-            let byte = bytes.next().ok_or(Failure::InvalidImage)?;
-            output.push(byte); a = (a + u32::from(byte)) % 65_521; b = (b + a) % 65_521;
+        let payload_start = output.len();
+        let block_end = filtered_offset + usize::from(count);
+        while filtered_offset < block_end {
+            let column = filtered_offset % filtered_stride;
+            if column == 0 {
+                output.push(0); // Keep the exact filter-0 stream, even at block edges.
+                filtered_offset += 1;
+            } else {
+                let copied = (filtered_stride - column).min(block_end - filtered_offset);
+                let source = (filtered_offset / filtered_stride) * stride + column - 1;
+                output.extend_from_slice(pixels.get(source..source + copied).ok_or(Failure::InvalidImage)?);
+                filtered_offset += copied;
+            }
         }
+        update_adler(&output[payload_start..], &mut a, &mut b);
     }
     output.extend_from_slice(&((b << 16) | a).to_be_bytes());
     output.extend_from_slice(&crc(&output[start..]).to_be_bytes());
@@ -190,6 +214,140 @@ pub fn png_rgba(width: u32, height: u32, pixels: &[u8], retained: usize) -> Resu
     let mut output = Vec::new();
     output.try_reserve_exact(total).map_err(|_| Failure::Allocation)?;
     if retained.checked_add(output.capacity()).is_none_or(|n| n > MAX_STAGING_BYTES) { return Err(Failure::Budget); }
+    encode_rgba(width, height, pixels, &mut output)?;
+    Ok(output)
+}
+
+// Transport-only subset: fixed Huffman codes and adjacent equal RGBA pixels.
+// No dictionary, heap workspace, cross-row matches, or change to stored PNG callers.
+struct PixelRunBits<'a> {
+    output: &'a mut Vec<u8>,
+    limit: usize,
+    accumulator: u32,
+    pending: u8,
+}
+impl PixelRunBits<'_> {
+    fn byte(&mut self, value: u8) -> Result<(), Failure> {
+        if self.output.len() >= self.limit { return Err(Failure::Budget); }
+        self.output.push(value);
+        Ok(())
+    }
+    fn put(&mut self, value: u16, bits: u8) -> Result<(), Failure> {
+        if bits > 9 || u32::from(value) >= (1u32 << bits) { return Err(Failure::InvalidImage); }
+        // pending < 8 before each write; at most 9 new bits => at most 16 live bits.
+        self.accumulator |= u32::from(value) << self.pending;
+        self.pending += bits;
+        while self.pending >= 8 {
+            self.byte(self.accumulator as u8)?;
+            self.accumulator >>= 8;
+            self.pending -= 8;
+        }
+        Ok(())
+    }
+    fn symbol(&mut self, symbol: u16) -> Result<(), Failure> {
+        let (code, bits): (u16, u8) = match symbol {
+            0..=143 => (0x30 + symbol, 8),
+            144..=255 => (0x190 + symbol - 144, 9),
+            256..=279 => (symbol - 256, 7),
+            280..=287 => (0xc0 + symbol - 280, 8),
+            _ => return Err(Failure::InvalidImage),
+        };
+        // Huffman codes are transmitted MSB first, within an LSB-packed bitstream.
+        self.put(code.reverse_bits() >> (16 - bits), bits)
+    }
+    fn repeat_pixel(&mut self, length: u16) -> Result<(), Failure> {
+        const BASE: [u16; 28] = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227];
+        const EXTRA: [u8; 28] = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5];
+        if !(4..=256).contains(&length) || length % 4 != 0 { return Err(Failure::InvalidImage); }
+        let mut index = 0;
+        while index + 1 < BASE.len() && length >= BASE[index + 1] { index += 1; }
+        self.symbol(257 + index as u16)?;
+        self.put(length - BASE[index], EXTRA[index])?;
+        self.put(24, 5) // Reversed fixed distance symbol 3: distance 4, no extra bits.
+    }
+    fn finish(mut self) -> Result<(), Failure> {
+        if self.pending != 0 { self.byte(self.accumulator as u8)?; }
+        Ok(())
+    }
+}
+
+fn encode_pixel_runs(width: u32, height: u32, pixels: &[u8], output: &mut Vec<u8>, ceiling: usize) -> Result<(), Failure> {
+    // Reserve Adler4 + IDAT CRC4 + complete IEND12 beyond the bounded bit writer.
+    let limit = ceiling.checked_sub(20).ok_or(Failure::Budget)?;
+    if limit < 43 || output.capacity() < ceiling { return Err(Failure::Budget); }
+    output.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    output.extend_from_slice(&13u32.to_be_bytes());
+    let ihdr = output.len();
+    output.extend_from_slice(b"IHDR");
+    output.extend_from_slice(&width.to_be_bytes());
+    output.extend_from_slice(&height.to_be_bytes());
+    output.extend_from_slice(&[8, 6, 0, 0, 0]);
+    output.extend_from_slice(&crc(&output[ihdr..]).to_be_bytes());
+    let idat_length = output.len();
+    output.extend_from_slice(&[0; 4]);
+    let idat = output.len();
+    output.extend_from_slice(b"IDAT");
+    output.extend_from_slice(&[0x78, 0x01]);
+    let mut writer = PixelRunBits { output, limit, accumulator: 0, pending: 0 };
+    writer.put(3, 3)?; // One final block, BTYPE=01 (fixed Huffman).
+    let (mut a, mut b) = (1u32, 0u32);
+    for row in pixels.chunks_exact(width as usize * 4) {
+        writer.symbol(0)?; // Filter 0: never match across this row boundary.
+        update_adler(&[0], &mut a, &mut b);
+        update_adler(row, &mut a, &mut b);
+        for byte in &row[..4] { writer.symbol(u16::from(*byte))?; }
+        let mut position = 4;
+        while position < row.len() {
+            let previous = &row[position - 4..position];
+            let mut repeated = 0;
+            while repeated < 64 && position + (repeated + 1) * 4 <= row.len()
+                && &row[position + repeated * 4..position + (repeated + 1) * 4] == previous { repeated += 1; }
+            if repeated != 0 {
+                writer.repeat_pixel((repeated * 4) as u16)?;
+                position += repeated * 4;
+            } else {
+                for byte in &row[position..position + 4] { writer.symbol(u16::from(*byte))?; }
+                position += 4;
+            }
+        }
+    }
+    writer.symbol(256)?;
+    writer.finish()?; // Remaining high padding bits are zero.
+    output.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let length = output.len().checked_sub(idat + 4).and_then(|len| u32::try_from(len).ok()).ok_or(Failure::Budget)?;
+    output[idat_length..idat_length + 4].copy_from_slice(&length.to_be_bytes());
+    output.extend_from_slice(&crc(&output[idat..]).to_be_bytes());
+    output.extend_from_slice(&0u32.to_be_bytes());
+    output.extend_from_slice(b"IEND");
+    output.extend_from_slice(&crc(b"IEND").to_be_bytes());
+    if output.len() > ceiling { return Err(Failure::Budget); }
+    Ok(())
+}
+
+/// Lossless image IPC only. Keeps the stored-PNG allocation ceiling and uses no
+/// encoder workspace; incompressible input retains the original stored bytes.
+pub fn png_rgba_transport(width: u32, height: u32, pixels: &[u8], retained: usize) -> Result<Vec<u8>, Failure> {
+    let len = checked_rgba_len(width, height, MAX_STAGING_BYTES).map_err(|_| Failure::InvalidImage)?;
+    if pixels.len() != len || retained < len || width > 16_384 || height > 16_384
+        || u64::from(width) * u64::from(height) > 33_600_000 { return Err(Failure::InvalidImage); }
+    let raw = len.checked_add(height as usize).ok_or(Failure::Budget)?;
+    let blocks = raw.checked_add(65_534).ok_or(Failure::Budget)? / 65_535;
+    let total = raw.checked_add(blocks.checked_mul(5).ok_or(Failure::Budget)?).and_then(|n| n.checked_add(63)).ok_or(Failure::Budget)?;
+    if retained.checked_add(total).is_none_or(|n| n > MAX_STAGING_BYTES) { return Err(Failure::Budget); }
+    let mut output = Vec::new();
+    output.try_reserve_exact(total).map_err(|_| Failure::Allocation)?;
+    if retained.checked_add(output.capacity()).is_none_or(|n| n > MAX_STAGING_BYTES) { return Err(Failure::Budget); }
+    let mut repeated = 0usize;
+    for row in pixels.chunks_exact(width as usize * 4) {
+        repeated = repeated.checked_add(row.windows(8).step_by(4).filter(|pair| pair[..4] == pair[4..]).count()).ok_or(Failure::Budget)?;
+    }
+    // <=9 bits per literal/filter, minus >=24 saved bits per repeated pixel;
+    // include the 3-bit header, 7-bit end code, byte padding and PNG/zlib framing.
+    let bound = raw.checked_mul(9).and_then(|bits| repeated.checked_mul(24).and_then(|saved| bits.checked_sub(saved)))
+        .and_then(|bits| bits.checked_add(17)).map(|bits| bits / 8).and_then(|bytes| bytes.checked_add(63));
+    if repeated != 0 && bound.is_some_and(|bound| bound < total)
+        && encode_pixel_runs(width, height, pixels, &mut output, total).is_ok() && output.len() < total { return Ok(output); }
+    output.clear();
     encode_rgba(width, height, pixels, &mut output)?;
     Ok(output)
 }

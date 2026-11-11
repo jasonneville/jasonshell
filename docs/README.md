@@ -35,6 +35,8 @@ No scheduled audit reports are included in this checkout. For available audit le
 
 These are not current behavior. Read only when the task names the feature or issue.
 
+- `rust-ui-frontend-feasibility-2026-10-07.md`: dated Rust/UI/Dioxus versus Tauri and browser-free native migration feasibility; research, not a migration decision or benchmark.
+- `plans/egui-bottom-bar-prototype.md`: draft source-grounded native bottom-bar experiment/spec, complete feature inventory and separate standalone/integration evidence tracks; pending approval, not authorization to build or smoke.
 - `stack-browser-*research*.md`
 - `stack-browser-*plan*.md`
 - `stack-text-editor-p*.md`

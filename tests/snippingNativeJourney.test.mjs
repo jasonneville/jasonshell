@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { lstat, readFile, rm } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
@@ -62,6 +62,7 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
   let vite, child, fixtureDirectory, exited;
   const messages = [];
   let protocolError, buffer = '';
+  const fixtureId = `snip-journey-${process.pid}-${process.hrtime.bigint()}`;
   const wait = async (predicate, stage) => {
     const end = Date.now() + 14_000;
     while (Date.now() < end) {
@@ -74,6 +75,12 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
     throw new Error(`native stage timeout: ${stage}`);
   };
   try {
+    // Parent knows/owns cleanup BEFORE any native startup can crash or time out.
+    const approved = join(process.env.LOCALAPPDATA, 'Temp/opencode');
+    assert.ok(!(await lstat(approved)).isSymbolicLink());
+    const owned = join(approved, fixtureId);
+    await mkdir(owned); fixtureDirectory = owned;
+    await writeFile(join(owned, 'parent-owner'), fixtureId, { flag: 'wx' });
     if (!await viteReady()) {
       // Existing npm dev script only; never npm tauri / production main.
       vite = spawn('pwsh', ['-NoProfile','-Command','npm run dev -- --port 1420 --strictPort'], { cwd: root, stdio: 'ignore' });
@@ -81,7 +88,10 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
       while (!await viteReady() && Date.now() < end) await delay(100);
       assert.ok(await viteReady(), 'local Vite did not become ready');
     }
-    child = spawn(join(root,'src-tauri/target/debug/examples/snip_synthetic_journey.exe'), ['--synthetic-clipboard-opt-in'], { cwd: root, stdio: ['pipe','pipe','pipe'] });
+    child = spawn(join(root,'src-tauri/target/debug/examples/snip_synthetic_journey.exe'), ['--synthetic-clipboard-opt-in'], {
+      cwd: root, stdio: ['pipe','pipe','pipe'],
+      env: { ...process.env, JASONSHELL_SNIP_JOURNEY_FIXTURE_ID: fixtureId }
+    });
     exited = once(child, 'exit');
     child.on('error', error => { protocolError = error; });
     child.stderr.on('data', () => {}); // Never persist profile/OS diagnostics.
@@ -95,7 +105,7 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
         if (!line) continue;
         try {
           const value = JSON.parse(line);
-          if (value.error || value.renderer?.error) protocolError = new Error(`native protocol failure: ${value.error ?? value.renderer.error}; op=${value.op ?? value.renderer?.op ?? 'unknown'}`);
+          if (value.error || value.renderer?.error) protocolError = new Error(`native protocol failure: ${value.error ?? value.renderer.error}; op=${value.op ?? value.renderer?.op ?? 'unknown'}; code=${value.renderer?.code ?? 'unavailable'}`);
           messages.push(value);
           if (messages.length > 128) protocolError = new Error('bounded metadata queue exceeded');
         } catch { protocolError = new Error('invalid native metadata JSON'); }
@@ -103,8 +113,7 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
     });
     const ready = await wait(m => m.stage === 'ready', 'READY');
     assert.equal(ready.synthetic, true); assert.equal(ready.source, 'owned-offscreen-dib');
-    assert.match(ready.fixtureId, new RegExp(`^snip-journey-${child.pid}-[0-9]+$`));
-    fixtureDirectory = join(process.env.LOCALAPPDATA, 'Temp/opencode', ready.fixtureId);
+    assert.equal(ready.fixtureId, fixtureId, 'native child must use exact parent-owned fixture');
     assert.ok(!(await lstat(fixtureDirectory)).isSymbolicLink());
     const send = op => child.stdin.write(`${JSON.stringify({op})}\n`);
     const action = async op => { send(op); return (await wait(m => m.renderer?.op === op, op)).renderer; };
@@ -113,7 +122,16 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
     assert.match(started.generation, /^[1-9][0-9]*$/); assert.match(started.captureId, /^[0-9a-f]{32}$/);
     const frozen = await wait(m => m.stage === 'synthetic-dib-frozen', 'offscreen DIB');
     assert.deepEqual([frozen.width,frozen.height,frozen.source],[640,400,'owned-offscreen-dib']);
-    const selected = await action('select'); assert.equal(selected.generation,started.generation); assert.equal(selected.captureId,started.captureId);
+    let selected;
+    try { selected = await action('select'); }
+    catch (error) {
+      // Completion may destroy the invoking overlay before it can report. Read
+      // existing bounded native state; never reinterpret a missing report as PASS.
+      const stalled = await inspect();
+      t.diagnostic(`select failure snapshot: phase=${stalled.phase}; windows=${stalled.windowCount}; publicationAttempts=${stalled.publicationAttempts}; previewVisible=${stalled.previewVisible}; foregroundIsPreview=${stalled.foregroundIsPreview}`);
+      throw error;
+    }
+    assert.equal(selected.generation,started.generation); assert.equal(selected.captureId,started.captureId);
     const preview = await action('preview'); assert.deepEqual([preview.width,preview.height],[126,75]);
     const baseline = await inspect();
     assert.equal(baseline.phase,'Some(Preview)'); assert.equal(baseline.publicationAttempts,1);
@@ -138,10 +156,14 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
     if (child) {
       if (child.exitCode === null && child.signalCode === null) { child.stdin.end('{"op":"shutdown"}\n'); await Promise.race([exited,delay(6000)]); }
       await terminateOwned(child); if (exited) await exited;
-      // Only the newly owned PID-bound fixture; never discover/remove other profiles.
-      if (fixtureDirectory) { await rm(fixtureDirectory,{recursive:true,force:true,maxRetries:8,retryDelay:250}); }
     }
     await terminateOwned(vite);
+    // Also covers failures before child spawn/READY. Never scan for other profiles.
+    if (fixtureDirectory) {
+      await rm(fixtureDirectory,{recursive:true,force:true,maxRetries:8,retryDelay:250});
+      await assert.rejects(lstat(fixtureDirectory), { code: 'ENOENT' });
+      t.diagnostic('exact parent-owned fixture removed after child exit, including pre-READY failure');
+    }
   }
   assert.equal(child.exitCode,0,'native fixture shutdown failed');
 });

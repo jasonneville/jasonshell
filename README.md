@@ -240,6 +240,7 @@ Verified paths in this repo:
 
 ## Config and environment notes
 
+- The repo-local Cargo compiler wrapper preserves a configured Blaze/ra-jit workspace wrapper for application code, but compiles build scripts directly. This avoids the Windows ra-jit build-script stub printing CLI help instead of emitting Tauri's resource/link directives (which can cause startup `0xc0000139`). The native launcher also avoids CMD's 8,191-character argument limit. `npm run tauri`, `npm run cargo:check`, and `npm run cargo:test` prepare it automatically in `.local/`; before invoking Cargo directly in a fresh checkout, run `node scripts/prepare-rustc-wrapper.mjs`. No global Cargo configuration changes are needed. After adding this workaround to an already-built checkout, touch `src-tauri/build.rs` before rebuilding so Cargo replaces any cached stub.
 - `JASONSHELL_TERMINAL_SHELL_INTEGRATION=0` disables terminal shell integration
 - `JASONSHELL_TERMINAL_SHELL_INTEGRATION=false` also disables it
 - `JASONSHELL_TASKBAR_NATIVE_HOOKS=0` disables native taskbar hooks

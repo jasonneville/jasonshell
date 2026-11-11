@@ -762,11 +762,11 @@ const fn table() -> [u32; 256] {
     }
     t
 }
-static CRC_TABLE: [u32; 256] = table();
-fn crc_table(b: &[u8]) -> u32 {
+static REFERENCE_CRC_TABLE: [u32; 256] = table();
+fn reference_crc_table(b: &[u8]) -> u32 {
     let mut v = u32::MAX;
     for b in b {
-        v = (v >> 8) ^ CRC_TABLE[((v ^ u32::from(*b)) & 255) as usize]
+        v = (v >> 8) ^ REFERENCE_CRC_TABLE[((v ^ u32::from(*b)) & 255) as usize]
     }
     !v
 }
@@ -775,16 +775,16 @@ fn crc_equivalence_and_before() {
     assert_eq!(crc(b"123456789"), 0xcbf43926);
     assert_eq!(crc(&[]), 0);
     for b in 0..=255 {
-        assert_eq!(crc(&[b]), crc_table(&[b]));
+        assert_eq!(crc(&[b]), reference_crc_table(&[b]));
     }
     for n in [3, 65534, 65535, 65536, 1920 * 1080 * 4, 3840 * 2160 * 4] {
         let b = (0..n).map(|i| (i % 251) as u8).collect::<Vec<_>>();
         let (a, _, ta) = measure(|| crc(black_box(&b)));
-        let (c, _, tc) = measure(|| crc_table(black_box(&b)));
+        let (c, _, tc) = measure(|| reference_crc_table(black_box(&b)));
         assert_eq!(a, c);
         println!(
             "crc bytes={n} current_ns={ta} candidate_table_ns={tc} candidate_static_bytes={}",
-            std::mem::size_of_val(&CRC_TABLE)
+            std::mem::size_of_val(&REFERENCE_CRC_TABLE)
         );
     }
 }
@@ -960,7 +960,7 @@ fn repeat_cpu_samples() {
         let b = (0..n).map(|i| (i % 251) as u8).collect::<Vec<_>>();
         for round in 0..5 {
             let (a, _, ta) = measure(|| crc(black_box(&b)));
-            let (c, _, tb) = measure(|| crc_table(black_box(&b)));
+            let (c, _, tb) = measure(|| reference_crc_table(black_box(&b)));
             assert_eq!(a, c);
             println!("crc_repeat bytes={n} round={round} current_ns={ta} candidate_table_ns={tb}");
         }

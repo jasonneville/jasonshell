@@ -175,6 +175,28 @@
   let snipBarEpoch = 0;
   let snipBarFrame: number | null = null;
   let snipBarMounted = false;
+  let snipStartPending = false;
+  let snipStartError = '';
+
+  async function requestSnip() {
+    if (snipStartPending || snipPreparing) return;
+    snipStartPending = true;
+    snipStartError = '';
+    try {
+      // Remove prior failure feedback before native capture can begin.
+      await tick();
+      if (!snipBarMounted) return;
+      await startSnip();
+    } catch (error) {
+      if (!snipBarMounted) return;
+      const code = error instanceof Error ? error.message : error;
+      snipStartError = typeof code === 'string' && code.includes('timeout')
+        ? 'Screen snip timed out. Try again.'
+        : 'Could not capture screen. Try again.';
+    } finally {
+      snipStartPending = false;
+    }
+  }
 
   function invalidateSnipBarFrame() {
     ++snipBarEpoch;
@@ -189,6 +211,8 @@
     const token = { generation: value.generation, captureId: value.captureId };
     latestSnipBarToken = token;
     snipPreparing = token;
+    // Native hotkey starts also discard feedback from an earlier failed click.
+    snipStartError = '';
     const epoch = snipBarEpoch;
     await tick();
     if (!snipBarMounted || epoch !== snipBarEpoch || !sameSnip(snipPreparing, token)) return;
@@ -2140,6 +2164,9 @@
     {#if showRailScrollRight}
       <MeltActionButton class="rail-scroll right" ariaLabel="Scroll pinned folders right" tooltip="Scroll pinned folders right" onClick={() => scrollRailRight()}>&rsaquo;</MeltActionButton>
     {/if}
+    {#if snipStartError && !snipPreparing}
+      <div class="pin-drop-status error snip-start-error" role="alert">{snipStartError}</div>
+    {/if}
   </div>
   <div class="top-bar-controls" bind:this={topBarControlsEl}>
     {#each orderedTopBarControls as control (control.id)}
@@ -2187,9 +2214,9 @@
             </MeltActionButton>
           </div>
         {:else if control.id === 'snip'}
-          <MeltActionButton class="sound-button" ariaLabel="Capture screen region" tooltip="Capture screen region" onClick={(event) => {
+          <MeltActionButton class="sound-button" ariaLabel="Capture screen region" tooltip="Capture screen region" disabled={snipStartPending} onClick={(event) => {
             if (!shouldSuppressTopBarControlClick(suppressNextTopBarControlClickId, 'snip', event)) {
-              void startSnip().catch(() => undefined);
+              void requestSnip();
             }
           }}>
             <MaterialSymbolIcon name="crop" />

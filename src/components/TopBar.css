@@ -185,6 +185,10 @@
   border-color: var(--js-color-error-border);
 }
 
+.top-bar .snip-start-error {
+  max-width: calc(100% - 0.6rem);
+}
+
 .top-bar .stack-pins button {
   background: transparent;
   border: transparent;

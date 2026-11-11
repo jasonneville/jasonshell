@@ -120,6 +120,70 @@ it('keyboard click without pointerdown starts zero-argument request but does not
   await waitFor(() => expect(calls('snip_bar_ready')).toHaveLength(1)); visible(root, button);
 });
 
+// Match SnipPreviewSurface's accessible failure/retry contract. These exercise
+// production TopBar and Melt controls, not native capture or the IPC ACL boundary.
+function startResponse(response: () => Promise<Token>) {
+  const fallback = tauriMocks().invoke.getMockImplementation()!;
+  tauriMocks().invoke.mockImplementation((command, args) => command === 'start_snip'
+    ? response() : fallback(command, args));
+}
+
+it('rejected snip start announces a useful timeout and retry guidance instead of silently doing nothing', async () => {
+  startResponse(() => Promise.reject('readiness-timeout'));
+  const { view, button, root } = await bar();
+  await fireEvent.click(button);
+  await waitFor(() => expect(calls('start_snip')).toHaveLength(1));
+  const failure = await view.findByRole('alert');
+  expect(failure.textContent).toMatch(/snip|capture|screenshot/i);
+  expect(failure.textContent).toMatch(/timed?\s*out|timeout|time.*out/i);
+  expect(failure.textContent).toMatch(/try again|retry/i);
+  expect(getComputedStyle(failure).display).not.toBe('none');
+  expect(getComputedStyle(failure).visibility).not.toBe('hidden');
+  expect(button.hasAttribute('disabled')).toBe(false);
+  expect(root.classList.contains('snip-preparing')).toBe(false);
+  expect(calls('snip_bar_ready')).toHaveLength(0);
+});
+
+it('retry clears the old snip error immediately and a successful new start does not restore it', async () => {
+  let resolveRetry!: (token: Token) => void;
+  const retry = new Promise<Token>((resolve) => { resolveRetry = resolve; });
+  let attempts = 0;
+  startResponse(() => ++attempts === 1 ? Promise.reject('capture-failed') : retry);
+  const { view, button } = await bar();
+  try {
+    await fireEvent.click(button);
+    const failure = await view.findByRole('alert');
+    expect(failure.textContent).toMatch(/snip|capture|screenshot/i);
+    await fireEvent.click(button);
+    await waitFor(() => expect(calls('start_snip')).toHaveLength(2));
+    expect(view.queryByRole('alert')?.textContent ?? '').toBe('');
+    resolveRetry(second);
+    await tick();
+    await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+    expect(view.queryByRole('alert')?.textContent ?? '').toBe('');
+    expect(calls('start_snip')).toHaveLength(2);
+    for (const [, args] of calls('start_snip')) expect(args ?? {}).toEqual({});
+  } finally { resolveRetry(second); }
+});
+
+it('pending snip start suppresses repeated clicks but completion permits another request', async () => {
+  let resolveStart!: (token: Token) => void;
+  const pending = new Promise<Token>((resolve) => { resolveStart = resolve; });
+  startResponse(() => pending);
+  const { button } = await bar();
+  try {
+    await fireEvent.click(button);
+    await fireEvent.click(button);
+    await fireEvent.click(button, { detail: 0 });
+    expect(calls('start_snip')).toHaveLength(1);
+    resolveStart(first);
+    await tick();
+    await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+    await fireEvent.click(button);
+    await waitFor(() => expect(calls('start_snip')).toHaveLength(2));
+  } finally { resolveStart(first); }
+});
+
 it('IPC registry exposes exact barrier command/events without extra renderer foreground-intent command', () => {
   expect(Object.values(IPC_COMMANDS)).toContain('snip_bar_ready');
   expect(Object.values(IPC_EVENTS)).toContain('snip:prepare_bar');

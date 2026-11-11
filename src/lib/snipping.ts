@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { IPC_COMMANDS, IPC_EVENTS } from '../ipc';
 import type { Rect } from './snipSelection';
 
@@ -59,11 +60,12 @@ export function observeSnipContext(phase: SnipContext['phase'], update: (context
     update(context);
   };
   const registration = async () => {
+    const target = { kind: 'WebviewWindow' as const, label: getCurrentWebviewWindow().label };
     for (const [name, callback] of [
       [IPC_EVENTS.snipContext, (event: { payload: SnipContext }) => { revision += 1; accept(event.payload); }],
       [IPC_EVENTS.snipArmed, (event: { payload: SnipContext }) => { if (!disposed) armed(event.payload); }]
     ] as const) {
-      const unlisten = await listen<SnipContext>(name, callback);
+      const unlisten = await listen<SnipContext>(name, callback, { target });
       if (disposed) { unlisten(); return; }
       unlisteners.push(unlisten);
     }

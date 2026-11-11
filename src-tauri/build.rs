@@ -21,6 +21,8 @@ fn registered_commands() -> Vec<&'static str> {
 }
 
 fn main() {
+    // Keep this build script native under the repo's Cargo compiler wrapper:
+    // Tauri's resource/link directives must reach Cargo before Blaze links bins.
     println!("cargo:rerun-if-changed=src/main.rs");
     let commands = registered_commands();
     // Before app ACL activation, registered legacy commands were callable from

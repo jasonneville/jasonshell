@@ -12,11 +12,14 @@
     "test:component": "node scripts/run-component-tests.mjs",
     "test:search": "npm run test:node",
     "p03:experiment": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/stack-text-editor/launch-p03-experiment.ps1",
+    "precargo:check": "node scripts/prepare-rustc-wrapper.mjs",
     "cargo:check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "precargo:test": "node scripts/prepare-rustc-wrapper.mjs",
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "smoke:runtime": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/runtime-smoke.ps1 -DryRun",
     "smoke:fullscreen": "powershell -ExecutionPolicy Bypass -File scripts/smoke-fullscreen-appbar.ps1",
     "validate": "npm run check && npm run build && npm run test:component && npm run test:node && npm run cargo:test && npm run cargo:check",
+    "pretauri": "node scripts/prepare-rustc-wrapper.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

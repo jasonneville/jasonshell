@@ -101,6 +101,29 @@
     taskGroupStateLabel
   } from '../features/bottom-bar/taskbarUxState';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+
+  function sizeTaskGroupGlyph(node: SVGSVGElement) {
+    const sizeCells = () => {
+      const scale = (node.getScreenCTM?.()?.a ?? 1) * window.devicePixelRatio;
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      // Equal CSS lengths can rasterize differently at fractional DPI/zoom.
+      // Give every crisp-edged cell the same whole physical-pixel side.
+      const side = String(Math.max(1, Math.round(3 * scale)) / scale);
+      for (const cell of node.querySelectorAll('rect')) {
+        cell.setAttribute('width', side);
+        cell.setAttribute('height', side);
+      }
+    };
+    const observer = new ResizeObserver(sizeCells);
+    observer.observe(node, { box: 'device-pixel-content-box' });
+    window.addEventListener('resize', sizeCells);
+    sizeCells();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', sizeCells);
+    };
+  }
+
   let taskContextMenu: { taskWindow: TaskbarWindow; token: string } | null = null;
   let launcherContextMenu: { launcher: PinnedTaskbarLauncher; token: string } | null = null;
   type TaskGroupMenuContext = {
@@ -1405,10 +1428,15 @@
                 onMouseLeave={() => scheduleTaskGalleryClose(group.key)}
               >
                 <img class="task-icon" src={taskGroupGalleryItems(group)[0]?.iconDataUrl ?? ''} alt="" draggable="false" />
-                {#if taskGroupGalleryMode(group) === 'matrix'}
-                  <span class="task-group-glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-                {/if}
                 <span class="task-label"><OverflowTicker text={group.label} /></span>
+                {#if taskGroupGalleryMode(group) === 'matrix'}
+                  <svg {@attach sizeTaskGroupGlyph} class="task-group-glyph" aria-hidden="true" width="8" height="8" viewBox="0 0 8 8" shape-rendering="crispEdges">
+                    <rect x="0" y="0" width="3" height="3" />
+                    <rect x="5" y="0" width="3" height="3" />
+                    <rect x="0" y="5" width="3" height="3" />
+                    <rect x="5" y="5" width="3" height="3" />
+                  </svg>
+                {/if}
                 <span class="task-count" aria-label={`${group.windows.length} windows`}>{group.windows.length}</span>
                 {#if taskGroupGalleryMode(group) === 'ribbon'}
                   <span class="task-ribbon-marks" aria-hidden="true">

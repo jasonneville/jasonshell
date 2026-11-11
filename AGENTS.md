@@ -1,6 +1,6 @@
 # JasonShell agent instructions
 
-YOU MUST READ C:\Users\jnev1\.pi\AGENTS.md AND C:\Users\jnev1\.pi\agent\agents\leader.md
+YOU MUST READ C:\Users\jnev1\.config\opencode\AGENTS.md AND C:\Users\jnev1\.config\opencode\agents\LEADER.md
 
 ## Intake
 

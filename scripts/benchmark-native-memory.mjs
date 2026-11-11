@@ -46,6 +46,12 @@ for(const n of ['read_persisted_app_index','write_persisted_app_index']) generat
 generated+=item(apps,'CachedAppIndex','impl')+'\n';
 for(const n of ['cached_app_entries_from_cache','cache_age_secs','rank_apps','app_result','score_app','source_rank','app_source_priority_signal','query_tokens','token_terms','normalize_record_key','normalize']) generated+=item(apps,n)+'\n';
 generated+=`mod matcher { ${read('search/matcher.rs').split('#[cfg(test)]')[0]} }\nuse matcher::{best_match,full_highlight,MatchData,MatchField};\nuse matcher::query_tokens as match_query_tokens;\n`;
+if(clip.includes('const fn crc_table()')){
+ generated+=item(clip,'crc_table','const fn')+'\n';
+ const table=clip.match(/^static CRC_TABLE\b[^\n]*$/m);if(!table)throw Error('module CRC table declaration missing');
+ generated+=table[0]+'\n';
+}
+if(clip.includes('fn update_adler('))generated+=item(clip,'update_adler')+'\n';
 generated+=item(clip,'crc')+'\n'+item(clip,'png_lengths')+'\n'+item(clip,'encode_png')+'\n'+item(clip,'encode_rgba')+'\n';
 generated+=item(clip,'prepare').replace('unsafe { RegisterClipboardFormatW(w!("PNG")) }','1u32')+'\n';
 generated+=item(term,'decode_terminal_output_chunk')+'\n'+item(term,'flush_terminal_output_decoder')+'\n';

@@ -11,7 +11,7 @@ clip=clip.replace('STAGED.fetch_add(bytes, Ordering::SeqCst); Self(bytes)','STAG
 const geometry=path.resolve('src-tauri/src/snipping/geometry.rs').replaceAll('\\','/');
 const tests=fs.readFileSync('tests/fixtures/native-memory/clipboard-tests.rs','utf8');
 const start=clip.indexOf('fn encode_rgba('),end=clip.indexOf('\n}',start)+2;
-const tableEncoder=clip.slice(start,end).replace('fn encode_rgba(','fn encode_rgba_table(').replaceAll('crc(', 'crc_table(');
+const tableEncoder=clip.slice(start,end).replace('fn encode_rgba(','fn encode_rgba_table(').replaceAll('crc(', 'reference_crc_table(');
 fs.writeFileSync(path.join(out,'clipboard-generated.rs'),`#![allow(dead_code)]\n#[path=${JSON.stringify(geometry)}]mod geometry;\nmod clipboard {\n${clip}\nstatic TEST_PEAK:AtomicUsize=AtomicUsize::new(0);\n${tableEncoder}\n${tests}\n}`);
 const args=['--edition=2021','--test','-O','-L',`dependency=${deps}`];for(const n of ['serde','windows','windows_core'])args.push('--extern',`${n}=${lib(n)}`);args.push(path.join(out,'clipboard-generated.rs'),'-o',path.join(out,'clipboard.exe'));
 const b=spawnSync('rustc',args,{encoding:'utf8'});fs.writeFileSync(path.join(out,'clipboard-compile.txt'),b.stdout+b.stderr);if(b.status){console.error(b.stderr);process.exit(b.status)}
