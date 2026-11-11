@@ -229,18 +229,28 @@ fn enrich_process_tree(processes: &mut [ProcessInfo]) {
         .map(|process| (process.pid, process.name.clone()))
         .collect::<HashMap<_, _>>();
     let children_by_parent = children_by_parent(processes);
+    let mut stack = Vec::new();
+    let mut visited = std::collections::HashSet::new();
 
     for process in processes {
         process.parent_name = process
             .parent_pid
             .and_then(|parent_pid| by_pid.get(&parent_pid).cloned());
-        let children = children_by_parent
-            .get(&process.pid)
-            .cloned()
-            .unwrap_or_default();
-        process.child_process_count = children.len() as u32;
-        process.descendant_process_count =
-            descendant_pids(process.pid, &children_by_parent).len() as u32;
+        let children = children_by_parent.get(&process.pid);
+        process.child_process_count = children.map_or(0, Vec::len) as u32;
+        stack.clear();
+        visited.clear();
+        if let Some(children) = children {
+            stack.extend(children.iter().copied());
+        }
+        while let Some(child_pid) = stack.pop() {
+            if visited.insert(child_pid) {
+                if let Some(children) = children_by_parent.get(&child_pid) {
+                    stack.extend(children.iter().copied());
+                }
+            }
+        }
+        process.descendant_process_count = visited.len() as u32;
     }
 }
 

@@ -11,7 +11,7 @@
   import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
   import {
-    readStackTerminal,
+    pollStackTerminal,
     resizeStackTerminal,
     startStackTerminal,
     stopStackTerminal,
@@ -23,6 +23,7 @@
   import { detectStackTerminalLinks, isSafeStackTerminalOpenTarget } from '../features/stack-browser/terminalViewModel';
   import ContextMenu from './ContextMenu.svelte';
   import ContextMenuItem from './ContextMenuItem.svelte';
+  import { TerminalSequenceTracker } from '../lib/terminalSequenceTracker';
 
   type TerminalLifecycleState = 'idle' | 'starting' | 'runningWaitingForFirstByte' | 'running' | 'exited' | 'failed';
   type StackTerminalClosedPayload = { sessionId: string; running?: boolean };
@@ -69,7 +70,7 @@
   let lastFitRetry = 0;
   let lastResizeKey = '';
   let pendingChunks: Array<StackTerminalOutputPayload | StackTerminalOutputChunk> = [];
-  let renderedSequences = new Set<string>();
+  let renderedSequences = new TerminalSequenceTracker();
   let searchOpen = false;
   let searchDraft = '';
   let renderer: StackTerminalRenderer = 'default';
@@ -116,7 +117,7 @@
     firstOutputReceived = false;
     firstByteAt = 0;
     pendingChunks = [];
-    renderedSequences = new Set<string>();
+    renderedSequences = new TerminalSequenceTracker();
     lifecycleState = 'starting';
     startupStatus = `Starting ${profileLabel}...`;
     busy = true;
@@ -383,7 +384,7 @@
   }
 
   function resetTerminalView(outputSnapshot = '') {
-    renderedSequences = new Set<string>();
+    renderedSequences = new TerminalSequenceTracker();
     pendingChunks = [];
     cancelOutputFlush();
     void tick().then(() => {
@@ -426,13 +427,7 @@
   }
 
   function writeChunk(chunk: StackTerminalOutputPayload | StackTerminalOutputChunk) {
-    if (typeof chunk.sequence === 'number') {
-      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
-      if (renderedSequences.has(sequenceKey)) {
-        return;
-      }
-      renderedSequences.add(sequenceKey);
-    }
+    if (!renderedSequences.accept(chunk.sessionId, chunk.stream, chunk.sequence)) return;
     writeOutput(chunk.text);
   }
 
@@ -549,7 +544,7 @@
     pollInFlight = true;
     try {
       const sessionId = session.sessionId;
-      const result = await enqueueOperation(() => readStackTerminal(sessionId));
+      const result = await enqueueOperation(() => pollStackTerminal(sessionId));
       if (result.sessionId !== session?.sessionId) {
         return;
       }
@@ -560,12 +555,12 @@
       }
       await applyCwd(result.cwd || cwd);
       if (result.exited) {
+        cancelOutputFlush();
+        flushOutputChunks();
         stopPolling();
         clearStartupTimeout();
         lifecycleState = firstOutputReceived ? 'exited' : 'failed';
-        startupStatus = result.exitCode === null || result.exitCode === undefined
-          ? 'Terminal exited before output'
-          : `Terminal exited before output (${result.exitCode})`;
+        startupStatus = firstOutputReceived ? 'Terminal exited' : 'Terminal exited before output';
       }
     } catch (error) {
       stopPolling();
@@ -697,7 +692,7 @@
       <ContextMenuItem icon="content_paste" onClick={() => void pasteClipboardFromContextMenu()}>Paste</ContextMenuItem>
     </ContextMenu>
   {/if}
-  {#if !firstOutputReceived && lifecycleState !== 'idle'}
+  {#if (!firstOutputReceived && lifecycleState !== 'idle') || lifecycleState === 'exited' || lifecycleState === 'failed'}
     <div class="stack-terminal-startup" role="status">
       <strong>{startupStatus || `Starting ${profileLabel}...`}</strong>
       <span>{profileLabel}</span>

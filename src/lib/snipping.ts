@@ -79,9 +79,13 @@ export async function snipImageUrl(context: SnipContext, isCurrent: () => boolea
   const bytes = await invoke<Uint8Array | ArrayBuffer>(IPC_COMMANDS.getSnipImage, imageArgs(context));
   if (!isCurrent()) throw new Error('stale');
   if (!(bytes instanceof Uint8Array) && !(bytes instanceof ArrayBuffer)) throw new Error('image-failed');
-  const buffer = bytes instanceof Uint8Array ? bytes.slice().buffer : bytes;
-  if (!buffer.byteLength || buffer.byteLength > 512 * 1024 * 1024) throw new Error('image-failed');
-  return URL.createObjectURL(new Blob([buffer], { type: 'image/png' }));
+  if (!bytes.byteLength || bytes.byteLength > 512 * 1024 * 1024) throw new Error('image-failed');
+  // Blob accepts ordinary views directly (including offset/length). Shared backing
+  // needs an owned ArrayBuffer view because browser Blob parts disallow shared memory.
+  const part = bytes instanceof Uint8Array
+    ? bytes.buffer instanceof ArrayBuffer ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes)
+    : bytes;
+  return URL.createObjectURL(new Blob([part], { type: 'image/png' }));
 }
 
 export function decodeSnipImage(image: HTMLImageElement): Promise<void> {

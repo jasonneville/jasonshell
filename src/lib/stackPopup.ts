@@ -171,6 +171,14 @@ export type StackTerminalOutputChunk = {
   sequence: number;
 };
 
+export type StackTerminalPollResult = {
+  sessionId: string;
+  cwd: string;
+  chunks: StackTerminalOutputChunk[];
+  exited: boolean;
+  exitCode: null;
+};
+
 export function normalizeStackTerminalProfile(value: unknown): StackTerminalProfile {
   return STACK_TERMINAL_PROFILE_OPTIONS.some((option) => option.value === value)
     ? value as StackTerminalProfile
@@ -707,6 +715,16 @@ export function startStackTerminal(folderPath: string, profile: StackTerminalPro
 
 export function readStackTerminal(sessionId: string): Promise<StackTerminalReadResult> {
   return invoke<StackTerminalReadResult>(IPC_COMMANDS.readStackTerminal, { sessionId });
+}
+
+export async function pollStackTerminal(sessionId: string): Promise<StackTerminalPollResult> {
+  const result = await invoke<{
+    sessionId: string;
+    cwd: string;
+    chunks: StackTerminalOutputChunk[];
+    running: boolean;
+  }>(IPC_COMMANDS.pollStackTerminalSession, { sessionId });
+  return { sessionId: result.sessionId, cwd: result.cwd, chunks: result.chunks, exited: !result.running, exitCode: null };
 }
 
 export function writeStackTerminal(sessionId: string, input: string): Promise<void> {

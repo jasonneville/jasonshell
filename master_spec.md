@@ -91,6 +91,20 @@ The persistent terminal panel keeps hidden mount lazy: it does not eagerly creat
 
 Normal startup and output waiting never cover the terminal with a status notice. Genuine failure, exit, and explicit stopped-state diagnostics remain visible and accessible before a pane exists and after output, including startup rejection, PTY/read failure, exit-before-output, later exit, and stopping the final tab. Existing output remains visible alongside a later diagnostic, and retry clears the prior failure without duplicating notices. Rendered coverage is in `tests/components/terminal-panel-status.test.ts`; its mocked IPC/xterm environment is not native ConPTY or desktop Tauri certification. The focused policy and tradeoffs are documented in `docs/terminal-panel-prewarm-idle-policy.md`.
 
+### Runtime memory ownership
+
+Quick Commands renderer transcripts retain the newest 256 rows per run and the newest 20 completed runs alongside known active runs. Native snapshot omission alone does not terminate an active run. Live-known pending input metadata survives transcript-row eviction; terminal status clears it monotonically. Retired history cannot be restored by delayed polls or events. This does not certify recovery of an evicted pending request on a cold renderer mount: native snapshots have no independent pending-request field.
+
+App-index snapshots share immutable `Arc` generations; persisted serialization borrows entries without changing the disk schema. App ranking sorts lightweight candidates with the existing score/title/key ordering before hydrating retained results and icons. Process sorting prepares taskbar PID membership once per invocation, sharing it across refresh ordering passes rather than caching caller options across invocations.
+
+Clipboard preparation releases temporary DIB staging after its owned global-memory copy succeeds and before allocating PNG global memory; conservative admission accounting and publication ownership remain unchanged. Terminal readers move decoded text through the borrowed event emission and into the polling queue without a second text clone. Ordinary ArrayBuffer-backed screenshot subviews preserve offset/length when passed to Blob without a preparatory payload copy; shared backing retains an ordinary-buffer compatibility copy, and Blob still owns a snapshot.
+
+Terminal renderers share one dedupe tracker per panel session rather than copying whole seen-key Sets on each chunk. Exact integer intervals preserve holes, out-of-order chunks, stream/session identity and duplicate suppression; exceptional numeric sequences retain exact fallback membership. Contiguous histories compact, but arbitrarily fragmented histories can still grow. Both renderers poll the existing authorized chunks-only `poll_stack_terminal_session` route through a typed adapter; the legacy aggregate-output read command remains available. Native stop removes session ownership without retaining unused stopped-ID tombstones. These changes do not impose a session quota or remove replay.
+
+Process descendant enrichment reuses count-only traversal scratch while preserving existing cycle/duplicate semantics and leaving termination planning untouched. Speech inference input reserves the required contiguous vector once without changing model lifetime or sample order. PNG CRC uses a fixed 1 KiB table with unchanged encoded bytes.
+
+`docs/performance-memory-lab.md` records isolated allocation/retention evidence and its limits. These fixtures do not establish whole-app private bytes, WebView2 residency, native latency, or live Windows shell acceptance.
+
 ### Backend and native
 
 `src-tauri/src/main.rs` registers commands, windows, setup, and plugins. Rust modules own native integration:

@@ -95,7 +95,10 @@ beforeEach(() => {
   tauri.invoke.mockImplementation(async (command: string, args?: any) => {
     if (command === 'list_stack_terminals') return [...sessions];
     if (command === 'start_persistent_terminal' || command === 'start_stack_terminal') return start();
-    if (command === 'read_stack_terminal') return read(args.sessionId);
+    if (command === 'poll_stack_terminal_session') {
+      const { exited, output: _output, exitCode: _exitCode, ...result } = await read(args.sessionId) as any;
+      return { ...result, running: !exited };
+    }
     if (command === 'resize_stack_terminal') return resize();
     if (command === 'stop_stack_terminal') {
       await stop(args.sessionId);
@@ -169,7 +172,7 @@ describe('persistent terminal quiet startup presentation', () => {
     await advance(1201);
     noStartupNotice(view);
     expect(tauriMocks().invoke.mock.calls.some(([name]) => name === 'start_persistent_terminal')).toBe(false);
-    expect(tauriMocks().invoke).toHaveBeenCalledWith('read_stack_terminal', { sessionId: 'existing' });
+    expect(tauriMocks().invoke).toHaveBeenCalledWith('poll_stack_terminal_session', { sessionId: 'existing' });
   });
 });
 

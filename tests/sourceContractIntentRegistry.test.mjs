@@ -52,6 +52,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'stackConfirmDialogKeyboard.test.mjs',
     'stackBrowserGitStatus.test.mjs',
     'stackBrowserTerminal.test.mjs',
+    'terminalRegistryRetention.test.mjs', // Executes extracted production registry declarations to guard ownership/retention.
     'stackBrowserPhase1Safety.test.mjs',
     'stackBrowserPathAutocomplete.test.mjs',
     'stackBrowserTopBarPinFlow.test.mjs',

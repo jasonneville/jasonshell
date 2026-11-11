@@ -1,0 +1,32 @@
+{
+  "scope": "Bounded registry ownership fixture; verbatim production declarations, drop-observable session double; no ConPTY/Tauri runtime",
+  "command": "node --test tests/terminalRegistryRetention.test.mjs",
+  "before": {
+    "result": "RED: obsolete production stop tombstones retained after churn",
+    "churn": 10000,
+    "active": 0,
+    "retainedTombstones": 10000,
+    "dropped": 10000,
+    "sourceHash": null,
+    "sourceHashNote": "Baseline source hash was not recorded; counts preserved from original observed RED run."
+  },
+  "after": {
+    "result": "PASS: 1 test, 0 failed, 0 skipped",
+    "productionDeclarationsSha256": "39976dc1144655f9d83d2d00a0fbd8ce36527f27f92d9a01057aea1970c30ee1",
+    "churn": 10000,
+    "active": 0,
+    "retainedTombstones": 0,
+    "dropped": 10000,
+    "alsoVerified": ["repeated stop has no ownership", "target-scoped stop preserves other target", "detached cleanup ownership is transferred", "invalid ID rejection", "cross-target authorization rejection"]
+  },
+  "compile": {
+    "command": "cargo check --tests --offline --manifest-path src-tauri/Cargo.toml",
+    "result": "PASS with warnings; no link or test execution",
+    "capturedOutput": "test-results/native-memory/final-cargo-check-tests.log",
+    "captureMetadata": "test-results/native-memory/final-cargo-check-tests.meta.json",
+    "exitCode": 0,
+    "durationMilliseconds": 7220,
+    "warningDiagnosticLines": 512
+  },
+  "limits": ["ConPTY child termination unverified", "E2E skipped for internal dead-bookkeeping removal", "Linked Rust tests not retried: known ONNX OrtGetApiBase baseline blocker", "Frontend validation deferred to separate continuation"]
+}

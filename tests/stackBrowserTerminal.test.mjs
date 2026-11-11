@@ -99,9 +99,9 @@ test('terminal poll fallback keeps writing chunks after first output with sequen
   assert.match(stackTerminalPane, /if \(result\.chunks\?\.length\) \{/);
   assert.doesNotMatch(stackTerminalPane, /if \(result\.chunks\?\.length && !firstOutputReceived\)/);
   assert.match(stackTerminalPane, /for \(const chunk of result\.chunks\) \{\s*enqueueOutputChunk\(chunk\);/);
-  assert.match(stackTerminalPane, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.stream \?\? 'stdout'\}:\$\{chunk\.sequence\}`/);
+  assert.match(stackTerminalPane, /renderedSequences\.accept\(chunk\.sessionId, chunk\.stream, chunk\.sequence\)/);
   assert.doesNotMatch(stackTerminalPane, /writeOutput\(result\.output\)/);
-  assert.match(stackTerminalPane, /renderedSequences\.has\(sequenceKey\)/);
+  assert.match(stackTerminalPane, /if \(!renderedSequences\.accept\(chunk\.sessionId, chunk\.stream, chunk\.sequence\)\) return/);
   assert.match(stackTerminalPane, /if \(result\.sessionId !== session\?\.sessionId\) \{\s*return;/);
 });
 
@@ -171,7 +171,7 @@ test('phase 1 terminal poll and resize paths serialize frontend reads for one ac
   assert.match(stackTerminalPane, /void pollOutput\(\)/);
   assert.match(stackTerminalPane, /let operationQueue: Promise<void> = Promise\.resolve\(\)/);
   assert.match(stackTerminalPane, /function enqueueOperation/);
-  assert.match(stackTerminalPane, /enqueueOperation\(\(\) => readStackTerminal\(sessionId\)\)/);
+  assert.match(stackTerminalPane, /enqueueOperation\(\(\) => pollStackTerminal\(sessionId\)\)/);
   assert.match(stackTerminalPane, /enqueueOperation\(\(\) => resizeStackTerminal/);
 });
 
@@ -346,7 +346,7 @@ test('persistent terminal starts on delayed idle or first open, accepts input, a
   assert.match(terminalPanelSurface, /startTerminal\('first-open'\)/);
   assert.match(terminalPanelSurface, /terminalStartPromise/);
   assert.match(terminalPanelSurface, /await startTerminal\(\)/);
-  assert.match(terminalPanelSurface, /readStackTerminal\(sessionId\)/);
+  assert.match(terminalPanelSurface, /pollStackTerminal\(sessionId\)/);
   assert.match(terminalPanelSurface, /new Terminal\(\{/);
   assert.match(terminalPanelSurface, /fontFamily: TERMINAL_PANEL_FONT_FAMILY/);
   assert.match(terminalPanelSurface, /fontSize: terminalFontSize/);

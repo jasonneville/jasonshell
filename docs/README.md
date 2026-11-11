@@ -24,6 +24,7 @@ These docs capture evidence at a point in time. Use them for leads, then confirm
 
 - `current-state-technical-audit-2026-08-28.md`
 - `dependency-usage-audit-2026-08-30.md`
+- `performance-memory-lab.md`: living memory-first experiment ledger; isolated measurements are not native release acceptance.
 - `stack-text-editor-*-evidence.md`
 
 Scheduled reports are point-in-time evidence, not current product truth. Use them for leads, then confirm against source/tests.

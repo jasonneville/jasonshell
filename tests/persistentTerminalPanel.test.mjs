@@ -121,10 +121,10 @@ test('terminal panel owns xterm, terminal-state notices, and poll fallback', () 
   assert.match(terminalPanel, /await ensureVisibleResizeBeforeInput\(\);[\s\S]{0,120}writeStackTerminal\(sessionId, data\)/);
   assert.match(terminalPanel, /terminal-panel-status/);
   assert.doesNotMatch(terminalPanel, /\{#if paneRuntime && !paneRuntime\.outputReceived && paneRuntime\.lifecycle !== 'running'\}/, 'persistent notices must follow failed/exited lifecycle, not the absence of output');
-  assert.match(terminalPanel, /readStackTerminal\(sessionId\)/);
+  assert.match(terminalPanel, /pollStackTerminal\(sessionId\)/);
   assert.match(terminalPanel, /writeStackTerminal\(sessionId, data\)/);
   assert.doesNotMatch(terminalPanel, /writeTerminalOutput\(result\.output\)/);
-  assert.match(terminalPanel, /const sequenceKey = `\$\{chunk\.sessionId\}:\$\{chunk\.stream \?\? 'stdout'\}:\$\{chunk\.sequence\}`/);
+  assert.match(terminalPanel, /renderedSequences\.accept\(chunk\.sessionId, chunk\.stream, chunk\.sequence\)/);
   assert.match(terminalPanel, /let writeQueue: Promise<void> = Promise\.resolve\(\)/);
   assert.match(terminalPanel, /function enqueueTerminalWrite/);
   assert.match(terminalPanel, /enqueueTerminalWrite\(\(\) => writeStackTerminal\(sessionId, data\)\)/);
@@ -401,7 +401,7 @@ test('terminal split and tab lifecycle guards stale runtimes and DOM identity', 
 
 test('terminal tabs replay retained output and remember hidden-tab chunks', () => {
   assert.match(terminalPanel, /let sessionReplayBuffers = new Map<string, string>\(\)/);
-  assert.match(terminalPanel, /let renderedSequenceKeysBySession = new Map<string, Set<string>>\(\)/);
+  assert.match(terminalPanel, /const renderedSequenceKeysBySession = new Map<string, TerminalSequenceTracker>\(\)/);
   assert.match(terminalPanel, /if \(!runtime\) \{[\s\S]*rememberTerminalChunkForSession\(event\.payload\)[\s\S]*return;[\s\S]*\}/);
   assert.match(terminalPanel, /function rememberTerminalChunkForSession\(chunk: StackTerminalOutputChunk\)[\s\S]*appendSessionReplayBuffer\(chunk\.sessionId, chunk\.text\)/);
   assert.match(terminalPanel, /function appendSessionReplayBuffer\(sessionId: string, output: string\)[\s\S]*\.slice\(-262144\)/);
@@ -419,7 +419,9 @@ test('terminal tabs replay retained output and remember hidden-tab chunks', () =
   assert.match(bindPaneHostBody, /boundRuntimeId === nextBinding\.runtimeId && runtime\?\.host === node && runtimeHasAttachedTerminal\(runtime\)\) return/);
   assert.match(bindPaneHostBody, /boundRuntimeId = attachPaneHost\(node, boundPane\)\?\.runtimeId \?\? null/);
   assert.match(terminalPanel, /\{#snippet renderPaneTree\(node: TerminalPaneTreeNode\)\}/);
-  assert.match(terminalPanel, /renderedSequences: new Set<string>\(renderedSequenceKeysBySession\.get\(nextSession\.sessionId\) \?\? \[\]\)/);
+  assert.match(terminalPanel, /renderedSequences: sequenceTrackerForSession\(nextSession\.sessionId\)/);
+  assert.match(terminalPanel, /function sequenceTrackerForSession\(sessionId: string\)[\s\S]*renderedSequenceKeysBySession\.get\(sessionId\)[\s\S]*renderedSequenceKeysBySession\.set\(sessionId, tracker\)/);
+  assert.match(terminalPanel, /if \(!sequenceTrackerForSession\(chunk\.sessionId\)\.accept\(chunk\.sessionId, chunk\.stream, chunk\.sequence\)\) return false/);
 });
 
 test('phase 7 terminal panel owns real per-pane xterm runtimes and split resize', () => {
@@ -429,7 +431,7 @@ test('phase 7 terminal panel owns real per-pane xterm runtimes and split resize'
   assert.match(terminalPanel, /searchAddon: SearchAddon \| null/);
   assert.match(terminalPanel, /session: StackTerminalSession/);
   assert.match(terminalPanel, /pollInFlight: boolean/);
-  assert.match(terminalPanel, /renderedSequences: Set<string>/);
+  assert.match(terminalPanel, /renderedSequences: TerminalSequenceTracker/);
   assert.match(terminalPanel, /let paneRuntimes = new Map<string, TerminalPaneRuntime>\(\)/);
   assert.match(terminalPanel, /function runtimeForSession\(sessionId: string\)/);
   assert.match(terminalPanel, /listen<TerminalOutputPayload>\('stack-terminal:output'[\s\S]*runtimeForSession\(event\.payload\.sessionId\)[\s\S]*writeTerminalChunkForRuntime/);

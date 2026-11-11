@@ -11,7 +11,7 @@
   import ContextMenuItem from './ContextMenuItem.svelte';
   import {
     listStackTerminals,
-    readStackTerminal,
+    pollStackTerminal,
     renameStackTerminal,
     resizeStackTerminal,
     startPersistentTerminal,
@@ -24,6 +24,7 @@
   } from '../lib/persistentTerminal';
   import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import { hideTerminalPanel } from '../lib/terminalPanel';
+  import { TerminalSequenceTracker } from '../lib/terminalSequenceTracker';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
   import { openStackFolderInVscode, openStackItem, openStackTerminalHere, revealStackItem } from '../lib/stackPopup';
   import {
@@ -75,7 +76,7 @@
     pollQueued: boolean;
     operationQueue: Promise<void>;
     writeQueue: Promise<void>;
-    renderedSequences: Set<string>;
+    renderedSequences: TerminalSequenceTracker;
     lastResizeKey: string;
     visibleResizeSettled: boolean;
     visibleResizePromise: Promise<void> | null;
@@ -146,7 +147,7 @@
   let pollQueued = false;
   let operationQueue: Promise<void> = Promise.resolve();
   let writeQueue: Promise<void> = Promise.resolve();
-  let renderedSequences = new Set<string>();
+  let renderedSequences = new TerminalSequenceTracker();
   let lastResizeKey = '';
   let unlisteners: Array<() => void> = [];
   let listenersDisposed = false;
@@ -160,7 +161,7 @@
   let recentOutputText = '';
   let sessionReplayBuffers = new Map<string, string>();
   let terminalTitleStates = new Map<string, TerminalTitleState>();
-  let renderedSequenceKeysBySession = new Map<string, Set<string>>();
+  const renderedSequenceKeysBySession = new Map<string, TerminalSequenceTracker>();
   let idlePrewarmTimer: number | null = null;
   let terminalStartPromise: Promise<void> | null = null;
   let terminalSessionCreationInFlight = false;
@@ -274,7 +275,6 @@
     importantTerminalActivitySessions.delete(sessionId);
     manuallyRenamedTerminalSessions.delete(sessionId);
     sessionReplayBuffers = new Map(sessionReplayBuffers);
-    renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession);
     terminalTitleStates = new Map(terminalTitleStates);
   }
 
@@ -501,8 +501,9 @@
         notifyTopBarForImportantTerminalOutput(event.payload.sessionId);
         const runtime = runtimeForSession(event.payload.sessionId);
         if (!runtime) {
-          rememberTerminalChunkForSession(event.payload);
-          rememberTerminalTitleOutput(event.payload.sessionId, event.payload.text);
+          if (rememberTerminalChunkForSession(event.payload)) {
+            rememberTerminalTitleOutput(event.payload.sessionId, event.payload.text);
+          }
           return;
         }
         writeTerminalChunkForRuntime(runtime, event.payload);
@@ -572,7 +573,7 @@
     status = intent === 'idle-prewarm' ? 'Prewarming terminal in the background...' : 'Starting terminal...';
     lifecycle = 'starting';
     outputReceived = false;
-    renderedSequences = new Set<string>();
+    renderedSequences = new TerminalSequenceTracker();
     if (intent !== 'idle-prewarm') ensureTerminalView();
     startStartupTimer();
     try {
@@ -955,7 +956,7 @@
       pollQueued: false,
       operationQueue: Promise.resolve(),
       writeQueue: Promise.resolve(),
-      renderedSequences: new Set<string>(renderedSequenceKeysBySession.get(nextSession.sessionId) ?? []),
+      renderedSequences: sequenceTrackerForSession(nextSession.sessionId),
       lastResizeKey: '',
       visibleResizeSettled: false,
       visibleResizePromise: null,
@@ -2120,9 +2121,10 @@
     commitRuntime(runtime);
     try {
       const sessionId = runtime.session.sessionId;
-      const result = await enqueueTerminalOperationForRuntime(runtime, () => readStackTerminal(sessionId));
+      const result = await enqueueTerminalOperationForRuntime(runtime, () => pollStackTerminal(sessionId));
       if (!isRuntimeCurrent(runtime) || !result || result.sessionId !== runtime.session.sessionId) return;
       for (const chunk of result.chunks ?? []) writeTerminalChunkForRuntime(runtime, chunk);
+      if (result.cwd && !runtime.shellCwdMarkerSeen) applyAuthoritativeTerminalCwdForRuntime(runtime, result.cwd);
       if (result.exited) {
         stopPollingForRuntime(runtime);
         clearStartupTimerForRuntime(runtime);
@@ -2158,7 +2160,7 @@
     pollInFlight = true;
     try {
       const sessionId = session.sessionId;
-      const result = await enqueueTerminalOperation(() => readStackTerminal(sessionId));
+      const result = await enqueueTerminalOperation(() => pollStackTerminal(sessionId));
       if (result.sessionId !== session?.sessionId) {
         return;
       }
@@ -2187,15 +2189,19 @@
     }
   }
 
-  function rememberTerminalChunkForSession(chunk: StackTerminalOutputChunk) {
-    if (typeof chunk.sequence === 'number') {
-      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
-      const sessionKeys = new Set(renderedSequenceKeysBySession.get(chunk.sessionId) ?? []);
-      if (sessionKeys.has(sequenceKey)) return;
-      sessionKeys.add(sequenceKey);
-      renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession).set(chunk.sessionId, sessionKeys);
+  function sequenceTrackerForSession(sessionId: string) {
+    let tracker = renderedSequenceKeysBySession.get(sessionId);
+    if (!tracker) {
+      tracker = new TerminalSequenceTracker();
+      renderedSequenceKeysBySession.set(sessionId, tracker);
     }
+    return tracker;
+  }
+
+  function rememberTerminalChunkForSession(chunk: StackTerminalOutputChunk) {
+    if (!sequenceTrackerForSession(chunk.sessionId).accept(chunk.sessionId, chunk.stream, chunk.sequence)) return false;
     appendSessionReplayBuffer(chunk.sessionId, chunk.text);
+    return true;
   }
 
   function appendSessionReplayBuffer(sessionId: string, output: string) {
@@ -2228,23 +2234,12 @@
 
   function writeTerminalChunkForRuntime(runtime: TerminalPaneRuntime, chunk: StackTerminalOutputChunk) {
     if (!isRuntimeCurrent(runtime) || chunk.sessionId !== runtime.session.sessionId) return;
-    if (typeof chunk.sequence === 'number') {
-      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
-      if (runtime.renderedSequences.has(sequenceKey)) return;
-      runtime.renderedSequences.add(sequenceKey);
-      renderedSequenceKeysBySession = new Map(renderedSequenceKeysBySession).set(chunk.sessionId, new Set(runtime.renderedSequences));
-    }
+    if (!runtime.renderedSequences.accept(chunk.sessionId, chunk.stream, chunk.sequence)) return;
     writeTerminalOutputForRuntime(runtime, chunk.text);
   }
 
   function writeTerminalChunk(chunk: StackTerminalOutputChunk) {
-    if (typeof chunk.sequence === 'number') {
-      const sequenceKey = `${chunk.sessionId}:${chunk.stream ?? 'stdout'}:${chunk.sequence}`;
-      if (renderedSequences.has(sequenceKey)) {
-        return;
-      }
-      renderedSequences.add(sequenceKey);
-    }
+    if (!renderedSequences.accept(chunk.sessionId, chunk.stream, chunk.sequence)) return;
     writeTerminalOutput(chunk.text);
   }
 

@@ -14,7 +14,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
@@ -49,7 +49,7 @@ struct AppIndexEntry {
 #[derive(Clone, Debug)]
 struct CachedAppIndex {
     indexed_at_epoch_secs: u64,
-    entries: Vec<AppIndexEntry>,
+    entries: Arc<[AppIndexEntry]>,
 }
 
 impl CachedAppIndex {
@@ -81,17 +81,25 @@ impl From<PersistedAppIndexCache> for CachedAppIndex {
     fn from(value: PersistedAppIndexCache) -> Self {
         Self {
             indexed_at_epoch_secs: value.indexed_at_epoch_secs,
-            entries: value.entries,
+            entries: value.entries.into(),
         }
     }
 }
 
-impl From<&CachedAppIndex> for PersistedAppIndexCache {
-    fn from(value: &CachedAppIndex) -> Self {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BorrowedPersistedAppIndexCache<'a> {
+    version: u32,
+    indexed_at_epoch_secs: u64,
+    entries: &'a [AppIndexEntry],
+}
+
+impl<'a> From<&'a CachedAppIndex> for BorrowedPersistedAppIndexCache<'a> {
+    fn from(value: &'a CachedAppIndex) -> Self {
         Self {
             version: APP_INDEX_CACHE_VERSION,
             indexed_at_epoch_secs: value.indexed_at_epoch_secs,
-            entries: value.entries.clone(),
+            entries: &value.entries,
         }
     }
 }
@@ -113,7 +121,7 @@ pub(crate) struct AppsSearchRun {
 }
 
 struct CachedAppEntriesSnapshot {
-    entries: Vec<AppIndexEntry>,
+    entries: Arc<[AppIndexEntry]>,
     cache_state: SearchProviderCacheState,
     cache_age_ms: Option<u64>,
     refresh_needed: bool,
@@ -207,7 +215,7 @@ fn refresh_app_index_cache() -> usize {
     let entry_count = entries.len();
     let cache = CachedAppIndex {
         indexed_at_epoch_secs,
-        entries,
+        entries: entries.into(),
     };
 
     let cache_path = app_index_runtime()
@@ -251,7 +259,7 @@ fn cached_app_entries(now_epoch_secs: u64) -> CachedAppEntriesSnapshot {
         );
     }
     CachedAppEntriesSnapshot {
-        entries: Vec::new(),
+        entries: Arc::default(),
         cache_state: SearchProviderCacheState::Disabled,
         cache_age_ms: None,
         refresh_needed: false,
@@ -265,31 +273,31 @@ fn cached_app_entries_from_cache(
 ) -> CachedAppEntriesSnapshot {
     match cached {
         Some(cached) if refresh_in_flight => CachedAppEntriesSnapshot {
-            entries: cached.entries.clone(),
+            entries: Arc::clone(&cached.entries),
             cache_state: SearchProviderCacheState::Refresh,
             cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
             refresh_needed: false,
         },
         Some(cached) if cached.is_fresh(now_epoch_secs) => CachedAppEntriesSnapshot {
-            entries: cached.entries.clone(),
+            entries: Arc::clone(&cached.entries),
             cache_state: SearchProviderCacheState::Hit,
             cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
             refresh_needed: false,
         },
         Some(cached) => CachedAppEntriesSnapshot {
-            entries: cached.entries.clone(),
+            entries: Arc::clone(&cached.entries),
             cache_state: SearchProviderCacheState::Refresh,
             cache_age_ms: Some(cached.age_ms(now_epoch_secs)),
             refresh_needed: true,
         },
         None if refresh_in_flight => CachedAppEntriesSnapshot {
-            entries: Vec::new(),
+            entries: Arc::default(),
             cache_state: SearchProviderCacheState::Indexing,
             cache_age_ms: None,
             refresh_needed: false,
         },
         None => CachedAppEntriesSnapshot {
-            entries: Vec::new(),
+            entries: Arc::default(),
             cache_state: SearchProviderCacheState::Miss,
             cache_age_ms: None,
             refresh_needed: true,
@@ -531,25 +539,34 @@ fn source_rank(source: &str) -> i32 {
 
 fn rank_apps(entries: &[AppIndexEntry], query: &str, limit: usize) -> Vec<SearchResult> {
     let tokens = query_tokens(query);
-    if tokens.is_empty() {
+    if tokens.is_empty() || limit == 0 {
         return Vec::new();
     }
 
     let mut results = entries
         .iter()
         .filter_map(|entry| {
-            score_app(entry, &tokens).map(|(score, matched)| app_result(entry, score, matched))
+            score_app(entry, &tokens).map(|(score, matched)| {
+                let record_key = format!(
+                    "app:{}",
+                    normalize_record_key(&entry.path.display().to_string())
+                );
+                (entry, score, matched, record_key)
+            })
         })
         .collect::<Vec<_>>();
     results.sort_by(|left, right| {
         right
-            .score
-            .cmp(&left.score)
-            .then(left.title.cmp(&right.title))
-            .then(left.record_key.cmp(&right.record_key))
+            .1
+            .cmp(&left.1)
+            .then(left.0.title.cmp(&right.0.title))
+            .then(left.3.cmp(&right.3))
     });
     results.truncate(limit);
     results
+        .into_iter()
+        .map(|(entry, score, matched, _)| app_result(entry, score, matched))
+        .collect()
 }
 
 fn app_result(entry: &AppIndexEntry, score: i32, matched: MatchData) -> SearchResult {
@@ -817,7 +834,7 @@ fn write_persisted_app_index(path: &Path, cache: &CachedAppIndex) -> Result<(), 
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create app index cache directory: {error}"))?;
     }
-    let bytes = serde_json::to_vec(&PersistedAppIndexCache::from(cache))
+    let bytes = serde_json::to_vec(&BorrowedPersistedAppIndexCache::from(cache))
         .map_err(|error| format!("failed to serialize app index cache: {error}"))?;
     fs::write(path, bytes).map_err(|error| format!("failed to write app index cache: {error}"))
 }
@@ -864,7 +881,7 @@ mod tests {
     fn app_index_cache_freshness_is_bounded_by_ttl() {
         let cache = CachedAppIndex {
             indexed_at_epoch_secs: 100,
-            entries: Vec::new(),
+            entries: Vec::new().into(),
         };
 
         assert!(cache.is_fresh(105));
@@ -917,7 +934,8 @@ mod tests {
                 source: "test".to_string(),
                 aliases: vec!["Spotify".to_string()],
                 priority: 1_550,
-            }],
+            }]
+            .into(),
         };
         let snapshot = cached_app_entries_from_cache(Some(&cached), 220, false);
 
@@ -946,7 +964,8 @@ mod tests {
                 source: "test".to_string(),
                 aliases: vec!["Spotify".to_string()],
                 priority: 1_550,
-            }],
+            }]
+            .into(),
         };
         let snapshot = cached_app_entries_from_cache(Some(&cached), 100, true);
 
@@ -969,7 +988,8 @@ mod tests {
                 source: "windowsApps".to_string(),
                 aliases: vec!["Code".to_string(), "VS Code".to_string()],
                 priority: 1_500,
-            }],
+            }]
+            .into(),
         };
 
         write_persisted_app_index(&path, &cache).unwrap();

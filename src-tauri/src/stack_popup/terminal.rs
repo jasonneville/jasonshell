@@ -5,7 +5,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -144,33 +144,24 @@ struct StackTerminalSize {
 
 pub(crate) struct StackTerminalRegistry {
     sessions: HashMap<String, StackTerminalSession>,
-    stop_requested: HashSet<String>,
 }
 
 impl Default for StackTerminalRegistry {
     fn default() -> Self {
         Self {
             sessions: HashMap::new(),
-            stop_requested: HashSet::new(),
         }
     }
 }
 
 impl StackTerminalRegistry {
     fn insert(&mut self, session: StackTerminalSession) {
-        self.stop_requested.remove(&session.id);
         self.sessions.insert(session.id.clone(), session);
     }
 
     fn request_stop(&mut self, session_id: &str) -> Result<Option<StackTerminalSession>, String> {
         validate_stack_terminal_session_id(session_id)?;
-        self.stop_requested.insert(session_id.to_string());
         Ok(self.sessions.remove(session_id))
-    }
-
-    #[cfg(test)]
-    fn should_drop_for_stop(&mut self, session_id: &str) -> bool {
-        self.stop_requested.remove(session_id)
     }
 
     fn session_mut(&mut self, session_id: &str) -> Result<&mut StackTerminalSession, String> {
@@ -223,7 +214,6 @@ impl StackTerminalRegistry {
             .collect::<Vec<_>>();
         let mut stopped = Vec::new();
         for id in ids {
-            self.stop_requested.insert(id.clone());
             if let Some(session) = self.sessions.remove(&id) {
                 stopped.push(session);
             }
@@ -847,7 +837,7 @@ fn spawn_terminal_reader<R>(
                     let chunk = StackTerminalOutputChunk {
                         session_id: session_id.clone(),
                         stream,
-                        text: text.clone(),
+                        text,
                         sequence,
                     };
                     if let Some(app_handle) = &app_handle {
@@ -860,7 +850,7 @@ fn spawn_terminal_reader<R>(
                     sequence = sequence.saturating_add(1);
                     match tx.try_send(TerminalReaderMessage {
                         stream,
-                        text,
+                        text: chunk.text,
                         sequence: chunk.sequence,
                     }) {
                         Ok(()) => {}
@@ -876,7 +866,7 @@ fn spawn_terminal_reader<R>(
             let chunk = StackTerminalOutputChunk {
                 session_id: session_id.clone(),
                 stream,
-                text: text.clone(),
+                text,
                 sequence,
             };
             if let Some(app_handle) = &app_handle {
@@ -888,7 +878,7 @@ fn spawn_terminal_reader<R>(
             }
             let _ = tx.try_send(TerminalReaderMessage {
                 stream,
-                text,
+                text: chunk.text,
                 sequence: chunk.sequence,
             });
         }
@@ -1725,13 +1715,27 @@ mod tests {
     }
 
     #[test]
-    fn terminal_stop_request_blocks_late_reinsert() {
+    fn terminal_stop_request_transfers_ownership_without_resurrection() {
         let mut registry = StackTerminalRegistry::default();
         let session_id = "stack-term-race";
 
         assert!(registry.request_stop(session_id).unwrap().is_none());
-        assert!(registry.should_drop_for_stop(session_id));
-        assert!(!registry.should_drop_for_stop(session_id));
+        registry.insert_test_session(session_id.to_string(), PathBuf::from(r"C:\dev"));
+        let mut stopped = registry.request_stop(session_id).unwrap().unwrap();
+        assert_eq!(stopped.id, session_id);
+        assert_eq!(stopped.cwd, PathBuf::from(r"C:\dev"));
+        assert!(registry.session_mut(session_id).is_err());
+        assert!(registry.request_stop(session_id).unwrap().is_none());
+
+        // Cleanup owns the removed session. Updating or dropping that detached
+        // value cannot restore it to the registry, unlike the former fake
+        // test-only tombstone consumer, which had no production caller.
+        stopped.running = false;
+        assert!(!stopped.snapshot().running);
+        assert!(registry.list_by_target(None).is_empty());
+        drop(stopped);
+        assert!(registry.session_mut(session_id).is_err());
+        assert!(registry.remove(session_id).is_err());
     }
 
     #[test]
@@ -1794,9 +1798,27 @@ mod tests {
                 .len(),
             1
         );
-        assert!(registry.should_drop_for_stop("stack-term-panel-a"));
-        assert!(registry.should_drop_for_stop("stack-term-panel-b"));
-        assert!(!registry.should_drop_for_stop("stack-term-popup"));
+        let mut stopped_ids = stopped
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>();
+        stopped_ids.sort_unstable();
+        assert_eq!(stopped_ids, ["stack-term-panel-a", "stack-term-panel-b"]);
+        assert!(stopped
+            .iter()
+            .all(|session| session.target_label == shell_windows::TERMINAL_PANEL_LABEL));
+        for id in stopped_ids {
+            assert!(registry.session_mut(id).is_err());
+            assert!(registry.request_stop(id).unwrap().is_none());
+        }
+        assert!(registry
+            .request_stop_by_target(shell_windows::TERMINAL_PANEL_LABEL)
+            .is_empty());
+        drop(stopped);
+        let survivor = registry.session_mut("stack-term-popup").unwrap();
+        assert_eq!(survivor.target_label, shell_windows::STACK_POPUP_LABEL);
+        assert_eq!(survivor.cwd, PathBuf::from(r"C:\dev\popup"));
+        assert!(survivor.running);
     }
 
     #[test]

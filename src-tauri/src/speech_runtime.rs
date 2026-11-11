@@ -1183,10 +1183,11 @@ fn transcribe_window(
     transcript: &mut String,
     final_window: bool,
 ) -> Result<(), SpeechFailure> {
-    let audio: Vec<f32> = segments
-        .iter()
-        .flat_map(|segment| segment.iter().copied())
-        .collect();
+    let sample_count = segments.iter().map(|segment| segment.len()).sum();
+    let mut audio = Vec::with_capacity(sample_count);
+    for segment in segments {
+        audio.extend_from_slice(segment);
+    }
     validate_audio(&audio)?;
     let result = model
         .transcribe_samples(audio, TARGET_RATE, 1, None)

@@ -122,6 +122,14 @@ const SECRET_VALUE_PATTERN = /\b(?:bearer\s+\S+|ghp_[A-Za-z0-9_.-]+|gho_[A-Za-z0
 const DEFAULT_MAX_QUICK_COMMAND_INPUT_LENGTH = 4096;
 const MIN_QUICK_COMMAND_INPUT_LENGTH = 1;
 const MAX_QUICK_COMMAND_INPUT_LENGTH = 16384;
+const QUICK_COMMAND_HISTORY_LIMIT = 20;
+const QUICK_COMMAND_TRANSCRIPT_LIMIT = 256;
+
+type RunChronology = Pick<QuickCommandRunHistoryEntry, 'startedAtEpochMs' | 'finishedAtEpochMs' | 'processId' | 'runId'>;
+type HistoryWatermark = { retiredThrough: RunChronology | null; eventEpochMs: number };
+// Weak ownership follows the current renderer snapshot, not the lifetime of the module.
+const historyWatermarks = new WeakMap<readonly QuickCommandRunHistoryEntry[], HistoryWatermark>();
+const inputControls = new WeakMap<object, { sequence: number; pending: QuickCommandPendingInputRequest | null }>();
 
 export function defaultQuickCommandsSettings(): QuickCommandsSettings {
   return { ...DEFAULT_QUICK_COMMANDS_SETTINGS };
@@ -300,11 +308,14 @@ export function stopQuickCommand(request: StopQuickCommandRequest): Promise<void
 }
 
 export function deriveQuickCommandPendingInputRequest(
-  run: Pick<QuickCommandRunHistoryEntry, 'runId' | 'commandId' | 'processId' | 'transcript'>
+  run: Pick<QuickCommandRunHistoryEntry, 'runId' | 'commandId' | 'processId' | 'transcript'> & { running?: boolean }
 ): QuickCommandPendingInputRequest | null {
+  if (run.running === false) return null;
+  const control = inputControls.get(run);
+  if (control) return control.pending;
   for (let index = run.transcript.length - 1; index >= 0; index -= 1) {
     const entry = run.transcript[index];
-    if (!entry.requestId || (entry.kind !== 'text' && entry.kind !== 'password' && entry.kind !== 'confirm' && entry.kind !== 'input-request')) {
+    if (entry.pending === false || !entry.requestId || (entry.kind !== 'text' && entry.kind !== 'password' && entry.kind !== 'confirm' && entry.kind !== 'input-request')) {
       continue;
     }
     const stillPending = !run.transcript.slice(index + 1).some((next) => next.requestId === entry.requestId && (next.kind === 'input-submitted' || next.kind === 'input-cancelled'));
@@ -334,16 +345,10 @@ export function mergeQuickCommandRunHistoryEntry(
   incoming: QuickCommandRunHistoryEntry
 ): QuickCommandRunHistoryEntry {
   const normalizedIncoming = coerceQuickCommandRunHistoryEntry(incoming, 0) ?? incoming;
-  if (!existing) {
-    return normalizedIncoming;
-  }
-  if (!existing.running && normalizedIncoming.running) {
-    return {
-      ...existing,
-      transcript: mergeQuickCommandTranscripts(existing.transcript, normalizedIncoming.transcript)
-    };
-  }
-  return {
+  const merged = !existing ? normalizedIncoming : !existing.running && normalizedIncoming.running ? {
+    ...existing,
+    transcript: mergeQuickCommandTranscripts(existing.transcript, normalizedIncoming.transcript)
+  } : {
     ...existing,
     ...normalizedIncoming,
     transcript: mergeQuickCommandTranscripts(existing.transcript, normalizedIncoming.transcript),
@@ -353,6 +358,25 @@ export function mergeQuickCommandRunHistoryEntry(
     stdoutTruncated: normalizedIncoming.stdoutTruncated,
     stderrTruncated: normalizedIncoming.stderrTruncated
   };
+  // One current input control per live run survives eviction of its transcript row.
+  let control = existing ? inputControls.get(existing) : undefined;
+  if (!control && existing) control = {
+    sequence: Math.max(-1, ...existing.transcript.filter(row => row.requestId).map(row => row.sequence)),
+    pending: deriveQuickCommandPendingInputRequest(existing)
+  };
+  control = { sequence: control?.sequence ?? -1, pending: control?.pending ?? null };
+  for (const row of [...incoming.transcript].sort((left, right) => left.sequence - right.sequence)) {
+    if (row.sequence < control.sequence) continue;
+    if (row.kind === 'input-submitted' || row.kind === 'input-cancelled') {
+      control = { sequence: row.sequence, pending: null };
+    } else if (row.requestId && ['text', 'password', 'confirm', 'input-request'].includes(row.kind)) {
+      if (row.sequence === control.sequence && !control.pending) continue;
+      control = { sequence: row.sequence, pending: row.pending === false ? null : deriveQuickCommandPendingInputRequest({ ...incoming, transcript: [row] }) };
+    }
+  }
+  if (!merged.running) control = { sequence: control.sequence, pending: null };
+  inputControls.set(merged, control);
+  return merged;
 }
 
 export function mergeQuickCommandRunHistoryEntries(
@@ -360,13 +384,33 @@ export function mergeQuickCommandRunHistoryEntries(
   incoming: readonly QuickCommandRunHistoryEntry[]
 ): QuickCommandRunHistoryEntry[] {
   const byRunId = new Map<string, QuickCommandRunHistoryEntry>();
+  const watermark = historyWatermarks.get(existing) ?? { retiredThrough: null, eventEpochMs: 0 };
   for (const entry of existing) {
     byRunId.set(entry.runId, entry);
   }
   for (const entry of incoming) {
+    if (!byRunId.has(entry.runId) && watermark.retiredThrough && sortQuickCommandHistoryEntries(entry, watermark.retiredThrough) >= 0) continue;
     byRunId.set(entry.runId, mergeQuickCommandRunHistoryEntry(byRunId.get(entry.runId), entry));
   }
-  return [...byRunId.values()].sort(sortQuickCommandHistoryEntries);
+  let completed = 0;
+  let retiredThrough = watermark.retiredThrough;
+  let eventEpochMs = watermark.eventEpochMs;
+  const retained = [...byRunId.values()].sort(sortQuickCommandHistoryEntries).filter((entry) => {
+    if (entry.running || ++completed <= QUICK_COMMAND_HISTORY_LIMIT) return true;
+    if (!retiredThrough || sortQuickCommandHistoryEntries(entry, retiredThrough) < 0) {
+      const { startedAtEpochMs, finishedAtEpochMs, processId, runId } = entry;
+      retiredThrough = { startedAtEpochMs, finishedAtEpochMs, processId, runId };
+    }
+    eventEpochMs = Math.max(eventEpochMs, entry.finishedAtEpochMs, ...entry.transcript.map(row => row.atEpochMs));
+    return false;
+  });
+  historyWatermarks.set(retained, { retiredThrough, eventEpochMs });
+  return retained;
+}
+
+export function isQuickCommandRunEventRetired(history: readonly QuickCommandRunHistoryEntry[], event: QuickCommandRunUpdatedEvent): boolean {
+  return !history.some(run => run.runId === event.runId)
+    && event.atEpochMs <= (historyWatermarks.get(history)?.eventEpochMs ?? 0);
 }
 
 export function mergeQuickCommandTranscripts(
@@ -390,7 +434,7 @@ export function mergeQuickCommandTranscripts(
   return [
     ...[...bySequence.entries()].sort(([leftSequence], [rightSequence]) => leftSequence - rightSequence).map(([, entry]) => entry),
     ...fallback.values()
-  ];
+  ].slice(-QUICK_COMMAND_TRANSCRIPT_LIMIT);
 }
 
 function coerceQuickCommandEntry(value: unknown, index: number): QuickCommandEntry | null {
@@ -472,7 +516,7 @@ function coerceQuickCommandRunHistoryEntry(value: unknown, index: number): Quick
     stdoutTruncated: Boolean(record.stdoutTruncated),
     stderrTruncated: Boolean(record.stderrTruncated),
     running: Boolean(record.running),
-    transcript
+    transcript: mergeQuickCommandTranscripts([], transcript)
   } satisfies QuickCommandRunHistoryEntry;
   validateQuickCommandRunHistoryEntry(entry, index);
   return entry;
@@ -692,7 +736,7 @@ function transcriptFallbackKey(entry: QuickCommandTranscriptEntry): string {
   return [entry.kind, entry.body, entry.requestId ?? '', entry.prompt ?? '', String(entry.secret), String(entry.redacted), String(entry.maxLength ?? ''), String(entry.sequence ?? ''), String(entry.atEpochMs ?? '')].join('::');
 }
 
-function sortQuickCommandHistoryEntries(left: QuickCommandRunHistoryEntry, right: QuickCommandRunHistoryEntry): number {
+function sortQuickCommandHistoryEntries(left: RunChronology, right: RunChronology): number {
   return right.startedAtEpochMs - left.startedAtEpochMs
     || right.finishedAtEpochMs - left.finishedAtEpochMs
     || right.processId - left.processId

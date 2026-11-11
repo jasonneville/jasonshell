@@ -1,5 +1,6 @@
 import {
   listStackTerminals,
+  pollStackTerminal,
   readStackTerminal,
   renameStackTerminal,
   resizeStackTerminal,
@@ -8,6 +9,7 @@ import {
   stopTerminalPanelSessions,
   writeStackTerminal,
   type StackTerminalOutputChunk,
+  type StackTerminalPollResult,
   type StackTerminalReadResult,
   type StackTerminalSession
 } from './stackPopup';
@@ -16,6 +18,7 @@ import { IPC_COMMANDS } from '../ipc/commands.js';
 
 export type {
   StackTerminalOutputChunk,
+  StackTerminalPollResult,
   StackTerminalReadResult,
   StackTerminalSession
 };
@@ -26,6 +29,7 @@ export function startPersistentTerminal(): Promise<StackTerminalSession> {
 
 export {
   listStackTerminals,
+  pollStackTerminal,
   readStackTerminal,
   renameStackTerminal,
   resizeStackTerminal,

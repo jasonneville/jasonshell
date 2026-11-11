@@ -98,10 +98,24 @@ unsafe extern "system" {
 impl Drop for Global { fn drop(&mut self) { unsafe { let _ = GlobalFree(self.handle); } GLOBALS.fetch_sub(1, Ordering::SeqCst); } }
 
 fn crc(bytes: &[u8]) -> u32 {
+    static TABLE: [u32; 256] = {
+        let mut table = [0; 256];
+        let mut index = 0;
+        while index < table.len() {
+            let mut value = index as u32;
+            let mut bit = 0;
+            while bit < 8 {
+                value = (value >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(value & 1));
+                bit += 1;
+            }
+            table[index] = value;
+            index += 1;
+        }
+        table
+    };
     let mut value = u32::MAX;
     for byte in bytes {
-        value ^= u32::from(*byte);
-        for _ in 0..8 { value = (value >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(value & 1)); }
+        value = (value >> 8) ^ TABLE[((value ^ u32::from(*byte)) & 255) as usize];
     }
     !value
 }
@@ -216,9 +230,11 @@ fn prepare(image: &CroppedImage, retained: usize, fail: Failpoints) -> Result<Pr
     encode_png(image, &mut output)?;
     let format = unsafe { RegisterClipboardFormatW(w!("PNG")) };
     if format == 0 || format > u16::MAX as u32 { return Err(Failure::SetRejected); }
-    let dib = Global::copy(&dib, false)?;
+    let dib_global = Global::copy(&dib, false)?;
+    drop(dib);
+    drop(_dib_staged);
     let png = Global::copy(&output, false)?;
-    Ok(Prepared { dib, png, png_format: format as u16, _charge: charge })
+    Ok(Prepared { dib: dib_global, png, png_format: format as u16, _charge: charge })
 }
 
 fn format(id: u16) -> FORMATETC { FORMATETC { cfFormat: id, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0 as u32,

@@ -15,6 +15,7 @@
     formatQuickCommandArgsTextarea,
     formatQuickCommandCommandsTextarea,
     listQuickCommandHistory,
+    isQuickCommandRunEventRetired,
     loadQuickCommandsSettings,
     mergeQuickCommandRunHistoryEntries,
     nextDuplicateQuickCommandLabel,
@@ -258,7 +259,7 @@
       const loaded = cloneSettings(quickCommands);
       latestAcceptedSettings = loaded;
       entries = cloneEntries(quickCommands.entries);
-      allHistory = [...quickCommands.history];
+      allHistory = mergeQuickCommandRunHistoryEntries(allHistory, quickCommands.history);
       listWidth = quickCommands.listWidth;
       history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
       updatePendingInputFromHistory();
@@ -564,7 +565,9 @@
       history = selectedId ? allHistory.filter((run) => run.commandId === selectedId) : [];
       activeRunIds = new Set(allHistory.filter((run) => run.running).map((run) => run.runId));
       activeCommandIds = new Set(allHistory.filter((run) => run.running).map((run) => run.commandId));
-      const nextExpandedIds = new Set(expandedRunIds);
+      stoppingRunIds = new Set([...stoppingRunIds].filter(id => activeRunIds.has(id)));
+      pruneLiveHistoryUpdateTimes();
+      const nextExpandedIds = new Set([...expandedRunIds].filter(id => allHistory.some(run => historyRunKey(run) === id)));
       for (const run of allHistory) if (run.commandId === selectedId && run.running) nextExpandedIds.add(historyRunKey(run));
       expandedRunIds = nextExpandedIds;
       updatePendingInputFromHistory();
@@ -576,7 +579,8 @@
     if (disposed) return;
     stoppingId = id; panelError = '';
     try {
-      const activeRun = (await listQuickCommandHistory()).find((run) => run.commandId === id && run.running);
+      await refreshHistory();
+      const activeRun = allHistory.find((run) => run.commandId === id && run.running);
       if (disposed) return;
       if (!activeRun) { await refreshHistory(); return; }
       await stopQuickCommand({ id, processId: activeRun.processId, runId: activeRun.runId });
@@ -820,7 +824,8 @@
   }
 
   function updatePendingInputFromHistory() {
-    const run = pendingInputRequest ? allHistory.find((entry) => entry.runId === pendingInputRequest?.runId) : allHistory.find((entry) => deriveQuickCommandPendingInputRequest(entry));
+    const run = allHistory.find((entry) => entry.runId === pendingInputRequest?.runId && deriveQuickCommandPendingInputRequest(entry))
+      ?? allHistory.find((entry) => deriveQuickCommandPendingInputRequest(entry));
     pendingInputRequest = run ? deriveQuickCommandPendingInputRequest(run) : null;
     if (!pendingInputRequest) { pendingInputDraft = ''; pendingInputError = ''; }
   }
@@ -828,6 +833,7 @@
   function handleQuickCommandRunUpdated(payload: QuickCommandRunUpdatedEvent) {
     if (disposed) return;
     const existing = allHistory.find((run) => run.runId === payload.runId) ?? null;
+    if (isQuickCommandRunEventRetired(allHistory, payload) || (existing && !existing.running)) return;
     const nextHistory = mergeQuickCommandRunHistoryEntries(allHistory, [{
       runId: payload.runId,
       commandId: payload.commandId,
@@ -843,12 +849,17 @@
       transcript: [payload]
     }]);
     allHistory = nextHistory;
+    activeRunIds = new Set(allHistory.filter(run => run.running).map(run => run.runId));
+    activeCommandIds = new Set(allHistory.filter(run => run.running).map(run => run.commandId));
+    const retainedIds = new Set(allHistory.map(historyRunKey));
+    expandedRunIds = new Set([...expandedRunIds].filter(id => retainedIds.has(id)));
+    stoppingRunIds = new Set([...stoppingRunIds].filter(id => activeRunIds.has(id)));
     if (payload.kind === 'stopping') stoppingRunIds = new Set([...stoppingRunIds, payload.runId]);
     else if (payload.kind === 'stop-failed' || payload.kind === 'stopped' || payload.kind === 'exit') stoppingRunIds = new Set([...stoppingRunIds].filter((runId) => runId !== payload.runId));
     if ((payload.kind === 'stop-failed' || payload.kind === 'stopped' || payload.kind === 'exit') && stoppingId === payload.commandId) stoppingId = null;
     if (payload.kind === 'stopped' || payload.kind === 'exit') {
       activeRunIds = new Set([...activeRunIds].filter((runId) => runId !== payload.runId));
-      activeCommandIds = new Set([...activeCommandIds].filter((commandId) => commandId !== payload.commandId));
+      activeCommandIds = new Set(allHistory.filter(run => run.running).map(run => run.commandId));
     }
     lastLiveHistoryUpdateAtByRun.set(payload.runId, Date.now());
     pruneLiveHistoryUpdateTimes();

@@ -1,0 +1,43 @@
+{
+  "scope": "Deterministic retained-identity/copy counts and serialized JSON bytes, not heap usage or native certification",
+  "historicalProductionBefore": {
+    "command": "node tests/fixtures/terminalRetentionBaseline.mjs (original pre-migration version)",
+    "sourceHash": null,
+    "sourceHashNote": "Original actual-source measurements were recorded before migration; no baseline source hash was captured. These are preserved observations, not reconstructed claims.",
+    "visible": { "chunks": 10000, "runtimeKeys": 10000, "setCopies": 10000, "copiedKeys": 50005000 },
+    "hiddenIncludingDuplicatePass": { "uniqueChunks": 10000, "duplicateChunks": 10000, "retainedKeys": 10000, "setCopies": 20000, "copiedKeys": 149995000 }
+  },
+  "currentReproducibleMeasurement": {
+    "command": "node tests/fixtures/terminalRetentionBaseline.mjs",
+    "method": "Execute current production tracker and panel declarations; instrument Set iterable constructors and tracker constructors; compare emitted text against independent string-key Set decision oracle; replacement runtime shares same tracker object",
+    "workloads": [
+      { "visibleChunks": 100, "totalUniqueVisibleAndHiddenChunks": 200, "trackerConstructions": 1, "setCopies": 0, "copiedKeys": 0, "rangeCount": 1, "fallbackKeyCount": 0 },
+      { "visibleChunks": 1000, "totalUniqueVisibleAndHiddenChunks": 2000, "trackerConstructions": 1, "setCopies": 0, "copiedKeys": 0, "rangeCount": 1, "fallbackKeyCount": 0 },
+      { "visibleChunks": 10000, "totalUniqueVisibleAndHiddenChunks": 20000, "trackerConstructions": 1, "setCopies": 0, "copiedKeys": 0, "rangeCount": 1, "fallbackKeyCount": 0 }
+    ],
+    "standaloneContiguousTracker": { "chunks": 10000, "rangeCount": 1, "fallbackKeyCount": 0 },
+    "payload": { "chunks": 100, "textCodeUnitsPerChunk": 100, "pollBytes": 16857, "legacyBytes": 26885, "savedBytes": 10028, "identicalChunks": true, "aggregateOutputRequested": false },
+    "productionSha256": {
+      "src/lib/terminalSequenceTracker.ts": "8a1619d4d0d8ba1739ad2e596dcc368516a1e528d325f716efe4b72cc315e03b",
+      "src/components/TerminalPanelSurface.svelte": "fb6d492c61448da92b34ace46567b4eef78ff4ebe87a2018d1da886e1d20fd2d",
+      "src/components/StackTerminalPane.svelte": "e7e4782fbcf051710c6fbe8fd01652a10a3769e268da539b5d52ef195092e67d",
+      "src/lib/stackPopup.ts": "68c48040d927c15f58d921163f6fc49ae8fbdd2389b8086a071f4990a070fe6b",
+      "src/lib/persistentTerminal.ts": "d8fdd4c99c07154c1e2999c96c706b9d7098f0b20c14349d375adb99474d3b56"
+    }
+  },
+  "acceptance": {
+    "nodeCommand": "node --test tests/terminalSequenceRetention.test.mjs tests/terminalPollingContract.test.mjs",
+    "nodeResult": { "passed": 7, "failed": 0, "skipped": 0 },
+    "componentCommand": "npm run test:component -- --run tests/components/terminal-retention.test.ts tests/components/terminal-panel-status.test.ts",
+    "componentResult": { "passed": 49, "failed": 0 },
+    "existingCommand": "npx --no-install tsc -p tsconfig.test.json; node --test tests/persistentTerminalPanel.test.mjs tests/stackBrowserTerminal.test.mjs",
+    "existingResult": { "passed": 45, "failed": 1, "remainingFailure": "Unchanged crop icon list baseline at persistentTerminalPanel.test.mjs:227" }
+  },
+  "limits": [
+    "Mounted production components use jsdom, mocked Tauri IPC, DOM-owning xterm double, and deterministic timers; not desktop/native E2E",
+    "Stack push before start response is recovered by polling; test does not claim the pre-session push event itself is buffered",
+    "Worst-case sparse fragmentation still grows; no eviction quota or high-water truncation",
+    "Live Tauri and ConPTY termination unrun, consent-gated",
+    "Independent final code review remains Leader-owned"
+  ]
+}

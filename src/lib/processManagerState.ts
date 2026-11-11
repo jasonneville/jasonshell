@@ -98,8 +98,16 @@ export function sortProcesses(
   sort: ProcessSortState,
   options: ProcessOrderOptions = {}
 ): ProcessInfo[] {
+  return sortProcessesWithMembership(processes, sort, new Set(options.taskbarActivePids));
+}
+
+function sortProcessesWithMembership(
+  processes: readonly ProcessInfo[],
+  sort: ProcessSortState,
+  taskbarActivePids: ReadonlySet<number>
+): ProcessInfo[] {
   return [...processes].sort((left, right) => {
-    const groupComparison = compareProcessGroups(left, right, options);
+    const groupComparison = compareProcessGroups(left, right, taskbarActivePids);
     if (groupComparison !== 0) {
       return groupComparison;
     }
@@ -118,7 +126,8 @@ export function orderProcessRefresh(
   sort: ProcessSortState,
   options: ProcessOrderOptions & { preserveExistingOrder?: boolean } = {}
 ): ProcessInfo[] {
-  const sortedNextProcesses = sortProcesses(nextProcesses, sort, options);
+  const taskbarActivePids = new Set(options.taskbarActivePids);
+  const sortedNextProcesses = sortProcessesWithMembership(nextProcesses, sort, taskbarActivePids);
   if (!options.preserveExistingOrder || previousProcesses.length === 0) {
     return sortedNextProcesses;
   }
@@ -126,8 +135,9 @@ export function orderProcessRefresh(
   const previousIndexByPid = new Map(previousProcesses.map((process, index) => [process.pid, index]));
   const sortedIndexByPid = new Map(sortedNextProcesses.map((process, index) => [process.pid, index]));
 
-  return [...sortedNextProcesses].sort((left, right) => {
-    const groupComparison = compareProcessGroups(left, right, options);
+  // The first pass owns this array; sorting it again leaves caller arrays untouched.
+  return sortedNextProcesses.sort((left, right) => {
+    const groupComparison = compareProcessGroups(left, right, taskbarActivePids);
     if (groupComparison !== 0) {
       return groupComparison;
     }
@@ -152,7 +162,13 @@ export function classifyProcessGroup(
   process: ProcessInfo,
   options: ProcessOrderOptions = {}
 ): ProcessGroupId {
-  const taskbarActivePids = new Set(options.taskbarActivePids ?? []);
+  return classifyProcessGroupWithMembership(process, new Set(options.taskbarActivePids));
+}
+
+function classifyProcessGroupWithMembership(
+  process: ProcessInfo,
+  taskbarActivePids: ReadonlySet<number>
+): ProcessGroupId {
   if (taskbarActivePids.has(process.pid) || process.taskbarActive === true) {
     return 'applications';
   }
@@ -329,9 +345,10 @@ function compareProcessValues(
 function compareProcessGroups(
   left: ProcessInfo,
   right: ProcessInfo,
-  options: ProcessOrderOptions
+  taskbarActivePids: ReadonlySet<number>
 ): number {
-  return groupIndex(classifyProcessGroup(left, options)) - groupIndex(classifyProcessGroup(right, options));
+  return groupIndex(classifyProcessGroupWithMembership(left, taskbarActivePids))
+    - groupIndex(classifyProcessGroupWithMembership(right, taskbarActivePids));
 }
 
 function groupIndex(groupId: ProcessGroupId): number {

@@ -445,9 +445,25 @@ test('saved-command row left click selects except actions and suppressed post-dr
 });
 
 test('command panel terminal events clear active quick command state immediately', () => {
-  assert.match(commandPanelSource, /payload\.kind === 'stopped' \|\| payload\.kind === 'exit'/);
-  assert.match(commandPanelSource, /activeRunIds = new Set\(\[\.\.\.activeRunIds\]\.filter\(\(runId\) => runId !== payload\.runId\)\)/);
-  assert.match(commandPanelSource, /activeCommandIds = new Set\(\[\.\.\.activeCommandIds\]\.filter\(\(commandId\) => commandId !== payload\.commandId\)\)/);
-  assert.match(commandPanelSource, /payload\.kind === 'stop-failed' \|\| payload\.kind === 'stopped' \|\| payload\.kind === 'exit'\) && stoppingId === payload\.commandId\) stoppingId = null/);
+  const handler = commandPanelSource.slice(
+    commandPanelSource.indexOf('function handleQuickCommandRunUpdated('),
+    commandPanelSource.indexOf('async function submitPendingInput(')
+  );
+  // Terminal runs cannot regain controls from replayed events. Active command
+  // state is derived from retained live runs, preserving another same-command run.
+  assert.match(handler, /if \(isQuickCommandRunEventRetired\(allHistory, payload\) \|\| \(existing && !existing\.running\)\) return;[\s\S]*mergeQuickCommandRunHistoryEntries/);
+  assert.match(handler, /running: payload\.kind !== 'exit' && payload\.kind !== 'stopped'/);
+  assert.match(handler, /allHistory = nextHistory;/);
+  const synchronousHandler = handler.slice(0, handler.indexOf('window.requestAnimationFrame('));
+  assert.match(synchronousHandler, /if \(payload\.kind === 'stopped' \|\| payload\.kind === 'exit'\) \{\s*activeRunIds = new Set\(\[\.\.\.activeRunIds\]\.filter\(\(runId\) => runId !== payload\.runId\)\);\s*activeCommandIds = new Set\(allHistory\.filter\(run => run\.running\)\.map\(run => run\.commandId\)\);\s*\}/);
+  assert.match(synchronousHandler, /payload\.kind === 'stop-failed' \|\| payload\.kind === 'stopped' \|\| payload\.kind === 'exit'\) && stoppingId === payload\.commandId\) stoppingId = null/);
+  assert.match(synchronousHandler, /stoppingRunIds = new Set\(\[\.\.\.stoppingRunIds\]\.filter\(\(runId\) => runId !== payload\.runId\)\)/);
+  assert.match(handler, /history = editor\.id \? allHistory\.filter\(\(run\) => run\.commandId === editor\.id\) : \[\];\s*updatePendingInputFromHistory\(\);/);
+  const pendingUpdate = commandPanelSource.slice(
+    commandPanelSource.indexOf('function updatePendingInputFromHistory('),
+    commandPanelSource.indexOf('function handleQuickCommandRunUpdated(')
+  );
+  assert.match(pendingUpdate, /pendingInputRequest = run \? deriveQuickCommandPendingInputRequest\(run\) : null;/);
+  assert.match(pendingUpdate, /if \(!pendingInputRequest\) \{ pendingInputDraft = ''; pendingInputError = ''; \}/);
 });
 
