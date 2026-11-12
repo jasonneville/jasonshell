@@ -147,9 +147,10 @@ test('active task window context menu exposes PID lookup and taskbar pin actions
   assert.match(taskbarMenuRs, /pub fn run_task_window_action\([\s\S]*?if window\.label\(\) != BOTTOM_BAR_LABEL \{[\s\S]*?"pin" => launchers::pin_task_window_to_taskbar\(request\.hwnd\)/);
   assert.match(taskbarMenuRs, /_ => return Err\("Unknown task window action"\.to_string\(\)\)/);
   assert.match(processManagerRust, /pub focus_pid: Option<u32>/);
-  assert.match(processManagerRust, /emit\(PROCESS_MANAGER_OPEN_EVENT, request\.focus_pid\)/);
-  assert.match(processManagerSurface, /processFilter = String\(focusPid\)/);
-  assert.match(processManagerSurface, /sortState = \{ column: 'pid', direction: 'asc' \}/);
+  assert.match(processManagerRust, /emit\(PROCESS_MANAGER_OPEN_EVENT, OpenPayload \{ focus_pid: request\.focus_pid, context \}\)/);
+  assert.match(processManagerRust, /struct OpenPayload \{ focus_pid: Option<u32>, context: ProcessManagerContext \}/);
+  assert.match(processManagerSurface, /processFilter = focusPid === null \? '' : String\(focusPid\)/);
+  assert.match(processManagerSurface, /sortState = focusPid === null \? \{ column: 'cpuPercent', direction: 'desc' \} : \{ column: 'pid', direction: 'asc' \}/);
 });
 
 test('active taskbar pin creates a taskbar shortcut instead of reviving app-managed quick icons', () => {

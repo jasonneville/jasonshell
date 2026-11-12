@@ -88,6 +88,9 @@ pub mod commands {
     pub const PUBLISH_SEARCH_PANEL: &str = "publish_search_panel";
     pub const GET_SEARCH_PANEL_PAYLOAD: &str = "get_search_panel_payload";
     pub const SHOW_PROCESS_MANAGER: &str = "show_process_manager";
+    pub const GET_PROCESS_MANAGER_CONTEXT: &str = "get_process_manager_context";
+    pub const SET_PROCESS_MANAGER_TAB: &str = "set_process_manager_tab";
+    pub const GET_SYSTEM_INFO_SNAPSHOT: &str = "get_system_info_snapshot";
     pub const HIDE_PROCESS_MANAGER: &str = "hide_process_manager";
     pub const SHOW_QUICK_LAUNCH_PANEL: &str = "show_quick_launch_panel";
     pub const HIDE_QUICK_LAUNCH_PANEL_ON_FOCUS_LOSS: &str = "hide_quick_launch_panel_on_focus_loss";
@@ -273,6 +276,9 @@ pub mod commands {
         PUBLISH_SEARCH_PANEL,
         GET_SEARCH_PANEL_PAYLOAD,
         SHOW_PROCESS_MANAGER,
+        GET_PROCESS_MANAGER_CONTEXT,
+        SET_PROCESS_MANAGER_TAB,
+        GET_SYSTEM_INFO_SNAPSHOT,
         HIDE_PROCESS_MANAGER,
         SHOW_QUICK_LAUNCH_PANEL,
         HIDE_QUICK_LAUNCH_PANEL_ON_FOCUS_LOSS,

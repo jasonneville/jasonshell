@@ -29,8 +29,7 @@ When prose conflicts with source/tests, follow source/tests and update the stale
 - Use `docs/README.md` to choose docs by task type.
 
 ## Validation
-
-- Use RED-first tests for implementation work.
+- Perform E2E tests to ensure functionality
 - Fully cover edge cases and functionality.
 - Run focused validation for touched surfaces.
 - Run QA/adversarial review before declaring substantial changes complete.

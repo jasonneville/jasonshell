@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-process-manager-tab"
+description = "Enables the set_process_manager_tab command without any pre-configured scope."
+commands.allow = ["set_process_manager_tab"]
+
+[[permission]]
+identifier = "deny-set-process-manager-tab"
+description = "Denies the set_process_manager_tab command without any pre-configured scope."
+commands.deny = ["set_process_manager_tab"]

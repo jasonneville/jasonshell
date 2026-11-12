@@ -26,6 +26,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'processManagerAccessibility.test.mjs',
     'processManagerCloseButton.test.mjs',
     'processManagerWiring.test.mjs',
+    'systemInfoContract.test.mjs',
     'quickCommands.test.mjs',
     'commandPanelCloseButton.test.mjs',
     'quickIcons.test.mjs',

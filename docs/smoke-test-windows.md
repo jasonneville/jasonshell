@@ -119,6 +119,19 @@ Prereqs: Windows desktop session, working default microphone, packaged JasonShel
 - Pending/manual evidence: keyboard-check Process Manager at 100% and 200% zoom in light and dark themes. Tab/Shift+Tab should reach Filter, Refresh, sortable headers, group toggles, Kill buttons, the focusable grid, and Close with visible focus throughout.
 - Pending/manual evidence: with NVDA or JAWS for 30 seconds while the process list auto-refreshes, verify timer ticks do not announce every successful refresh. Trigger one manual Refresh and record one bounded status announcement. Record any auto-refresh error announcement separately as intentional error status.
 
+### System Info tab
+
+- The existing Process Manager opens on Processes and exposes only the **Processes** and **System Info** tabs; no separate launcher, icon, or window is expected.
+- Switch to System Info with mouse and keyboard. Verify the five sections are present: Overview, Storage, Sensors, Network, and Hardware. Return to Processes and verify the filter, selected sort, expanded groups, and scroll/viewport remain intact.
+- Verify Overview labels CPU, RAM, uptime, and GPU readings as whole-machine values independent of the process filter. GPU text must describe busiest-engine usage, not an adapter-total; Network must show per-adapter receive/send traffic and link speeds without a misleading total.
+- Verify Storage distinguishes total free space from “Caller-visible capacity (quota-aware)”. This is quota-limited caller availability, not physical or volume capacity; do not treat a timeout, missing root, or unavailable sample as zero.
+- Verify Sensors reports an explicit unavailable/provider-not-verified state when no supported already-running provider is present. JasonShell must not launch, install, or request elevation for a sensor provider.
+- Verify Hardware shows only the documented allowlist (names, counts, RAM, Windows version, board/BIOS vendor/version); do not expect serial numbers, MAC addresses, UUIDs, asset tags, or keys. No battery, history, chart, or action controls should appear.
+- Verify System Info refreshes from cached native readings while visible and focused, and stops/invalidates after focus-loss or close. Close events carry the retired context and stale generation close events must not affect a newer open. This manual check does not replace native acceptance or cache/ACL contract tests.
+- Pending/manual evidence: repeat the tab and keyboard checks at 100% and 200% zoom in light and dark themes, with visible focus throughout. Live hardware values, multiple-processor-group behavior, provider absence, quota behavior, and helper timeout/reaping require an opted-in Windows session; no such live evidence is claimed by this checklist update.
+
+Automated evidence for this implementation includes operational child cleanup 7/7, cache/schema 20/20, ACL 6/6, 484 component tests, 1,180 Rust tests, full `check`, `build`, and `cargo:check` passing. The Node suite is 1,270 passing and 10 proven baseline failures at HEAD `43af99a6009bd2dee5b7f27d7b425832e307841b`; `npm run validate` exits 1 and is not GREEN. A visible-browser production-mounted mocked-IPC journey plus 13 extended checks passed with verified portable wmux 2.60.0. Reproduce with `pwsh -NoProfile -File tests/browser/system-info/run-visible.ps1 -WmuxProcessId <current wmux PID>` (observed PID 35164, exit 0); six screenshots, accessibility/results artifacts, and a 62-entry IPC trace were captured under the approved `system-info-visible-e2e` temp directory. This does not verify native hardware/HWND runtime, process termination, or live shell behavior; those remain unverified and unauthorized.
+
 ## Notes
 
 - Stack Browser Phase 1 manual Windows smoke status: pending/not run in this docs pass.

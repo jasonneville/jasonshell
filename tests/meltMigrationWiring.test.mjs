@@ -132,7 +132,8 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('name'\)\} onClick=\{\(\) => sortBy\('name'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton role="columnheader" ariaSort=\{ariaSort\('startTimeMs'\)\} onClick=\{\(\) => sortBy\('startTimeMs'\)\}/);
   assert.match(processManagerSource, /<MeltActionButton[\s\S]*class="kill-button"[\s\S]*ariaLabel=\{killState\.ariaLabel\}[\s\S]*disabled=\{killState\.disabled\}[\s\S]*onClick=\{\(\) => void killRow\(process\)\}/);
-  assert.doesNotMatch(processManagerSource, /<button[\s\S]*class="kill-button"/);
+  // Do not span from a native tab's opening tag into a later Melt kill control.
+  assert.doesNotMatch(processManagerSource, /<button\b[^>]*\bclass="kill-button"/);
 });
 
 test('search panel keeps pinning input-owned while safe buttons use Melt-backed controls', () => {

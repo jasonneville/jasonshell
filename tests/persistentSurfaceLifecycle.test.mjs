@@ -107,7 +107,8 @@ test('process manager close invalidates in-flight refreshes', () => {
 
   assert.match(closeBody, /inFlightRequest \+= 1/);
   assert.match(closeBody, /isLoading = false/);
-  assert.match(processManagerSource, /if \(requestId !== inFlightRequest\) \{\s*return;\s*\}/);
+  assert.match(processManagerSource, /if \(!current\(requestId, 'processes'\)\) \{\s*return;\s*\}/);
+  assert.match(processManagerSource, /return !disposed && isOpen && activeTab === tab && request === inFlightRequest/);
 });
 
 test('async unlistener registry calls late-resolving unlisten exactly once after destroy', async () => {

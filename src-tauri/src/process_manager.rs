@@ -4,6 +4,80 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
+pub mod system_info;
+#[cfg(target_os = "windows")]
+mod windows_telemetry;
+#[cfg(target_os = "windows")]
+pub mod volume_probe;
+#[cfg(target_os = "windows")]
+pub mod probe_executor;
+#[cfg(target_os = "windows")]
+mod native_runtime;
+#[cfg(target_os = "windows")]
+pub use native_runtime::SystemInfoRuntime;
+use system_info::{ProcessManagerContext, ProcessManagerTab, SystemInfoSnapshot};
+
+fn same_registered_instance(window: &WebviewWindow, label: &str) -> bool {
+    let Some(registered) = window.app_handle().get_webview_window(label) else { return false; };
+    #[cfg(target_os = "windows")]
+    { window.hwnd().ok().zip(registered.hwnd().ok()).is_some_and(|(actual, expected)| actual == expected) }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = registered; false }
+}
+fn authorize_process_manager(window: &WebviewWindow) -> Result<(), String> {
+    system_info::authorize_manager(window.label(), || same_registered_instance(window, PROCESS_MANAGER_LABEL)).map_err(str::to_owned)
+}
+#[cfg(target_os = "windows")]
+pub fn retire_system_info(app: &AppHandle) -> Result<ProcessManagerContext, String> {
+    // Capture the retired epoch under the lifecycle lock. A newer opening may
+    // commit before emission; never reread its context for this close event.
+    let context = {
+        let runtime = app.state::<SystemInfoRuntime>();
+        let mut state = runtime.inner.lock().map_err(|_| "state unavailable")?;
+        state.invalidate();
+        state.coordinator.hide().map_err(str::to_owned)?;
+        state.coordinator.context()
+    };
+    #[derive(Clone, Serialize)]
+    struct ClosedPayload { context: ProcessManagerContext }
+    if let Some(popup) = app.get_webview_window(PROCESS_MANAGER_LABEL) {
+        let _ = popup.emit(PROCESS_MANAGER_CLOSED_EVENT, ClosedPayload { context: context.clone() });
+    }
+    Ok(context)
+}
+#[cfg(target_os = "windows")]
+pub fn volume_helper(args: &[String]) -> i32 { volume_probe::helper(args) }
+
+#[tauri::command]
+pub fn get_process_manager_context(window: WebviewWindow) -> Result<ProcessManagerContext, String> {
+    authorize_process_manager(&window)?;
+    let runtime = window.state::<SystemInfoRuntime>();
+    let state = runtime.inner.lock().map_err(|_| "state unavailable")?;
+    Ok(state.coordinator.context())
+}
+#[tauri::command]
+pub fn set_process_manager_tab(window: WebviewWindow, open_generation: u64, tab_revision: u64, tab: ProcessManagerTab) -> Result<ProcessManagerContext, String> {
+    authorize_process_manager(&window)?;
+    let visible = window.is_visible().unwrap_or(false); let focused = window.is_focused().unwrap_or(false);
+    let runtime = window.state::<SystemInfoRuntime>();
+    let context = {
+        let mut state = runtime.inner.lock().map_err(|_| "state unavailable")?;
+        let context = state.coordinator.activate(open_generation, tab_revision, tab, visible, focused).map_err(str::to_owned)?;
+        state.invalidate(); if tab == ProcessManagerTab::SystemInfo { state.warm(native_runtime::now())?; } context
+    };
+    runtime.start(window.app_handle());
+    Ok(context)
+}
+#[tauri::command]
+pub fn get_system_info_snapshot(window: WebviewWindow, open_generation: u64, tab_revision: u64, after_revision: Option<u64>) -> Result<Option<SystemInfoSnapshot>, String> {
+    authorize_process_manager(&window)?;
+    if !window.is_visible().unwrap_or(false) || !window.is_focused().unwrap_or(false) { return Err("inactive context".into()); }
+    let runtime = window.state::<SystemInfoRuntime>();
+    let state = runtime.inner.lock().map_err(|_| "state unavailable")?;
+    let context = state.coordinator.context();
+    if !context.visible || context.active_tab != ProcessManagerTab::SystemInfo || context.open_generation != open_generation || context.tab_revision != tab_revision || after_revision.is_some_and(|revision| system_info::safe_number(revision).is_none()) { return Err("inactive or stale context".into()); }
+    state.read_snapshot(open_generation, tab_revision, after_revision, true, true)
+}
 
 use crate::shell_windows::{
     BOTTOM_BAR_LABEL, PROCESS_MANAGER_HEIGHT_LOGICAL, PROCESS_MANAGER_LABEL,
@@ -100,12 +174,31 @@ struct ProcessCpuSnapshot {
 }
 
 static PROCESS_CPU_SNAPSHOTS: OnceLock<Mutex<HashMap<u32, ProcessCpuSnapshot>>> = OnceLock::new();
+// Never queue enumerations behind a slow previous request/open generation.
+static PROCESS_ENUMERATION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct EnumerationPermit;
+impl EnumerationPermit {
+    fn acquire() -> Result<Self, String> {
+        PROCESS_ENUMERATION.compare_exchange(false, true, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).map(|_| Self).map_err(|_| "process refresh busy".to_string())
+    }
+}
+impl Drop for EnumerationPermit {
+    fn drop(&mut self) { PROCESS_ENUMERATION.store(false, std::sync::atomic::Ordering::Release); }
+}
 
 #[tauri::command]
 pub fn show_process_manager(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: ShowProcessManagerRequest,
 ) -> Result<(), String> {
+    if window.label() != BOTTOM_BAR_LABEL || !same_registered_instance(&window, BOTTOM_BAR_LABEL) { return Err("unauthorized".into()); }
+    show_process_manager_native(app_handle, request)
+}
+
+/// Trusted native menu dispatcher; never registered as renderer IPC.
+pub(crate) fn show_process_manager_native(app_handle: AppHandle, request: ShowProcessManagerRequest) -> Result<(), String> {
+    if !request.anchor_left.is_finite() || !request.anchor_width.is_finite() || request.anchor_left.abs() > 1_000_000.0 || !(0.0..=100_000.0).contains(&request.anchor_width) || request.focus_pid == Some(0) { return Err("invalid request".into()); }
     let popup = app_handle
         .get_webview_window(PROCESS_MANAGER_LABEL)
         .ok_or_else(|| "Process manager window is unavailable".to_string())?;
@@ -160,49 +253,63 @@ pub fn show_process_manager(
         .map_err(|error| format!("Failed to show the process manager: {error}"))?;
     popup
         .set_focus()
-        .map_err(|error| format!("Failed to focus the process manager: {error}"))?;
+        .map_err(|error| { let _ = retire_system_info(&app_handle); let _ = popup.hide(); format!("Failed to focus the process manager: {error}") })?;
+    let context = {
+        let runtime = app_handle.state::<SystemInfoRuntime>();
+        let mut state = runtime.inner.lock().map_err(|_| "state unavailable")?;
+        state.invalidate(); state.coordinator.open(request.focus_pid).map_err(str::to_owned)?
+    };
+    #[derive(Clone, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct OpenPayload { focus_pid: Option<u32>, context: ProcessManagerContext }
     popup
-        .emit(PROCESS_MANAGER_OPEN_EVENT, request.focus_pid)
+        .emit(PROCESS_MANAGER_OPEN_EVENT, OpenPayload { focus_pid: request.focus_pid, context })
         .map_err(|error| format!("Failed to publish process manager open event: {error}"))
 }
 
 #[tauri::command]
-pub fn hide_process_manager(app_handle: AppHandle) -> Result<(), String> {
+pub fn hide_process_manager(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
+    authorize_process_manager(&window)?;
+    retire_system_info(&app_handle)?;
     let popup = app_handle
         .get_webview_window(PROCESS_MANAGER_LABEL)
         .ok_or_else(|| "Process manager window is unavailable".to_string())?;
-    popup
-        .emit(PROCESS_MANAGER_CLOSED_EVENT, ())
-        .map_err(|error| format!("Failed to publish process manager closed event: {error}"))?;
     popup
         .hide()
         .map_err(|error| format!("Failed to hide the process manager: {error}"))
 }
 
 #[tauri::command]
-pub fn list_processes(window: WebviewWindow) -> Result<Vec<ProcessInfo>, String> {
+pub async fn list_processes(window: WebviewWindow) -> Result<Vec<ProcessInfo>, String> {
+    authorize_process_manager(&window)?;
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
         command: crate::contracts::commands::LIST_PROCESSES,
         callers: &[PROCESS_MANAGER_LABEL],
     }).map_err(CallerAuthError::into_string)?;
+    let enumeration = EnumerationPermit::acquire()?;
     #[cfg(target_os = "windows")]
     {
-        windows_impl::list_processes()
+        tauri::async_runtime::spawn_blocking(move || { let _enumeration = enumeration; windows_impl::list_processes() }).await.map_err(|_| "process refresh failed".to_string())?
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _enumeration = enumeration;
         Ok(Vec::new())
     }
 }
 
 #[tauri::command]
-pub fn kill_process(window: WebviewWindow, pid: u32, confirmation: Option<ProcessKillConfirmation>) -> Result<(), String> {
+pub async fn kill_process(window: WebviewWindow, pid: u32, confirmation: Option<ProcessKillConfirmation>) -> Result<(), String> {
+    authorize_process_manager(&window)?;
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
         command: crate::contracts::commands::KILL_PROCESS,
         callers: &[PROCESS_MANAGER_LABEL],
     }).map_err(CallerAuthError::into_string)?;
+    let enumeration = EnumerationPermit::acquire()?;
     #[cfg(target_os = "windows")]
     {
+        return tauri::async_runtime::spawn_blocking(move || {
+        let _enumeration = enumeration;
         let processes = windows_impl::list_processes()?;
         let plan = validate_kill_guardrail_execution(
             &processes,
@@ -211,9 +318,11 @@ pub fn kill_process(window: WebviewWindow, pid: u32, confirmation: Option<Proces
             std::process::id(),
         )?;
         windows_impl::kill_process(pid, &plan_identity(&plan)?)
+        }).await.map_err(|_| "process operation failed".to_string())?;
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _enumeration = enumeration;
         let _ = (pid, confirmation);
         Err("Process termination is only supported on Windows".to_string())
     }
@@ -1383,11 +1492,12 @@ mod tests {
     fn process_listing_requires_process_manager_caller_before_enumeration() {
         use crate::stack_popup::{authorize_stack_command_caller, StackCommandAuth};
         let source = include_str!("process_manager.rs");
-        let handler = source.split("pub fn list_processes(").nth(1).unwrap().split("#[tauri::command]").next().unwrap();
+        let handler = source.split("pub async fn list_processes(").nth(1).unwrap().split("#[tauri::command]").next().unwrap();
         assert!(handler.contains("WebviewWindow"), "process listing requires trusted invoking webview");
         assert!(handler.contains("callers: &[PROCESS_MANAGER_LABEL]"), "listing must bind process-manager-only policy");
         let guard = handler.find("authorize_stack_command(").expect("listing must authorize caller");
         assert!(guard < handler.find("windows_impl::list_processes()").unwrap(), "deny before enumeration or diagnostics");
+        assert!(handler.find("authorize_process_manager(&window)?").unwrap() < handler.find("EnumerationPermit::acquire()").unwrap(), "concrete instance guard before shared admission");
         let auth = StackCommandAuth::AllowedCallers {
             command: crate::contracts::commands::LIST_PROCESSES,
             callers: &[crate::shell_windows::PROCESS_MANAGER_LABEL],
@@ -1402,7 +1512,7 @@ mod tests {
     #[test]
     fn kill_caller_policy_accepts_process_manager_only_and_redacts_denial() {
         use crate::stack_popup::{authorize_stack_command_caller, StackCommandAuth};
-        let handler = include_str!("process_manager.rs").split("pub fn kill_process(").nth(1).unwrap().split("#[cfg(target_os = \"windows\")]").next().unwrap();
+        let handler = include_str!("process_manager.rs").split("pub async fn kill_process(").nth(1).unwrap().split("#[cfg(target_os = \"windows\")]").next().unwrap();
         assert!(handler.contains("callers: &[PROCESS_MANAGER_LABEL]"), "handler must bind exactly process manager policy");
         let auth = StackCommandAuth::AllowedCallers {
             command: crate::contracts::commands::KILL_PROCESS,
@@ -1418,11 +1528,12 @@ mod tests {
     #[test]
     fn termination_requires_caller_before_identity_or_termination_work() {
         let source = include_str!("process_manager.rs");
-        let handler = source.split("pub fn kill_process(").nth(1).unwrap().split("#[cfg(test)]\nmod tests").next().unwrap();
+        let handler = source.split("pub async fn kill_process(").nth(1).unwrap().split("#[cfg(test)]\nmod tests").next().unwrap();
         assert!(handler.split(')').next().unwrap().contains("WebviewWindow"), "kill_process must receive trusted invoking webview");
         let guard = handler.find("authorize_stack_command(").expect("kill_process must authorize caller");
-        let work = handler.find("build_kill_guardrail_plan(").expect("kill guardrail work present");
+        let work = handler.find("validate_kill_guardrail_execution(").expect("kill guardrail validation present");
         assert!(guard < work, "deny before inspecting or terminating processes");
+        assert!(handler.find("authorize_process_manager(&window)?").unwrap() < handler.find("EnumerationPermit::acquire()").unwrap(), "concrete instance guard before shared admission");
     }
     use super::{
         build_kill_guardrail_plan, cpu_percent_from_snapshots, dev_workspace_from_text,

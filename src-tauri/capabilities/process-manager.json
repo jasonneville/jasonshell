@@ -6,6 +6,9 @@
   ],
   "permissions": [
     "core:default",
+    "allow-get-process-manager-context",
+    "allow-set-process-manager-tab",
+    "allow-get-system-info-snapshot",
     "core:window:default"
   ]
 }

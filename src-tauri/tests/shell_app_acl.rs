@@ -20,6 +20,21 @@ fn authority()->(RuntimeAuthority,bool) {
 fn allowed(authority:&RuntimeAuthority,command:&str,surface:&str)->bool {
     authority.resolve_access(command,surface,surface,&Origin::Local).is_some()
 }
+#[test]
+fn system_info_commands_resolve_for_manager_and_deny_unknown_remote_snip() {
+    let (authority, enabled) = authority(); assert!(enabled);
+    for command in ["get_process_manager_context", "set_process_manager_tab", "get_system_info_snapshot"] {
+        assert!(registered_commands().contains(command),"missing actual handler {command}");
+        assert!(allowed(&authority,command,"process-manager"),"missing manager grant {command}");
+        // Legacy app-command grants may still cover other shell labels. Exact
+        // instance enforcement is a handler responsibility, tested separately.
+        for label in ["unknown","future-panel","snip-overlay-7-m0","snip-preview-7"] {
+            assert!(!allowed(&authority,command,label),"{label} gained {command}");
+        }
+        let remote=Origin::Remote{url:"https://not-authorized.invalid/".parse().unwrap()};
+        assert!(authority.resolve_access(command,"process-manager","process-manager",&remote).is_none());
+    }
+}
 fn registered_commands()->BTreeSet<String> {
     // This is inventory ONLY, not an authorization oracle: resolution above uses
     // actual generated ACL. Tauri's registered handler list is the coverage floor.

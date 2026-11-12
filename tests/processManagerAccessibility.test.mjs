@@ -70,5 +70,12 @@ test('process manager filter and grid expose visible focus styles', () => {
   assert.match(buttonFocusRule, /\.process-row-head button:focus-visible/);
   assert.match(buttonFocusRule, /\.process-group-toggle:focus-visible/);
   assert.match(buttonFocusRule, /\.kill-button:focus-visible/);
-  assert.doesNotMatch(processManagerCss, /outline:\s*none/);
+  // Tabs replace the UA outline with the established theme focus ring. Forbid
+  // outline suppression unless that same focus-visible rule supplies the ring.
+  for (const [,selector,body] of processManagerCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (/outline:\s*none/.test(body)) {
+      assert.match(selector,/:focus-visible/);
+      assert.match(body,/box-shadow:\s*var\(--js-focus-ring\)/);
+    }
+  }
 });

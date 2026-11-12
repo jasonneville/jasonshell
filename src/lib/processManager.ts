@@ -1,5 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import { IPC_COMMANDS } from '../ipc/commands.js';
+export { getSystemInfoSnapshot } from './systemInfo.js';
+export type { SystemInfoSnapshot } from './systemInfo.js';
+
+export type ProcessManagerTab = 'processes' | 'system_info';
+export type ProcessManagerContext = {
+  visible: boolean; activeTab: ProcessManagerTab; openGeneration: number;
+  tabRevision: number; focusPid: number | null;
+};
+export type ProcessManagerOpenPayload = { focusPid: number | null; context: ProcessManagerContext };
+export function getProcessManagerContext(): Promise<ProcessManagerContext> {
+  return invoke<ProcessManagerContext>(IPC_COMMANDS.getProcessManagerContext);
+}
+export function setProcessManagerTab(args: { openGeneration: number; tabRevision: number; tab: ProcessManagerTab }): Promise<ProcessManagerContext> {
+  return invoke<ProcessManagerContext>(IPC_COMMANDS.setProcessManagerTab, args);
+}
+// SystemInfoSnapshot.snapshotRevision is a JS-safe monotonic cache revision;
+// getSystemInfoSnapshot accepts afterRevision without scheduling native work.
 
 export const PROCESS_MANAGER_OPEN_EVENT = 'process-manager:open';
 export const PROCESS_MANAGER_CLOSED_EVENT = 'process-manager:closed';

@@ -212,6 +212,16 @@ Snipping has no annotations, spanning mode, autosave, capture history, upload, o
 - sortable process metrics
 - guarded end-process action
 - live process inspection
+- two tabs: **Processes** and **System Info**; each opening starts on Processes
+- switching tabs preserves the process filter, sort, expanded groups, and viewport
+- process rows refresh every 1 second; System Info reads native cache snapshots on a 2-second live, 15-second storage, and 60-second inventory cadence
+- System Info shows whole-machine Overview, Storage, Sensors, Network, and Hardware sections. Whole-machine metrics are independent of the process filter; network traffic is shown per adapter and is not misleadingly summed
+- System Info is cache-only at IPC read time. Native work is admitted only for the visible, focused, current registered Process Manager instance and is rejected when its open generation or tab revision is stale
+- unsupported or unverified readings remain explicitly unavailable. CPU is unavailable on multiple processor groups or more than 64 logical processors; GPU usage is the busiest physical engine rather than adapter-total usage; dedicated VRAM excludes UMA shared memory
+- temperatures report unavailable with `provider_not_verified` when no supported already-running provider is verified. JasonShell does not start a sensor provider or request installation/admin access
+- storage distinguishes total free space from **Caller-visible capacity (quota-aware)**. Selected drive probes are bounded by a 1,500 ms helper deadline, with limits on roots and concurrent probes; timed-out children are killed and waited/reaped before their slot is released, including indefinite retention when Windows cannot reap them
+- hardware inventory is allowlisted: CPU/GPU names, counts, RAM, Windows version, and SMBIOS board/BIOS vendor/version only; serial numbers, MAC addresses, UUIDs, and keys are not collected
+- System Info has no battery/history/charts/actions and does not add a launcher, icon, or separate window
 
 ### Workspaces and automation
 
@@ -270,6 +280,8 @@ Validation note:
 
 - `npm run test:component` uses `scripts/run-component-tests.mjs` to canonicalize the Windows Vitest CLI drive letter, preventing Node/Vite path-case differences from creating duplicate test collectors. Public commands and forwarded test arguments are unchanged
 - Windows native behavior still needs manual smoke
+- Process Manager System Info evidence includes operational child cleanup 7/7 passing, cache/schema 20/20 passing, and ACL 6/6 passing. The latest focused gate has `check`, `build`, 484 component tests, 1,180 Rust tests, and `cargo:check` passing. The Node suite has 1,270 passes and 10 proven baseline failures at HEAD `43af99a6009bd2dee5b7f27d7b425832e307841b`; therefore `npm run validate` exits 1 and is not GREEN. A visible-browser production-mounted mocked-IPC journey plus 13 extended checks passed with verified portable wmux 2.60.0; native hardware/HWND runtime and live shell smoke remain unverified and unauthorized
+- Reproduce the visible journey with `pwsh -NoProfile -File tests/browser/system-info/run-visible.ps1 -WmuxProcessId <current wmux PID>` (observed run: PID 35164, exit 0). The run produced six screenshots, accessibility/results artifacts, and a 62-entry IPC trace under the approved `system-info-visible-e2e` temp directory. This verifies mocked IPC, fixture navigation/modality events, and trusted CDP observation only; it does not verify native HWND, hardware, process termination, or live shell behavior
 - `npm run smoke:fullscreen` is part of the expected Windows smoke path
 - snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, and consumer paste remain unverified
 

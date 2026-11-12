@@ -1,0 +1,72 @@
+.system-info-view {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: 0.75rem;
+  scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
+}
+
+.system-info-view:focus-visible { outline: none; box-shadow: inset var(--js-focus-ring); }
+.system-info-update { color: var(--js-color-text-muted); font-size: 0.65rem; margin-bottom: 0.7rem; }
+.system-info-section {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.8rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--js-color-border-soft);
+}
+.system-info-section h2 { color: var(--js-color-accent); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 0.3rem 0 0; }
+.system-info-section-content { min-width: 0; }
+.system-info-description { color: var(--js-color-text-muted); font-size: 0.63rem; margin: 0.35rem 0 0.5rem; line-height: 1.5; overflow-wrap: anywhere; }
+.system-info-metrics { display: block; margin: 0; }
+.system-info-metric { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.7rem; padding: 0.3rem 0; border-bottom: 1px solid var(--js-color-border-soft); align-items: baseline; }
+.system-info-metric:last-child { border-bottom: none; }
+.system-info-metric dt { color: var(--js-color-text-muted); font-size: 0.68rem; overflow-wrap: anywhere; }
+.system-info-metric dd { color: var(--js-color-text); font-size: 0.73rem; margin: 0; display: grid; gap: 0.15rem; overflow-wrap: anywhere; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.system-info-metric strong { font-weight: 600; }
+.system-info-metric small { color: var(--js-color-text-muted); font-size: 0.63rem; line-height: 1.4; }
+.system-info-note { color: var(--js-color-text-muted); font-size: 0.63rem; overflow-wrap: anywhere; margin: 0; }
+.system-info-item { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--js-color-border-soft); }
+.system-info-item:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.system-info-item h3 { color: var(--js-color-text); font-size: 0.74rem; margin: 0 0 0.35rem; overflow-wrap: anywhere; }
+.system-info-item h3 > span { color: var(--js-color-text-muted); font-size: 0.63rem; font-weight: 400; margin-left: 0.4rem; }
+.system-info-empty { color: var(--js-color-text-muted); font-size: 0.67rem; overflow-wrap: anywhere; }
+
+/* Option A: four primary columns, not a grid of individual metric cards. */
+.system-info-strip { display: block; padding-top: 0; padding-bottom: 0.7rem; border-bottom-color: var(--js-color-border); }
+.system-info-strip h2 { margin-top: 0; }
+.system-info-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 0.75rem 0 0.5rem; align-items: start; }
+.system-info-overview .system-info-metric { display: block; padding: 0; border: none; }
+.system-info-overview .system-info-metric dt { margin-bottom: 0.25rem; }
+.system-info-overview .system-info-metric dd { text-align: left; }
+.system-info-overview .system-info-metric strong { font-size: 1.35rem; line-height: 1.2; }
+.system-info-overview .system-info-description { margin: 0.25rem 0 0; }
+.system-info-memory .system-info-description > span { display: block; }
+.system-info-gpus > .system-info-metric + .system-info-metric { margin-top: 0.65rem; }
+.system-info-gpus > .system-info-metric + .system-info-metric dt { font-size: 0.63rem; }
+.system-info-gpus > .system-info-metric + .system-info-metric strong { font-size: 0.85rem; }
+
+.system-info-sampling { margin-top: 0.45rem; color: var(--js-color-text-muted); font-size: 0.63rem; min-width: 0; }
+.system-info-sampling summary { cursor: pointer; width: fit-content; max-width: 100%; padding: 0.2rem 0; overflow-wrap: anywhere; }
+.system-info-sampling summary:hover { color: var(--js-color-text); }
+.system-info-sampling summary:focus-visible { outline: none; border-radius: var(--js-radius-xs); box-shadow: var(--js-focus-ring); }
+.system-info-sampling > p { margin: 0.4rem 0; }
+.system-info-sampling > dl { margin: 0; }
+.system-info-provenance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.5rem; padding: 0.4rem 0; border-top: 1px solid var(--js-color-border-soft); }
+.system-info-provenance dt { overflow-wrap: anywhere; }
+.system-info-provenance dd { display: grid; gap: 0.15rem; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+@media (min-width: 601px) {
+  .system-info-strip { padding-bottom: 0.45rem; }
+  .system-info-overview { margin: 0.45rem 0 0.35rem; }
+}
+
+@media (max-width: 600px) {
+  .system-info-view { padding: 0.6rem; }
+  .system-info-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem 0.75rem; }
+  .system-info-section:not(.system-info-strip) { grid-template-columns: minmax(0, 1fr); gap: 0.45rem; }
+  .system-info-section h2 { margin-top: 0; }
+  .system-info-provenance { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; }
+}

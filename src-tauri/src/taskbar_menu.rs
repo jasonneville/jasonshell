@@ -299,6 +299,7 @@ pub fn run_task_window_action(
             let focus_pid = request.process_id.filter(|pid| *pid != 0)
                 .ok_or_else(|| "A process id is required to open Process Manager".to_string())?;
             process_manager::show_process_manager(
+                window.clone(),
                 app_handle.clone(),
                 process_manager::ShowProcessManagerRequest {
                     anchor_left: 0.0,
@@ -408,7 +409,7 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
                     eprintln!("task window process menu payload invalid pid: {pid}");
                     return;
                 };
-                process_manager::show_process_manager(
+                process_manager::show_process_manager_native(
                     app_handle.clone(),
                     process_manager::ShowProcessManagerRequest {
                         anchor_left: 0.0,

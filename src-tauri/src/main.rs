@@ -75,6 +75,9 @@ fn main() {
     // Private clipboard owner must branch before any Tauri/AppBar/hook startup.
     // Only exact Rust-owned helper arguments enter this metadata/binary pipe path.
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--internal-system-info-volume") {
+        std::process::exit(process_manager::volume_helper(&args));
+    }
     if args == ["--internal-snip-clipboard-owner"] {
         if snipping::clipboard_process::helper_main().is_err() { std::process::exit(1); }
         return;
@@ -115,6 +118,7 @@ fn main() {
         .manage(stack_popup_state())
         .manage(diagnostics::diagnostics_state())
         .manage(speech_runtime::SpeechRuntimeState::default())
+        .manage(process_manager::SystemInfoRuntime::default())
         .invoke_handler(tauri::generate_handler![
             snipping::runtime::start_snip,
             snipping::runtime::get_snip_context,
@@ -156,6 +160,9 @@ fn main() {
             settings::save_shell_bar_height,
             settings::save_shell_bar_lock,
             process_manager::show_process_manager,
+            process_manager::get_process_manager_context,
+            process_manager::set_process_manager_tab,
+            process_manager::get_system_info_snapshot,
             process_manager::hide_process_manager,
             quick_launch_panel::show_quick_launch_panel,
             quick_launch_panel::hide_quick_launch_panel_on_focus_loss,
@@ -371,9 +378,9 @@ fn main() {
             }
 
             if window.label() == shell_windows::PROCESS_MANAGER_LABEL
-                && matches!(event, WindowEvent::Focused(false))
+                && matches!(event, WindowEvent::Focused(false) | WindowEvent::Destroyed)
             {
-                let _ = window.emit(process_manager::PROCESS_MANAGER_CLOSED_EVENT, ());
+                let _ = process_manager::retire_system_info(window.app_handle());
                 let _ = window.hide();
                 return;
             }

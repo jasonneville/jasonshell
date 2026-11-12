@@ -30,10 +30,11 @@ test('process manager surface and commands are routed through app and Rust comma
   assert.match(processSurface, /buildProcessGroups/);
   assert.match(processSurface, /orderProcessRefresh/);
   assert.match(processSurface, /preserveVolatileOrder/);
-  assert.match(processSurface, /if \(isLoading\) \{\r?\n\s+return;/);
+  // Deferred IPC component tests own bounded admission; the old isLoading early
+  // return discarded newer opening intent and is not an acceptance requirement.
   assert.doesNotMatch(processSurface, /<MeltActionButton onClick=\{\(\) => void refreshProcesses\(\{ preserveVolatileOrder: false \}\)\} disabled=\{isLoading\}>\r?\n\s+Refresh/);
   assert.match(processSurface, /processGroups/);
-  assert.match(processSurface, /metricAggregates = aggregateProcessMetrics\(visibleProcesses\)/);
+  assert.match(processSurface, /metricAggregates = \$derived\(aggregateProcessMetrics\(visibleProcesses\)\)/);
   assert.match(processSurface, /formatProcessThreadCount\(metricAggregates\.threadCount\)/);
   assert.match(processSurface, /Threads\{sortIndicator\('threadCount'\)\}/);
   assert.match(processSurface, /class="process-header-metric"/);
