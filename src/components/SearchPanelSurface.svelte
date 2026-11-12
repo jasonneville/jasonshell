@@ -44,6 +44,16 @@
   let optimisticQueryDraft: string | null = null;
   let resultRows: Array<HTMLDivElement | undefined> = [];
   let queryInput: HTMLInputElement | null = null;
+  const searchScopes = [
+    { value: 'all', label: 'All' },
+    { value: 'app', label: 'Apps' },
+    { value: 'window', label: 'Windows' },
+    { value: 'setting', label: 'Settings' },
+    { value: 'folder', label: 'Folders' },
+    { value: 'command', label: 'Commands' },
+    { value: 'everything', label: 'Everything' }
+  ];
+  let searchScope = 'all';
   let lastRevealedSelection = '';
   let fallbackTimer: number | null = null;
   let fallbackAttempt = 0;
@@ -62,8 +72,14 @@
   $: selectedIndex = panelState.selectedIndex;
   $: statusMessage = panelState.statusMessage;
   $: presentation = panelState.presentation;
-  $: visibleRows = buildVisibleSearchRows(results);
-  $: selectedRowIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  // Filter after building so activation retains the supplied result index and record key.
+  $: visibleRows = buildVisibleSearchRows(results).filter((row) =>
+    presentation !== 'centered' || searchScope === 'all' ||
+    (searchScope === 'everything' ? row.result.providerId === 'everything' : row.result.kind === searchScope)
+  );
+  $: underlyingSelectedRowIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  $: selectedRowIndex = presentation === 'centered' && underlyingSelectedRowIndex < 0 && visibleRows.length
+    ? 0 : underlyingSelectedRowIndex;
   $: selectedRow = selectedRowIndex >= 0 ? visibleRows[selectedRowIndex] : null;
   $: void revealSelectedResult(selectedRowIndex, visibleRows.length);
   $: visibleStatusMessage = searchPanelStatusMessage(statusMessage, results.length);
@@ -174,10 +190,6 @@
     queueQueryEmit(value);
   }
 
-  function hasCenteredSearchClearValue() {
-    return Boolean(displayedQuery);
-  }
-
   async function clearCenteredSearch() {
     optimisticQueryDraft = '';
     announcePanelInteraction();
@@ -208,6 +220,9 @@
     if (event.key === 'Enter') {
       if (selectedRow) {
         activateRow(selectedRow);
+        return;
+      }
+      if (presentation === 'centered') {
         return;
       }
     }
@@ -402,8 +417,23 @@
   aria-label="Search results"
   tabindex="-1"
 >
-  <header class="search-panel-header">
+  <header class="search-panel-header" class:search-panel-header-centered={presentation === 'centered'}>
     {#if presentation === 'centered'}
+      <svg class="search-panel-lens" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+        <circle cx="10" cy="10" r="6.5" />
+        <path d="m15 15 6 6" />
+      </svg>
+      <select
+        class="search-panel-scope"
+        aria-label="Search scope"
+        title={searchScopes.find((scope) => scope.value === searchScope)?.label}
+        bind:value={searchScope}
+        on:change={announcePanelInteraction}
+      >
+        {#each searchScopes as scope (scope.value)}
+          <option value={scope.value}>{scope.label}</option>
+        {/each}
+      </select>
       <input
         bind:this={queryInput}
         aria-activedescendant={selectedRow?.domId}
@@ -415,12 +445,12 @@
         aria-label="Search Everything"
         autocomplete="off"
         class="search-panel-query"
-        placeholder="Search Everything"
+        placeholder="What are you looking for?"
         value={displayedQuery}
         on:input={updateQuery}
         on:keydown={handleQueryKeydown}
       />
-      {#if presentation === 'centered' && hasCenteredSearchClearValue()}
+      {#if displayedQuery}
         <MeltActionButton
           class="search-panel-clear-button"
           ariaLabel="Clear search"
@@ -434,7 +464,7 @@
       <strong>Search</strong>
       <span>{query || 'Everything files and folders'}</span>
     {/if}
-    <kbd>Enter opens</kbd>
+    <kbd aria-hidden={presentation === 'centered' ? true : undefined}>{presentation === 'centered' ? '↵' : 'Enter opens'}</kbd>
   </header>
 
   <div
@@ -454,7 +484,7 @@
     tabindex="-1"
     aria-label="Search results"
   >
-    {#if results.length}
+    {#if visibleRows.length}
       {#each visibleRows as row, index (row.rowKey)}
         {@const result = row.result}
         {@const hints = searchResultActionHints(result)}

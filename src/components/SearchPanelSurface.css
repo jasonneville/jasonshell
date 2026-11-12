@@ -63,18 +63,75 @@
   white-space: nowrap;
 }
 
-.search-panel-query {
+.search-panel-header-centered {
   background: var(--js-bg-control);
   border: 1px solid var(--js-color-border);
   border-radius: var(--js-radius-sm);
+  gap: 10px;
+  min-height: 52px;
+  min-width: 0;
+  padding: 4px 10px 4px 6px;
+}
+
+.search-panel-header-centered:focus-within {
+  outline: 2px solid var(--js-color-accent-border);
+  outline-offset: 2px;
+}
+
+.search-panel-lens {
+  color: var(--js-color-accent);
+  flex: 0 0 18px;
+  height: 18px;
+  width: 18px;
+}
+
+.search-panel-scope {
+  background: transparent;
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, var(--js-color-text) 8%, transparent);
+  border-radius: 0;
   color: var(--js-color-text);
+  cursor: pointer;
+  flex: 0 0 84px;
+  font: inherit;
+  font-size: 0.7rem;
+  min-height: 34px;
+  min-width: 0;
+  padding: 4px 4px 4px 2px;
+  width: 84px;
+}
+
+.search-panel-scope option {
+  background: var(--js-bg-surface);
+  color: var(--js-color-text);
+}
+
+.search-panel-scope:focus-visible,
+.search-panel-clear-button:focus-visible {
+  outline: 2px solid var(--js-color-accent-border);
+  outline-offset: 2px;
+}
+
+.search-panel-query {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--js-color-text);
+  flex: 1 1 0;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 650;
+  height: 42px;
   min-width: 0;
   outline: none;
-  padding: 0.38rem 2rem 0.38rem 0.55rem;
-  width: 100%;
+  padding: 0;
+  width: 0;
+}
+
+.search-panel-query::placeholder {
+  color: var(--js-color-text-muted);
+  font-weight: 450;
+  opacity: 1;
 }
 
 .search-panel-clear-button {
@@ -88,12 +145,12 @@
   flex: 0 0 auto;
   font-size: 1rem;
   font-weight: 800;
-  height: 1.5rem;
+  height: 32px;
   justify-content: center;
   line-height: 1;
-  margin-left: -2.2rem;
+  margin-left: 0;
   padding: 0;
-  width: 1.5rem;
+  width: 28px;
   z-index: 1;
 }
 
@@ -101,11 +158,6 @@
 .search-panel-clear-button:focus-visible {
   background: var(--js-color-surface-overlay);
   color: var(--js-color-text);
-}
-
-.search-panel-query:focus {
-  border-color: var(--js-color-accent-border);
-  box-shadow: 0 0 0 1px var(--js-color-accent-border);
 }
 
 .result-list {

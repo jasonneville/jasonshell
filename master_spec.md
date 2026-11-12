@@ -59,6 +59,8 @@ Feature clusters:
 - settings/tray/audio/calendar/process manager: matching `src/lib/*` and `src/components/*Surface.svelte`
 - snipping: `src/lib/snipping.ts`, `src/lib/shellSurface.ts`, `src/lib/surfaceLoader.ts`, `src/lib/topBarControls.ts`, `SnipOverlaySurface.svelte`, `SnipPreviewSurface.svelte`
 
+Centered search has an inline native scope picker: All, Apps, Windows, Settings, Folders, Commands, and Everything. It filters only the supplied renderer result set (Everything matches `providerId: everything`); it does not expand provider queries or persist scope. Scope survives query/payload refreshes while mounted. Filtering preserves original row identities and result indices; navigation, activation, and folder pinning use only visible rows, falling back to the first visible row when the supplied selection is hidden. An empty scoped set cannot forward activation-producing Enter. The anchored presentation remains unfiltered and retains its existing header.
+
 ### Process Manager System Info
 
 The Process Manager has exactly two tabs, **Processes** and **System Info**. Opening it selects Processes. Tab changes use a monotonic open generation and tab revision; stale tab responses, snapshots, and native work are rejected. The renderer preserves the process filter, sort, expanded groups, and viewport when switching tabs. There is no added launcher, icon, or window: System Info is a panel in the existing Process Manager surface.
