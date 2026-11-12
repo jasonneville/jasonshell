@@ -236,6 +236,7 @@ test('material symbol icon set keeps official 960-grid paths and equal inline si
     'file_copy',
     'folder_copy',
     'content_cut',
+    'crop',
     'content_paste',
     'drive_file_rename',
     'delete',

@@ -1119,6 +1119,61 @@
   --js-bg-active: var(--js-color-control-active);
 }
 
+/* Custom inputs are validated by the theme engine; preset selectors above stay
+   byte-for-byte independent. Aliases inside inputs reference custom inputs. */
+:root[data-custom-theme] {
+  --js-color-bg: var(--js-custom-color-bg);
+  --js-color-text: var(--js-custom-color-text);
+  --js-color-text-strong: var(--js-custom-color-text-strong);
+  --js-color-text-muted: var(--js-custom-color-text-muted);
+  --js-color-text-subtle: var(--js-custom-color-text-subtle);
+  --js-color-surface: var(--js-custom-color-surface);
+  --js-color-surface-raised: var(--js-custom-color-surface-raised);
+  --js-color-surface-sunken: var(--js-custom-color-surface-sunken);
+  --js-color-surface-overlay: var(--js-custom-color-surface-overlay);
+  --js-color-control: var(--js-custom-color-control);
+  --js-color-control-hover: var(--js-custom-color-control-hover);
+  --js-color-control-active: var(--js-custom-color-control-active);
+  --js-color-border: var(--js-custom-color-border);
+  --js-color-border-soft: var(--js-custom-color-border-soft);
+  --js-color-accent: var(--js-custom-color-accent);
+  --js-color-accent-soft: var(--js-custom-color-accent-soft);
+  --js-color-accent-border: var(--js-custom-color-accent-border);
+  --js-color-selected: var(--js-custom-color-selected);
+  --js-stack-editor-selection: var(--js-custom-stack-editor-selection);
+  --js-stack-editor-selection-inactive: var(--js-custom-stack-editor-selection-inactive);
+  --js-color-success: var(--js-custom-color-success);
+  --js-color-success-border: var(--js-custom-color-success-border);
+  --js-color-info: var(--js-custom-color-info);
+  --js-color-warning: var(--js-custom-color-warning);
+  --js-color-warning-border: var(--js-custom-color-warning-border);
+  --js-color-error: var(--js-custom-color-error);
+  --js-color-error-border: var(--js-custom-color-error-border);
+  --js-color-error-text: var(--js-custom-color-error-text);
+  --js-shadow-raised: var(--js-custom-shadow-raised);
+  --js-shadow-panel: var(--js-custom-shadow-panel);
+  --js-focus-ring: var(--js-custom-focus-ring);
+  --js-inset-highlight: var(--js-custom-inset-highlight);
+  --js-bg-surface: var(--js-custom-bg-surface);
+  --js-bg-bar: var(--js-custom-bg-bar);
+  --js-bg-control: var(--js-custom-bg-control);
+  --js-bg-active: var(--js-custom-bg-active);
+  --js-scrollbar-thumb: var(--js-custom-scrollbar-thumb);
+  --js-scrollbar-track: var(--js-custom-scrollbar-track);
+}
+
+/* Accessibility preferences are the final layer for both built-in and custom
+   palettes. Normal presentation still uses the exact preset declarations. */
+:root[data-shell-focus='strong'] {
+  --js-focus-ring: 0 0 0 2px var(--js-color-accent), 0 0 0 4px rgba(255, 255, 255, 0.24);
+}
+
+:root[data-shell-transparency='reduced'] {
+  --js-color-surface-overlay: var(--js-color-control);
+  --js-bg-surface: var(--js-color-surface-raised);
+  --js-bg-bar: var(--js-color-surface-raised);
+}
+
 html,
 body,
 #app {

@@ -7,6 +7,7 @@
   import MeltRadioGroup from './melt/MeltRadioGroup.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
   import MeltToggle from './melt/MeltToggle.svelte';
+  import ThemeEditor from './ThemeEditor.svelte';
   import { getSpeechModelStatus, importSpeechModel, importSpeechModelFolder, type SpeechModelStatus } from '../lib/speech';
   import {
     formatShellDate,
@@ -39,16 +40,7 @@
     type StandardHotkeyAction,
     type ShellSettings
   } from '../lib/settings';
-  import {
-    getInitialShellThemeId,
-    normalizeShellThemeId,
-    setShellTheme,
-    shellThemeOptions,
-    type ShellThemeId
-  } from '../lib/themes';
-
-  const themeOptions = shellThemeOptions();
-  const themeSelectOptions = themeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
+  let themeEditor: ThemeEditor;
   const stackTerminalProfileOptions = STACK_TERMINAL_PROFILE_OPTIONS.map((option) => ({
     value: option.value,
     label: option.label
@@ -63,7 +55,6 @@
   const dateFormatOptions = dateFormatExamples.map((format) => ({ value: format, label: format }));
   let preferences: ShellPreferences = getInitialShellPreferences();
   let shellSettings: ShellSettings = defaultShellSettings();
-  let selectedThemeId: ShellThemeId = getInitialShellThemeId();
   let now = new Date();
   let pendingPowerAction: SystemPowerAction | null = null;
   let powerError = '';
@@ -190,11 +181,6 @@
       .catch((error) => {
         console.error('Failed to save shell bar lock setting', error);
       });
-  }
-
-  function handleThemeChange(value: string) {
-    selectedThemeId = normalizeShellThemeId(value);
-    setShellTheme(selectedThemeId);
   }
 
   function handleFontChange(value: string) {
@@ -358,8 +344,7 @@
       reducedTransparency: false,
       showSearchShortcutHint: true
     });
-    selectedThemeId = 'base-dark';
-    setShellTheme(selectedThemeId);
+    themeEditor?.resetPresentationTheme();
   }
 
   function requestPowerAction(action: SystemPowerAction) {
@@ -402,6 +387,7 @@
 <svelte:window
   on:keydown={(event) => {
     if (event.key === 'Escape') {
+      if (event.defaultPrevented) return;
       event.preventDefault();
       closePanel();
     }
@@ -419,12 +405,7 @@
 
   <section class="settings-section" aria-labelledby="appearance-heading">
     <h2 id="appearance-heading">Appearance</h2>
-    <MeltSelect
-      label="Theme"
-      value={selectedThemeId}
-      options={themeSelectOptions}
-      onChange={handleThemeChange}
-    />
+    <ThemeEditor bind:this={themeEditor} />
 
     <MeltSelect
       label="Font"

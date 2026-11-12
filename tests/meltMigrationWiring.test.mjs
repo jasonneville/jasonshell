@@ -232,7 +232,10 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /function handlePreviewHideRequest\(/);
   assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openTaskMenu\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /<img class="task-icon" src=\{taskWindow\.iconDataUrl\} alt="" draggable="false" \/>/);
-  assert.match(bottomBarSource, /<span class="task-label">\{taskWindowLabel\(taskWindow\)\}<\/span>/);
+  // The shipped ticker preserves taskWindowLabel inside the same label host;
+  // rendered motion/clipping coverage is in components/overflow-ticker.test.ts.
+  assert.match(bottomBarSource, /import OverflowTicker from '\.\/OverflowTicker\.svelte'/);
+  assert.match(bottomBarSource, /<span class="task-label"><OverflowTicker text=\{taskWindowLabel\(taskWindow\)\} \/><\/span>/);
   assert.match(bottomBarSource, /querySelectorAll<HTMLButtonElement>\('\.task-button'\)/);
 
   assert.match(bottomBarSource, /<MeltActionButton\s+class="process-manager-button"[\s\S]*type="button"[\s\S]*title="Processes"[\s\S]*ariaLabel="Open process manager"[\s\S]*onClick=\{\(event\) => void openProcessManager\(event\)\}/);

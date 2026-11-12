@@ -84,8 +84,11 @@ const SOURCE_CONTRACT_INTENTS = {
     'taskbarLauncherReorder.test.mjs',
     'taskbarUxState.test.mjs',
     'taskPreviewRetention.test.mjs',
+    'taskPreviewBaseline.test.mjs', // Tracked baseline inset-lens source contract.
     'taskPreviewTextPolish.test.mjs',
     'themeRegistry.test.mjs',
+    'themePalette.test.mjs',
+    'themeTerminalBoundary.test.mjs',
     'topBarMicControl.test.mjs',
     'topBarControlReorder.test.mjs',
     'topBarCalendar.test.mjs',
