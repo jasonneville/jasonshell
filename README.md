@@ -139,6 +139,14 @@ npm run tauri dev
 
 ## Feature overview
 
+### Custom themes
+
+Settings → Appearance includes the custom-theme editor. Select a built-in or saved theme, then use **Create copy** (or **Duplicate theme**) to make a named custom theme. Built-in themes remain unchanged. Saved custom themes can be edited, renamed through **Theme name**, duplicated, or deleted; deleting the active theme applies **Base Dark**.
+
+While editing, core colors and **Advanced colors & tints** preview across the shell. Color fields support hexadecimal color values and alpha; linked aliases can be overridden, while composite shadow/focus geometry remains preset-owned. Contrast guidance is a non-blocking estimate, not a native translucency guarantee. Hiding Settings keeps the draft; **Cancel** discards it and restores the saved theme. **Reset colors** restores the source-copy baseline, while **Save & apply** writes the collection and selection before closing the preview. Name-only edits still require Save.
+
+Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasonshell.theme` IDs remain a compatibility mirror/read path. The collection supports up to 100 custom themes and 512 KiB of serialized storage; names are limited to 1–80 characters. Unsupported future schema data is preserved read-only, and concurrent collection/theme revisions are rejected rather than silently overwritten. There is no terminal palette editor or theme import/export surface.
+
 ### Top bar
 
 - hosts shell controls and search entry
@@ -264,15 +272,20 @@ npm run dev
 npm run build
 npm run preview
 npm run check
+npm run themes:generate
+npm run themes:check
 npm run test:node
 npm run test:component
 npm run test:search
 npm run p03:experiment
+npm run precargo:check
 npm run cargo:check
+npm run precargo:test
 npm run cargo:test
 npm run smoke:runtime
 npm run smoke:fullscreen
 npm run validate
+npm run pretauri
 npm run tauri
 ```
 

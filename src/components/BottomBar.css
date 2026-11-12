@@ -1,7 +1,6 @@
 .bottom-bar.surface {
   align-items: stretch;
   background: var(--js-bg-bar);
-  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border-top: 1px solid var(--js-color-border-soft);
   box-sizing: border-box;
   box-shadow: var(--js-shadow-raised), var(--js-inset-highlight);
@@ -48,7 +47,6 @@
   align-items: center;
   align-self: stretch;
   background: var(--js-color-surface-overlay);
-  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border: 1px solid var(--js-color-border);
   border-radius: 2px;
   box-shadow: var(--js-inset-highlight);
@@ -92,7 +90,6 @@
 
 .bottom-bar .quick-launch-button {
   background: var(--js-color-surface-overlay);
-  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border: 1px solid var(--js-color-border);
   border-radius: 2px;
   box-shadow: var(--js-inset-highlight);
@@ -375,7 +372,6 @@
   background: var(--js-color-control);
   /* Keep inset tile faces opaque and theme-derived. */
   background-color: color-mix(in srgb, var(--js-bg-bar) 93%, var(--js-color-text) 7%);
-  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border: 1px solid var(--js-color-border);
   border-radius: 2px;
   box-shadow: var(--js-inset-highlight);
@@ -414,7 +410,6 @@
 .bottom-bar .task-button-active {
   background: var(--js-bg-active);
   background-color: color-mix(in srgb, var(--js-bg-bar) 76%, var(--js-color-accent) 24%);
-  background-image: linear-gradient(to bottom, var(--js-color-surface-overlay), transparent);
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-inset-highlight), inset 0 0 0 1px var(--js-color-accent-soft);
 }

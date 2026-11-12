@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run themes:check && tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "npm run themes:check && svelte-check --tsconfig ./tsconfig.json",
+    "themes:generate": "node scripts/generate-theme-palettes.mjs",
+    "themes:check": "node scripts/generate-theme-palettes.mjs --check",
     "test:node": "node scripts/clean-dist-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
     "test:component": "node scripts/run-component-tests.mjs",
     "test:search": "npm run test:node",

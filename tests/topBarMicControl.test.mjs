@@ -277,10 +277,19 @@ test('mic hover matches adjacent control and successful paste check overlays vis
   const micHover = cssRule('.top-bar .mic-button:hover');
   const terminalHover = css.match(/\.top-bar \.terminal-button:hover,\s*\.top-bar \.command-button:hover\s*\{([^}]*)\}/)?.[1];
   assert.ok(terminalHover, 'missing shared neighboring hover rule');
-  for (const property of ['background', 'border-color']) {
-    assert.equal(cssDeclarationValue(micHover, property), cssDeclarationValue(terminalHover, property));
-  }
+  assert.equal(cssDeclarationValue(micHover, 'background'), cssDeclarationValue(terminalHover, 'background'));
   const button = cssRule('.top-bar .mic-button');
+  assert.equal(cssDeclarationValue(button, 'border'), '1px solid transparent');
+  assert.equal(cssDeclarationValue(micHover, 'border-color'), 'transparent');
+  // Neighbor hover has a color declaration but inherits zero border width;
+  // comparing that unused color with the mic's real transparent border was stale.
+  const globalButton = cssRule('button', source('../src/app.css'));
+  assert.equal(cssDeclarationValue(globalButton, 'border'), '0');
+  for (const selector of ['.top-bar .terminal-button', '.top-bar .command-button']) {
+    const neighbor = cssRule(selector);
+    assert.equal(cssDeclarationValue(neighbor, 'border'), null);
+    assert.equal(cssDeclarationValue(neighbor, 'border-width'), null);
+  }
   const check = cssRule('.top-bar .mic-copy-check');
   assert.equal(cssDeclarationValue(button, 'position'), 'relative');
   assert.equal(cssDeclarationValue(check, 'position'), 'absolute');
