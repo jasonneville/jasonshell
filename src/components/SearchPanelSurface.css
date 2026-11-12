@@ -74,39 +74,99 @@
 }
 
 .search-panel-header-centered:focus-within {
-  outline: 2px solid var(--js-color-accent-border);
+  outline: 1px solid var(--js-color-accent);
   outline-offset: 2px;
+}
+
+.search-panel-scope-capsule {
+  flex: 0 0 112px;
+  min-width: 0;
+  position: relative;
+  width: 112px;
 }
 
 .search-panel-lens {
   color: var(--js-color-accent);
-  flex: 0 0 18px;
   height: 18px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: calc(50% - 9px);
   width: 18px;
+  z-index: 1;
 }
 
-.search-panel-scope {
+.search-panel-header-centered .search-panel-scope {
+  gap: 0;
+  min-width: 0;
+  width: 112px;
+}
+
+.search-panel .search-panel-scope .melt-select-trigger {
   background: transparent;
   border: 0;
   border-right: 1px solid color-mix(in srgb, var(--js-color-text) 8%, transparent);
   border-radius: 0;
   color: var(--js-color-text);
   cursor: pointer;
-  flex: 0 0 84px;
   font: inherit;
-  font-size: 0.7rem;
+  font-family: var(--js-font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
   min-height: 34px;
   min-width: 0;
-  padding: 4px 4px 4px 2px;
-  width: 84px;
+  padding: 4px 4px 4px 28px;
+  width: 112px;
 }
 
-.search-panel-scope option {
-  background: var(--js-bg-surface);
-  color: var(--js-color-text);
+.search-panel .search-panel-scope .melt-select-trigger:hover,
+.search-panel .search-panel-scope .melt-select-trigger[data-open] {
+  background: transparent;
+  border-right-color: color-mix(in srgb, var(--js-color-text) 8%, transparent);
 }
 
-.search-panel-scope:focus-visible,
+/* Fixed vector ink avoids the font-dependent baseline of the shared caret glyph. */
+.search-panel .search-panel-scope .melt-select-trigger .melt-select-caret {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 8px;
+  font-size: 0;
+  height: 18px;
+  justify-content: center;
+  line-height: 0;
+  margin-left: 4px;
+  width: 8px;
+}
+
+.search-panel .search-panel-scope .melt-select-caret::before {
+  background: currentColor;
+  content: '';
+  height: 5px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='m1 1 4 4 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  width: 8px;
+}
+
+.search-panel .search-panel-scope .melt-select-content {
+  border-radius: var(--js-radius-sm);
+  font-family: var(--js-font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  max-width: calc(100vw - 16px);
+}
+
+.search-panel .search-panel-scope .melt-select-option {
+  font: inherit;
+  gap: 0.35rem;
+  padding: 0 0.35rem;
+}
+
+.search-panel .search-panel-scope .melt-select-trigger span,
+.search-panel .search-panel-scope .melt-select-option span {
+  color: inherit;
+  font: inherit;
+}
+
+.search-panel .search-panel-scope .melt-select-trigger:focus-visible,
 .search-panel-clear-button:focus-visible {
   outline: 2px solid var(--js-color-accent-border);
   outline-offset: 2px;
@@ -132,6 +192,16 @@
   color: var(--js-color-text-muted);
   font-weight: 450;
   opacity: 1;
+}
+
+/* The composite field owns query focus; keep separate picker/button focus cues. */
+.search-panel-header-centered .search-panel-query {
+  padding-left: 4px;
+}
+
+.search-panel-header-centered .search-panel-query:focus-visible {
+  box-shadow: none;
+  outline: none;
 }
 
 .search-panel-clear-button {

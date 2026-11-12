@@ -107,8 +107,14 @@ pub fn show_centered_search_panel(
     let height = (logical_size.height * scale_factor).round() as u32;
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
-    let x = monitor_position.x + ((monitor_size.width.saturating_sub(width)) / 2) as i32;
-    let y = monitor_position.y + ((monitor_size.height.saturating_sub(height)) / 3) as i32;
+    let (x, y) = centered_search_panel_position(
+        monitor_position.x,
+        monitor_position.y,
+        monitor_size.width,
+        monitor_size.height,
+        width,
+        height,
+    );
 
     panel
         .set_size(PhysicalSize::new(width, height))
@@ -241,6 +247,25 @@ fn search_panel_payload_phase_rank(payload: &Value) -> u8 {
     }
 }
 
+fn centered_search_panel_position(
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: u32,
+    monitor_height: u32,
+    panel_width: u32,
+    panel_height: u32,
+) -> (i32, i32) {
+    let x_offset = monitor_width.saturating_sub(panel_width) / 2;
+    // Anchor the query region, not the full panel's center, near the eye line.
+    let y_offset = ((u64::from(monitor_height) * 25) / 100)
+        .min(u64::from(monitor_height.saturating_sub(panel_height)));
+    let x = (i64::from(monitor_x) + i64::from(x_offset))
+        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    let y = (i64::from(monitor_y) + y_offset as i64).clamp(i64::from(i32::MIN), i64::from(i32::MAX))
+        as i32;
+    (x, y)
+}
+
 fn bounded_centered_search_size(request: CenteredSearchPanelRequest) -> CenteredSearchPanelRequest {
     CenteredSearchPanelRequest {
         width: bounded_centered_dimension(
@@ -278,6 +303,111 @@ fn anchored_panel_x(
     let min_x = host_x + SEARCH_PANEL_EDGE_PADDING_PHYSICAL;
     let max_x = host_x + host_width - panel_width - SEARCH_PANEL_EDGE_PADDING_PHYSICAL;
     (anchor_right - panel_width).clamp(min_x, max_x.max(min_x))
+}
+
+#[cfg(test)]
+mod centered_placement_tests {
+    use super::centered_search_panel_position;
+
+    #[test]
+    fn default_query_region_starts_near_eye_line_not_at_panel_center() {
+        let position = centered_search_panel_position(0, 0, 1_920, 1_080, 720, 560);
+        assert_eq!(position, (600, 270));
+        assert_eq!(position.1 + 560, 830);
+    }
+
+    #[test]
+    fn varied_monitor_sizes_keep_query_near_25_percent_or_clamp_bottom() {
+        for (width, height, expected) in [
+            (1_366, 768, (323, 192)),
+            (2_560, 1_440, (920, 360)),
+            (3_840, 2_160, (1_560, 540)),
+            (1_001, 1_001, (140, 250)),
+        ] {
+            assert_eq!(
+                centered_search_panel_position(0, 0, width, height, 720, 560),
+                expected,
+                "monitor {width}x{height}"
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_origin_translates_position_including_negative_coordinates() {
+        assert_eq!(
+            centered_search_panel_position(-1_920, -1_080, 1_920, 1_080, 720, 560),
+            (-1_320, -810)
+        );
+        assert_eq!(
+            centered_search_panel_position(120, 80, 1_920, 1_080, 720, 560),
+            (720, 350)
+        );
+    }
+
+    #[test]
+    fn placement_uses_dpi_scaled_physical_panel_dimensions() {
+        // The command converts logical 720x560 before calling this helper.
+        assert_eq!(
+            centered_search_panel_position(0, 0, 1_920, 1_080, 900, 700),
+            (510, 270)
+        );
+        assert_eq!(
+            centered_search_panel_position(0, 0, 3_840, 2_160, 1_080, 840),
+            (1_380, 540)
+        );
+    }
+
+    #[test]
+    fn reopened_resized_panel_keeps_query_anchor_unless_bottom_clamped() {
+        assert_eq!(
+            centered_search_panel_position(0, 0, 1_920, 1_080, 420, 320),
+            (750, 270)
+        );
+        assert_eq!(
+            centered_search_panel_position(0, 0, 1_920, 1_080, 1_000, 900),
+            (460, 180)
+        );
+        assert_eq!(
+            centered_search_panel_position(0, 0, 1_001, 1_001, 420, 320),
+            (290, 250)
+        );
+    }
+
+    #[test]
+    fn equal_or_oversized_panel_anchors_to_monitor_origin_without_resizing() {
+        for (panel_width, panel_height) in [(800, 600), (1_200, 900)] {
+            assert_eq!(
+                centered_search_panel_position(-800, 40, 800, 600, panel_width, panel_height),
+                (-800, 40)
+            );
+        }
+        assert_eq!(centered_search_panel_position(0, 0, 0, 0, 720, 560), (0, 0));
+    }
+
+    #[test]
+    fn fitting_panel_stays_inside_monitor_and_horizontal_center_is_unchanged() {
+        for monitor_height in [600, 768, 1_080, 1_440, 2_160] {
+            for panel_height in [320, 560, 900] {
+                let (x, y) = centered_search_panel_position(
+                    -1_920,
+                    -100,
+                    1_920,
+                    monitor_height,
+                    720,
+                    panel_height,
+                );
+                assert_eq!(x, -1_320);
+                assert!(y >= -100);
+                if panel_height <= monitor_height {
+                    assert!(
+                        i64::from(y) + i64::from(panel_height) <= -100 + i64::from(monitor_height)
+                    );
+                } else {
+                    assert_eq!(y, -100);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

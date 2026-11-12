@@ -59,7 +59,9 @@ Feature clusters:
 - settings/tray/audio/calendar/process manager: matching `src/lib/*` and `src/components/*Surface.svelte`
 - snipping: `src/lib/snipping.ts`, `src/lib/shellSurface.ts`, `src/lib/surfaceLoader.ts`, `src/lib/topBarControls.ts`, `SnipOverlaySurface.svelte`, `SnipPreviewSurface.svelte`
 
-Centered search has an inline native scope picker: All, Apps, Windows, Settings, Folders, Commands, and Everything. It filters only the supplied renderer result set (Everything matches `providerId: everything`); it does not expand provider queries or persist scope. Scope survives query/payload refreshes while mounted. Filtering preserves original row identities and result indices; navigation, activation, and folder pinning use only visible rows, falling back to the first visible row when the supplied selection is hidden. An empty scoped set cannot forward activation-producing Enter. The anchored presentation remains unfiltered and retains its existing header.
+Centered search has an inline shared MeltSelect scope picker with a rounded HTML popup: All, Apps, Windows, Settings, Folders, Commands, and Everything. It filters only the supplied renderer result set (Everything matches `providerId: everything`); it does not expand provider queries or persist scope. Scope survives query/payload refreshes while mounted. Filtering preserves original row identities and result indices; navigation, activation, and folder pinning use only visible rows, falling back to the first visible row when the supplied selection is hidden. An empty scoped set cannot forward activation-producing Enter. The anchored presentation remains unfiltered and retains its existing header.
+
+The centered scope trigger includes the decorative lens in one 112px clickable capsule; its popup spans that entire capsule and shares the search field's small corner radius. Search opts out of MeltSelect's redundant generic close-focus restoration so Tab and outside clicks retain their intended destination; the Select builder still restores the trigger after selection or Escape. Other MeltSelect consumers retain the default restoration policy.
 
 ### Process Manager System Info
 
@@ -139,6 +141,7 @@ Process descendant enrichment reuses count-only traversal scratch while preservi
 - task windows: `task_windows/`, `task_preview.rs`, `task_gallery.rs`, `taskbar_menu.rs`, `launchers.rs`
 - Stack Browser: `stack_popup.rs`, `stack_popup/`
 - search: `search/`, `search_sources/`, `search_panel.rs`
+- centered search placement horizontally centers the existing DPI-scaled panel on the top bar's current monitor and targets its top/query region at 25% of monitor height, moving upward only as needed to keep a fitting panel inside the monitor. Oversized panels anchor to the monitor origin on the affected axis; anchored search and live resizing retain their existing placement behavior.
 - terminal and commands: `terminal_panel.rs`, `quick_commands.rs`, `command_panel.rs`
 - process, audio, tray, settings, workspaces: matching Rust modules
 

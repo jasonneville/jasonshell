@@ -1,8 +1,28 @@
 import { fireEvent, render, waitFor, within } from '@testing-library/svelte';
-import { expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import SearchPanelSurface from '../../src/components/SearchPanelSurface.svelte';
 import { tauriMocks } from './setup';
 import type { SearchPanelPayload, SearchPanelResult } from '../../src/lib/searchPanel';
+
+const popoverDescriptors = ['showPopover', 'hidePopover'].map(name => [name, Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)] as const);
+beforeEach(() => {
+  // jsdom 27 exposes [popover] UA display:none but has no show/hidePopover.
+  // Model only that missing visibility transition; real top-layer placement,
+  // keyboard default actions and dismissal remain browser-fixture evidence.
+  if (typeof HTMLElement.prototype.showPopover === 'function') return;
+  for (const [name, display, state] of [['showPopover', 'block', 'open'], ['hidePopover', 'none', 'closed']] as const) {
+    Object.defineProperty(HTMLElement.prototype, name, { configurable: true, value(this: HTMLElement) {
+      this.style.display = display;
+      this.dispatchEvent(Object.assign(new Event('toggle'), { newState: state }));
+    } });
+  }
+});
+afterEach(() => {
+  for (const [name, descriptor] of popoverDescriptors) {
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor);
+    else Reflect.deleteProperty(HTMLElement.prototype, name);
+  }
+});
 
 it('releases listener exactly once when registration resolves after unmount', async () => {
   let resolve!: (unlisten: () => void) => void;
@@ -93,16 +113,18 @@ async function mountScopedSearch(presentation: 'centered' | 'anchored' = 'center
   tauri.invoke.mockImplementation(async (command) => command === 'get_search_panel_payload' ? payload : null);
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const view = render(SearchPanelSurface);
-  await waitFor(() => expect(within(view.getByRole('listbox')).getAllByRole('option').length).toBe(scopedResults.length));
+  await waitFor(() => expect(within(view.getByRole('listbox', { name: 'Search results' })).getAllByRole('option').length).toBe(scopedResults.length));
   return { view, tauri, refresh: (changes: Partial<SearchPanelPayload> = {}) => deliver({ payload: { ...payload, ...changes } }) };
 }
 
-function chooseScope(view: ReturnType<typeof render>, label: string) {
-  const select = view.container.querySelector('select');
-  expect(select, 'centered search must expose a native scope select').not.toBeNull();
-  const option = Array.from(select!.options).find((item) => item.text === label);
-  expect(option, `scope ${label} exists`).toBeDefined();
-  return fireEvent.change(select!, { target: { value: option!.value } });
+async function chooseScope(view: ReturnType<typeof render>, label: string) {
+  const trigger = view.getByRole('combobox', { name: 'Search scope' });
+  expect(trigger.tagName, 'rounded popup uses existing project button combobox').toBe('BUTTON');
+  await fireEvent.click(trigger);
+  await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('true'));
+  const popup = document.getElementById(trigger.getAttribute('aria-controls')!)!;
+  await fireEvent.click(within(popup).getByRole('option', { name: label, exact: true }));
+  await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('false'));
 }
 
 it.each([
@@ -115,12 +137,12 @@ it.each([
 ])('filters supplied results by %s without changing query IPC; All restores every kind', async (scope, titles) => {
   const { view, tauri } = await mountScopedSearch();
   await chooseScope(view, scope as string);
-  const rows = within(view.getByRole('listbox')).getAllByRole('option');
+  const rows = within(view.getByRole('listbox', { name: 'Search results' })).getAllByRole('option');
   expect(rows).toHaveLength(titles.length);
   for (const title of titles) expect(rows.some((row) => row.textContent?.includes(title))).toBe(true);
   expect(tauri.emitTo.mock.calls.filter((args) => args[1] === 'search-panel:query')).toHaveLength(0);
   await chooseScope(view, 'All');
-  expect(within(view.getByRole('listbox')).getAllByRole('option')).toHaveLength(scopedResults.length);
+  expect(within(view.getByRole('listbox', { name: 'Search results' })).getAllByRole('option')).toHaveLength(scopedResults.length);
 });
 
 it('activates first scoped row when backend selection is hidden, preserving original index and record key', async () => {
@@ -134,7 +156,7 @@ it('activates first scoped row when backend selection is hidden, preserving orig
   expect(tauri.emitTo.mock.calls.some((args) => args[1] === 'search-panel:pin-folder')).toBe(false);
   await fireEvent.keyDown(input, { key: 'ArrowDown' });
   expect(tauri.emitTo.mock.calls.filter((args) => args[1] === 'search-panel:select').at(-1)?.[2]).toMatchObject({ resultIndex: 8, recordKey: 'app:second' });
-  await fireEvent.click(within(view.getByRole('listbox')).getAllByRole('option')[1]);
+  await fireEvent.click(within(view.getByRole('listbox', { name: 'Search results' })).getAllByRole('option')[1]);
   expect(tauri.emitTo.mock.calls.filter((args) => args[1] === 'search-panel:select').at(-1)?.[2]).toMatchObject({ resultIndex: 8, recordKey: 'app:second' });
 });
 
@@ -142,7 +164,7 @@ it('does not activate or pin hidden backend selection when scoped results are em
   const { view, tauri, refresh } = await mountScopedSearch();
   await chooseScope(view, 'Apps');
   refresh({ results: [scopedResults[0]], selectedIndex: 0 });
-  await waitFor(() => expect(within(view.getByRole('listbox')).queryAllByRole('option')).toHaveLength(0));
+  await waitFor(() => expect(within(view.getByRole('listbox', { name: 'Search results' })).queryAllByRole('option')).toHaveLength(0));
   const input = view.getByRole('combobox', { name: 'Search Everything' });
   await fireEvent.keyDown(input, { key: 'Enter' });
   await fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
@@ -150,16 +172,16 @@ it('does not activate or pin hidden backend selection when scoped results are em
   expect(tauri.emitTo.mock.calls.some((args) => args[1] === 'search-panel:key' && args[2] === 'Enter')).toBe(false);
 });
 
-it('preserves native select focus and scope across payload refresh; clear still focuses query', async () => {
+it('preserves scope trigger focus and scope across payload refresh; clear still focuses query', async () => {
   const { view, refresh, tauri } = await mountScopedSearch();
   await chooseScope(view, 'Everything');
-  const select = view.container.querySelector('select')!;
+  const select = view.getByRole('combobox', { name: 'Search scope' });
   select.focus();
   refresh({ query: 'refreshed', selectedIndex: 8 });
   await waitFor(() => expect((view.getByRole('combobox', { name: 'Search Everything' }) as HTMLInputElement).value).toBe('refreshed'));
   expect(document.activeElement).toBe(select);
-  expect(select.selectedOptions[0].text).toBe('Everything');
-  expect(within(view.getByRole('listbox')).getAllByRole('option')).toHaveLength(2);
+  expect(select.textContent).toContain('Everything');
+  expect(within(view.getByRole('listbox', { name: 'Search results' })).getAllByRole('option')).toHaveLength(2);
   await fireEvent.click(view.getByRole('button', { name: 'Clear search' }));
   await waitFor(() => expect(document.activeElement).toBe(view.getByRole('combobox', { name: 'Search Everything' })));
   expect(tauri.emitTo.mock.calls.filter((args) => args[1] === 'search-panel:query').at(-1)?.[2]).toMatchObject({ query: '' });
@@ -167,7 +189,26 @@ it('preserves native select focus and scope across payload refresh; clear still 
 
 it('leaves anchored presentation unfiltered and without the centered scope picker', async () => {
   const { view } = await mountScopedSearch('anchored');
-  expect(view.container.querySelector('select')).toBeNull();
+  expect(view.queryByRole('combobox', { name: 'Search scope' })).toBeNull();
   expect(view.queryByRole('combobox')).toBeNull();
-  expect(within(view.getByRole('listbox')).getAllByRole('option')).toHaveLength(scopedResults.length);
+  expect(within(view.getByRole('listbox', { name: 'Search results' })).getAllByRole('option')).toHaveLength(scopedResults.length);
+});
+
+it('keeps the open project scope popup focused across refresh and Escape dismisses only the popup', async () => {
+  const { view, refresh, tauri } = await mountScopedSearch();
+  const trigger = view.getByRole('combobox', { name: 'Search scope' });
+  expect(trigger.tagName).toBe('BUTTON');
+  await fireEvent.click(trigger);
+  await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('true'));
+  const popup = document.getElementById(trigger.getAttribute('aria-controls')!)!;
+  popup.focus();
+  refresh({ query: 'refresh while open' });
+  await waitFor(() => expect((view.getByRole('combobox', { name: 'Search Everything' }) as HTMLInputElement).value).toBe('refresh while open'));
+  expect(document.activeElement).toBe(popup);
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  await fireEvent.keyDown(popup, { key: 'Escape' });
+  await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('false'));
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(tauri.invoke.mock.calls.some(args => args[0] === 'hide_search_panel')).toBe(false);
+  expect(tauri.emitTo.mock.calls.some(args => args[1] === 'search-panel:key' && args[2] === 'Escape')).toBe(false);
 });
