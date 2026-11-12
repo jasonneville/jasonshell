@@ -569,10 +569,40 @@ fn stack_git_remote_operation(
 ) -> Result<StackGitOperationResult, String> {
     let repo_root = repo_root_for_folder(folder_path)?
         .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let push_branch = if operation == "push" {
+        let output = run_git(&repo_root, &["branch", "--show-current"])?;
+        let branch = String::from_utf8(output.stdout)
+            .map_err(|_| "Current Git branch is not valid Unicode".to_string())?;
+        let branch = branch.trim_end_matches(['\r', '\n']).to_string();
+        if branch.is_empty() {
+            return Err("Cannot push detached HEAD; check out a local branch first".to_string());
+        }
+        // A short push refspec must not acquire option or force semantics.
+        // Use Git's ref rules, not the narrower branch-creation UI policy.
+        if branch.starts_with(['+', '-']) {
+            return Err("Current Git branch cannot be pushed safely as a short refspec".to_string());
+        }
+        let branch_ref = local_branch_ref(&branch);
+        run_git(&repo_root, &["check-ref-format", &branch_ref])?;
+        run_git(&repo_root, &["show-ref", "--verify", "--", &branch_ref])?;
+        // Unlike `push origin`, this lookup cannot treat a directory named
+        // origin as the destination when no such remote is configured.
+        run_git(&repo_root, &["remote", "get-url", "origin"])
+            .map_err(|error| format!("Configured Git origin remote required: {error}"))?;
+        Some(branch)
+    } else {
+        None
+    };
     let args = match operation {
         "fetch" => vec!["fetch", "--prune"],
         "pull" => vec!["pull", "--ff-only"],
-        "push" => vec!["push"],
+        "push" => vec![
+            "push",
+            "origin",
+            push_branch
+                .as_deref()
+                .ok_or_else(|| "Current Git branch unavailable".to_string())?,
+        ],
         _ => return Err("Git operation is invalid".to_string()),
     };
     let output = run_git(&repo_root, &args)?;
@@ -2253,6 +2283,227 @@ fn git_status_has_unstaged_change(xy: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    // Real Git acceptance fixtures: only isolated local bare destinations, never a network remote.
+    struct PushFixture {
+        home: std::path::PathBuf,
+        repo: std::path::PathBuf,
+        origin: std::path::PathBuf,
+        other: std::path::PathBuf,
+    }
+
+    impl Drop for PushFixture {
+        fn drop(&mut self) {
+            super::remove_dir_all_with_retries(&self.home).expect("remove isolated push fixture");
+        }
+    }
+
+    impl PushFixture {
+        fn new(committed: bool) -> Self {
+            super::trusted_git_path().expect("push acceptance requires production trusted Git");
+            let home = std::env::var_os("LOCALAPPDATA")
+                .map(|path| std::path::PathBuf::from(path).join("Temp/opencode"))
+                .unwrap_or_else(std::env::temp_dir)
+                .join(format!("push-{}-{}", std::process::id(), std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            std::fs::create_dir_all(&home).unwrap();
+            let fixture = Self { repo: home.join("repo"), origin: home.join("origin.git"), other: home.join("other.git"), home };
+            for (path, bare) in [(&fixture.repo, false), (&fixture.origin, true), (&fixture.other, true)] {
+                std::fs::create_dir_all(path).unwrap();
+                let args = if bare { vec!["init", "--bare", "--initial-branch=master"] } else { vec!["init", "--initial-branch=master"] };
+                fixture.git(path, &args);
+                fixture.git(path, &["config", "core.hooksPath", ".disabled-fixture-hooks"]);
+            }
+            fixture.git(&fixture.repo, &["config", "user.name", "Push fixture"]);
+            fixture.git(&fixture.repo, &["config", "user.email", "push@example.invalid"]);
+            fixture.git(&fixture.repo, &["config", "commit.gpgSign", "false"]);
+            fixture.git(&fixture.repo, &["config", "push.gpgSign", "false"]);
+            fixture.git(&fixture.repo, &["config", "protocol.allow", "never"]);
+            fixture.git(&fixture.repo, &["config", "protocol.file.allow", "always"]);
+            fixture.git(&fixture.repo, &["config", "push.autoSetupRemote", "false"]);
+            fixture.git(&fixture.repo, &["config", "push.default", "simple"]);
+            assert!(fixture.git(&fixture.repo, &["remote"]).is_empty(), "fixture requires no inherited remotes");
+            assert!(super::run_git(&fixture.repo, &["config", "--get-regexp", "^url\\."]).is_err(), "fixture refuses inherited URL rewrites before any push");
+            if committed { fixture.git(&fixture.repo, &["commit", "--allow-empty", "-m", "fixture"]); }
+            fixture
+        }
+
+        fn git(&self, path: &Path, args: &[&str]) -> String {
+            let result = super::run_git(path, args).unwrap_or_else(|error| panic!("fixture {args:?}: {error}"));
+            String::from_utf8(result.stdout).unwrap().trim().to_owned()
+        }
+
+        fn origin(&self) {
+            self.git(&self.repo, &["remote", "add", "origin", self.origin.to_str().unwrap()]);
+        }
+
+        fn push(&self, path: &Path) -> Result<super::StackGitOperationResult, String> {
+            super::stack_git_remote_operation(path.to_str().unwrap(), "push")
+        }
+
+        fn refs(&self, remote: &Path) -> String { self.git(remote, &["for-each-ref", "--format=%(refname) %(objectname)"]) }
+
+        fn assert_pushed(&self, branch: &str, source: &Path) {
+            let sha = self.git(source, &["rev-parse", "HEAD"]);
+            assert_eq!(self.refs(&self.origin), format!("refs/heads/{branch} {sha}"));
+            assert!(self.refs(&self.other).is_empty(), "default remote must remain untouched");
+        }
+    }
+
+    #[test]
+    fn explicit_origin_push_master_without_upstream_and_up_to_date() {
+        let f = PushFixture::new(true); f.origin();
+        assert_eq!(f.push(&f.repo).unwrap().summary, "Pushed");
+        f.assert_pushed("master", &f.repo);
+        assert!(f.push(&f.repo).unwrap().output.to_lowercase().contains("up-to-date"));
+        assert!(super::run_git(&f.repo, &["config", "--get", "branch.master.remote"]).is_err(), "push must not set upstream");
+    }
+
+    fn assert_explicit_origin_branch_push(branch: &str) {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["switch", "-c", branch]);
+        f.push(&f.repo).unwrap(); f.assert_pushed(branch, &f.repo);
+        assert!(super::run_git(&f.repo, &["config", "--get", &format!("branch.{branch}.remote")]).is_err());
+    }
+
+    #[test]
+    fn explicit_origin_push_slash_branch() { assert_explicit_origin_branch_push("feature/slash"); }
+
+    #[test]
+    fn explicit_origin_push_unicode_branch() { assert_explicit_origin_branch_push("feature/日本語-é"); }
+
+    #[test]
+    fn explicit_origin_push_long_branch() { assert_explicit_origin_branch_push(&format!("feature/{}/{}", "a".repeat(65), "b".repeat(65))); }
+
+    #[test]
+    fn explicit_origin_push_ignores_upstream_pushremote_default_and_push_refspec() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["remote", "add", "other", f.other.to_str().unwrap()]);
+        for (key, value) in [("branch.master.remote", "other"), ("branch.master.merge", "refs/heads/different"), ("branch.master.pushRemote", "other"), ("remote.pushDefault", "other"), ("push.default", "nothing"), ("remote.origin.push", "HEAD:refs/heads/wrong")] { f.git(&f.repo, &["config", key, value]); }
+        f.push(&f.repo).unwrap(); f.assert_pushed("master", &f.repo);
+        assert_eq!(f.git(&f.repo, &["config", "--get", "branch.master.remote"]), "other");
+        assert_eq!(f.git(&f.repo, &["config", "--get", "branch.master.merge"]), "refs/heads/different");
+    }
+
+    #[test]
+    fn explicit_origin_push_resolves_current_branch_from_nested_folder_at_call_time() {
+        let f = PushFixture::new(true); f.origin();
+        let nested = f.repo.join("nested/deeper"); std::fs::create_dir_all(&nested).unwrap();
+        let _stale_status = super::stack_git_status_for_path(nested.to_str().unwrap()).unwrap();
+        f.git(&f.repo, &["switch", "-c", "current/now"]);
+        f.push(&nested).unwrap(); f.assert_pushed("current/now", &f.repo);
+    }
+
+    #[test]
+    fn explicit_origin_push_uses_selected_linked_worktree_branch_and_head() {
+        let f = PushFixture::new(true); f.origin();
+        let linked = f.home.join("linked");
+        f.git(&f.repo, &["worktree", "add", "-b", "linked/topic", linked.to_str().unwrap()]);
+        f.git(&linked, &["commit", "--allow-empty", "-m", "linked only"]);
+        let nested = linked.join("nested"); std::fs::create_dir_all(&nested).unwrap();
+        f.push(&nested).unwrap(); f.assert_pushed("linked/topic", &linked);
+        assert_ne!(f.git(&linked, &["rev-parse", "HEAD"]), f.git(&f.repo, &["rev-parse", "HEAD"]));
+    }
+
+    fn assert_explicit_origin_required(mode: &str) {
+            let f = PushFixture::new(true);
+            if mode == "upstream-only" {
+                f.git(&f.repo, &["remote", "add", "other", f.other.to_str().unwrap()]);
+                f.git(&f.repo, &["config", "branch.master.remote", "other"]);
+                f.git(&f.repo, &["config", "branch.master.merge", "refs/heads/master"]);
+            }
+            if mode == "origin-directory" {
+                let directory = f.repo.join("origin"); std::fs::create_dir_all(&directory).unwrap();
+                f.git(&directory, &["init", "--bare"]);
+            }
+            let error = f.push(&f.repo).unwrap_err();
+            assert!(error.to_lowercase().contains("origin"), "{mode}: {error}");
+            assert!(f.refs(&f.origin).is_empty()); assert!(f.refs(&f.other).is_empty());
+            if mode == "origin-directory" { assert!(f.refs(&f.repo.join("origin")).is_empty()); }
+    }
+
+    #[test]
+    fn explicit_origin_push_requires_configured_origin() { assert_explicit_origin_required("missing"); }
+
+    #[test]
+    fn explicit_origin_push_rejects_upstream_only_without_origin() { assert_explicit_origin_required("upstream-only"); }
+
+    #[test]
+    fn explicit_origin_push_rejects_origin_directory_without_configured_remote() { assert_explicit_origin_required("origin-directory"); }
+
+    #[test]
+    fn explicit_origin_push_detached_has_checkout_guidance() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["checkout", "--detach"]);
+        let error = f.push(&f.repo).unwrap_err().to_lowercase();
+        assert!(error.contains("detached") && (error.contains("check out") || error.contains("checkout")), "{error}");
+        assert!(f.refs(&f.origin).is_empty());
+    }
+
+    #[test]
+    fn explicit_origin_push_unborn_fails_without_remote_ref() {
+        let unborn = PushFixture::new(false); unborn.origin();
+        assert!(unborn.push(&unborn.repo).is_err()); assert!(unborn.refs(&unborn.origin).is_empty());
+    }
+
+    #[test]
+    fn explicit_origin_push_preserves_git_invalid_destination_error() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["remote", "set-url", "origin", f.home.join("absent.git").to_str().unwrap()]);
+        let error = f.push(&f.repo).unwrap_err();
+        assert!(error.contains("absent.git"), "{error}"); assert!(f.refs(&f.origin).is_empty());
+    }
+
+    #[test]
+    fn explicit_origin_push_preserves_git_branch_tag_ambiguity_error() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["tag", "master"]);
+        let error = f.push(&f.repo).unwrap_err();
+        assert!(error.contains("matches more than one"), "Git ambiguity must propagate: {error}");
+        assert!(f.refs(&f.origin).is_empty());
+    }
+
+    #[test]
+    fn explicit_origin_push_nonfastforward_rejects_without_force_or_upstream_write() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["push", "origin", "master"]);
+        f.git(&f.repo, &["commit", "--allow-empty", "-m", "remote ahead"]);
+        f.git(&f.repo, &["push", "origin", "master"]);
+        let remote_before = f.refs(&f.origin);
+        f.git(&f.repo, &["reset", "--hard", "HEAD~1"]);
+        f.git(&f.repo, &["commit", "--allow-empty", "-m", "local diverged"]);
+        let error = f.push(&f.repo).unwrap_err().to_lowercase();
+        assert!(error.contains("non-fast-forward") || error.contains("rejected"), "{error}");
+        assert_eq!(f.refs(&f.origin), remote_before);
+        assert!(super::run_git(&f.repo, &["config", "--get", "branch.master.remote"]).is_err());
+    }
+
+    #[test]
+    fn explicit_origin_push_rejects_force_refspec_branch_without_overwriting_remote() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["push", "origin", "master:refs/heads/topic"]);
+        f.git(&f.repo, &["commit", "--allow-empty", "-m", "remote ahead"]);
+        f.git(&f.repo, &["push", "origin", "master:refs/heads/topic"]);
+        let before = f.refs(&f.origin);
+        f.git(&f.repo, &["reset", "--hard", "HEAD~1"]);
+        f.git(&f.repo, &["switch", "-c", "+topic"]);
+        f.git(&f.repo, &["commit", "--allow-empty", "-m", "diverged plus branch"]);
+        // If +topic is passed as an unchecked refspec, Git force-pushes *topic*,
+        // not +topic. Give that source a divergent commit so the oracle detects it.
+        f.git(&f.repo, &["branch", "topic", "HEAD"]);
+        let error = f.push(&f.repo).unwrap_err();
+        assert!(!error.is_empty());
+        assert_eq!(f.refs(&f.origin), before, "a leading + must never become force semantics");
+    }
+
+    #[test]
+    fn explicit_origin_push_rejects_malformed_leading_dash_symbolic_head() {
+        let f = PushFixture::new(true); f.origin();
+        f.git(&f.repo, &["update-ref", "refs/heads/-topic", "HEAD"]);
+        f.git(&f.repo, &["symbolic-ref", "HEAD", "refs/heads/-topic"]);
+        assert!(f.push(&f.repo).is_err());
+        assert!(f.refs(&f.origin).is_empty(), "malformed HEAD must not become a push option");
+    }
+
     use super::{
         annotate_branches_with_worktrees, classify_git_run_mode, count_untracked_file_lines,
         create_branch_git_args, delete_branch_git_args, encode_git_branch_path,

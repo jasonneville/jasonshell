@@ -437,9 +437,11 @@ test('stack git stash drawer matches history geometry and opens after the closin
   assert.ok(stashSection.indexOf('<div class="stack-git-row-shell">') < stashSection.indexOf('{#if selectedStashRef === stashRef}'));
 });
 
-test('stack git commit push validates remote early and preserves refresh warnings after success', () => {
-  assert.match(panel, /if \(pushAfter && !status\.remoteRepositoryUrl\)/);
-  assert.match(panel, /beginOperation\('Pushing'\);[\s\S]*failOperation\('Pushing', new Error\('No remote configured'\), 'Push failed'\)/);
+test('stack git commit push leaves origin validation to native Git and preserves refresh warnings after success', () => {
+  assert.doesNotMatch(panel, /if \(pushAfter && !status\.remoteRepositoryUrl\)/);
+  assert.doesNotMatch(panel, /disabled=\{[^}]*!remoteUrl[^}]*\}[^>]*aria-label="Push"/);
+  assert.doesNotMatch(panel, /disabled=\{[^}]*!remoteUrl[^}]*\}[^>]*>Commit &amp; Push/);
+  assert.match(panel, /await stackPopup\.stackGitCommit\([\s\S]*if \(!pushAfter\)[\s\S]*await stackPopup\.stackGitPush\(folderPath\)/);
   assert.match(panel, /operationRefreshWarning/);
   assert.match(panel, /Refresh warning/);
   assert.match(panel, /stackGitStash\(folderPath, stashMessage\.trim\(\) \|\| 'WIP', status\.entries\.some\(/);
