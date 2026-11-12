@@ -27,6 +27,25 @@ export function installLargeDirectoryFixture() {
 }
 
 export function resetBridge() { ledger.length = 0; handlers.clear(); overrides.clear(); }
+// Explicit opt-in: existing mouse journeys retain their read-only allowlist.
+export function installPushFixture(options: { commitError?: string; pushError?: string; browserUrl?: string } = {}) {
+  let committed = false;
+  const current = () => ({ ...status, remoteRepositoryUrl: options.browserUrl ?? null,
+    entries: committed ? [] : status.entries.map((entry) => ({ ...entry, staged: true, unstaged: false })) });
+  overrides.set('get_stack_git_status', ({ path }) => {
+    if (path !== child) return null;
+    return current();
+  });
+  overrides.set('stack_git_commit', () => {
+    if (options.commitError) throw new Error(options.commitError);
+    committed = true;
+    return { repositoryRoot: child, summary: 'Commit created', output: 'fixture commit SHA' };
+  });
+  overrides.set('stack_git_push', () => {
+    if (options.pushError) throw new Error(options.pushError);
+    return { repositoryRoot: child, summary: 'Pushed', output: 'fixture origin master updated' };
+  });
+}
 export function listen(event: string, handler: (event: { payload: unknown }) => void) {
   const subscribers = handlers.get(event) ?? new Set();
   subscribers.add(handler);
