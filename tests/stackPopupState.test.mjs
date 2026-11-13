@@ -22,7 +22,6 @@ import {
   selectedStackEntry,
   selectedStackPaths,
   sortStackEntries,
-  stackOpenWithSuggestions,
   stackSortHeaderState,
   stackBreadcrumbSegments,
   stackGitStatusPathMatchesEntry,
@@ -35,6 +34,7 @@ import {
   updateStackSort
 } from '../dist-tests/lib/stackPopupState.js';
 import { stackFileIconForEntry } from '../dist-tests/lib/stackFileIcons.js';
+import * as stackPopupState from '../dist-tests/lib/stackPopupState.js';
 
 const documents = 'C:\\Users\\me\\Documents';
 const downloads = 'C:\\Users\\me\\Downloads';
@@ -412,19 +412,8 @@ test('reports stack sort header aria state and active indicator', () => {
   });
 });
 
-test('suggests useful Open With apps for developer text files', () => {
-  assert.deepEqual(
-    stackOpenWithSuggestions(stackEntry('notes.txt')).map((app) => [
-      app.label,
-      app.commandContract
-    ]),
-    [
-      ['Notepad', 'open_stack_item_with_app'],
-      ['Notepad++', 'open_stack_item_with_app'],
-      ['Visual Studio Code', 'open_stack_item_with_app']
-    ]
-  );
-  assert.deepEqual(stackOpenWithSuggestions(stackEntry('Projects', 'Folder')), []);
+test('popup state cannot fabricate Open With apps from file extensions', () => {
+  assert.equal('stackOpenWithSuggestions' in stackPopupState, false);
 });
 
 test('ignores stale folder entry payloads', () => {

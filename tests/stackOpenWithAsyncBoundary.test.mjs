@@ -116,8 +116,45 @@ test('stack Open With filesystem and launch work is routed inside spawn_blocking
     /open_with_app\(Path::new\(&path\),\s*&app_id\)/,
   );
 
-  const openWithApp = extractFunction(openWithSource, 'open_with_app');
-  assert.match(openWithApp, /open_with_candidates_for_path\(path\)\?/);
-  assert.match(openWithApp, /find\(\|candidate\| candidate\.id == app_id\)/);
-  assert.match(openWithApp, /Command::new\(&candidate\.executable\)[\s\S]*\.spawn\(\)/);
+});
+
+test('Windows Open With uses association handlers and IDataObject invocation, never executable fallback', () => {
+  assert.match(openWithSource, /SHAssocEnumHandlers/);
+  assert.match(openWithSource, /ASSOC_FILTER_NONE/);
+  assert.match(openWithSource, /GetName\(/, 'identity comes from the native handler');
+  assert.match(openWithSource, /GetUIName\(/, 'display label is not executable identity');
+  assert.match(openWithSource, /IDataObject/);
+  assert.match(openWithSource, /\.Invoke\(/);
+  assert.doesNotMatch(openWithSource, /Command::new|std::process::Command|resolve_executable|NOTEPAD_SPEC|VSCODE_SPEC/);
+});
+
+test('candidate serialization contract contains identity, label and association provenance only', () => {
+  const models = readFileSync('src-tauri/src/stack_popup/models.rs', 'utf8');
+  const candidate = /pub(?:\(crate\))? struct StackOpenWithCandidate\s*\{([^}]+)\}/.exec(models);
+  assert.ok(candidate, 'candidate model exists');
+  const fields = [...candidate[1].matchAll(/pub(?:\(crate\))?\s+(\w+)\s*:/g)].map((match) => match[1]).sort();
+  assert.deepEqual(fields, ['id', 'label', 'source']);
+  assert.match(openWithSource, /windows-association/);
+});
+
+test('native handler identity is lossless, deduplicated independently of labels and revalidated at invocation', () => {
+  const app = extractFunction(openWithSource, 'open_with_app');
+  assert.match(app, /native::handlers\(path\)\?/);
+  assert.match(app, /find\(\|\(candidate, _\)\| candidate\.id == app_id\)/);
+  assert.match(app, /native::invoke\(&handler, path\)/);
+  assert.ok(app.indexOf('native::handlers') < app.indexOf('native::invoke'));
+  const handlers = extractFunction(openWithSource, 'handlers');
+  assert.match(handlers, /identity[\s\S]*?\.iter\(\)[\s\S]*?format!\("\{unit:04x\}"\)/);
+  assert.match(handlers, /seen\.insert\(id\.clone\(\)\)/);
+  assert.doesNotMatch(handlers, /seen\.insert\(label|from_utf16_lossy/);
+  assert.match(handlers, /extension\.encode_wide\(\)/);
+  assert.ok(handlers.indexOf('return Ok(Vec::new())') < handlers.indexOf('SHAssocEnumHandlers'));
+});
+
+test('enumeration, identity, label, data-object and Invoke errors remain errors instead of fallback success', () => {
+  for (const stage of ['enumerate Windows associations', 'read Windows association identity', 'read Windows association label', 'create Open With Shell data', 'invoke Windows association']) {
+    assert.ok(openWithSource.includes(`Failed to ${stage}`), `preserve failure stage: ${stage}`);
+  }
+  assert.match(openWithSource, /String::from_utf16\(label\.wide\(\)\?\)[\s\S]*?\.map_err/);
+  assert.doesNotMatch(openWithSource, /unwrap_or_default\(|\.unwrap_or\(Vec::new\(\)\)|\.or_else\(/);
 });

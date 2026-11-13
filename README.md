@@ -177,6 +177,10 @@ Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasons
 
 - browse folders
 - file operations
+- **Open with** for files enumerates Windows-registered association handlers for the file extension. Labels and presentation-only IDs come from Windows; this is not a list of every installed app and its order is not guaranteed to match Explorer
+- selecting a handler re-enumerates the current exact handler identity, then invokes it through the Shell `IDataObject` path. Renderer IDs are never executable authority; there is no executable fallback, default-association write, or saved app list
+- the **Choose app...** route remains the native Windows picker and is available even when no registered handlers are returned
+- the submenu keeps loading, empty, and error states explicit, guards stale lookups, and supports pointer grace plus keyboard entry/return navigation. Native association/picker and packaged-app smoke remain unverified
 - On Windows, drag a file or folder row to Explorer or another Shell drop target with the primary mouse button; dragging multiple selected rows from the current folder requests a copy-only native Shell/OLE drag. Dragging rows from different parent folders reports an unsupported operation rather than sending an invalid payload. Released gestures cancel silently; native errors appear in the popup. Incoming drops remain supported.
 - Native outbound drag has only static/compile validation so far. Explorer/Teams transfer, cancellation, focus behavior, and symlink identity still require consent-gated live Windows smoke; a returned `copied` effect indicates the Shell accepted a copy effect, not that the destination contents were independently verified.
 - Changes, History, Stashes, and Branches views

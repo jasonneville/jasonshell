@@ -6,24 +6,23 @@ const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte
 const css = readFileSync(new URL('../src/components/StackPopupSurface.css', import.meta.url), 'utf8');
 const stackPopupApi = readFileSync(new URL('../src/lib/stackPopup.ts', import.meta.url), 'utf8');
 
-test('row context menu exposes Open with picker plus suggested developer apps', () => {
+test('row context menu exposes Open with picker plus native association candidates only', () => {
   assert.equal(surface.includes('Open width'), false);
   assert.equal(surface.includes('Default width'), false);
-  assert.match(surface, />Open with ▸<\/ContextMenuItem>/);
-  assert.match(surface, /openWithSuggestions/);
-  assert.match(surface, /openSelectedWithSuggestedApp\(app\)/);
-  assert.match(surface, />\{app\.label\}<\/ContextMenuItem>/);
+  assert.match(surface, /Open with/);
+  assert.doesNotMatch(surface, /stackOpenWithSuggestions|StackOpenWithSuggestion/);
+  assert.match(surface, /openWithCandidates/);
+  assert.match(surface, /app\.label/);
   assert.match(stackPopupApi, /listStackOpenWithCandidates\(path: string\): Promise<StackOpenWithCandidate\[]>/);
   assert.match(stackPopupApi, /openStackItemWithApp\(path: string, appId: string\): Promise<void>/);
   assert.match(surface, />Choose app\.\.\.<\/ContextMenuItem>/);
   assert.match(surface, /openSelectedWithPicker\(\)/);
 });
 
-test('Open with flyout has a bridge so rightward mouse movement stays inside submenu zone', () => {
-  assert.match(css, /\.context-submenu-panel::before/);
-  assert.match(css, /right: 100%;/);
-  assert.match(css, /\.context-menu-shell:has\(\.context-submenu:hover\) > \.context-submenu-panel/);
-  assert.doesNotMatch(css, /left: calc\(100% \+ 0\.25rem\)/);
+test('Open with flyout visibility is explicit rather than CSS-hover-only', () => {
+  assert.match(surface, /aria-expanded/);
+  assert.match(surface, /aria-haspopup/);
+  assert.doesNotMatch(css, /\.context-menu-shell:has\(\.context-submenu:hover\) > \.context-submenu-panel/);
 });
 
 test('Open with flyout is a sibling of the independently scrolling root menu', () => {
@@ -33,9 +32,12 @@ test('Open with flyout is a sibling of the independently scrolling root menu', (
   );
 
   assert.match(rowMenu, /class="context-menu-shell"/);
-  assert.match(rowMenu, /<ContextMenu bind:element=\{rowMenuElement\} className="context-menu context-menu-scroll"[\s\S]*?<\/ContextMenu>\s*<ContextMenu bind:element=\{rowSubmenuPanelElement\} className="context-menu context-submenu-panel"/);
+  assert.ok(rowMenu.indexOf('bind:element={rowMenuElement}') < rowMenu.indexOf('bind:element={rowSubmenuPanelElement}'));
+  const rootEnd = rowMenu.indexOf('</ContextMenu>');
+  assert.ok(rootEnd >= 0 && rootEnd < rowMenu.indexOf('bind:element={rowSubmenuPanelElement}'), 'flyout remains outside independently scrolling root');
   assert.match(rowMenu, /on:keydown=\{\(event\) => void handleRowMenuKeydown\(event\)\}/);
-  assert.match(surface, /event\.key !== 'ArrowRight'[\s\S]*?rowSubmenuPanelElement\?\.querySelector<HTMLElement>\('button:not\(:disabled\)'\)\?\.focus\(\)/);
+  assert.match(surface, /ArrowRight/);
+  assert.match(surface, /ArrowLeft/);
   assert.match(css, /\.context-menu-scroll\s*\{[\s\S]*?overflow-y:\s*auto;/);
   assert.match(css, /\.context-menu-shell\s*\{[\s\S]*?overflow:\s*visible;/);
 });

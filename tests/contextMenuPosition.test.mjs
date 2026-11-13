@@ -83,22 +83,19 @@ test('stack popup wires computed context menu max-height CSS variables', () => {
 
 test('stack submenu stays attached to trigger and scrolls internally', () => {
   const submenuPanelRule = cssRule(stackPopupCss, '.context-submenu-panel');
-
+  const submenuRegionRule = cssRule(stackPopupCss, '.context-submenu-region');
   assert.match(
-    submenuPanelRule,
-    /position\s*:\s*absolute\s*;/,
-    'Submenu panel must stay attached to the trigger hover area so pointer travel remains reachable.'
-  );
-  assert.match(
-    submenuPanelRule,
-    /top\s*:\s*var\(--stack-context-submenu-top, 0\)\s*;/,
-    'Submenu panel top must align with the trigger row.'
-  );
-  assert.doesNotMatch(
-    submenuPanelRule,
+    submenuRegionRule,
     /position\s*:\s*fixed\s*;/,
-    'Fixed submenus can detach from the trigger hover path.'
+    'Measured submenu region must escape the independently scrolling parent.'
   );
+  assert.match(
+    stackPopupSource,
+    /openWithTrigger\?\.getBoundingClientRect\(\)\.top/,
+    'Submenu placement must measure the actual trigger row.'
+  );
+  assert.match(stackPopupSource, /left:\$\{openWithPosition\.x\}px;top:\$\{openWithPosition\.y\}px/);
+  assert.match(submenuPanelRule, /position\s*:\s*static\s*;/);
   assert.match(
     submenuPanelRule,
     /max-height\s*:\s*(?:min\()?var\(--stack-context-submenu-max-height[^;]*;/,

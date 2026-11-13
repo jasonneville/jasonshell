@@ -224,8 +224,7 @@ type StackPasteResult = {
 export type StackOpenWithCandidate = {
   id: string;
   label: string;
-  executable: string;
-  source: string;
+  source: 'windows-association';
 };
 
 export type StackNativeDragOutcome = {

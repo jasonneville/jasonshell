@@ -169,7 +169,7 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
   assert.match(stackPopupSource, /<MeltActionButton onClick=\{cancelInlineEditor\}>Cancel<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton class=\{sortHeader\('name'\)\.className\} role="columnheader" ariaColindex=\{1\} ariaSort=\{sortHeader\('name'\)\.ariaSort\} onClick=\{\(\) => sortBy\('name'\)\}/);
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!selectedEntry\}[^>]*onClick=\{\(\) => selectedEntry && void activateEntry\(selectedEntry\)\}>Open<\/ContextMenuItem>/);
-  assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{selectedEntry\?\.entryType !== 'File'\}>Open with ▸<\/ContextMenuItem>/);
+  assert.match(stackPopupSource, /<button\b[^>]*class="context-menu-item submenu-trigger"[^>]*role="menuitem"[^>]*aria-haspopup="menu"[^>]*aria-expanded=\{openWithOpen\}[^>]*disabled=\{selectedEntry\?\.entryType !== 'File'\}/);
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!currentPath\}[^>]*onClick=\{beginCreateFolder\}>New Folder<\/ContextMenuItem>/);
   assert.match(stackPopupSource, /\{#if deleteConfirmation\}\s*<StackConfirmDialog[^>]*confirmLabel="Delete"[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*dismissOnBackdrop=\{false\}[^>]*returnFocus=\{detailsGrid\}[^>]*onCancel=\{cancelDeleteConfirmation\}[^>]*onConfirm=\{\(\) => void confirmDeleteSelection\(\)\}/);
 

@@ -51,12 +51,6 @@ export type StackSortHeaderState = {
   indicator: '' | '↑' | '↓';
 };
 
-export type StackOpenWithSuggestion = {
-  id: string;
-  label: string;
-  commandContract: 'open_stack_item_with_app';
-};
-
 export type StackEntryIconUpdate = {
   path: string;
   iconDataUrl: string | null;
@@ -461,54 +455,6 @@ export function stackSortHeaderState(
     className: `details-sort active ${current.sortDirection}`,
     indicator: current.sortDirection === 'asc' ? '↑' : '↓'
   };
-}
-
-export function stackOpenWithSuggestions(entry: StackEntry | null | undefined): StackOpenWithSuggestion[] {
-  if (!entry || entry.entryType !== 'File') {
-    return [];
-  }
-
-  const extension = stackEntryExtension(entry.name);
-  const type = entry.typeLabel.toLocaleLowerCase();
-  const ids = new Set<string>();
-  const suggestions: StackOpenWithSuggestion[] = [];
-  const add = (id: string, label: string) => {
-    if (!ids.has(id)) {
-      ids.add(id);
-      suggestions.push({ id, label, commandContract: 'open_stack_item_with_app' });
-    }
-  };
-
-  if (TEXT_OPEN_WITH_EXTENSIONS.has(extension) || type.includes('text') || type.includes('code') || type.includes('json')) {
-    add('notepad', 'Notepad');
-    add('notepad-plus-plus', 'Notepad++');
-    add('vscode', 'Visual Studio Code');
-  } else if (IMAGE_OPEN_WITH_EXTENSIONS.has(extension) || type.includes('image')) {
-    add('paint', 'Paint');
-    add('vscode', 'Visual Studio Code');
-  } else if (ARCHIVE_OPEN_WITH_EXTENSIONS.has(extension) || type.includes('archive')) {
-    add('vscode', 'Visual Studio Code');
-  } else {
-    add('vscode', 'Visual Studio Code');
-    add('notepad', 'Notepad');
-  }
-
-  return suggestions;
-}
-
-const TEXT_OPEN_WITH_EXTENSIONS = new Set([
-  'txt', 'md', 'markdown', 'log', 'json', 'jsonc', 'yaml', 'yml', 'xml', 'toml',
-  'ini', 'csv', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'svelte', 'rs', 'py',
-  'ps1', 'bat', 'cmd', 'sh', 'html', 'css', 'scss', 'sql'
-]);
-
-const IMAGE_OPEN_WITH_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico']);
-const ARCHIVE_OPEN_WITH_EXTENSIONS = new Set(['zip', '7z', 'rar', 'tar', 'gz']);
-
-function stackEntryExtension(name: string) {
-  const leaf = name.split(/[\\/]/).filter(Boolean).at(-1) ?? name;
-  const index = leaf.lastIndexOf('.');
-  return index > 0 && index < leaf.length - 1 ? leaf.slice(index + 1).toLocaleLowerCase() : '';
 }
 
 export function sortStackEntries(

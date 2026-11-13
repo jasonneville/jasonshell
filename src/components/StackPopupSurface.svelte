@@ -84,11 +84,9 @@
     stackPopupOpenPath,
     stackPopupRequestKey,
     stackGitStatusPathMatchesEntry,
-    stackOpenWithSuggestions,
     stackSortHeaderState,
     updateStackSort,
     type StackEntryIconUpdate,
-    type StackOpenWithSuggestion,
     type StackPopupOpenPayload,
     type StackSortColumn
   } from '../lib/stackPopupState';
@@ -150,6 +148,14 @@
   let backgroundMenuElement: HTMLDivElement | null = null;
   let rowSubmenuElement: HTMLDivElement | null = null;
   let rowSubmenuPanelElement: HTMLDivElement | null = null;
+  let openWithTrigger: HTMLButtonElement | null = null;
+  let openWithOpen = false;
+  let openWithCloseTimer: number | null = null;
+  let openWithRevision = 0;
+  let openWithPendingCandidates: StackOpenWithCandidate[] | null = null;
+  let openWithStatus: 'loading' | 'ready' | 'error' = 'ready';
+  let openWithLaunching = false;
+  let openWithPosition = { x: 8, y: 8 };
   let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
   let rowSubmenuOpensLeft = false;
   let createFolderDraft: string | null = null;
@@ -204,7 +210,6 @@
   let searchQuery = '';
   let stackSearchInput: HTMLInputElement | null = null;
   let openWithCandidates: StackOpenWithCandidate[] = [];
-  let openWithCandidatePath: string | null = null;
   let iconCache = new Map<string, string | null>();
   let iconHydrationJobToken = 0;
   let iconHydrationVisiblePriority: string[] = [];
@@ -257,7 +262,6 @@
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
   $: virtualEntries = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
   $: marqueeRect = marqueeSelection ? stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current) : null;
-  $: openWithSuggestions = openWithCandidates.length ? openWithCandidates : stackOpenWithSuggestions(selectedEntry);
   $: if (currentPath !== pathDraftBase && (!pathInputFocused || pathDraft === pathDraftBase)) {
     pathDraft = currentPath;
     pathDraftBase = currentPath;
@@ -312,6 +316,7 @@
 
     return () => {
       disposed = true;
+      closeMenus();
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
       }
@@ -946,48 +951,60 @@
   }
 
   async function openSelectedWithPicker() {
+    const path = rowMenu?.path;
+    if (!path || selectedEntry?.entryType !== 'File' || openWithLaunching) return;
+    openWithLaunching = true;
     closeMenus();
-    if (!selectedEntry || selectedEntry.entryType !== 'File') {
-      return;
-    }
 
     try {
-      await openStackItemWithPicker(selectedEntry.path);
+      await openStackItemWithPicker(path);
       errorMessage = '';
     } catch (error) {
       console.error('Failed to open stack item with picker', error);
       errorMessage = operationErrorMessage(error, 'Open with unavailable');
+    } finally {
+      openWithLaunching = false;
     }
   }
 
   async function loadOpenWithCandidates(entry: StackEntry) {
-    openWithCandidatePath = entry.path;
+    const revision = ++openWithRevision;
     openWithCandidates = [];
     if (entry.entryType !== 'File') {
+      openWithStatus = 'ready';
       return;
     }
+    openWithStatus = 'loading';
 
     try {
       const candidates = await listStackOpenWithCandidates(entry.path);
-      if (openWithCandidatePath === entry.path) {
-        openWithCandidates = candidates;
+      if (revision === openWithRevision && rowMenu?.path === entry.path) {
+        // Never insert rows underneath an engaged pointer or keyboard focus.
+        if (openWithOpen) openWithPendingCandidates = candidates;
+        else openWithCandidates = candidates;
+        openWithStatus = 'ready';
+        void positionOpenMenus();
       }
     } catch (error) {
       console.error('Failed to load Open With candidates', error);
+      if (revision === openWithRevision && rowMenu?.path === entry.path) openWithStatus = 'error';
     }
   }
 
-  async function openSelectedWithSuggestedApp(app: StackOpenWithSuggestion | StackOpenWithCandidate) {
+  async function openSelectedWithSuggestedApp(app: StackOpenWithCandidate) {
+    const path = rowMenu?.path;
+    const appId = app.id;
+    if (!path || selectedEntry?.entryType !== 'File' || openWithLaunching) return;
+    openWithLaunching = true;
     closeMenus();
-    if (!selectedEntry || selectedEntry.entryType !== 'File') {
-      return;
-    }
     try {
-      await openStackItemWithApp(selectedEntry.path, app.id);
+      await openStackItemWithApp(path, appId);
       errorMessage = '';
     } catch (error) {
       console.error('Failed to open stack item with app', error);
       errorMessage = operationErrorMessage(error, `Open with ${app.label} unavailable`);
+    } finally {
+      openWithLaunching = false;
     }
   }
 
@@ -1501,6 +1518,10 @@
   }
 
   function closeMenus() {
+    ++openWithRevision;
+    closeOpenWith();
+    openWithCandidates = [];
+    openWithPendingCandidates = null;
     rowMenu = null;
     backgroundMenu = null;
   }
@@ -1532,7 +1553,6 @@
     await tick();
     if (rowMenu && rowMenuElement) {
       rowMenu = positionedMenu(rowMenu, rowMenuElement);
-      rowSubmenuOpensLeft = rowMenu.x + rowMenuElement.getBoundingClientRect().width + 154 > window.innerWidth;
       await tick();
       if (rowMenu && rowMenuElement) {
         rowMenu = positionedSubmenu(rowMenu, rowMenuElement);
@@ -1561,8 +1581,17 @@
 
   function positionedSubmenu<T extends StackContextMenuPlacement>(menu: T, element: HTMLElement): T {
     const rect = element.getBoundingClientRect();
-    const triggerTop = rowSubmenuElement?.getBoundingClientRect().top ?? rect.top;
-    const maxHeight = availableContextMenuHeightFromTop(triggerTop);
+    const triggerTop = openWithTrigger?.getBoundingClientRect().top ?? rect.top;
+    const panel = rowSubmenuPanelElement?.getBoundingClientRect();
+    const width = panel?.width ?? 144;
+    const padding = STACK_CONTEXT_MENU_VIEWPORT_PADDING;
+    rowSubmenuOpensLeft = rect.right + width + 4 > window.innerWidth && rect.left > window.innerWidth - rect.right;
+    const x = rowSubmenuOpensLeft ? rect.left - width - 4 : rect.right + 4;
+    openWithPosition = {
+      x: Math.max(padding, Math.min(x, window.innerWidth - padding - width)),
+      y: Math.max(padding, Math.min(triggerTop, window.innerHeight - padding - (panel?.height ?? 0)))
+    };
+    const maxHeight = availableContextMenuHeight();
     return {
       ...menu,
       width: rect.width,
@@ -1724,20 +1753,77 @@
   }
 
   async function handleRowMenuKeydown(event: KeyboardEvent) {
+    // The folder's window-level shortcuts must not activate files behind a menu.
+    event.stopPropagation();
     if (event.key === 'Escape') {
-      closeMenus();
+      event.preventDefault();
+      event.stopPropagation();
+      if (openWithOpen) closeOpenWith(true);
+      else closeMenus();
       return;
     }
-    if (event.key !== 'ArrowRight' || !(event.target as HTMLElement).closest('.submenu-trigger')) {
-      return;
+    const inSubmenu = rowSubmenuPanelElement?.contains(event.target as Node);
+    if (inSubmenu && event.key === 'ArrowLeft') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeOpenWith(true);
+    } else if (inSubmenu && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const buttons = Array.from(rowSubmenuPanelElement!.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    } else if (event.target === openWithTrigger && ['ArrowRight', 'Enter', ' '].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      await openOpenWith(event.key === 'ArrowRight');
     }
-    event.preventDefault();
-    await tick();
-    rowSubmenuPanelElement?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+  }
+
+  function cancelOpenWithClose() {
+    if (openWithCloseTimer !== null) window.clearTimeout(openWithCloseTimer);
+    openWithCloseTimer = null;
+  }
+
+  function closeOpenWith(restoreFocus = false) {
+    cancelOpenWithClose();
+    openWithOpen = false;
+    if (openWithPendingCandidates) {
+      openWithCandidates = openWithPendingCandidates;
+      openWithPendingCandidates = null;
+    }
+    if (restoreFocus) openWithTrigger?.focus({ preventScroll: true });
+  }
+
+  function scheduleOpenWithClose() {
+    // Movement across neighboring rows is transit, not an immediate dismissal.
+    // Keep the original deadline so settling over another action still closes.
+    if (!openWithOpen || openWithCloseTimer !== null) return;
+    openWithCloseTimer = window.setTimeout(() => closeOpenWith(), 220);
+  }
+
+  async function openOpenWith(focus = false) {
+    if (!rowMenu || selectedEntry?.entryType !== 'File') return;
+    cancelOpenWithClose();
+    openWithOpen = true;
+    await positionOpenMenus();
+    if (focus && openWithOpen) rowSubmenuPanelElement?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+  }
+
+  function handleParentMenuPointer(event: PointerEvent) {
+    if ((event.target as HTMLElement).closest('.context-submenu')) cancelOpenWithClose();
+    else scheduleOpenWithClose();
+  }
+
+  function observeOpenWithContent(node: HTMLElement) {
+    const observer = new ResizeObserver(() => { if (openWithOpen) void positionOpenMenus(); });
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
   }
 
   function focusDetailsGrid() {
-    window.requestAnimationFrame(() => detailsGrid?.focus({ preventScroll: true }));
+    window.requestAnimationFrame(() => { if (!rowMenu && !backgroundMenu) detailsGrid?.focus({ preventScroll: true }); });
   }
 
   let folderViewport: { path: string; search: string; scrollTop: number; height: number } | null = null;
@@ -2184,8 +2270,9 @@
     if (!stackState.selectedPaths.includes(entry.path)) {
       stackState = selectStackEntry(stackState, entry.path);
     }
-    void loadOpenWithCandidates(entry);
+    closeMenus();
     rowMenu = { x: event.clientX, y: event.clientY, path: entry.path };
+    void loadOpenWithCandidates(entry);
     backgroundMenu = null;
     void positionOpenMenus();
   }
@@ -2201,7 +2288,7 @@
     }
     event.preventDefault();
     event.stopPropagation();
-    rowMenu = null;
+    closeMenus();
     backgroundMenu = { x: event.clientX, y: event.clientY };
     void positionOpenMenus();
   }
@@ -2370,6 +2457,9 @@
       event.preventDefault();
       if (createFolderDraft !== null || renameDraft !== null) {
         cancelInlineEditor();
+      } else if (openWithOpen) {
+        // Hover does not move focus into the menu; preserve that focus on Escape.
+        closeOpenWith();
       } else if (rowMenu || backgroundMenu) {
         closeMenus();
       } else {
@@ -2424,7 +2514,10 @@
       event.preventDefault();
       const entry = selectedEntry ?? entries[0];
       if (entry) {
+        closeMenus();
         rowMenu = { x: 24, y: 72, path: entry.path };
+        void loadOpenWithCandidates(entry);
+        void positionOpenMenus();
         backgroundMenu = null;
       }
     } else if (event.key === 'F2') {
@@ -2549,7 +2642,7 @@
   on:pointerup={endMarqueeSelection}
   on:pointercancel={endResize}
   on:pointercancel={endMarqueeSelection}
-  on:resize={updateDetailsViewport}
+  on:resize={() => { updateDetailsViewport(); void positionOpenMenus(); }}
 />
 
 <section
@@ -2863,11 +2956,16 @@
       on:click={(event) => event.stopPropagation()}
       on:contextmenu={(event) => event.stopPropagation()}
       on:keydown={(event) => void handleRowMenuKeydown(event)}
+      on:pointermove={(event) => { if (rowMenuElement?.contains(event.target as Node)) handleParentMenuPointer(event); }}
+      on:focusin={(event) => { if (rowMenuElement?.contains(event.target as Node) && event.target !== openWithTrigger) closeOpenWith(); }}
+      on:focusout={(event) => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) scheduleOpenWithClose(); }}
     >
-      <ContextMenu bind:element={rowMenuElement} className="context-menu context-menu-scroll" on:scroll={() => void positionOpenMenus()}>
+      <ContextMenu bind:element={rowMenuElement} className="context-menu context-menu-scroll" on:scroll={() => void positionOpenMenus()} on:pointerdown={(event) => { if (!(event.target as HTMLElement).closest('.context-submenu')) closeOpenWith(); }}>
         <ContextMenuItem icon="preview" disabled={!selectedEntry} onClick={() => selectedEntry && void activateEntry(selectedEntry)}>Open</ContextMenuItem>
-        <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none">
-          <ContextMenuItem icon="preview" disabled={selectedEntry?.entryType !== 'File'}>Open with ▸</ContextMenuItem>
+        <div bind:this={rowSubmenuElement} class:left={rowSubmenuOpensLeft} class="context-submenu" role="none" on:pointerenter={() => void openOpenWith()} on:pointerleave={scheduleOpenWithClose}>
+          <button bind:this={openWithTrigger} class="context-menu-item submenu-trigger" type="button" role="menuitem" aria-haspopup="menu" aria-expanded={openWithOpen} aria-controls="stack-open-with-menu" disabled={selectedEntry?.entryType !== 'File'} on:click={() => void openOpenWith()}>
+            <span class="context-menu-icon"><MaterialSymbolIcon name="preview" /></span>Open with ▸
+          </button>
         </div>
         <ContextMenuItem icon="file_copy" disabled={!hasSelection} onClick={() => void copySelected(false)}>Copy</ContextMenuItem>
         <ContextMenuItem icon="content_cut" disabled={!hasSelection} onClick={() => void copySelected(true)}>Cut</ContextMenuItem>
@@ -2887,12 +2985,25 @@
         <ContextMenuItem icon="folder" disabled={!selectedEntry} onClick={() => void revealSelected()}>Reveal</ContextMenuItem>
         <ContextMenuItem icon="settings" disabled={!selectedEntry} onClick={() => void showSelectedProperties()}>Properties</ContextMenuItem>
       </ContextMenu>
-      <ContextMenu bind:element={rowSubmenuPanelElement} className="context-menu context-submenu-panel">
-        {#each openWithSuggestions as app (app.id)}
+      <div class="context-submenu-region" class:open={openWithOpen} class:left={rowSubmenuOpensLeft} style={`left:${openWithPosition.x}px;top:${openWithPosition.y}px`} role="none" on:pointerenter={cancelOpenWithClose} on:pointerleave={scheduleOpenWithClose}>
+      <div id="stack-open-with-menu" role="none" use:observeOpenWithContent>
+      <ContextMenu bind:element={rowSubmenuPanelElement} ariaLabel="Open with" className="context-menu context-submenu-panel">
+        {#each openWithCandidates as app (app.id)}
           <ContextMenuItem disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithSuggestedApp(app)}>{app.label}</ContextMenuItem>
         {/each}
+        {#if openWithStatus === 'loading'}
+          <div class="open-with-status" role="status">Loading apps...</div>
+        {:else if openWithStatus === 'error'}
+          <div class="open-with-status" role="status">Apps unavailable. Choose an app below.</div>
+        {:else if openWithPendingCandidates}
+          <div class="open-with-status" role="status">Apps ready. Reopen to view.</div>
+        {:else if !openWithCandidates.length}
+          <div class="open-with-status" role="status">No associated apps.</div>
+        {/if}
         <ContextMenuItem disabled={selectedEntry?.entryType !== 'File'} onClick={() => void openSelectedWithPicker()}>Choose app...</ContextMenuItem>
       </ContextMenu>
+      </div>
+      </div>
     </div>
   {/if}
 
