@@ -2,7 +2,107 @@
 
 Living scratchpad for the memory-first optimization campaign started 2026-11-11.
 
-Campaign status: **Complete within the authorized isolated-validation scope.** Fourteen production optimizations (A04–A17) have focused acceptance and independent review. Final check/build, 436 mounted tests, native type checking and isolated native fixtures pass. Repository-wide Node tests retain ten pre-existing failures; no new failure or registry omission remains. Whole-app memory and live native acceptance are not measured.
+Campaign status: **2026-11-13 authorized source/fixture campaign complete: four further production optimizations independently validated and reviewed.** All fifteen follow-up candidates have explicit dispositions below. Native/lifecycle experiments remain evidence- or consent-gated, not exhausted in principle. The earlier campaign completed fourteen production optimizations (A04–A17); its historical validation and measurements remain below and are not fresh results for this checkout. Whole-app memory, speed and live native acceptance remain unmeasured.
+
+### Native measurement follow-up (blocked; no accepted comparison)
+
+After reviewing the fixture results and explicit native-consent limitation, the user requested **“Measure it”**. This authorizes controlled JasonShell launches for actual baseline/current runtime measurement. The prior no-launch statements below describe the completed source/fixture campaign, not this newly authorized follow-up. It does not authorize unrelated system changes, feature-policy changes, destructive workflows or modifying user data.
+
+Measurement owner completed fresh release builds from baseline `3203040e` and current six frontend source files in isolated temporary staging, preserving the dirty checkout. Both use unique measurement identifier `com.jnev1.jasonshell.rammeasurement20261113`, fresh native settings without an imported model, and recorded source/binary SHA-256 hashes. Three counterbalanced idle pairs were planned with normal hooks/prewarm and per-attempt WebView user-data folders. Sampling tracks root/descendant PID plus creation identity; shutdown uses topbar `WM_CLOSE` with workarea/taskbar equality and survivor checks. Independent safety/methodology review is in progress. Raw artifacts: `test-results/runtime-ram-20261113/native-ram-native-20261113-080859/`.
+
+**Safety stop after first pair:** baseline/current roots exited normally with code zero and no surviving descendants, but current post-exit taskbar visibility was false versus true before launch. The sampler stopped before pair two; no blanket cleanup or further native launch was performed. Reported logical workarea remained `2048×1152`; both runs logged expected physical `2560×1438` versus observed `2560×1440`. Read-only diagnosis is distinguishing auto-hide/transient visibility and DPI observer effects from a concrete restoration defect. Preserve both raw attempt series; they are not an accepted repeated comparison or proof of savings. Do not relax the restoration guard to finish the campaign.
+
+Read-only follow-up found taskbar visibility returned to true without any restoration/input/system action. DPI-aware inspection (temporary thread PMv2 context restored in `finally`) reports physical SPI workarea `0,0,2560,1440`, taskbar rectangle `0,1438,2560,1488`, auto-hide state `1`, and unchanged taskbar HWND/Explorer PID plus creation time predating this campaign. Fifty-one 200 ms samples remained stable over ten seconds, with no JasonShell process alive. This supports a transient visibility observation, **not retrospective proof of exact physical prelaunch restoration**. Evidence: `post-stop-desktop-physical.json` and `post-stop-desktop-physical-series.json` under the native artifact root. Independent reviewer is assessing inspector safety and prospective physical/stable restoration invariants before any further launch.
+
+Review requires checked cursor reads, style/exstyle capture, end-of-read taskbar/Explorer identity revalidation, checked DPI-context restoration and bounded input validation. Prospective collection must capture a stable physical prelaunch baseline and, after normal exit plus zero owned survivors, require the exact visibility/workarea/identity/auto-hide/style/geometry state to return continuously under unchanged pointer conditions within a bounded settling window. Owner is implementing the stricter ten-second stable interval within thirty seconds, with pure regression tests and independent re-review before launch. Auto-hide does not waive `WS_VISIBLE` equality; persistent mismatch or input/observer interference stops collection without automatic restoration. Optional UIA process-manager/terminal workflow must prove populated process rows and exclude its fixed dwell from action latency; it cannot establish icon/diff/output-churn savings.
+
+Revised shared physical observer and integrated sampler are ready for re-review; no relaunch has occurred. Owner reports 21 restoration cases, 11 invariant checks, six process-identity cases, observer/DPI/consent checks and JS summary checks passing. Evidence: `review-guard-fix-tests.log` and `review-fix-readonly-observer-final.json`. Original incomplete pair warm-idle process-tree private-byte medians were **943.7 MiB baseline / 968.9 MiB current**; this single unaccepted pair is diagnostic only, not an optimization result or a repeated before/after comparison. Reviewer approval and explicit leader clearance remain required before fresh collection.
+
+**Prospective gate review passed; leader cleared fresh collection.** Independent pure tests, parsing and read-only desktop observation passed; original findings closed. Exact leftover local profile ownership was verified against launch timing and the original absent-profile guard. Only that directory may be archived to the absent, non-reparse staging destination after fresh ownership/identity/survivor checks, using literal paths without force/deletion/wildcards. Three fresh counterbalanced pairs with the reviewed physical restoration gate and nondestructive process/terminal UIA workflow are now authorized; the original pair remains excluded. Final native E2E results and independent results review remain pending.
+
+**Final outcome: blocked.** Fresh campaign `test-results/runtime-ram-20261113/native-accepted-20261113-091408/` stopped with exit 1 after only `pair1-baseline`; current and subsequent pairs were not launched. Accepted attempts/pairs: **0/0**. Fifty identical physical prelaunch observations spanned 10.180 seconds. Root PID 4376 exited normally (code 0), with zero tracked owned survivors. First post-exit observation returned `Mixed desktop state during observation`; the changed field is unknown, so exact restoration is unverified, not evidence of persistent taskbar/work-area damage. No repair or relaunch followed. The original stopped pair remains excluded, and the fresh campaign-owned baseline profile remains intact.
+
+The actual native workflow completed three Process Manager open/close cycles, each with 472 populated production rows. Invoke-to-loaded times were **3,870.56 / 1,872.94 / 1,849.29 ms**, excluding the fixed dwell. First terminal invocation failed with `Unsupported Pattern`; no fallback input, terminal success or post-workflow quiet phase occurred. Native E2E was attempted, **not passed**. Existing summarizer rejected the invalid attempt; no accepted summary or paired delta exists.
+
+Excluded baseline-only diagnostics: warm-idle tree private bytes **960.81 MiB** median (956.13–964.99), root **23.10 MiB**, descendants **937.71 MiB**; summed working sets **1,765.37 MiB**, potentially double-counting shared pages. Warm-window CPU was **1,281.25 ms over 15.29647 s**. These are observations, **not before/after savings or a speed comparison**. Full phase ranges, 92 samples and zero metric errors are in `excluded-baseline-diagnostics.json`; commands/provenance are in `final-handoff.json`, rejection in `summary-rejection.log`, hashes in `final-evidence-sha256.json`. All 13 measurement-artifact and six production-source hashes were unchanged. For exact creation-time identities use raw/string evidence: the derived diagnostic JSON rounds Explorer creation ticks.
+
+Independent final results review confirmed the rejected comparison, raw metrics, restoration uncertainty and eight evidence hashes. Further collection requires narrow diagnosis of the observer's changed end-read field and the terminal's supported nondestructive accessibility pattern, followed by fresh clearance. No whole-app improvement has been established.
+
+Required records: exact source/binary hashes, release/build mode, fixed scenarios/warmup/sample windows, root and descendant private bytes, separate working sets, CPU/threads/handles and variation. Churn-specific fixes require exercised workflows; idle-only differences cannot establish those savings. Deterministic nondestructive UI Automation follow-up is being prepared without CDP flags. No completed native comparison is claimed yet; this section will record results or concrete blockers when execution finishes.
+
+## Follow-up campaign: 2026-11-13
+
+Priority: runtime RAM, then speed. Explore remaining techniques autonomously, retain only evidence-backed improvements, and preserve features, security, cancellation, replay and shell safety. No native shell launch or consent-dependent smoke is authorized. No whole-app savings will be inferred from fixture allocation counts.
+
+Observed host/toolchain: Windows 10 Home `10.0.19045` x64; PowerShell `7.6.10`; Node `v24.14.0`; npm `11.9.0`; rustc `1.97.1 (8bab26f4f 2026-07-14)`; Cargo `1.97.1 (c980f4866 2026-06-30)`. These identify this follow-up environment, not a native memory sample.
+
+| Work item | State | Evidence / next action |
+|---|---|---|
+| Fresh shared validation baseline | Captured; Rust prerequisites subsequently repaired | Check/build/Cargo check pass; components 531 pass; Node 1,376 pass / 7 inherited failures. Initial Cargo tests lacked frontend example artifacts; frontend-only builds subsequently enabled 1,204 Rust tests to pass / 30 ignored. Raw logs: `test-results/runtime-ram-20261113/` |
+| Native remaining-opportunity audit | Complete | Existing caps/ownership confirmed; queued terminal output and model/WebView residency remain measurement-dependent, not claimed wins |
+| Renderer remaining-opportunity audit | Complete | Four grounded candidates B01/B12–B14 have mounted mocked-IPC acceptance coverage and before measurements |
+| New production changes | Complete; independently verified and reviewed | 43/43 RAM acceptance, 531/531 components, 1,204 Rust tests pass / 30 ignored. Review-found delayed-listing disposal race closed: no new icon IPC and zero cache entries/bytes after unmount. Two obsolete Node contracts adapted and independently reviewed: 68/68 focused pass; full Node 1,376 pass / seven inherited failures, all normalized failure payloads match baseline. Final build/check and docs policy pass |
+| Whole-app private bytes / working set / peak | Unmeasured | Native launch remains consent-gated; fixture evidence is not a replacement |
+
+This section is the current follow-along sheet. Append measured before/after rows and candidate dispositions as investigations finish. “Exhausted” means no remaining justified safe candidate under the available evidence and authorization, not that no future optimization exists.
+
+### Follow-up candidate register
+
+| ID | Mechanism / source | Disposition | Evidence required / constraint |
+|---|---|---|---|
+| B01 | Unused terminal title output overlaps replay: `TerminalPanelSurface.svelte::rememberTerminalTitleOutput` | Implemented; independently verified and reviewed | 20,000 → zero unused characters in runtime-less session, separately from replay. Mounted acceptance preserves titles, reattach, display/replay and cleanup. Character counts are not heap/RSS evidence |
+| B02 | Stack terminal poll queue: `stack_popup/terminal.rs`, 1,024 messages × 4,096-byte reads | Measure first | Approximately 4 MiB queued text per session before decoding expansion/overhead; actual occupancy unknown. Do not lower capacity without push/poll/recovery/overflow evidence or silently lose ordered output |
+| B03 | Full process-tree measurement, not root-only metrics | Measurement gap | Existing `measure-performance.ps1` samples root metrics; WebView/child attribution needs identity-safe process records. Summed working sets double-count shared pages; private bytes, working set and reserve are different metrics |
+| B04 | Large values behind entry-count bounds: icons, images, drafts, active sessions, fragmented dedupe intervals | Scoped lead B12; other quotas deferred | Renderer icon map is actionable. No silent active-session/replay/draft eviction; bounded native caches do not establish a redundant owned payload |
+| B05 | Snapshot IPC serialization and stale work coalescing | No additional justified change | Prior shared-index/rank-before-hydration wins remain. No new production duplicate ownership established; only superseded snapshots may coalesce, never ordered terminal/auth transitions |
+| B06 | Hidden renderer DOM, xterm/WebGL and image URL lifetime | Already optimized / lifecycle deferred | Lazy per-window routing, xterm disposal and object-URL replacement/dismiss/stale-result cleanup confirmed. Additional teardown needs state/focus/native residency evidence |
+| B07 | Release LTO/codegen/stripping, image compression, allocators | Experiment deferred | Binary size or encoded payload size does not establish private-byte improvement. No dependencies/global heap knobs without traces and measured non-regression |
+| B08 | Thread stacks and inference pools | Measurement deferred | Distinguish reserved address space from committed stack pages; tune only owned idle pools with concurrency/cancellation evidence |
+| B09 | Speech model mmap/unload and WebView pooling/teardown | Lifecycle deferred | Likely consequential, not proven. Native model/process-tree attribution plus API/security/latency evidence required; no consent to launch shell |
+| B10 | Opt-in low-memory mode disabling idle terminal prewarm | Product proposal deferred | RAM priority does not authorize changing intentional readiness policy; needs explicit product/persistence/latency decision and native evidence |
+| B11 | Working-set trimming, forced GC, smaller replay/history quotas, unsafe clipboard copy removal | Rejected | Trimming/GC is not retained-memory proof; arbitrary quotas remove semantics; clipboard requires consumer ownership |
+| B12 | Stack renderer `StackPopupSurface.svelte::iconCache` retains every resolved path across navigation/hide | Implemented; independently verified and reviewed | LRU bounds estimated key/value strings to 2 MiB and 256 entries, including misses. Oversized values still display; stale-batch and post-disposal acceptance passes |
+| B13 | `ProcessManagerSurface.svelte::closeSurface` retains `processes` snapshot after hide | Implemented; independently verified and reviewed | Both accepted hide routes release process/PID snapshots while preserving reopen/refetch, request-generation invalidation and pending-kill protection |
+| B14 | `StackGitPanel.svelte::getDiffLines` splits full diff before displaying 4,000 lines | Implemented; independently verified and reviewed | Prefix scanner counts all lines without splitting all text; CRLF/count/truncation acceptance passes. This is peak materialization, not steady RSS |
+| B15 | WebView2 inactive memory target / renderer suspension / shared environments | Vendor-supported; evidence deferred | Microsoft documents low target (scripts continue; pages may swap), suspension (timers pause) and environment reuse. None establishes released private allocation; wrapper/API support, current sharing, hidden event/replay contracts, resume latency and process-tree evidence must be verified before adoption |
+
+Native audit dispositions: speech history is bounded to five × 16 KiB transcripts; Quick Commands keeps 20 history entries with 16 KiB streams / 256 transcript rows; gallery close clears thumbnail state; Stack paging has 32-session / 50,000-entry / 32 MiB limits; Git reads have 256-file / 8 MiB aggregate / 1 MiB per-file caps and 64 KiB process streams. These are bounds, not measured application residency. Existing A04–A17 work is not recounted as new savings.
+
+Read-only host check found no `jason-shell.exe` process; no application was launched. This is not process-tree memory measurement.
+
+B01 follow-up: the title helper `src/features/terminal/terminalTabTitle.ts` does not read `recentOutputText`. Removing this unused title metadata needs no replacement parser; terminal display/replay are separate and must stay unchanged. Dedicated RED tests precede production edits; existing title/replay/reattach checks already pass before implementation.
+
+Implementation preparation corrected a stale audit assumption: current Process Manager snapshots already use `$state.raw`, including `processes`, taskbar PIDs and system-info snapshots. No proxy migration is needed. Hidden-snapshot release must cover accepted reconciliation as well as explicit close, while preserving stale-generation guards and pending-kill duplicate protection. Terminal runtime output history is **not** the unused title metadata and remains required.
+
+### Follow-up comparison sheet
+
+| Candidate | Before, source-established | Before, fixture | After, fixture | Required non-regression |
+|---|---|---|---|---|
+| B01 title metadata | Up to 20,000 unused characters per session, separate from required runtime/replay state | 20,000 retained characters in runtime-less session | Zero title-output characters; reattached runtime output remains separate | Same title selection, replay, reattach and cleanup |
+| B12 icon ownership | Renderer map has no entry/byte budget across folder churn | 13 folders: 624 entries / 10,287,676 estimated string bytes; negative-only churn: 624 entries; stale response pollutes cache | Same positive churn: 127 entries / 2,094,128 charged bytes; 48 visible icons still display. Default direct 10,000-negative-key churn: 256 entries / 9,728 charged bytes | Visible icons still display, cached misses bounded, stale batches rejected |
+| B13 hidden process snapshot | Accepted hide can retain previous process rows | Both close routes retain 40 rows / 665,910 serialized characters | Both routes: zero rows / payload characters; pending kill still exactly one destructive mocked invocation across close/reopen | Reopen refetches; stale requests, generation and kill safety preserved |
+| B14 diff parsing | Whole diff split before 4,000-line display limit | 30,000-line fixture materializes 30,000 split strings, returns 4,001; mounted viewer materializes 10,000 | Same fixture returns 4,001 prefix/notice strings; zero whole-input split strings | Exact line count/truncation, CRLF/trailing-line and hunk parity |
+
+Source-established bounds describe ownership opportunities, not measured heap bytes. Fixture counts, string lengths, accounted string bytes and allocation probes must remain labelled as such; none is whole-app private bytes or a guarantee about JavaScript string representation.
+
+Acceptance reproduction: `node tests/runtime-ram/run.mjs --reporter=default --reporter=json --outputFile=test-results/runtime-ram-20261113/acceptance-rerun.json` (choose a fresh filename for each run). Test contracts and observation limits: `tests/runtime-ram/README.md`; baseline metrics/source hashes: `test-results/runtime-ram-20261113/metrics-before.json`; staged RED evidence: `red-handoff.{json,log}` in the same ignored results directory. No native shell was launched.
+
+Independent final production evidence: `test-results/runtime-ram-20261113/final-20261113-011756294/`, `metrics-after.json` and `validated-production-sha256.json`. All six validated production source hashes stayed unchanged. Cargo prerequisite remediation built only the two frontend example artifacts, never their native launchers. All 209 generated permission files were restored to baseline SHA-256 bytes; no permission changes remain. `git diff --check` passed. Runtime speed and whole-app heap/private bytes remain unmeasured; these are logical retention/materialization improvements.
+
+Fresh baseline Node failures (excluded from this optimization): two centered-search combobox/listbox contracts in `centeredSearchSurface.test.mjs`; agent-instruction routing in `changelogPolicyHygiene.test.mjs`; centered-search clear button in `searchClearButtons.test.mjs`; two flat-visibleRows/keyboard-ARIA contracts in `searchPanelState.test.mjs`; source-text intent registry in `sourceContractIntentRegistry.test.mjs`. Their full assertion payloads are preserved with baseline evidence. An intermediate final run also failed obsolete title-output accumulation and inline diff truncation assertions; both task-owned contracts were adapted without production changes. Final Node evidence and reproducible normalized baseline comparison: `test-results/runtime-ram-20261113/node-contract-adaptation-20261113-012454121/` and `compare-node-contract-adaptation.mjs`. All seven remaining assertion payloads match baseline; all six validated production source hashes remain unchanged.
+
+### Remaining whole-app evidence path (not executed)
+
+The current root-only sampler cannot answer whether WebView2/model/terminal ownership dominates application RAM. A future authorized release-build run should record:
+
+- Build/source identity, settings/model/profile, monitor topology, scenario inputs and process creation times. Match processes by PID **and creation time**; do not attribute a reused PID to the shell. Capture descendant changes throughout the scenario, including short-lived and surviving children.
+- Root and descendant private bytes separately, working sets separately, peak private bytes, CPU time, thread count and handle count. Summed working sets can double-count shared pages; reserved stack address space is not committed RAM. Do not present either as unique retained bytes.
+- Repeated cold idle, warm idle, first-open, repeated open/close, folder/icon churn, terminal output/reattach and post-close quiet-state samples with identical inputs. Include all raw samples rather than choosing the best run. Distinguish root exit, descendant exit, allocator retention and a merely lower working set.
+- Paired first-open/warm-action latency and CPU alongside RAM. Revert an experiment if apparent savings remove required replay, hide stale state, weaken authorization/cancellation or regress the accepted interaction contract.
+
+Model unload/mmap, native window teardown/pooling, terminal prewarm policy, thread pools/stacks, release profiles and allocator experiments stay deferred until this evidence can support their actual ownership and latency trade-offs. No automatic working-set trim or forced GC substitutes for it.
+
+Vendor research: [WebView2 performance best practices](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/performance), [Win32 memory target API](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_19) and [Win32 suspension API](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_3). A low target is best-effort and can swap cached pages rather than remove ownership; restore normal on activation. Suspension pauses scripts/timers and requires an invisible controller, so it cannot be blindly applied to hidden event consumers. Do not mix suspension and manual target policies. Environment sharing must not weaken profile/capability isolation; no current sharing change or saving is claimed.
 
 ## Goal and evidence rules
 
@@ -10,7 +110,9 @@ Reduce retained runtime memory first; improve latency and CPU work second withou
 
 No live shell launch is authorized in this campaign: AppBars, hooks, Explorer taskbar changes, native interaction, hardware, and actual WebView2 process-tree memory remain unmeasured. No dependencies, system configuration changes, or automatic feature removal.
 
-## Metrics sheet
+## Historical metrics sheet (2026-11-11)
+
+The B01–B05 rows in this historical table are validation-run labels from the earlier campaign, not the B01–B15 follow-up candidate IDs above. Follow-up measurements must record their own inputs, commands and source identity before comparison.
 
 | ID | Scenario / metric | Before | After | Evidence / limitation |
 |---|---|---|---|---|
@@ -75,7 +177,7 @@ No live shell launch is authorized in this campaign: AppBars, hooks, Explorer ta
 - Ordinary ArrayBuffer-backed snip views should avoid preparatory copies. SharedArrayBuffer-backed views may require an ordinary-buffer compatibility snapshot for Blob; zero `slice()` calls alone would not establish zero copied bytes. Test this boundary rather than casting away the backing type.
 - Reject a measured optimization if it weakens ownership, ordering, cancellation, authorization or active controls. Passing a source-pattern check is not sufficient memory evidence; retain rejected experiments and their reason.
 
-### Baseline provenance and pre-existing blockers
+### Historical baseline provenance and pre-existing blockers (2026-11-11)
 
 Evidence directory: `C:\Users\jnev1\AppData\Local\Temp\opencode\memory-speed-baseline-20261111\` (environment JSON, command logs/results, `measurement-inventory.md`, `process-sort-handoff.md`, and three `process-sort-before-run*.json` files). Windows 19045 x64; Node 24.14.0; npm 11.9.0; Rust/Cargo 1.97.1; external cached Cargo target `C:\dev\jasonshell\src-tauri\target`.
 
@@ -141,7 +243,7 @@ Choose a new process-sort output path for each run; the script refuses overwriti
 
 Each concrete candidate receives an implemented, rejected, already-bounded, or blocked disposition with reason. Exhaustion means no remaining justified safe candidate supported by available evidence, not a claim that no future optimization exists.
 
-At campaign close, all fourteen grounded runtime candidates A04–A17 are implemented, measured and independently reviewed. Remaining leads below are already optimized, developer-only, unsafe without a product decision, or dependent on consent-gated native/model residency evidence. No justified candidate remains open within the current safety/evidence boundary. Future profiling can reopen this ledger; current fixtures cannot establish the largest remaining whole-app residency costs.
+At the **2026-11-11 campaign close**, all fourteen grounded runtime candidates A04–A17 were implemented, measured and independently reviewed. The historical dispositions below describe that campaign, not the reopened investigation above. Fresh audits found additional renderer ownership candidates; current fixtures still cannot establish the largest remaining whole-app residency costs.
 
 | Candidate | Disposition | Reason / evidence needed |
 |---|---|---|
@@ -156,7 +258,7 @@ At campaign close, all fourteen grounded runtime candidates A04–A17 are implem
 | Replace terminal dedupe with only largest sequence seen | Rejected | Drops unseen out-of-order output; exact per-stream intervals are lossless alternative under A16 |
 | Lazy native window creation / WebView teardown | Deferred pending native measurement | Changes runtime lifecycle; existing performance plan explicitly requires residency measurement first |
 | Disable terminal's 5-second idle prewarm | Deferred pending current native measurement | Existing policy intentionally trades hidden shell residency for first-open latency; `terminal-panel-prewarm-idle-policy.md` labels historical 75–80 MiB / 1.5–1.7 s observations approximate surrogates, not fresh measurements. Do not report those as campaign savings or silently rewrite policy |
-| Replace process snapshot deep proxies with raw state | Rejected for inspected surface | `ProcessManagerSurface.svelte` uses legacy assignment reactivity, not deep `$state` proxies; no applicable proxy waste there |
+| Replace process snapshot deep proxies with raw state | Already optimized in current source | Current `ProcessManagerSurface.svelte` uses `$state.raw` for snapshots and taskbar PIDs; no applicable deep-proxy waste there |
 | Remove snipping frame/crop deep clones | Already optimized | Coordinator already shares `Arc<Frame>` / `Arc<CroppedImage>` and borrows pixels outside lock |
 | Eliminate PNG raw-pixel copy | Already optimized | Current encoder borrows pixels and preallocates encoded output |
 | Encode clipboard bytes directly into HGLOBAL | Deferred higher-risk alternative | Staging overlap offers safer first win; avoid unsafe mutable-memory encoder redesign |

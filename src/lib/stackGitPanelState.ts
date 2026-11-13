@@ -89,6 +89,29 @@ export function confirmStackGitDiscard(selection: readonly StackGitFileStatus[])
   };
 }
 
+export function getBoundedStackGitDiffLines(text: string, limit: number): string[] {
+  const retainedLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 4000;
+  const lines: string[] = [];
+  let start = 0;
+  let total = 0;
+  // Count the whole input, but never materialize discarded line strings.
+  while (true) {
+    const newline = text.indexOf('\n', start);
+    total += 1;
+    if (lines.length < retainedLimit) {
+      const end = newline < 0 ? text.length : newline;
+      const contentEnd = newline >= 0 && end > start && text.charCodeAt(end - 1) === 13 ? end - 1 : end;
+      lines.push(text.slice(start, contentEnd));
+    }
+    if (newline < 0) break;
+    start = newline + 1;
+  }
+  if (total > retainedLimit) {
+    lines.push(`Diff truncated after ${retainedLimit.toLocaleString()} lines (${total.toLocaleString()} total).`);
+  }
+  return lines;
+}
+
 export function parseStackGitUnifiedDiffRows(lines: readonly string[]): StackGitDiffRow[] {
   const rows: StackGitDiffRow[] = [];
   let oldLineNumber: number | '' = '';

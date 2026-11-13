@@ -101,7 +101,6 @@
   type TerminalTitleState = {
     cwd?: string;
     currentInputText?: string;
-    recentOutputText?: string;
     commandState?: TerminalCommandState | null;
   };
 
@@ -433,17 +432,7 @@
     terminalTitleStates = new Map(terminalTitleStates).set(runtime.session.sessionId, {
       cwd: runtime.session.cwd,
       currentInputText: runtime.currentInputText,
-      recentOutputText: runtime.recentOutputText,
       commandState: runtime.commandState
-    });
-  }
-
-  function rememberTerminalTitleOutput(sessionId: string, output: string) {
-    if (!output) return;
-    const previous = terminalTitleStates.get(sessionId) ?? {};
-    terminalTitleStates = new Map(terminalTitleStates).set(sessionId, {
-      ...previous,
-      recentOutputText: `${previous.recentOutputText ?? ''}${stripTerminalAnsiControls(output)}`.slice(-20000)
     });
   }
 
@@ -501,9 +490,7 @@
         notifyTopBarForImportantTerminalOutput(event.payload.sessionId);
         const runtime = runtimeForSession(event.payload.sessionId);
         if (!runtime) {
-          if (rememberTerminalChunkForSession(event.payload)) {
-            rememberTerminalTitleOutput(event.payload.sessionId, event.payload.text);
-          }
+          rememberTerminalChunkForSession(event.payload);
           return;
         }
         writeTerminalChunkForRuntime(runtime, event.payload);
@@ -2449,7 +2436,6 @@
       manualTitle: terminalManualTitle(terminalSession.sessionId, terminalSession.title),
       cwd: runtime?.session.cwd || titleState?.cwd || terminalSession.cwd,
       currentInputText: runtime?.currentInputText ?? titleState?.currentInputText,
-      recentOutputText: runtime?.recentOutputText ?? titleState?.recentOutputText,
       commandState: runtime?.commandState ?? titleState?.commandState ?? null
     });
   }
@@ -2465,7 +2451,6 @@
       manualTitle: terminalManualTitle(pane.sessionId, pane.title),
       cwd: runtime?.session.cwd || titleState?.cwd,
       currentInputText: runtime?.currentInputText ?? titleState?.currentInputText,
-      recentOutputText: runtime?.recentOutputText ?? titleState?.recentOutputText,
       commandState: runtime?.commandState ?? titleState?.commandState ?? null
     });
   }
