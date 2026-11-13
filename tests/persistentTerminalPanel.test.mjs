@@ -184,8 +184,16 @@ test('terminal panel owns xterm, terminal-state notices, and poll fallback', () 
   assert.match(terminalPanel, /const manuallyRenamedTerminalSessions = new Set<string>\(\)/);
   assert.match(terminalPanel, /let terminalTitleStates = new Map<string, TerminalTitleState>\(\)/);
   assert.match(terminalPanel, /function rememberTerminalTitleStateForRuntime\(runtime: TerminalPaneRuntime\)[\s\S]*terminalTitleStates = new Map\(terminalTitleStates\)\.set\(runtime\.session\.sessionId/);
-  assert.match(terminalPanel, /function rememberTerminalTitleOutput\(sessionId: string, output: string\)[\s\S]*recentOutputText: `\$\{previous\.recentOutputText \?\? ''\}\$\{stripTerminalAnsiControls\(output\)\}`\.slice\(-20000\)/);
-  assert.match(terminalPanel, /rememberTerminalTitleOutput\(event\.payload\.sessionId, event\.payload\.text\)/);
+  const titleStateType = terminalPanel.match(/type TerminalTitleState = \{[\s\S]*?\n  \};/)?.[0];
+  const rememberTitleState = terminalPanel.match(/function rememberTerminalTitleStateForRuntime\([\s\S]*?\n  \}/)?.[0];
+  assert.ok(titleStateType && rememberTitleState, 'title metadata must retain its non-output state contract');
+  assert.doesNotMatch(titleStateType, /recentOutputText/);
+  assert.doesNotMatch(rememberTitleState, /recentOutputText/);
+  assert.match(rememberTitleState, /cwd: runtime\.session\.cwd[\s\S]*currentInputText: runtime\.currentInputText[\s\S]*commandState: runtime\.commandState/);
+  assert.doesNotMatch(terminalPanel, /rememberTerminalTitleOutput\(/);
+  assert.match(terminalPanel, /runtime\.recentOutputText = `\$\{runtime\.recentOutputText\}\$\{stripTerminalAnsiControls\(output\)\}`\.slice\(-20000\)/, 'runtime output used by terminal features remains bounded and available');
+  assert.match(terminalPanel, /function rememberTerminalChunkForSession\([\s\S]*?appendSessionReplayBuffer\(chunk\.sessionId, chunk\.text\)/);
+  assert.match(terminalPanel, /function replayTerminalSessionOutput\([\s\S]*?runtime\.terminal\?\.write\(replay\)/, 'removing unused title output must not remove terminal replay');
   assert.match(terminalPanel, /manuallyRenamedTerminalSessions\.add\(renamed\.sessionId\)/);
   assert.match(terminalPanel, /function terminalManualTitle\(sessionId: string, title\?: string\)[\s\S]*manuallyRenamedTerminalSessions\.has\(sessionId\)[\s\S]*isDefaultTerminalProfileTitle\(title\) \? undefined : title/);
   assert.match(terminalPanel, /function isDefaultTerminalProfileTitle\(title: string\)[\s\S]*Windows Terminal[\s\S]*PowerShell[\s\S]*Git Bash/);

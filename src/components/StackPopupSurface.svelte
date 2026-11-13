@@ -4,6 +4,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { onMount, tick } from 'svelte';
+  import { StackIconCache } from '../lib/stackIconCache';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import ContextMenu from './ContextMenu.svelte';
@@ -210,7 +211,8 @@
   let searchQuery = '';
   let stackSearchInput: HTMLInputElement | null = null;
   let openWithCandidates: StackOpenWithCandidate[] = [];
-  let iconCache = new Map<string, string | null>();
+  const iconCache = new StackIconCache();
+  let disposed = false;
   let iconHydrationJobToken = 0;
   let iconHydrationVisiblePriority: string[] = [];
   let iconHydrationPending: string[] = [];
@@ -273,7 +275,6 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
-    let disposed = false;
     const latestRequestTimer = window.setInterval(() => {
       void reconcileLatestStackPopupRequest();
     }, 250);
@@ -317,6 +318,11 @@
     return () => {
       disposed = true;
       closeMenus();
+      folderLoadSequence += 1;
+      iconHydrationJobToken += 1;
+      iconHydrationVisiblePriority = [];
+      iconHydrationPending = [];
+      iconCache.clear();
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
       }
@@ -347,12 +353,14 @@
       unlisteners.push(unlisten);
       await openLatestStackPopupRequest();
     } catch (error) {
+      if (isDisposed()) return;
       console.error('Failed to initialize stack popup open listener', error);
       await openLatestStackPopupRequest();
     }
   }
 
   async function openLatestStackPopupRequest() {
+    if (disposed) return;
     try {
       await handleOpenRequest(await getStackPopupRequest());
     } catch (error) {
@@ -361,6 +369,7 @@
   }
 
   async function reconcileLatestStackPopupRequest() {
+    if (disposed) return;
     try {
       await handleOpenRequest(await getStackPopupRequest());
     } catch (error) {
@@ -369,6 +378,7 @@
   }
 
   async function handleOpenRequest(payload: StackPopupOpenPayload) {
+    if (disposed) return;
     const path = stackPopupOpenPath(payload);
     const requestKey = stackPopupRequestKey(payload);
     if (!path || !requestKey || requestKey === lastHandledOpenRequestKey || requestKey === pendingOpenRequestKey) {
@@ -379,7 +389,9 @@
     try {
       lastHandledOpenRequestKey = requestKey;
       await requestEditorExit(async () => {
+        if (disposed) return;
         await stopCurrentStackTerminal();
+        if (disposed) return;
         stackBrowserViewMode = 'files';
         await performOpenFolder(path);
       });
@@ -391,10 +403,12 @@
   }
 
   async function openFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
+    if (disposed) return;
     await requestEditorExit(() => performOpenFolder(folderPath, _options));
   }
 
   async function performOpenFolder(folderPath: string, _options: { warmTerminal?: boolean } = {}) {
+    if (disposed) return;
     closeMenus();
     prepareGitStateForFolderCommit(folderPath);
     stackState = openStackFolder(stackState, folderPath);
@@ -402,6 +416,7 @@
   }
 
   async function submitPathDraft() {
+    if (disposed) return;
     if (editorPath) {
       await requestEditorExit(() => submitPathDraft());
       return;
@@ -424,7 +439,7 @@
     errorMessage = '';
     try {
       const listing = await listStackFolder(folderPath, async (page) => {
-        if (loadSequence !== folderLoadSequence) {
+        if (disposed || loadSequence !== folderLoadSequence) {
           return;
         }
         if (page.offset === 0 && !stackSortLockedByUser && page.sortColumn && page.sortDirection) {
@@ -435,7 +450,7 @@
         }
         maybeFocusDetailsGridAfterPageAppend();
       });
-      if (loadSequence !== folderLoadSequence) {
+      if (disposed || loadSequence !== folderLoadSequence) {
         return;
       }
       iconDiagnosticsPath = folderPath;
@@ -580,7 +595,7 @@
   }
 
   async function loadFolder(folderPath: string) {
-    if (!folderPath) {
+    if (disposed || !folderPath) {
       return;
     }
 
@@ -595,7 +610,7 @@
     void refreshStackGitStatus(folderPath, loadSequence);
     try {
       const listing = await listStackFolder(folderPath, async (page) => {
-        if (loadSequence !== folderLoadSequence) {
+        if (disposed || loadSequence !== folderLoadSequence) {
           return;
         }
 
@@ -613,7 +628,7 @@
         updateDetailsViewport();
         maybeFocusDetailsGridAfterPageAppend();
       });
-      if (loadSequence !== folderLoadSequence) {
+      if (disposed || loadSequence !== folderLoadSequence) {
         return;
       }
       iconDiagnosticsPath = folderPath;
@@ -685,6 +700,7 @@
   }
 
   function startNewIconHydrationSession(folderPath: string) {
+    if (disposed) return;
     iconHydrationJobToken += 1;
     iconHydrationVisiblePriority = [];
     iconHydrationPending = [];
@@ -705,7 +721,7 @@
   }
 
   function scheduleVisibleIconHydration(folderPath: string, loadSequence: number) {
-    if (loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
+    if (disposed || loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
       return;
     }
 
@@ -745,7 +761,8 @@
 
   async function drainIconHydrationQueue(folderPath: string, loadSequence: number, jobToken: number) {
     while (
-      loadSequence === folderLoadSequence
+      !disposed
+      && loadSequence === folderLoadSequence
       && folderPath === stackState.currentPath
       && jobToken === iconHydrationJobToken
       && iconHydrationInFlight < STACK_ICON_RESOLVE_MAX_CONCURRENCY
@@ -775,7 +792,7 @@
   }
 
   function queueVisibleIconHydrationPriority(folderPath: string, loadSequence: number) {
-    if (loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
+    if (disposed || loadSequence !== folderLoadSequence || folderPath !== stackState.currentPath) {
       return;
     }
     const visiblePaths = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight)
@@ -808,8 +825,15 @@
     jobToken: number,
     paths: string[]
   ) {
+    if (disposed) return;
     try {
       const batch = await resolveStackItemIcons(paths);
+      if (
+        disposed
+        || loadSequence !== folderLoadSequence
+        || folderPath !== stackState.currentPath
+        || jobToken !== iconHydrationJobToken
+      ) return;
       iconHydrationCacheHits += batch.cacheHits;
       iconHydrationCacheMisses += batch.cacheMisses;
       iconHydrationFallbackCount += batch.items.filter((item) => !item.iconDataUrl).length;
@@ -832,7 +856,7 @@
     } catch (error) {
       console.error('Failed to resolve stack row icons', error);
     } finally {
-      if (jobToken !== iconHydrationJobToken) {
+      if (disposed || jobToken !== iconHydrationJobToken) {
         return;
       }
       iconHydrationInFlight = Math.max(0, iconHydrationInFlight - 1);

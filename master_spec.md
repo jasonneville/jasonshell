@@ -131,6 +131,8 @@ Terminal renderers share one dedupe tracker per panel session rather than copyin
 
 Process descendant enrichment reuses count-only traversal scratch while preserving existing cycle/duplicate semantics and leaving termination planning untouched. Speech inference input reserves the required contiguous vector once without changing model lifetime or sample order. PNG CRC uses a fixed 1 KiB table with unchanged encoded bytes.
 
+Stack renderer icon reuse uses an LRU bounded to 256 entries and 2 MiB of estimated key/value string storage, including negative entries. Oversized icons remain displayable without cache admission; stale batches and post-disposal listing continuations cannot populate the cache. This accounting is not a JavaScript heap-size guarantee. Terminal title metadata does not retain unused output copies; runtime output and replay remain separate. Accepted Process Manager hide transitions release process rows and taskbar PID snapshots without clearing pending-kill duplicate protection. Git diff previews scan for the exact total line count while materializing only the displayed prefix and truncation notice.
+
 `docs/performance-memory-lab.md` records isolated allocation/retention evidence and its limits. These fixtures do not establish whole-app private bytes, WebView2 residency, native latency, or live Windows shell acceptance.
 
 ### Backend and native

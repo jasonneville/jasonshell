@@ -91,6 +91,7 @@
     canStageGitSelection,
     canUnstageGitSelection,
     confirmStackGitDiscard,
+    getBoundedStackGitDiffLines,
     groupStackGitEntries,
     parseStackGitUnifiedDiffRows
   } from '../lib/stackGitPanelState';
@@ -797,16 +798,7 @@
     return result?.content ?? '';
   }
 
-  function getDiffLines(text: string) {
-    const lines = text.split(/\r?\n/);
-    if (lines.length <= maxRenderedDiffLines) return lines;
-    return [
-      ...lines.slice(0, maxRenderedDiffLines),
-      `Diff truncated after ${maxRenderedDiffLines.toLocaleString()} lines (${lines.length.toLocaleString()} total).`
-    ];
-  }
-
-  $: renderedDiffRows = parseStackGitUnifiedDiffRows(getDiffLines(diffText || 'Loading diff...'));
+  $: renderedDiffRows = parseStackGitUnifiedDiffRows(getBoundedStackGitDiffLines(diffText || 'Loading diff...', maxRenderedDiffLines));
   $: diffGutterWidth = `${Math.max(3, ...renderedDiffRows.flatMap((row) => [String(row.oldLineNumber).length, String(row.newLineNumber).length]))}ch`;
 
   async function stagePaths(paths: string[]) {

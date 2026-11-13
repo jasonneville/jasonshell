@@ -629,7 +629,7 @@ test('stack git create branch frontend contract forwards optional source branch'
   assert.match(api, /request: \{ folderPath, branchName, checkout, sourceBranch \}/);
 });
 
-test('StackGitPanel inserts staged and unstaged diff drawers directly below the clicked row', () => {
+test('StackGitPanel inserts staged and unstaged diff drawers directly below the clicked row', async () => {
   const selectChangePathBlock = panel.match(/function selectChangePath\([\s\S]*?\n  }/)?.[0] ?? '';
   const openChangeDiffBlock = panel.match(/function openChangeDiff\([\s\S]*?\n  }/)?.[0] ?? '';
   const handleTabChangeBlock = panel.match(/function handleTabChange\([\s\S]*?\n  }/)?.[0] ?? '';
@@ -660,8 +660,23 @@ test('StackGitPanel inserts staged and unstaged diff drawers directly below the 
   assert.match(panel, /stack-git-diff-line__meta/);
   assert.doesNotMatch(panel, /\{index < diffLines\.length - 1 \? '\\n' : ''\}/);
   assert.match(panel, /const maxRenderedDiffLines = 4_000;/);
-  assert.match(panel, /Diff truncated after \$\{maxRenderedDiffLines\.toLocaleString\(\)\} lines/);
-  assert.match(panel, /lines\.slice\(0, maxRenderedDiffLines\)/);
+  assert.match(panel, /parseStackGitUnifiedDiffRows\(getBoundedStackGitDiffLines\(diffText \|\| 'Loading diff\.\.\.', maxRenderedDiffLines\)\)/);
+  const state = await import('../dist-tests/lib/stackGitPanelState.js');
+  assert.equal(typeof state.getBoundedStackGitDiffLines, 'function');
+  // Check the production helper's exact contract, not the superseded inline split/slice implementation.
+  const diffCases = ['', 'one\n', 'a\r\nb\r\n', 'lone\rreturn', '@@ -1,2 +1,2 @@\r\n-old\r\n+new\r\n same',
+    ...[4000, 4001, 30000].map((count) => Array.from({ length: count }, (_, index) => `+line-${index}`).join('\r\n'))];
+  for (const text of diffCases) {
+    const allLines = text.split(/\r?\n/);
+    const expected = allLines.length <= 4000 ? allLines : [
+      ...allLines.slice(0, 4000),
+      `Diff truncated after ${(4000).toLocaleString()} lines (${allLines.length.toLocaleString()} total).`
+    ];
+    const actual = state.getBoundedStackGitDiffLines(text, 4000);
+    assert.deepEqual(actual, expected, 'bounded preview preserves empty/trailing lines, CRLF, lone CR, and exact totals');
+    assert.ok(actual.length <= 4001);
+    assert.deepEqual(state.parseStackGitUnifiedDiffRows(actual), state.parseStackGitUnifiedDiffRows(expected), 'hunk/classification semantics remain unchanged');
+  }
   assert.doesNotMatch(panel, /class="stack-git-diff-header"/);
   assert.doesNotMatch(panel, /aria-label="Close diff"/);
   assert.match(panel, /aria-expanded=\{diffDrawerOpen && selectedChangePaths\.includes\(entry\.path\) && diffDrawerStaged\}/);
