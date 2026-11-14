@@ -11,6 +11,12 @@ vi.mock('@tauri-apps/api/window', async () => {
     onDragDropEvent: vi.fn().mockResolvedValue(vi.fn())
   }) };
 });
+vi.mock('@tauri-apps/api/webviewWindow', async () => {
+  const { tauriMocks } = await import('./setup');
+  return { getCurrentWebviewWindow: () => ({ label: 'top-bar',
+    listen: (name: string, callback: (event: { payload: unknown }) => void) =>
+      tauriMocks().listen(name, callback, { target: { kind: 'WebviewWindow', label: 'top-bar' } }) }) };
+});
 
 it('outside pointer closes open Search with blank publish then native hide', async () => {
   const tauri = tauriMocks();

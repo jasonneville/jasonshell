@@ -3,6 +3,7 @@
   import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import {
     launchPinnedTaskbarLauncher,
@@ -165,7 +166,7 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import TopBarMicControl from './TopBarMicControl.svelte';
-  import { startSnip, snipBarReady, isSnipToken, sameSnip, type SnipToken } from '../lib/snipping';
+  import { startSnip, snipBarReady, isSnipToken, isSnipHotkeyFeedback, sameSnip, type SnipToken } from '../lib/snipping';
   import { IPC_EVENTS } from '../ipc/events';
 
   let now = new Date();
@@ -177,6 +178,25 @@
   let snipBarMounted = false;
   let snipStartPending = false;
   let snipStartError = '';
+  let latestSnipHotkeyAttempt = 0n;
+  let snipHotkeyErrorReported = false;
+
+  function receiveSnipHotkeyFeedback(value: unknown) {
+    // Validate the complete payload before advancing the exact u64 watermark.
+    if (!snipBarMounted || !isSnipHotkeyFeedback(value)) return;
+    const attempt = BigInt(value.attempt);
+    if (attempt < latestSnipHotkeyAttempt) return;
+    if (attempt > latestSnipHotkeyAttempt) {
+      latestSnipHotkeyAttempt = attempt;
+      snipHotkeyErrorReported = false;
+      snipStartError = '';
+    }
+    if (value.status !== 'error' || snipHotkeyErrorReported) return;
+    snipHotkeyErrorReported = true;
+    snipStartError = value.code === 'readiness-timeout'
+      ? 'Screen snip timed out. Try again.'
+      : 'Could not capture screen. Try again.';
+  }
 
   async function requestSnip() {
     if (snipStartPending || snipPreparing) return;
@@ -1920,6 +1940,9 @@
     void loadStackPins();
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipPrepareBar, (event) => { void prepareSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipReleaseBar, (event) => { releaseSnipBar(event.payload); }));
+    registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipHotkeyFeedback, (event) => {
+      receiveSnipHotkeyFeedback(event.payload);
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
       const index = resolveVisibleSearchRowResultIndex(searchResults, event.payload);

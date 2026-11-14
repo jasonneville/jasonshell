@@ -12,6 +12,18 @@ const CASES: &[&str] = &[
     "snip_runtime_restore_requires_generation_capture_focus_and_continuity",
     "snip_runtime_foreground_tracker_reuse_and_identity_fail_closed",
     "snip_runtime_capture_failure_and_drop_leave_no_owned_resources",
+    "snip_runtime_own_origin_without_external_candidate_can_reserve",
+    "snip_runtime_own_origin_must_not_inherit_previous_external_target",
+    "snip_runtime_failed_capture_retry_rejects_old_ack_and_preserves_new_generation",
+    "snip_runtime_registered_instance_replacement_and_user_switch_invalidate_origin",
+    "snip_runtime_registered_origin_restores_only_without_user_switch_or_replacement",
+    "snip_runtime_hotkey_feedback_reports_bounded_failure_and_retry_without_repeat_noise",
+    "snip_runtime_renderer_start_does_not_emit_hotkey_feedback",
+    "snip_runtime_unregistered_source_never_holds_focus_loss",
+    "snip_runtime_expiry_during_create_closes_late_result_without_context_or_arming_then_retries",
+    "snip_runtime_native_prepare_topbar_switch_revokes_external_capture_and_restore",
+    "snip_runtime_renderer_topbar_admission_preserves_preclick_external_origin",
+    "snip_runtime_registered_panel_hold_tracks_helper_generation_phase_and_user_switch",
 ];
 fn cargo(args: &[&str]) -> std::process::Output {
     let path=std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap())
@@ -42,4 +54,7 @@ fn actual_binary_runtime_acceptance_requires_every_body() {
     }
     let run=cargo(&["test","--bin","jason-shell","snip_runtime_","--","--test-threads=1"]);
     assert!(run.status.success(),"actual Runtime acceptance failed: {}",String::from_utf8_lossy(&run.stdout));
+    let output=String::from_utf8_lossy(&run.stdout);
+    assert!(output.contains(&format!("test result: ok. {} passed; 0 failed; 0 ignored;",CASES.len())),
+        "every listed body must execute, none ignored: {output}");
 }

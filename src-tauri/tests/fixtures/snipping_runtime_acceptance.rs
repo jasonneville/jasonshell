@@ -3,7 +3,7 @@
 mod runtime_acceptance {
     use crate::snipping::{coordinator::*, foreground::{Intent, verification::Tracker},
         geometry::{CroppedImage, PhysicalRect}, native::PreparationBarrier,
-        native_registry::NativeRegistry, runtime::{RuntimeEdges, SnipRuntime, verification as v}};
+        native_registry::{NativeRegistry,FocusRegistration}, runtime::{RuntimeEdges, SnipRuntime, verification as v}};
     use std::{collections::HashMap, path::{Path,PathBuf}, sync::{Arc,Mutex,mpsc},
         thread, time::{Duration,Instant}};
     type Trace=Arc<Mutex<Vec<String>>>;
@@ -15,6 +15,7 @@ mod runtime_acceptance {
         focus_change_on_valid:Mutex<bool>,
         fail_emit:Mutex<bool>, flush_effect:Mutex<&'static str>,
         flush_gate:Mutex<Option<(mpsc::Sender<()>,mpsc::Receiver<()>)>>,
+        registrations:Mutex<HashMap<isize,FocusRegistration>>,switch_on_registration:Mutex<bool>,
     }
     impl RuntimeEdges for Edges {
         fn intent(&self)->Result<Intent,SnipError> {
@@ -54,6 +55,12 @@ mod runtime_acceptance {
         fn foreground(&self)->isize { *self.foreground.lock().unwrap() }
         fn restore(&self,_:Intent,owned:isize) { assert_eq!(owned,99); record(&self.trace,"restore"); }
         fn shutdown(&self) { record(&self.trace,"shutdown"); }
+        fn feedback(&self,attempt:u64,code:Option<&str>) {record(&self.trace,&format!("feedback:{attempt}:{}",code.unwrap_or("started")));}
+        fn focus_registration(&self,hwnd:isize)->Option<FocusRegistration> {
+            let registration=self.registrations.lock().unwrap().get(&hwnd).cloned();
+            if *self.switch_on_registration.lock().unwrap(){*self.foreground.lock().unwrap()=88;}
+            registration
+        }
     }
     struct Clock(Arc<Edges>);
     impl ClockPort for Clock { fn now(&self)->Instant { self.0.now() } }
@@ -71,19 +78,23 @@ mod runtime_acceptance {
             Ok(monitors.iter().map(|m|Frame {monitor:m.clone(),rgba:vec![255;64]}).collect())
         }
     }
-    struct Windows {live:Mutex<HashMap<u64,WindowRef>>,next:Mutex<u64>,trace:Trace}
+    struct Windows {live:Mutex<HashMap<u64,WindowRef>>,next:Mutex<u64>,trace:Trace,create_gate:Mutex<Option<(mpsc::Sender<()>,mpsc::Receiver<()>)>>}
     impl Windows {
         fn create(&self,t:&Token,m:&MonitorSnapshot,preview:bool)->Result<WindowRef,SnipError> {
+            if let Some((entered,release))=self.create_gate.lock().unwrap().take() {
+                entered.send(()).unwrap();release.recv_timeout(Duration::from_secs(2)).expect("late-create fixture must release within bound");
+            }
             let mut next=self.next.lock().unwrap(); *next+=1;
             let w=WindowRef {caller:Caller {label:if preview {format!("snip-preview-{}",t.generation)} else {format!("snip-overlay-{}-{}",t.generation,m.id)},window_id:*next},monitor_id:Some(m.id.clone())};
             self.live.lock().unwrap().insert(*next,w.clone()); record(&self.trace,"create"); Ok(w)
         }
     }
     impl WindowPort for Windows {
+        fn retire_generation(&self,t:&Token){record(&self.trace,&format!("retire:{}:{}",t.generation,t.capture_id));}
         fn create_overlay(&self,t:&Token,m:&MonitorSnapshot)->Result<WindowRef,SnipError>{self.create(t,m,false)}
         fn create_preview(&self,t:&Token,m:&MonitorSnapshot,_:u32,_:u32)->Result<WindowRef,SnipError>{self.create(t,m,true)}
-        fn emit_context(&self,_:&WindowRef,_:&Context)->Result<(),SnipError>{Ok(())}
-        fn emit_armed(&self,_:&WindowRef,_:&Token)->Result<(),SnipError>{Ok(())}
+        fn emit_context(&self,_:&WindowRef,_:&Context)->Result<(),SnipError>{record(&self.trace,"context");Ok(())}
+        fn emit_armed(&self,_:&WindowRef,_:&Token)->Result<(),SnipError>{record(&self.trace,"armed");Ok(())}
         fn show(&self,_:&WindowRef)->Result<(),SnipError>{record(&self.trace,"show");Ok(())}
         fn hide(&self,_:&WindowRef)->Result<(),SnipError>{record(&self.trace,"hide");Ok(())}
         fn close(&self,w:WindowRef){assert!(self.live.lock().unwrap().remove(&w.caller.window_id).is_some());record(&self.trace,"close");}
@@ -103,8 +114,8 @@ mod runtime_acceptance {
         fn new()->Self {
             let trace=Arc::new(Mutex::new(Vec::new())); let (tx,prepared)=mpsc::channel();
             let mut tracker=Tracker::new(); tracker.foreground(10,Some((20,30)),false);
-            let edges=Arc::new(Edges {trace:trace.clone(),tracker:Mutex::new(tracker),time:Mutex::new(Instant::now()),visible:Mutex::new(true),foreground:Mutex::new(99),prepared:tx,focus_change_on_valid:Mutex::new(false),fail_emit:Mutex::new(false),flush_effect:Mutex::new("none"),flush_gate:Mutex::new(None)});
-            let windows=Arc::new(Windows {live:Mutex::new(HashMap::new()),next:Mutex::new(100),trace});
+            let edges=Arc::new(Edges {trace:trace.clone(),tracker:Mutex::new(tracker),time:Mutex::new(Instant::now()),visible:Mutex::new(true),foreground:Mutex::new(99),prepared:tx,focus_change_on_valid:Mutex::new(false),fail_emit:Mutex::new(false),flush_effect:Mutex::new("none"),flush_gate:Mutex::new(None),registrations:Mutex::new(HashMap::new()),switch_on_registration:Mutex::new(false)});
+            let windows=Arc::new(Windows {live:Mutex::new(HashMap::new()),next:Mutex::new(100),trace,create_gate:Mutex::new(None)});
             let capture_fail=Arc::new(Mutex::new(false)); let (e,f)=(edges.clone(),capture_fail.clone());
             let runtime=v::construct(bar(),Arc::new(NativeRegistry::default()),edges.clone(),v::Ports {
                 capture:Box::new(move |prepare,release|Arc::new(Capture {prepare,release,edges:e,fail:f})),
@@ -231,9 +242,195 @@ mod runtime_acceptance {
             tracker.destroyed(42);tracker.created(42);assert!(tracker.valid(old,Some((20,30))));
             tracker.foreground(99,None,true);assert!(tracker.valid(old,Some((20,30))),"proven own activation preserves external intent");
             assert!(!tracker.valid(old,Some((21,30))));assert!(!tracker.valid(old,Some((20,31))));assert!(!tracker.valid(old,None));
-            match event {"destroy"=>tracker.destroyed(10),"create"=>tracker.created(10),"unknown"=>tracker.foreground(0,None,false),"different"=>tracker.foreground(11,Some((20,30)),false),"same-hwnd-new-epoch"=>tracker.foreground(10,Some((20,30)),false),_=>tracker.lose_continuity()}
+            match event {"destroy"=>tracker.destroyed(10),"create"=>tracker.created(10),"unknown"=>tracker.foreground(0,None,false),"different"=>tracker.foreground(11,Some((20,30)),false),"same-hwnd-new-epoch"=>{tracker.foreground(11,Some((20,30)),false);tracker.foreground(10,Some((20,30)),false);},_=>tracker.lose_continuity()}
             assert!(!tracker.valid(old,Some((20,30))),"{event}: same HWND/PID cannot inherit native instance continuity");
         }
+    }
+    #[test]
+    fn snip_runtime_own_origin_without_external_candidate_can_reserve() {
+        let f=Fixture::new();
+        // Native registry has resolved a concrete normal-surface instance. No
+        // external application was observed first; legacy own=true is NOT authority.
+        let mut tracker=Tracker::new();tracker.registered_foreground(200,20,30,400);
+        *f.edges.tracker.lock().unwrap()=tracker;
+        let ticket=f.runtime.reserve_native_start();
+        assert!(ticket.is_ok(),"registered same-process origin must not require a previously observed external window; got {:?}",ticket.err());
+        assert_eq!(f.count("capture"),0);
+        f.clean();
+    }
+    #[test]
+    fn snip_runtime_own_origin_must_not_inherit_previous_external_target() {
+        let mut tracker=Tracker::new();tracker.foreground(10,Some((20,30)),false);
+        let external=tracker.candidate().unwrap();
+        // A normal registered panel becomes foreground BEFORE hotkey reservation,
+        // not a snipping helper activated during an already-reserved operation.
+        tracker.registered_foreground(200,20,30,400);
+        assert_ne!(tracker.candidate(),Some(external),"Process Manager/Stack Browser origin must replace, not inherit, prior external restore authority");
+        assert!(tracker.candidate().is_some(),"native registered identity must remain available for exact origin restoration");
+    }
+    #[test]
+    fn snip_runtime_registered_instance_replacement_and_user_switch_invalidate_origin() {
+        for event in ["instance","hwnd","pid","thread","destroy","create","unknown-own","switch-back","continuity"] {
+            let mut tracker=Tracker::new();tracker.registered_foreground(200,20,30,400);
+            let old=tracker.candidate().unwrap();
+            tracker.registered_foreground(200,20,30,400);
+            assert_eq!(tracker.candidate(),Some(old),"observer query refresh must not retire unchanged identity");
+            tracker.foreground(99,None,true);assert!(tracker.valid(old,Some((20,30))),"exact helper transition preserves origin");
+            match event {
+                "instance"=>tracker.registered_foreground(200,20,30,401),
+                "hwnd"=>tracker.registered_foreground(201,20,30,400),
+                "pid"=>tracker.registered_foreground(200,21,30,400),
+                "thread"=>tracker.registered_foreground(200,20,31,400),
+                "destroy"=>tracker.destroyed(200),"create"=>tracker.created(200),
+                "unknown-own"=>tracker.foreground(201,None,false),
+                "switch-back"=>{tracker.registered_foreground(201,20,30,401);tracker.registered_foreground(200,20,30,400);},
+                _=>tracker.lose_continuity(),
+            }
+            assert!(!tracker.valid(old,Some((20,30))),"{event}: old restore authority must retire");
+        }
+    }
+    #[test]
+    fn snip_runtime_registered_origin_restores_only_without_user_switch_or_replacement() {
+        for event in ["none","user-switch","instance"] {
+            let f=Fixture::new();f.edges.tracker.lock().unwrap().registered_foreground(200,20,30,400);
+            let token=f.accepted();
+            match event {
+                "user-switch"=>f.edges.tracker.lock().unwrap().registered_foreground(201,20,30,401),
+                "instance"=>f.edges.tracker.lock().unwrap().registered_foreground(200,20,30,401),
+                _=>{},
+            }
+            v::restore(&f.runtime,token,99);
+            assert_eq!(f.count("restore"),usize::from(event=="none"),"{event}");
+        }
+    }
+    #[test]
+    fn snip_runtime_hotkey_feedback_reports_bounded_failure_and_retry_without_repeat_noise() {
+        let f=Fixture::new();let ticket=f.runtime.reserve_native_start().unwrap();
+        assert!(matches!(f.runtime.reserve_native_start(),Err(SnipError::Busy)));
+        assert_eq!(f.count("feedback:1:started"),1);assert_eq!(f.count("feedback:2:started"),0);
+        f.expire();assert_eq!(f.runtime.run_native_start(ticket),Err(SnipError::ReadinessTimeout));
+        assert_eq!(f.count("feedback:1:readiness-timeout"),1);
+        f.runtime.hotkey_failure(1,SnipError::ReadinessTimeout);
+        f.runtime.hotkey_failure(1,SnipError::CaptureFailed);
+        assert_eq!(f.count("feedback:1:readiness-timeout"),1);
+        assert_eq!(f.count("feedback:1:capture-failed"),0,"same-attempt failures announce only once");
+        {let trace=f.edges.trace.lock().unwrap();
+         assert!(trace.iter().position(|event|event=="intent").unwrap()<trace.iter().position(|event|event=="feedback:1:started").unwrap(),"origin acquisition must precede feedback");}
+        let ticket=f.runtime.reserve_native_start().unwrap();assert_eq!(f.count("feedback:2:started"),1);drop(ticket);
+        // Delayed native failure publication from a retired attempt must not
+        // overwrite retry state, even when the old worker reports a real error.
+        f.runtime.hotkey_failure(1,SnipError::CaptureFailed);
+        assert_eq!(f.count("feedback:1:capture-failed"),0);
+        f.edges.tracker.lock().unwrap().foreground(0,None,false);
+        assert!(matches!(f.runtime.reserve_native_start(),Err(SnipError::Inactive)));
+        assert_eq!(f.count("feedback:3:started"),1);assert_eq!(f.count("feedback:3:inactive"),1);
+        assert_eq!(f.count("capture"),0);f.clean();
+    }
+    #[test]
+    fn snip_runtime_native_prepare_topbar_switch_revokes_external_capture_and_restore() {
+        let f=Fixture::new();
+        {let mut tracker=f.edges.tracker.lock().unwrap();tracker.set_bar(1);tracker.admit(true,10);}
+        let work=f.launch();let token=f.pending();
+        f.edges.tracker.lock().unwrap().surface_foreground(1,20,30,1);
+        v::ack(&f.runtime,bar(),token.clone()).unwrap();
+        assert!(matches!(work.finish(),Err(SnipError::Stale)|Err(SnipError::Inactive)));
+        v::restore(&f.runtime,token.clone(),99);
+        assert_eq!(f.count("capture"),0);assert_eq!(f.count("restore"),0);f.released(&token);f.clean();
+    }
+    #[test]
+    fn snip_runtime_renderer_topbar_admission_preserves_preclick_external_origin() {
+        let f=Fixture::new();
+        {let mut tracker=f.edges.tracker.lock().unwrap();tracker.set_bar(1);tracker.surface_foreground(1,20,30,1);tracker.admit(false,1);}
+        // Renderer start shares the production preparation path without invoking
+        // native admission. The callback seam above models pre-click retention.
+        let runtime=f.runtime.clone();let (tx,result)=mpsc::channel();
+        let join=thread::spawn(move||{tx.send(v::start(&runtime,bar())).unwrap();});let work=Work{result,join};
+        let token=f.pending();v::ack(&f.runtime,bar(),token.clone()).unwrap();assert_eq!(work.finish(),Ok(token.clone()));
+        v::restore(&f.runtime,token,99);assert_eq!(f.count("capture"),1);assert_eq!(f.count("restore"),1);
+    }
+    #[test]
+    fn snip_runtime_registered_panel_hold_tracks_helper_generation_phase_and_user_switch() {
+        for source in [200,201] { // Process Manager and Stack Browser resolved native identities.
+            let f=Fixture::new();
+            let normal=FocusRegistration{hwnd:source,pid:20,thread:30,instance:source as u64,token:None};
+            f.edges.registrations.lock().unwrap().insert(source,normal.clone());
+            let work=f.launch();let token=f.pending();
+            let helper=FocusRegistration{hwnd:99,pid:20,thread:31,instance:999,token:Some(token.clone())};
+            f.edges.registrations.lock().unwrap().insert(99,helper.clone());
+            assert!(f.runtime.holds_focus_loss(source),"matching helper preserves source during Preparing");
+            for phase in [None,Some(Phase::Preview)] {
+                assert!(!super::focus_loss_held(source,99,Some(&normal),Some(&helper),Some(&token),phase),"completed/absent generation releases passive hold");
+            }
+            let mut changed=helper.clone();changed.pid=21;
+            assert!(!super::focus_loss_held(source,99,Some(&normal),Some(&changed),Some(&token),Some(Phase::Selecting)));
+            changed=helper.clone();changed.instance=0;
+            assert!(!super::focus_loss_held(source,99,Some(&normal),Some(&changed),Some(&token),Some(Phase::Selecting)));
+            let mut stale=helper.clone();stale.token.as_mut().unwrap().capture_id="00000000000000000000000000000000".into();
+            f.edges.registrations.lock().unwrap().insert(99,stale);assert!(!f.runtime.holds_focus_loss(source));
+            f.edges.registrations.lock().unwrap().insert(99,helper);
+            v::ack(&f.runtime,bar(),token.clone()).unwrap();assert_eq!(work.finish(),Ok(token.clone()));
+            assert!(f.runtime.holds_focus_loss(source),"hold persists through Selecting");
+            *f.edges.foreground.lock().unwrap()=88;assert!(!f.runtime.holds_focus_loss(source),"user switch wins");
+            *f.edges.foreground.lock().unwrap()=99;*f.edges.switch_on_registration.lock().unwrap()=true;
+            assert!(!f.runtime.holds_focus_loss(source),"switch during native adapter resolution wins");
+            *f.edges.switch_on_registration.lock().unwrap()=false;*f.edges.foreground.lock().unwrap()=99;
+            f.edges.registrations.lock().unwrap().remove(&source);assert!(!f.runtime.holds_focus_loss(source),"retired/hidden native adapter result grants no hold");
+            let overlay=f.windows.live.lock().unwrap().values().next().unwrap().caller.clone();
+            f.runtime.coordinator.cancel(overlay,token).unwrap();assert!(!f.runtime.holds_focus_loss(source));
+            assert_eq!(f.count("show"),0);assert_eq!(f.count("restore"),0);f.clean();
+        }
+    }
+    #[test]
+    fn snip_runtime_expiry_during_create_closes_late_result_without_context_or_arming_then_retries() {
+        let f=Fixture::new();let (entered_tx,entered)=mpsc::channel();let (release,release_rx)=mpsc::channel();
+        *f.windows.create_gate.lock().unwrap()=Some((entered_tx,release_rx));
+        let work=f.launch();let old=f.pending();v::ack(&f.runtime,bar(),old.clone()).unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        f.expire();f.runtime.coordinator.expire();f.clean();
+        assert_eq!(f.count(&format!("retire:{}:{}",old.generation,old.capture_id)),1,"pending generation must retire before create returns");
+        assert_eq!(f.count("context"),0);assert_eq!(f.count("armed"),0);assert_eq!(f.count("show"),0);
+        release.send(()).unwrap();assert_eq!(work.finish(),Err(SnipError::Stale));
+        assert_eq!(f.count("create"),1);assert_eq!(f.count("close"),1);f.clean();
+        assert_eq!(f.count("context"),0);assert_eq!(f.count("armed"),0);assert_eq!(f.count("show"),0);
+        // Runtime repeat suppression permits retry only once the prior worker
+        // returns. This proves late-return cleanup, not native Entry::bind effects.
+        let work=f.launch();let current=f.pending();assert_ne!(old,current);
+        assert_eq!(v::ack(&f.runtime,bar(),old),Err(SnipError::Stale));
+        v::ack(&f.runtime,bar(),current.clone()).unwrap();assert_eq!(work.finish(),Ok(current.clone()));
+        assert_eq!(f.count("context"),1);assert_eq!(f.count("close"),1);
+        let overlay=f.windows.live.lock().unwrap().values().next().unwrap().caller.clone();
+        f.runtime.coordinator.cancel(overlay,current).unwrap();f.clean();
+    }
+    #[test]
+    fn snip_runtime_unregistered_source_never_holds_focus_loss() {
+        let f=Fixture::new();assert!(!f.runtime.holds_focus_loss(200));
+        let work=f.launch();let token=f.pending();
+        assert!(!f.runtime.holds_focus_loss(200),"preparation alone cannot authorize an unknown source");
+        v::ack(&f.runtime,bar(),token.clone()).unwrap();assert_eq!(work.finish(),Ok(token));
+        for hwnd in [0,99,200] {assert!(!f.runtime.holds_focus_loss(hwnd),"fake WindowPort handles are not native registrations");}
+        f.runtime.shutdown();assert!(!f.runtime.holds_focus_loss(200));
+        assert_eq!(f.count("restore"),0);
+    }
+    #[test]
+    fn snip_runtime_renderer_start_does_not_emit_hotkey_feedback() {
+        let f=Fixture::new();*f.edges.visible.lock().unwrap()=false;
+        assert_eq!(v::start(&f.runtime,bar()),Err(SnipError::Unauthorized));
+        assert!(!f.edges.trace.lock().unwrap().iter().any(|event|event.starts_with("feedback:")));
+        f.clean();
+    }
+    #[test]
+    fn snip_runtime_failed_capture_retry_rejects_old_ack_and_preserves_new_generation() {
+        let f=Fixture::new();*f.capture_fail.lock().unwrap()=true;
+        let work=f.launch();let old=f.pending();v::ack(&f.runtime,bar(),old.clone()).unwrap();
+        assert_eq!(work.finish(),Err(SnipError::CaptureFailed));f.released(&old);f.clean();
+        *f.capture_fail.lock().unwrap()=false;
+        let work=f.launch();let current=f.pending();assert_ne!(current,old);
+        assert_eq!(v::ack(&f.runtime,bar(),old),Err(SnipError::Stale));
+        assert!(!v::pending(&f.runtime).unwrap().3);assert_eq!(f.count("capture"),1);
+        v::ack(&f.runtime,bar(),current.clone()).unwrap();assert_eq!(work.finish(),Ok(current.clone()));
+        f.released(&current);assert_eq!(f.count("capture"),2);
+        let overlay=f.windows.live.lock().unwrap().values().next().unwrap().caller.clone();
+        f.runtime.coordinator.cancel(overlay,current).unwrap();f.clean();
     }
     #[test]
     fn snip_runtime_capture_failure_and_drop_leave_no_owned_resources() {

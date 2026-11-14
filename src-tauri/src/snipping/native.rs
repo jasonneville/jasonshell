@@ -86,6 +86,7 @@ impl NativeWindowPort {
         let data_directory = self.data_directory.clone();
         let owned = entry.clone();
         let result = self.dispatch(move || {
+            owned.admit_construction()?;
             let _dpi = super::windows::PhysicalDpi::enter().map_err(|_| SnipError::WindowFailed)?;
             let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
                 .visible(false).focused(false).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false)
@@ -117,6 +118,10 @@ impl NativeWindowPort {
                 let mut bounds = RECT::default();
                 unsafe { GetWindowRect(hwnd, &mut bounds) }.map_err(|_| SnipError::WindowFailed)?;
                 if (bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top) != (left, top, width, height) { return Err(SnipError::WindowFailed); }
+                // Retirement can race construction/native placement. Never publish
+                // a completion whose generation was retired while UI work ran.
+                owned.admit_construction()?;
+                owned.window()?;
                 Ok(owned.reference.clone())
             })();
             if prepare.is_err() { owned.invalidate(); let _ = window.destroy(); }
@@ -130,6 +135,13 @@ impl NativeWindowPort {
     }
 }
 impl WindowPort for NativeWindowPort {
+    fn retire_generation(&self, token: &Token) {
+        for (window, id) in self.registry.retire_pending_generation(token) {
+            let _ = self.app.run_on_main_thread(move || {
+                if super::native_registry::same_epoch(&window, id) { let _ = window.destroy(); }
+            });
+        }
+    }
     fn create_overlay(&self, token: &Token, monitor: &MonitorSnapshot) -> Result<WindowRef, SnipError> { self.create(token, monitor, false) }
     fn create_preview(&self, token: &Token, monitor: &MonitorSnapshot, _: u32, _: u32) -> Result<WindowRef, SnipError> { self.create(token, monitor, true) }
     fn emit_context(&self, reference: &WindowRef, context: &Context) -> Result<(), SnipError> {
@@ -158,13 +170,17 @@ impl WindowPort for NativeWindowPort {
     fn close(&self, reference: WindowRef) {
         if let Ok(entry) = self.registry.entry(&reference) {
             // Cleanup must not be cancelled merely because the UI queue is late.
-            let window = entry.retire();
             let before_close = self.before_close.clone();
             let token = entry.token.clone();
             let id = entry.reference.caller.window_id;
-            if let Some(window) = window { let _ = self.app.run_on_main_thread(move || {
-                if !super::native_registry::same_epoch(&window, id) { return; }
+            if let Ok(window) = entry.window() {
+                // Observer validation waits for a different native message thread.
+                // Never perform that bounded wait inside a UI-thread callback.
                 if let (Some(before_close), Some(token), Ok(hwnd)) = (before_close, token, window.hwnd()) { before_close(token, hwnd.0 as isize); }
+            }
+            if let Some(window) = entry.retire() {
+                let _ = self.app.run_on_main_thread(move || {
+                if !super::native_registry::same_epoch(&window, id) { return; }
                 let _ = window.destroy();
             }); }
         }

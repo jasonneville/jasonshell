@@ -2,6 +2,7 @@ export const IPC_EVENTS = {
   snipContext: 'snip:context',
   snipPrepareBar: 'snip:prepare_bar',
   snipReleaseBar: 'snip:release_bar',
+  snipHotkeyFeedback: 'snip:hotkey_feedback',
   snipArmed: 'snip:armed',
   // Convenience subset for shared cross-window frontend wrappers. Rust event
   // authority lives in src-tauri/src/contracts.rs; feature-local constants may
