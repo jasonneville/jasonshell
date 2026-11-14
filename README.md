@@ -25,6 +25,8 @@ Current truth boundary: workspace restoration is reserved and not implemented; s
 
 Screen snipping is implemented as a scoped native flow, but its native Windows journey is not yet certified. The crop control is appended after Sound in the existing top-bar order; its configurable fifth hotkey defaults to `Alt+S`. A legacy `Alt+S` assigned to Search is preserved and reported as an actionable conflict rather than silently remapped (for example: “Legacy Alt+S on Search preserved; snipping inactive until shortcut conflict repaired”). The original four hotkeys and control order remain unchanged.
 
+Renderer entry remains limited to the exact live top-bar instance; the trusted native dispatcher is the separate hotkey entry. The resulting capture/focus origin may be a supported concrete registered ordinary JasonShell surface or an external app, with live monotonic HWND/PID/thread identity; it does not use external foreground history. Retired snipping generations cannot create new native helpers. Preparation holds are passive (they do not show or refocus a helper), queued close cleanup does not wait on observer validation, and hotkey feedback is monotonic and sanitized for retry UI. These are covered by automated contracts, but persistent native freeze and the real cross-window hotkey journey remain unverified. Live Windows E2E is required for acceptance and was not executed.
+
 ## What this repo is for
 
 This repo is a prototype of a Windows-native shell foundation.
@@ -205,7 +207,8 @@ Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasons
 
 ### Screen snipping
 
-- starts only from the exact live top-bar instance or the trusted native snipping hotkey dispatcher
+- starts only from the exact live top-bar renderer instance or the trusted native snipping hotkey dispatcher; other panel renderers cannot invoke the start command
+- capture/focus origin is a supported concrete registered ordinary shell surface or an external app; live origin epochs and HWND/PID/thread identity reject stale or recycled targets
 - freezes all currently enumerated monitors before creating capture overlays; normal top/bottom bars, panels, and their tooltips remain in the capture, while snipping overlays and the prior preview are capture-excluded
 - binds the first backend-accepted monitor pointer-down to the generation; the crop is converted from trusted native monitor metadata
 - publishes automatic Copy immediately after hidden preview preparation and before showing the preview; the reported result remains truthful for committed, warning, rejected, or publication-unknown outcomes

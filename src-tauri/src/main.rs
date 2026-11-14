@@ -333,6 +333,18 @@ fn main() {
             taskbar_menu::handle_taskbar_menu_event(app_handle, event);
         })
         .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::Focused(false)) {
+                let held = window.app_handle().try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                    .is_some_and(|runtime| window.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize)));
+                if held {
+                    // System Info focus admission remains strict even while the
+                    // enclosing panel and its renderer state stay visible.
+                    if window.label() == shell_windows::PROCESS_MANAGER_LABEL {
+                        let _ = process_manager::retire_system_info(window.app_handle());
+                    }
+                    return;
+                }
+            }
             if window.label() == shell_windows::STACK_POPUP_LABEL
                 && matches!(event, WindowEvent::Focused(true))
             {
@@ -493,6 +505,10 @@ fn main() {
                         return;
                     }
                     if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
+                        return;
+                    }
+                    if app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                        .is_some_and(|runtime| panel.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize))) {
                         return;
                     }
                     let _ = app_handle.emit_to(

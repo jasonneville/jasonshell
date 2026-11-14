@@ -29,6 +29,8 @@ pub trait CapturePort: Send + Sync {
     fn freeze(&self, monitors: &[MonitorSnapshot]) -> Result<Vec<Frame>, SnipError>;
 }
 pub trait WindowPort: Send + Sync {
+    /// Retire construction not yet returned/installed in the coordinator.
+    fn retire_generation(&self, _token: &Token) {}
     fn create_overlay(&self, token: &Token, monitor: &MonitorSnapshot) -> Result<WindowRef, SnipError>;
     fn create_preview(&self, token: &Token, monitor: &MonitorSnapshot, width: u32, height: u32) -> Result<WindowRef, SnipError>;
     fn emit_context(&self, window: &WindowRef, context: &Context) -> Result<(), SnipError>;
@@ -432,6 +434,7 @@ impl Coordinator {
         if let Some(window) = removed.1 { let _ = self.windows.show(&window); }
     }
     fn dispose(&self, current: Current) {
+        self.windows.retire_generation(&current.token);
         for window in current.windows { self.windows.close(window); }
         if let Some(preview) = current.preview { self.windows.close(preview.window); }
     }

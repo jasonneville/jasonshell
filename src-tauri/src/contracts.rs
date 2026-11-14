@@ -437,6 +437,7 @@ pub mod events {
     pub const SNIP_ARMED: &str = "snip:armed";
     pub const SNIP_PREPARE_BAR: &str = "snip:prepare_bar";
     pub const SNIP_RELEASE_BAR: &str = "snip:release_bar";
+    pub const SNIP_HOTKEY_FEEDBACK: &str = "snip:hotkey_feedback";
     pub const AUDIO_PANEL_OPEN: &str = "audio-panel:open";
     pub const AUDIO_PANEL_CLOSED: &str = "audio-panel:closed";
     pub const SPEECH_HISTORY_PANEL_OPEN: &str = "speech-history-panel:open";
@@ -497,6 +498,7 @@ pub mod events {
         SNIP_ARMED,
         SNIP_PREPARE_BAR,
         SNIP_RELEASE_BAR,
+        SNIP_HOTKEY_FEEDBACK,
         AUDIO_PANEL_CLOSED,
         SPEECH_HISTORY_PANEL_OPEN,
         SPEECH_HISTORY_PANEL_CLOSED,
@@ -718,6 +720,7 @@ mod tests {
                 "snip:armed",
                 "snip:prepare_bar",
                 "snip:release_bar",
+                "snip:hotkey_feedback",
                 "audio-panel:closed",
                 "speech-history-panel:open",
                 "speech-history-panel:closed",

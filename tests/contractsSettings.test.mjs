@@ -291,6 +291,7 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'snip:armed',
     'snip:prepare_bar',
     'snip:release_bar',
+    'snip:hotkey_feedback',
     'speech:toggle',
     'speech-history-panel:open',
     'speech-history-panel:closed',
