@@ -19,3 +19,16 @@ for (const [name, path] of [
     assert.doesNotMatch(builder, /\.device_event_filter\(\s*tauri::DeviceEventFilter::(?:Never|Unfocused)\s*\)/);
   });
 }
+
+test('merged production startup retains both hotkey lifecycle owners and passive Escape forwarding', () => {
+  const main = readFileSync(new URL('../src-tauri/src/main.rs', import.meta.url), 'utf8');
+  const runtime = readFileSync(new URL('../src-tauri/src/snipping/runtime.rs', import.meta.url), 'utf8');
+  const escape = readFileSync(new URL('../src-tauri/src/snipping/escape.rs', import.meta.url), 'utf8');
+  assert.match(main, /windows_key_hook::install_loaded_windows_key_hook/);
+  assert.match(main, /windows_key_hook::uninstall_windows_key_hook/);
+  assert.match(main, /SnipRuntime::install/);
+  assert.match(runtime, /super::escape::install\(Arc::downgrade\(&runtime\)\)/);
+  const callback = escape.slice(escape.indexOf('unsafe extern "system" fn keyboard('), escape.indexOf('pub(crate) fn install('));
+  assert.match(callback, /CallNextHookEx\(None, code, message, data\)/);
+  assert.doesNotMatch(callback, /return\s+LRESULT\(1\)/, 'Escape observer must never swallow input');
+});

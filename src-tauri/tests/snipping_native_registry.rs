@@ -6,6 +6,7 @@
 #[path = "../src/snipping/clipboard.rs"] mod clipboard;
 #[path = "../src/snipping/clipboard_process.rs"] mod clipboard_process;
 #[path = "../src/snipping/save.rs"] mod save;
+#[path = "../src/snipping/diagnostics.rs"] mod diagnostics;
 #[path = "../src/snipping/coordinator.rs"] mod coordinator;
 #[path = "../src/snipping/native_registry.rs"] mod native_registry;
 #[path = "../src/snipping/composition.rs"] mod composition;

@@ -183,3 +183,51 @@ nullable-status warning branch now passes in the full 572-component gate and
 seven-check production-mounted browser journey. Native response-seam cases pass
 in the latest 32-case focused Rust run. The originally reported response defect
 is closed by this evidence; live native certification remains outside scope.
+
+## Master integration verification
+
+Integration checkout: merge `4a57860`, ordinary merge of master `a18cabd` into
+hotkeys `9f1e4fc`. Master contributes the snipping Escape observer, generation
+mailbox/arming cancellation and raw-device-event filtering; no production merge
+resolution was edited by the test owner.
+Results apply to that merge plus the test-only coexistence/import/intent-wiring
+changes recorded here; these test changes must accompany the integration commit.
+
+The added coexistence case lives in `seven_hotkey_registry_acceptance.rs` and
+uses both production `NativeState` and production snipping
+`EventRouter`/`SnipRuntime`/`Coordinator` in one test. Its test-only bridge reuses
+the existing synthetic runtime fixture; it does not copy a keyboard/cancellation
+model or install a hook. All seven registered actions remain captured in idle
+and Selecting phases. Idle Escape admits no snipping work; active Escape cancels
+the actual selection while preserving the independent native shortcut lease.
+The companion source contract preserves both startup/shutdown owners, the
+production `DeviceEventFilter::Always` setting and unconditional
+`CallNextHookEx` forwarding. Real OS key delivery remains unverified.
+
+Merged logs use approved-temp prefix `seven-hotkeys-merge-`:
+
+- `check.log`, `build.log`: pass.
+- `components.log`: **572/572 pass**, 30 files.
+- `node.log`: **1,385 pass / 7 fail / 4 skipped / 3 todo**, 1,399 tests. Failure
+  identities exactly match the seven fresh pre-hotkey baseline failures. The
+  master-added input-filter contract is now tagged in the intent registry; the
+  unrelated pre-existing Search placement inventory omission remains intact.
+- `browser-e2e/`: **seven checks PASS**, including strict capture/save routing,
+  failure/retry, committed nullable status and theme-draft retention. Includes
+  three screenshots, trace, accessibility snapshot, HTML and JUnit.
+- Native focused hotkey/coexistence, existing Escape reducer, diagnostic, full
+  Rust and cargo-check logs are recorded by the serialized native command.
+  Hotkeys/coexistence **33/33**, existing Escape reducers **16/16**, and default-off
+  diagnostic acceptance **4/4** pass. The first full native compile exposed an
+  omitted `diagnostics` module in the standalone `snipping_native_registry`
+  harness after master's new coordinator import. Adding that actual-source
+  test module dependency fixes harness wiring without a production behavior edit.
+  Repaired standalone registry harness: **20/20 pass**. Final merged full Rust
+  gate: **1,446 pass / 51 ignored**, 30 targets, exit 0. Final merged
+  `cargo:check` exits 0. All ignored opt-in native tests remain unexecuted.
+
+Native opt-in flags remained disabled. No live app, hook installation, global
+key injection, native snipping example or shell smoke was launched. Existing
+generated-permission line-ending noise was left untouched.
+No actionable production incompatibility remains in the automated evidence.
+Master advancement/committing these test artifacts remains the Git owner's job.

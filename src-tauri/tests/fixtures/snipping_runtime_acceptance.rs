@@ -1,6 +1,6 @@
 // Include at actual runtime module scope under cfg(test), or via the standalone
 // actual-source integration harness. No duplicated runtime/foreground state machine.
-mod runtime_acceptance {
+pub(crate) mod runtime_acceptance {
     use crate::snipping::{coordinator::*, foreground::{Intent, verification::Tracker},
         geometry::{CroppedImage, PhysicalRect}, native::PreparationBarrier,
         native_registry::{NativeRegistry,FocusRegistration}, runtime::{RuntimeEdges, SnipRuntime, verification as v}};
@@ -157,6 +157,16 @@ mod runtime_acceptance {
         let caller=f.windows.live.lock().unwrap().values().find(|w|w.caller.label.starts_with("snip-overlay-")).unwrap().caller.clone();
         assert!(f.runtime.coordinator.ready(caller.clone(),t.clone(),"m0".into()).unwrap());
         caller
+    }
+    // Test-only bridge for cross-subsystem acceptance. Both phases use the
+    // production Runtime/Coordinator/EventRouter; no OS listener is installed.
+    pub(crate) fn exercise_escape_hotkey_coexistence(mut check: impl FnMut(&Arc<crate::snipping::escape::EventRouter>, &Arc<SnipRuntime>, bool)) {
+        let f=Fixture::new();
+        let (router,_)=escape_event_router(&f);
+        check(&router,&f.runtime,false);
+        let token=f.accepted();escape_overlay(&f,&token);
+        check(&router,&f.runtime,true);
+        f.clean();router.shutdown();
     }
     #[test]
     fn snip_runtime_escape_before_and_during_drag_ignores_webview_focus() {

@@ -18,6 +18,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'globalCloseGlyphUniformity.test.mjs',
     'meltMigrationWiring.test.mjs',
     'overlayDismissalWiring.test.mjs',
+    'snippingDeviceEventFilterContract.test.mjs', // Native input-filter/lifecycle wiring, not real OS delivery evidence.
     'persistentSurfaceLifecycle.test.mjs',
     'bootstrapWindowsContract.test.mjs',
     'runtimeSmokeHarnessContract.test.mjs',

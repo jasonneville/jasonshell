@@ -278,4 +278,26 @@ mod seven_hotkey_registry_acceptance {
         let later = now + Duration::from_millis(i32::MAX as u64);
         assert_eq!(native.route_hotkey_observed(6, 99, chord, later, true), HotkeyRoute::Dispatch(6));
     }
+
+    #[test]
+    fn seven_hotkey_capture_and_snipping_escape_coexist_without_consumption_replay_or_lease_crosstalk() {
+        use windows::Win32::UI::WindowsAndMessaging::{WM_KEYDOWN,WM_KEYUP};
+        let mut native=state(registry());let now=std::time::Instant::now();
+        let lease=native.capture_transition(caller(1),"begin",1,None,now,true).unwrap();
+        crate::snipping::runtime::runtime_acceptance::exercise_escape_hotkey_coexistence(|router,runtime,selecting| {
+            for index in 0..7 {
+                let routed=native.route_hotkey_observed(HOTKEY_IDS[index],10,packed(native.current[index].unwrap()),now,true);
+                assert!(matches!(routed,HotkeyRoute::Capture(_)),"action {index} must stay captured, never dispatch into another subsystem");
+            }
+            let pending=router.route(WM_KEYDOWN,0x1b);
+            assert_eq!(pending.is_some(),selecting,"idle Escape is unowned; only Selecting admits cancellation");
+            assert!(router.route(WM_KEYUP,0x1b).is_none());
+            if let Some(pending)=pending { assert!(pending.deliver()); }
+            assert!(runtime.coordinator.inspect().phase.is_none(),"active snipping must cancel, idle remains idle");
+            assert_eq!(native.ack_at(now)["leaseId"],lease["leaseId"],"snipping Escape must not end the Settings capture lease");
+        });
+        let id=lease["leaseId"].as_str().unwrap();
+        native.capture_transition(caller(1),"end",1,Some(id),now,true).unwrap();
+        assert!(native.capture.is_none());
+    }
 }
