@@ -23,7 +23,7 @@ const topBar = source('src/components/TopBar.svelte');
 const speechWrapper = source('src/lib/speech.ts');
 
 test('WM_HOTKEY speech path prepares original target before emitting UI toggle', () => {
-  assert.match(hook, /WM_HOTKEY\s*=>\s*\{\s*dispatch_hotkey\(/);
+  assert.match(hook, /WM_HOTKEY\s*=>[\s\S]*route_hotkey_observed\([\s\S]*HotkeyRoute::Dispatch\(id\)\s*=>\s*dispatch_hotkey\(/);
   const speech = body(body(hook, 'fn dispatch_hotkey('), 'ConfiguredHotkeyAction::Speech =>');
   const prepare = speech.search(/\.prepare_speech_paste_target\s*\(/);
   const emit = speech.indexOf('SPEECH_TOGGLE');

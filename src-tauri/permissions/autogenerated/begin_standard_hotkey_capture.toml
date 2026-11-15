@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-standard-hotkey-capture"
+description = "Enables the begin_standard_hotkey_capture command without any pre-configured scope."
+commands.allow = ["begin_standard_hotkey_capture"]
+
+[[permission]]
+identifier = "deny-begin-standard-hotkey-capture"
+description = "Denies the begin_standard_hotkey_capture command without any pre-configured scope."
+commands.deny = ["begin_standard_hotkey_capture"]

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 
 function readSource(path) {
@@ -10,7 +10,7 @@ test('settings contract exposes fifth snipping hotkey while preserving original 
   const settings = readSource('../src/lib/settings.ts');
   const rustSettings = readSource('../src-tauri/src/settings.rs');
 
-  assert.match(settings, /export type StandardHotkeyAction = 'search' \| 'terminal' \| 'stackBrowser' \| 'speechTranscription' \| 'snipping';/);
+  assert.match(settings, /export type StandardHotkeyAction = 'search' \| 'terminal' \| 'stackBrowser' \| 'speechTranscription' \| 'snipping' \| 'processManager' \| 'settings';/);
   assert.match(settings, /export interface StandardHotkeySettings \{[^}]*search: CanonicalHotkeyBinding;[^}]*terminal: CanonicalHotkeyBinding;[^}]*stackBrowser: CanonicalHotkeyBinding;[^}]*speechTranscription: CanonicalHotkeyBinding;[^}]*\}/);
   assert.match(settings, /hotkeys: defaultStandardHotkeySettings\(\)/);
   assert.match(settings, /search: 'Ctrl\+Space'/);
@@ -66,30 +66,30 @@ test('startup and successful settings saves apply hook configuration at runtime'
 
   assert.match(main, /let \(shell_settings, missing_snipping\) = settings::load_hotkey_startup_settings\(app\.handle\(\)\)/);
   assert.match(main, /windows_key_hook::install_loaded_windows_key_hook\(app\.handle\(\)\.clone\(\),\s*shell_settings\.hotkeys, missing_snipping/);
-  const save = rustSettings.slice(rustSettings.indexOf('fn save_settings_transaction('), rustSettings.indexOf('pub(crate) fn update_shell_settings_for_app('));
-  assert.match(rustSettings, /save_shell_settings_for_app[\s\S]*save_settings_transaction\(/);
-  assert.match(rustSettings, /save_settings_panel_for_app[\s\S]*save_settings_transaction\(/);
-  assert.match(rustSettings, /fn transaction_hotkey_configurer\(/);
-  assert.match(rustSettings, /transaction_hotkey_configurer\(app_handle\)/);
-  assert.match(rustSettings, /configure_standard_hotkeys\(app, hotkeys\)/);
-  assert.ok(save.indexOf('configure(&settings.hotkeys)?') < save.indexOf('persist(path, settings.clone())'), 'OS registration must succeed before writing settings to disk');
-  assert.match(save, /persist\(path, settings\.clone\(\)\)[\s\S]*configure\(&previous\.hotkeys\)/, 'disk-write failure must restore prior registrations');
+  // Shortcut writes now have their own strict command; generic writes preserve
+  // committed hotkeys instead of applying an unsaved renderer draft.
+  assert.match(rustSettings, /save_shell_settings_for_app[\s\S]*save_unrelated_settings\(&path, settings, false\)/);
+  assert.match(rustSettings, /save_settings_panel_for_app[\s\S]*save_unrelated_settings\(&path, settings, true\)/);
+  assert.match(rustSettings, /settings\.hotkeys = previous\.hotkeys/);
+  assert.match(rustSettings, /pub async fn save_standard_hotkeys/);
+  assert.match(rustSettings, /register_standard_hotkeys/);
+  assert.match(rustSettings, /restore_standard_hotkey_snapshot/);
   assert.match(tsSettings, /SETTINGS_COMMANDS[\s\S]*save: 'save_shell_settings'/);
   assert.match(tsSettings, /saveShellSettings[\s\S]*broadcastShellSettings\(saved\)/);
 });
 
 test('Settings UI has accessible hotkey capture, conflict feedback, reset defaults, and no arbitrary action code', () => {
   const surface = readSource('../src/components/SettingsPanelSurface.svelte');
+  const hotkeys = readSource('../src/lib/standardHotkeys.ts');
 
   assert.match(surface, /aria-labelledby="hotkeys-heading"/);
   assert.match(surface, /<h2 id="hotkeys-heading">Keyboard shortcuts<\/h2>/);
-  assert.match(surface, /aria-label="Capture Search shortcut"/);
-  assert.match(surface, /aria-label="Capture Terminal shortcut"/);
-  assert.match(surface, /aria-label="Capture Stack Browser shortcut"/);
+  assert.match(surface, /aria-label=\{`Capture \$\{HOTKEY_ACTION_NAMES\[action\]\} shortcut`\}/);
+  for (const name of ['Search', 'Terminal', 'Stack Browser']) assert.ok(hotkeys.includes(`'${name}'`));
   assert.match(surface, /on:keydown=\{captureHotkeyBinding/);
   assert.match(surface, /aria-describedby=\{[^}]*hotkey[^}]*error/);
   assert.match(surface, /role="alert"/);
-  assert.match(surface, /Duplicate shortcut/);
+  assert.match(hotkeys, /Duplicate shortcut/);
   assert.match(surface, /Reset shortcuts to defaults/);
   assert.match(surface, /defaultStandardHotkeySettings\(\)/);
   assert.doesNotMatch(surface, /<input[^>]+name="action"|<textarea[^>]+command|customCommand|shellCommand|scriptPath/);
@@ -102,8 +102,8 @@ test('speech transcription is a fourth persisted, configurable and accessible st
   assert.match(ts, /StandardHotkeyAction[^\n]*'speechTranscription'/);
   assert.match(ts, /interface StandardHotkeySettings\s*\{[^}]*speechTranscription: CanonicalHotkeyBinding/s);
   assert.match(rust, /struct StandardHotkeySettings\s*\{[^}]*speech_transcription: CanonicalHotkeyBinding/s);
-  assert.match(ui, /aria-label="Capture Speech transcription shortcut"/i);
-  assert.match(ui, /speechTranscription/);
+  assert.match(ui, /HOTKEY_ACTION_NAMES\[action\]/);
+  assert.match(readSource('../src/lib/standardHotkeys.ts'), /speechTranscription: 'Speech transcription'/);
 });
 
 test('speech uses registered OS no-repeat hotkey without key-up suppression', () => {
@@ -140,4 +140,34 @@ test('hotkey toggles reconcile native/manual search and Stack Browser close befo
   assert.match(top, /listen\([^\n]*STACK[^\n]*CLOSED[^\n]*,[\s\S]*?stackBrowserOpen = false/);
   assert.match(top, /function toggleCenteredSearchFromHotkey\(\)[\s\S]*?if \(searchOpen\)[\s\S]*?closePanel\(\)[\s\S]*?openCenteredPanel/);
   assert.match(top, /function toggleStackBrowserFromHotkey\(\)[\s\S]*?toggleStackBrowserPanel/);
+});
+
+test('standard hotkey commands are Settings-only capabilities and never legacy process authority', () => {
+  const commands = ['get_standard_hotkey_status', 'save_standard_hotkeys', 'begin_standard_hotkey_capture', 'renew_standard_hotkey_capture', 'end_standard_hotkey_capture'];
+  const settings = JSON.parse(readSource('../src-tauri/capabilities/settings-panel.json'));
+  const build = readSource('../src-tauri/build.rs');
+  const legacy = readSource('../src-tauri/permissions/legacy-shell.toml');
+  assert.deepEqual(settings.windows, ['settings-panel']);
+  for (const command of commands) {
+    const permission = `allow-${command.replaceAll('_', '-')}`;
+    assert.ok(settings.permissions.includes(permission), `${command} missing Settings permission`);
+    assert.ok(!legacy.includes(`"${command}"`), `${command} leaked into legacy group`);
+    assert.ok(build.includes(`"${command}"`));
+    for (const file of readdirSync(new URL('../src-tauri/capabilities/', import.meta.url)).filter(name => name.endsWith('.json') && name !== 'settings-panel.json')) {
+      assert.ok(!JSON.parse(readSource(`../src-tauri/capabilities/${file}`)).permissions.includes(permission), `${command} leaked to ${file}`);
+    }
+  }
+  assert.match(build, /!STANDARD_HOTKEY_COMMANDS\.contains\(command\)/);
+  const process = JSON.parse(readSource('../src-tauri/capabilities/process-manager.json'));
+  assert.deepEqual(process.permissions, ['core:default', 'allow-get-process-manager-context', 'allow-set-process-manager-tab', 'allow-get-system-info-snapshot', 'core:window:default']);
+});
+
+test('native lease expiry and lifecycle retirement are backend-owned rather than renderer-timer authority', () => {
+  const hook = readSource('../src-tauri/src/windows_key_hook.rs');
+  assert.match(hook, /SetTimer\(None, 0, 100, None\)/);
+  assert.match(hook, /fn expire\([\s\S]*expire_observed\(/);
+  assert.match(hook, /fn capture_command[\s\S]*capture_transition\(/);
+  assert.match(hook, /WM_HOTKEY[\s\S]*route_hotkey_observed\(/);
+  const lifecycle = readSource('../src-tauri/src/settings_panel.rs') + readSource('../src-tauri/src/main.rs');
+  assert.match(lifecycle, /retire_settings_capture\(/);
 });

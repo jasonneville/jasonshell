@@ -313,6 +313,11 @@ fn main() {
             providers::resolve_provider_registry,
             settings::load_shell_settings,
             settings::save_shell_settings,
+            settings::get_standard_hotkey_status,
+            settings::save_standard_hotkeys,
+            settings::begin_standard_hotkey_capture,
+            settings::renew_standard_hotkey_capture,
+            settings::end_standard_hotkey_capture,
             workspaces::list_workspaces,
             workspaces::create_workspace,
             workspaces::update_workspace,
@@ -575,6 +580,7 @@ fn main() {
             let snip_runtime = snipping::runtime::SnipRuntime::install(app.handle().clone(), windows.top.clone())
                 .map_err(|_| "snipping native initialization failed")?;
             app.manage(snip_runtime);
+            settings_panel::install_capture_lifecycle(app.handle())?;
             let (shell_settings, missing_snipping) = settings::load_hotkey_startup_settings(app.handle())?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();

@@ -1,10 +1,24 @@
-import { fireEvent, render, waitFor } from '@testing-library/svelte';
+import { fireEvent, render as renderComponent, waitFor, within } from '@testing-library/svelte';
 import { readFileSync } from 'node:fs';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsPanelSurface from '../../src/components/SettingsPanelSurface.svelte';
 import { defaultShellSettings } from '../../src/lib/settings';
 import { tauriMocks } from './setup';
+
+// Speech announcements coexist with the independent shortcut live region.
+// Keep every existing speech assertion, but give its status/alert queries the
+// same semantic owner as the controls under test.
+function render(component: typeof SettingsPanelSurface) {
+  const view = renderComponent(component);
+  const speech = within(view.getByRole('region', { name: 'Speech', exact: true }));
+  return { ...view,
+    getByRole: ((role: string, options?: any) => ['status', 'alert'].includes(role) ? speech.getByRole(role as any, options) : view.getByRole(role as any, options)) as typeof view.getByRole,
+    queryByRole: ((role: string, options?: any) => ['status', 'alert'].includes(role) ? speech.queryByRole(role as any, options) : view.queryByRole(role as any, options)) as typeof view.queryByRole
+  };
+}
+
+function shortcutStatus() { return { revision: 1, bindings: Object.entries(defaultShellSettings().hotkeys).map(([action, binding], index) => ({ action, binding, id: index + 1, active: true, reason: null, state: 'active' })) }; }
 
 // Native IPC mocked, actual Settings component and speech wrappers mounted.
 // Persistent disk/restart behavior is independently exercised by Rust acceptance tests.
@@ -29,6 +43,7 @@ function statusCalls() {
 function mockStatusResponse(response: () => Promise<ModelStatus>) {
   tauriMocks().invoke.mockImplementation((command: string) => {
     if (command === 'load_shell_settings') return Promise.resolve(defaultShellSettings());
+    if (command === 'get_standard_hotkey_status') return Promise.resolve(shortcutStatus());
     if (command === 'get_speech_model_status') return response();
     if (command === 'import_speech_model') return importModel();
     if (command === 'import_speech_model_folder') return importFolder();
@@ -45,6 +60,7 @@ beforeEach(() => {
   tauri.listen.mockResolvedValue(vi.fn());
   tauri.invoke.mockImplementation((command: string) => {
     if (command === 'load_shell_settings') return Promise.resolve(defaultShellSettings());
+    if (command === 'get_standard_hotkey_status') return Promise.resolve(shortcutStatus());
     if (command === 'get_speech_model_status') return Promise.resolve(status);
     if (command === 'import_speech_model') return importModel();
     if (command === 'import_speech_model_folder') return importFolder();

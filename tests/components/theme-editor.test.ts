@@ -20,6 +20,7 @@ beforeEach(() => {
   tauri.listen.mockResolvedValue(vi.fn());
   tauri.invoke.mockImplementation((command: string) => {
     if (command === 'load_shell_settings') return Promise.resolve(defaultShellSettings());
+    if (command === 'get_standard_hotkey_status') return Promise.resolve({ revision: 1, bindings: [] });
     if (command === 'get_speech_model_status') return Promise.resolve({ state: 'missing', source: null, error: null });
     if (command === 'hide_settings_panel') return Promise.resolve();
     throw new Error(`Unexpected theme-editor IPC: ${command}`);
@@ -74,7 +75,7 @@ describe('custom theme editor acceptance through production Settings', () => {
   it('Cancel drops an unsaved draft, restores source control focus, and writes nothing', async () => {
     const { view, name } = await openCopy();
     await fireEvent.input(name, { target: { value: 'Discard me' } });
-    await fireEvent.click(view.getByRole('button', { name: 'Cancel', exact: true }));
+    await fireEvent.click(within(view.getByRole('region', { name: 'Custom theme editor' })).getByRole('button', { name: 'Cancel', exact: true }));
     await waitFor(() => expect(view.queryByRole('textbox', { name: 'Theme name', exact: true })).toBeNull());
     expect(localStorage.getItem(key)).toBeNull();
     expect(document.activeElement).toBe(view.getByRole('button', { name: 'Create copy', exact: true }));

@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><title>Seven-action hotkey journey</title>
+<style>body{margin:0;background:#141820;color:#eee;font:14px system-ui}header{padding:8px}iframe{border:1px solid #596274;box-sizing:border-box;width:100%}#panels{display:grid;grid-template-columns:1fr 1fr}#panels iframe{height:740px}#top-bar{height:70px}#bottom-bar{height:70px}button{padding:6px}pre{white-space:pre-wrap}</style></head>
+<body><header><button id="run">Run production-mounted journey</button><output id="result">Not run</output></header>
+<iframe id="top-bar" title="Production Top Bar" src="surface.html?surface=top-bar"></iframe>
+<div id="panels"><iframe id="settings-panel" title="Production Settings" src="surface.html?surface=settings-panel"></iframe><iframe id="process-manager" title="Production Process Manager" src="surface.html?surface=process-manager"></iframe></div>
+<iframe id="bottom-bar" title="Production Bottom Bar" src="surface.html?surface=bottom-bar"></iframe>
+<script type="module" src="./main.ts"></script></body></html>

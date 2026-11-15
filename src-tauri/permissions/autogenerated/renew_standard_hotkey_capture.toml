@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-renew-standard-hotkey-capture"
+description = "Enables the renew_standard_hotkey_capture command without any pre-configured scope."
+commands.allow = ["renew_standard_hotkey_capture"]
+
+[[permission]]
+identifier = "deny-renew-standard-hotkey-capture"
+description = "Denies the renew_standard_hotkey_capture command without any pre-configured scope."
+commands.deny = ["renew_standard_hotkey_capture"]

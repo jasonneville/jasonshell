@@ -133,17 +133,16 @@ test('Settings hotkey controls stay disabled until settings load succeeds', () =
   assert.match(source, /const settings = await loadShellSettings\(\);[\s\S]*shellSettings = settings;[\s\S]*shellSettingsLoaded = true;/);
   assert.match(source, /catch \(error\) \{[\s\S]*shellSettingsLoaded = false;/);
   assert.match(source, /async function saveHotkeys[\s\S]*if \(!shellSettingsLoaded \|\| hotkeyBusy\) return;/);
-  assert.match(source, /function captureHotkeyBinding[\s\S]*if \(!action \|\| !shellSettingsLoaded \|\| hotkeyBusy \|\| event\.repeat\) return;/);
-  assert.match(source, /data-hotkey-action="search"[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
-  assert.match(source, /data-hotkey-action="terminal"[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
-  assert.match(source, /data-hotkey-action="stackBrowser"[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
+  assert.match(source, /async function startCapture[\s\S]*if \(!shellSettingsLoaded \|\| hotkeyBusy \|\| !captureListenerReady\) return;/);
+  assert.match(source, /function captureHotkeyBinding[\s\S]*capturePending[\s\S]*event\.repeat/);
+  assert.match(source, /\{#each HOTKEY_ACTIONS as action[\s\S]*data-hotkey-action=\{action\}[\s\S]*disabled=\{!shellSettingsLoaded \|\| hotkeyBusy[^}]*\}/);
   assert.match(source, /class="hotkey-reset" disabled=\{!shellSettingsLoaded \|\| hotkeyBusy\}/);
 });
 
 test('Settings Stack Browser terminal selector cannot persist before authoritative settings load', () => {
   const source = readSource('../src/components/SettingsPanelSurface.svelte');
   const handlerStart = source.indexOf('async function handleStackTerminalProfileChange');
-  const handlerEnd = source.indexOf('const hotkeyActionNames', handlerStart);
+  const handlerEnd = source.indexOf('$: draftValidation', handlerStart);
   const handler = source.slice(handlerStart, handlerEnd);
   const selectorStart = source.indexOf('<section class="settings-section" aria-labelledby="json-shell-heading">');
   const selectorEnd = source.indexOf('{#if settingsError}', selectorStart);

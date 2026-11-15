@@ -1938,6 +1938,9 @@
     void loadSearchCatalog();
     void loadSearchMode();
     void loadStackPins();
+    registerAsyncUnlistener(listen(IPC_EVENTS.settingsOpenRequested, () => {
+      if (!disposed) void openSettingsPanel(document.querySelector('.shell-home-button'));
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipPrepareBar, (event) => { void prepareSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipReleaseBar, (event) => { releaseSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipHotkeyFeedback, (event) => {

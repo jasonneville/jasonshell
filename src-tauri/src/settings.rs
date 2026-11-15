@@ -51,6 +51,25 @@ pub struct StandardHotkeySettings {
     pub speech_transcription: CanonicalHotkeyBinding,
     #[serde(default = "default_snipping_hotkey")]
     pub snipping: CanonicalHotkeyBinding,
+    #[serde(default = "default_process_manager_hotkey")]
+    pub process_manager: CanonicalHotkeyBinding,
+    #[serde(default = "default_settings_hotkey")]
+    pub settings: CanonicalHotkeyBinding,
+}
+fn default_process_manager_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+P".into()) }
+fn default_settings_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+O".into()) }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MissingHotkeys { pub snipping: bool, pub process_manager: bool, pub settings: bool }
+impl MissingHotkeys {
+    fn from_value(value: &Value) -> Self {
+        let absent = |key| value.get("hotkeys").and_then(|hotkeys| hotkeys.get(key)).is_none();
+        Self { snipping: absent("snipping"), process_manager: absent("processManager"), settings: absent("settings") }
+    }
+}
+fn missing_hotkeys_at(path: &Path) -> MissingHotkeys {
+    fs::read_to_string(path).ok().and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .map(|value| MissingHotkeys::from_value(&value)).unwrap_or_default()
 }
 fn default_snipping_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+S".into()) }
 
@@ -65,6 +84,8 @@ fn default_standard_hotkeys() -> StandardHotkeySettings {
         stack_browser: CanonicalHotkeyBinding("Alt+1".to_string()),
         speech_transcription: default_speech_transcription_hotkey(),
         snipping: default_snipping_hotkey(),
+        process_manager: default_process_manager_hotkey(),
+        settings: default_settings_hotkey(),
     }
 }
 
@@ -444,19 +465,122 @@ pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<Shel
     let path = settings_path(app_handle)?;
     load_settings_from_path(&path)
 }
-pub(crate) fn load_hotkey_startup_settings(app_handle: &AppHandle) -> Result<(ShellSettings, bool), String> {
+pub(crate) fn load_hotkey_startup_settings(app_handle: &AppHandle) -> Result<(ShellSettings, MissingHotkeys), String> {
     let _guard = SETTINGS_WRITE_LOCK.lock().map_err(|_| "settings write lock is poisoned".to_string())?;
     let path = settings_path(app_handle)?;
-    let missing = fs::read_to_string(&path).ok().and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .is_some_and(|value| value.get("hotkeys").and_then(|hotkeys| hotkeys.get("snipping")).is_none());
+    let missing = missing_hotkeys_at(&path);
     Ok((load_settings_from_path(&path)?, missing))
 }
-fn transaction_hotkey_configurer(app: &AppHandle) -> impl FnMut(&StandardHotkeySettings) -> Result<(), String> + '_ {
-    let mut registered = false;
-    move |hotkeys| {
-        if registered { crate::windows_key_hook::restore_loaded_standard_hotkeys(app, hotkeys) }
-        else { let result = crate::windows_key_hook::configure_standard_hotkeys(app, hotkeys); registered = result.is_ok(); result }
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveStandardHotkeysRequest {
+    #[serde(deserialize_with = "deserialize_explicit_hotkeys")]
+    pub hotkeys: StandardHotkeySettings,
+    pub revision: u64,
+}
+fn deserialize_explicit_hotkeys<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<StandardHotkeySettings, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    let object = value.as_object().ok_or_else(|| serde::de::Error::custom("Expected seven shortcut bindings"))?;
+    let keys = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings"];
+    if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
+        return Err(serde::de::Error::custom("Explicit Save requires all seven shortcut bindings"));
     }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BeginStandardHotkeyCaptureRequest { pub revision: u64 }
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StandardHotkeyCaptureRequest { pub lease_id: String, pub revision: u64 }
+
+#[cfg(windows)]
+async fn settings_hotkey_worker<T: Send + 'static>(window: WebviewWindow, app: AppHandle,
+    work: impl FnOnce(AppHandle, crate::snipping::coordinator::Caller) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let caller = crate::windows_key_hook::authorize_settings_instance(&window, &app)?;
+        work(app, caller)
+    }).await.map_err(|_| "Shortcut operation failed".to_string())?
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn get_standard_hotkey_status(window: WebviewWindow, app_handle: AppHandle) -> Result<Value, String> {
+    settings_hotkey_worker(window, app_handle, |_, caller| crate::windows_key_hook::standard_hotkey_status(caller)).await
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn save_standard_hotkeys(window: WebviewWindow, app_handle: AppHandle, request: SaveStandardHotkeysRequest) -> Result<Value, String> {
+    settings_hotkey_worker(window, app_handle, move |app, caller| {
+        let path = settings_path(&app)?;
+        standard_hotkey_save_response(
+            || save_standard_hotkeys_transaction(&path, request.hotkeys,
+                |hotkeys| crate::windows_key_hook::register_standard_hotkeys(caller.clone(), hotkeys.clone(), request.revision),
+                |path, settings| persist_settings_to_path(path, settings, MissingHotkeys::default()),
+                crate::windows_key_hook::restore_standard_hotkey_snapshot),
+            crate::windows_key_hook::committed_standard_hotkey_status,
+        )
+    }).await
+}
+
+// Production response-phase seam. Only transaction failures mean failed Save.
+// Runtime observation is deliberately separate from the durable result: an
+// unavailable native channel cannot undo publication or prove active bindings.
+fn standard_hotkey_save_response(
+    save: impl FnOnce() -> Result<ShellSettings, String>,
+    observe_status: impl FnOnce() -> Result<Value, String>,
+) -> Result<Value, String> {
+    let settings = save()?;
+    let (status, status_error) = match observe_status() {
+        Ok(status) => (Some(status), None),
+        Err(_) => (None, Some("Shortcuts saved; runtime status unavailable. Refresh shortcut status.")),
+    };
+    Ok(serde_json::json!({
+        "committed": true,
+        "settings": settings_for_caller(settings, crate::contracts::surfaces::SETTINGS_PANEL),
+        "status": status,
+        "statusError": status_error,
+    }))
+}
+
+// The explicit shortcut Save path. Its snapshot is supplied by the native
+// owner and may contain vacant upgrade slots; disk settings are not rollback
+// authority. The lock serializes all settings owners through publication.
+fn save_standard_hotkeys_transaction<Snapshot>(path: &Path, hotkeys: StandardHotkeySettings,
+    register: impl FnOnce(&StandardHotkeySettings) -> Result<Snapshot, String>,
+    persist: impl FnOnce(&Path, ShellSettings) -> Result<ShellSettings, String>,
+    restore: impl FnOnce(Snapshot) -> Result<(), String>,
+) -> Result<ShellSettings, String> {
+    let _guard = SETTINGS_WRITE_LOCK.lock().map_err(|_| "settings write lock is poisoned")?;
+    let hotkeys = validate_standard_hotkey_settings(hotkeys)?;
+    let mut settings = load_settings_from_path(path)?;
+    settings.hotkeys = hotkeys;
+    let previous = register(&settings.hotkeys)?;
+    match persist(path, settings) {
+        Ok(saved) => Ok(saved),
+        Err(error) => match restore(previous) {
+            Ok(()) => Err(error),
+            Err(restore) => Err(format!("{error}; {restore}; refresh shortcut status")),
+        },
+    }
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn begin_standard_hotkey_capture(window: WebviewWindow, app_handle: AppHandle, request: BeginStandardHotkeyCaptureRequest) -> Result<Value, String> {
+    settings_hotkey_worker(window, app_handle, move |_, caller| crate::windows_key_hook::capture_command(caller, "begin", request.revision, None)).await
+}
+#[cfg(windows)]
+#[tauri::command]
+pub async fn renew_standard_hotkey_capture(window: WebviewWindow, app_handle: AppHandle, request: StandardHotkeyCaptureRequest) -> Result<Value, String> {
+    settings_hotkey_worker(window, app_handle, move |_, caller| crate::windows_key_hook::capture_command(caller, "renew", request.revision, Some(request.lease_id))).await
+}
+#[cfg(windows)]
+#[tauri::command]
+pub async fn end_standard_hotkey_capture(window: WebviewWindow, app_handle: AppHandle, request: StandardHotkeyCaptureRequest) -> Result<Value, String> {
+    settings_hotkey_worker(window, app_handle, move |_, caller| crate::windows_key_hook::capture_command(caller, "end", request.revision, Some(request.lease_id))).await
 }
 
 pub(crate) fn save_shell_settings_for_app(
@@ -464,13 +588,7 @@ pub(crate) fn save_shell_settings_for_app(
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
     let path = settings_path(app_handle)?;
-    save_settings_transaction(
-        &path,
-        settings,
-        |settings, _previous| settings,
-        transaction_hotkey_configurer(app_handle),
-        save_settings_to_path,
-    )
+    save_unrelated_settings(&path, settings, false)
 }
 
 fn save_settings_panel_for_app(
@@ -478,22 +596,22 @@ fn save_settings_panel_for_app(
     settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
     let path = settings_path(app_handle)?;
-    save_settings_transaction(
-        &path,
-        settings,
-        |mut settings, previous| {
-            settings.quick_commands = previous.quick_commands.clone();
-            settings
-        },
-        transaction_hotkey_configurer(app_handle),
-        save_settings_to_path,
-    )
+    save_unrelated_settings(&path, settings, true)
+}
+
+fn save_unrelated_settings(path: &Path, mut settings: ShellSettings, panel: bool) -> Result<ShellSettings, String> {
+    let _guard = SETTINGS_WRITE_LOCK.lock().map_err(|_| "settings write lock is poisoned".to_string())?;
+    let previous = load_settings_from_path(path)?;
+    settings.hotkeys = previous.hotkeys;
+    if panel { settings.quick_commands = previous.quick_commands; }
+    save_settings_to_path(path, settings)
 }
 
 // OS-free seam for exercising owner merge, registration failure and disk-write
 // rollback with injected callbacks. The lock covers the entire read/merge/
 // register/write transaction so Quick Commands cannot be overwritten by a
 // concurrent owner update.
+#[cfg(test)]
 fn save_settings_transaction(
     path: &Path,
     settings: ShellSettings,
@@ -541,7 +659,9 @@ fn update_settings_to_path(
 ) -> Result<ShellSettings, String> {
     let mut settings = load_settings_from_path(path)?;
     let previous_quick_commands = settings.quick_commands.clone();
+    let previous_hotkeys = settings.hotkeys.clone();
     update(&mut settings);
+    settings.hotkeys = previous_hotkeys;
     if settings.quick_commands.entries != previous_quick_commands.entries
         || settings.quick_commands.list_width != previous_quick_commands.list_width
     {
@@ -629,23 +749,27 @@ fn load_settings_from_path(path: &Path) -> Result<ShellSettings, String> {
             return Ok(ShellSettings::default());
         }
     };
-    let missing_snipping = value.get("hotkeys").and_then(|hotkeys| hotkeys.get("snipping")).is_none();
+    let missing = MissingHotkeys::from_value(&value);
     let settings = migrate_settings_value(value)?;
     reject_secret_setting_keys(
         &serde_json::to_value(&settings)
             .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
         &[],
     )?;
-    validate_loaded_settings(settings, missing_snipping)
+    validate_settings_with_missing(settings, missing)
 }
 
 fn save_settings_to_path(
     path: &Path,
-    mut settings: ShellSettings,
+    settings: ShellSettings,
 ) -> Result<ShellSettings, String> {
+    persist_settings_to_path(path, settings, missing_hotkeys_at(path))
+}
+
+fn persist_settings_to_path(path: &Path, mut settings: ShellSettings, missing: MissingHotkeys) -> Result<ShellSettings, String> {
     settings.schema = SETTINGS_SCHEMA.to_string();
     settings.version = SETTINGS_VERSION;
-    settings = validate_settings(settings)?;
+    settings = validate_settings_with_missing(settings, missing)?;
     reject_secret_setting_keys(
         &serde_json::to_value(&settings)
             .map_err(|error| format!("failed to inspect shell settings: {error}"))?,
@@ -655,7 +779,13 @@ fn save_settings_to_path(
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create settings directory: {error}"))?;
     }
-    let bytes = serde_json::to_vec_pretty(&settings)
+    let mut value = serde_json::to_value(&settings).map_err(|error| format!("failed to serialize shell settings: {error}"))?;
+    if let Some(hotkeys) = value.get_mut("hotkeys").and_then(Value::as_object_mut) {
+        for (key, omitted) in [("snipping", missing.snipping), ("processManager", missing.process_manager), ("settings", missing.settings)] {
+            if omitted { hotkeys.remove(key); }
+        }
+    }
+    let bytes = serde_json::to_vec_pretty(&value)
         .map_err(|error| format!("failed to serialize shell settings: {error}"))?;
     write_file_atomic(path, &bytes)
         .map_err(|error| format!("failed to write shell settings: {error}"))?;
@@ -665,7 +795,10 @@ fn save_settings_to_path(
 fn validate_settings(settings: ShellSettings) -> Result<ShellSettings, String> {
     validate_loaded_settings(settings, false)
 }
-fn validate_loaded_settings(mut settings: ShellSettings, missing_snipping: bool) -> Result<ShellSettings, String> {
+fn validate_loaded_settings(settings: ShellSettings, missing_snipping: bool) -> Result<ShellSettings, String> {
+    validate_settings_with_missing(settings, MissingHotkeys { snipping: missing_snipping, ..Default::default() })
+}
+fn validate_settings_with_missing(mut settings: ShellSettings, missing: MissingHotkeys) -> Result<ShellSettings, String> {
     settings.search.result_limit = settings.search.result_limit.clamp(1, 100);
     settings.search.everything.max_results = settings.search.everything.max_results.clamp(1, 200);
     settings.ui.top_bar_height_logical = clamp_shell_bar_height_logical(
@@ -686,7 +819,7 @@ fn validate_loaded_settings(mut settings: ShellSettings, missing_snipping: bool)
     }
     settings.workspaces = workspaces;
     settings.quick_commands = validate_quick_commands_settings(settings.quick_commands)?;
-    settings.hotkeys = validate_loaded_hotkeys(settings.hotkeys, missing_snipping)?;
+    settings.hotkeys = validate_hotkeys_with_missing(settings.hotkeys, missing)?;
     Ok(settings)
 }
 
@@ -704,12 +837,17 @@ pub(crate) fn validate_standard_hotkey_settings(
     validate_loaded_hotkeys(hotkeys, false)
 }
 pub(crate) fn validate_loaded_hotkeys(hotkeys: StandardHotkeySettings, missing_snipping: bool) -> Result<StandardHotkeySettings, String> {
+    validate_hotkeys_with_missing(hotkeys, MissingHotkeys { snipping: missing_snipping, ..Default::default() })
+}
+pub(crate) fn validate_hotkeys_with_missing(hotkeys: StandardHotkeySettings, missing: MissingHotkeys) -> Result<StandardHotkeySettings, String> {
     let normalized = StandardHotkeySettings {
         search: canonicalize_hotkey_binding(&hotkeys.search.0)?,
         terminal: canonicalize_hotkey_binding(&hotkeys.terminal.0)?,
         stack_browser: canonicalize_hotkey_binding(&hotkeys.stack_browser.0)?,
         speech_transcription: canonicalize_hotkey_binding(&hotkeys.speech_transcription.0)?,
         snipping: canonicalize_hotkey_binding(&hotkeys.snipping.0)?,
+        process_manager: canonicalize_hotkey_binding(&hotkeys.process_manager.0)?,
+        settings: canonicalize_hotkey_binding(&hotkeys.settings.0)?,
     };
     let mut unique = HashSet::new();
     for binding in [&normalized.search, &normalized.terminal, &normalized.stack_browser, &normalized.speech_transcription] {
@@ -717,15 +855,19 @@ pub(crate) fn validate_loaded_hotkeys(hotkeys: StandardHotkeySettings, missing_s
             return Err("standard hotkey bindings must be unique".to_string());
         }
     }
-    if !unique.insert(normalized.snipping.0.as_str())
-        && !(missing_snipping && normalized.snipping.0 == "Alt+S") {
-        return Err("standard hotkey bindings must be unique".into());
+    // Explicit fields own their chords before inferred additions, regardless of
+    // slot order. The snipping exception remains independently provenance-bound.
+    for (binding, inferred, default) in [(&normalized.snipping, missing.snipping, "Alt+S"),
+        (&normalized.process_manager, missing.process_manager, "Alt+P"), (&normalized.settings, missing.settings, "Alt+O")] {
+        if !inferred && !unique.insert(binding.0.as_str()) { return Err("standard hotkey bindings must be unique".into()); }
+        if inferred && binding.0 != default { return Err("invalid inferred hotkey default".into()); }
     }
     Ok(normalized)
 }
 
 #[cfg(test)]
 include!("../tests/fixtures/snipping_settings_acceptance.rs");
+
 
 pub(crate) fn canonicalize_hotkey_binding(value: &str) -> Result<CanonicalHotkeyBinding, String> {
     let value = value.trim();
@@ -1485,6 +1627,8 @@ mod tests {
             stack_browser: CanonicalHotkeyBinding(stack_browser.to_string()),
             speech_transcription: default_speech_transcription_hotkey(),
             snipping: default_snipping_hotkey(),
+            process_manager: default_process_manager_hotkey(),
+            settings: default_settings_hotkey(),
         }
     }
 

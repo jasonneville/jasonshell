@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-standard-hotkeys"
+description = "Enables the save_standard_hotkeys command without any pre-configured scope."
+commands.allow = ["save_standard_hotkeys"]
+
+[[permission]]
+identifier = "deny-save-standard-hotkeys"
+description = "Denies the save_standard_hotkeys command without any pre-configured scope."
+commands.deny = ["save_standard_hotkeys"]

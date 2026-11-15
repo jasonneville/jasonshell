@@ -43,6 +43,11 @@ pub mod surfaces {
 }
 
 pub mod commands {
+    pub const GET_STANDARD_HOTKEY_STATUS: &str = "get_standard_hotkey_status";
+    pub const SAVE_STANDARD_HOTKEYS: &str = "save_standard_hotkeys";
+    pub const BEGIN_STANDARD_HOTKEY_CAPTURE: &str = "begin_standard_hotkey_capture";
+    pub const RENEW_STANDARD_HOTKEY_CAPTURE: &str = "renew_standard_hotkey_capture";
+    pub const END_STANDARD_HOTKEY_CAPTURE: &str = "end_standard_hotkey_capture";
     pub const START_SNIP: &str = "start_snip";
     pub const GET_SNIP_CONTEXT: &str = "get_snip_context";
     pub const GET_SNIP_IMAGE: &str = "get_snip_image";
@@ -433,6 +438,9 @@ pub mod commands {
 }
 
 pub mod events {
+    pub const PROCESS_MANAGER_OPEN_REQUESTED: &str = "process-manager:open-requested";
+    pub const SETTINGS_OPEN_REQUESTED: &str = "settings:open-requested";
+    pub const STANDARD_HOTKEYS_CAPTURE: &str = "standard-hotkeys:capture";
     pub const SNIP_CONTEXT: &str = "snip:context";
     pub const SNIP_ARMED: &str = "snip:armed";
     pub const SNIP_PREPARE_BAR: &str = "snip:prepare_bar";

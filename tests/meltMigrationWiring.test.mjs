@@ -239,7 +239,7 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /<span class="task-label"><OverflowTicker text=\{taskWindowLabel\(taskWindow\)\} \/><\/span>/);
   assert.match(bottomBarSource, /querySelectorAll<HTMLButtonElement>\('\.task-button'\)/);
 
-  assert.match(bottomBarSource, /<MeltActionButton\s+class="process-manager-button"[\s\S]*type="button"[\s\S]*title="Processes"[\s\S]*ariaLabel="Open process manager"[\s\S]*onClick=\{\(event\) => void openProcessManager\(event\)\}/);
+  assert.match(bottomBarSource, /<MeltActionButton\s+class="process-manager-button"[\s\S]*type="button"[\s\S]*title="Processes"[\s\S]*ariaLabel="Open process manager"[\s\S]*onClick=\{\(event\) => void openProcessManager\(event\.currentTarget\)\}/);
   assert.match(bottomBarSource, /event\.currentTarget as HTMLButtonElement \| null/);
   assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid \}\)/);
 

@@ -58,12 +58,23 @@ pub fn show_settings_panel(
 
 #[tauri::command]
 pub fn hide_settings_panel(app_handle: AppHandle) -> Result<(), String> {
+    crate::windows_key_hook::retire_settings_capture();
     let panel = app_handle
         .get_webview_window(SETTINGS_PANEL_LABEL)
         .ok_or_else(|| "Settings panel window is unavailable".to_string())?;
     panel
         .hide()
         .map_err(|error| format!("Failed to hide the settings panel: {error}"))
+}
+
+pub(crate) fn install_capture_lifecycle(app: &AppHandle) -> Result<(), String> {
+    let panel = app.get_webview_window(SETTINGS_PANEL_LABEL).ok_or("Settings panel window is unavailable")?;
+    panel.on_window_event(|event| {
+        if matches!(event, tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) {
+            crate::windows_key_hook::retire_settings_capture();
+        }
+    });
+    Ok(())
 }
 
 fn anchored_panel_x(

@@ -6,6 +6,11 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:default"
+    "core:window:default",
+    "allow-get-standard-hotkey-status",
+    "allow-save-standard-hotkeys",
+    "allow-begin-standard-hotkey-capture",
+    "allow-renew-standard-hotkey-capture",
+    "allow-end-standard-hotkey-capture"
   ]
 }

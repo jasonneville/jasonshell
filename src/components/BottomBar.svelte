@@ -3,6 +3,8 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { IPC_EVENTS } from '../ipc/events';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import OverflowTicker from './OverflowTicker.svelte';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
@@ -1169,8 +1171,8 @@
     buttons[nextIndex]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     updateTaskbarOverflow();
   }
-  async function openProcessManager(event: MouseEvent, focusPid: number | null = null) {
-    const button = event.currentTarget as HTMLButtonElement | null;
+  async function openProcessManager(target: EventTarget | null, focusPid: number | null = null) {
+    const button = target instanceof HTMLElement ? target : null;
     if (!button) {
       return;
     }
@@ -1243,6 +1245,9 @@
         console.error('Failed to apply bottom bar context menu action', error);
       });
     }));
+    registerAsyncUnlistener(listen(IPC_EVENTS.processManagerOpenRequested, () => {
+      if (!disposed) void openProcessManager(document.querySelector('.process-manager-button'), null);
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWindow().label } }));
     void loadBottomBarResizeSettings();
     void Promise.all([refreshLauncherSections(), refreshTaskbarWindows()]);
 
@@ -1466,7 +1471,7 @@
     type="button"
     title="Processes"
     ariaLabel="Open process manager"
-    onClick={(event) => void openProcessManager(event)}
+    onClick={(event) => void openProcessManager(event.currentTarget)}
   >
     <MaterialSymbolIcon name="monitor_heart" />
   </MeltActionButton>
