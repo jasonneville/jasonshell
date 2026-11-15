@@ -4,7 +4,8 @@ include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/snipping_image_con
 use super::{geometry::{self, CroppedImage, LogicalRect, PhysicalRect, MAX_FROZEN_BYTES, MAX_STAGING_BYTES}, save::SaveError};
 pub use super::session::Caller;
 pub use super::clipboard_process::Outcome as ClipboardOutcome;
-use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, MutexGuard}, time::{Duration, Instant}};
+use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, MutexGuard, OnceLock, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant}};
+use super::diagnostics::{Diagnostics, Event as DiagnosticEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token { pub generation: String, pub capture_id: String }
@@ -57,7 +58,7 @@ pub struct Publication { pub token: Token, pub outcome: ClipboardOutcome }
 struct Preview { token: Token, window: WindowRef, crop: Arc<CroppedImage>, monitor: MonitorSnapshot, topology: Vec<MonitorSnapshot> }
 struct Current {
     token: Token, phase: Phase, deadline: Instant, frames: Vec<Arc<Frame>>, windows: Vec<WindowRef>,
-    ready: Vec<String>, armed: bool, selected: Option<String>, preview: Option<Preview>, busy: bool,
+    ready: Vec<String>, armed: bool, selected: Option<String>, preview: Option<Preview>, busy: bool, escape_after_arming: bool,
 }
 #[derive(Default)]
 struct Inner { next: u64, active: Option<Current>, previous: Option<Preview>, last_publication: Option<Publication>, image_reservations: usize }
@@ -73,12 +74,21 @@ impl Drop for ImageRead<'_> {
     }
 }
 pub struct Coordinator {
+    diagnostics: OnceLock<Arc<Diagnostics>>,
+    selecting_generation: AtomicU64,
     capture: Arc<dyn CapturePort>, windows: Arc<dyn WindowPort>, clipboard: Arc<dyn ClipboardPort>,
     picker: Arc<dyn PickerPort>, publisher: Arc<dyn PublisherPort>, clock: Arc<dyn ClockPort>, inner: Mutex<Inner>,
 }
 impl Coordinator {
     pub fn new(capture: Arc<dyn CapturePort>, windows: Arc<dyn WindowPort>, clipboard: Arc<dyn ClipboardPort>, picker: Arc<dyn PickerPort>, publisher: Arc<dyn PublisherPort>, clock: Arc<dyn ClockPort>) -> Self {
-        Self { capture, windows, clipboard, picker, publisher, clock, inner: Mutex::new(Inner::default()) }
+        Self { diagnostics: OnceLock::new(), selecting_generation: AtomicU64::new(0), capture, windows, clipboard, picker, publisher, clock, inner: Mutex::new(Inner::default()) }
+    }
+    pub(crate) fn set_diagnostics(&self, diagnostics: Arc<Diagnostics>) { let _ = self.diagnostics.set(diagnostics); }
+    pub(crate) fn diagnostics(&self) -> Option<Arc<Diagnostics>> { self.diagnostics.get().cloned() }
+    fn diagnostic(&self, event: DiagnosticEvent) { if let Some(diagnostics) = self.diagnostics.get() { diagnostics.record(event); } }
+    fn diagnostic_state(&self, current: Option<&Current>) {
+        self.diagnostic(DiagnosticEvent::State { phase: current.map_or(0, |c| match c.phase { Phase::Preparing=>1,Phase::Selecting=>2,Phase::Preview=>3,Phase::Saving=>4 }),
+            busy: current.is_some_and(|c|c.busy), armed: current.is_some_and(|c|c.armed), deferred: current.is_some_and(|c|c.escape_after_arming) });
     }
     fn lock(&self) -> Result<MutexGuard<'_, Inner>, SnipError> { self.inner.lock().map_err(|_| SnipError::Inactive) }
     pub fn start(&self, initiator: Caller) -> Result<Token, SnipError> {
@@ -98,7 +108,8 @@ impl Coordinator {
             let old_window = inner.previous.as_ref().map(|previous| previous.window.clone());
             let token = Token { generation: generation.to_string(), capture_id };
             inner.active = Some(Current { token: token.clone(), phase: Phase::Preparing, deadline: now + Duration::from_secs(5),
-                frames: Vec::new(), windows: Vec::new(), ready: Vec::new(), armed: false, selected: None, preview: None, busy: false });
+                frames: Vec::new(), windows: Vec::new(), ready: Vec::new(), armed: false, selected: None, preview: None, busy: false, escape_after_arming: false });
+            self.diagnostic(DiagnosticEvent::Begin); self.diagnostic_state(inner.active.as_ref());
             (token, old_window, retained)
         };
         let result = (|| {
@@ -136,6 +147,8 @@ impl Coordinator {
             {
                 let mut inner = self.lock()?;
                 active_mut(&mut inner, &token)?.phase = Phase::Selecting;
+                self.selecting_generation.store(inner.next, Ordering::Release);
+                self.diagnostic_state(inner.active.as_ref());
             }
             self.arm_if_ready(&token)?;
             Ok(token.clone())
@@ -224,6 +237,7 @@ impl Coordinator {
             if current.phase != Phase::Selecting || current.busy { return Ok(false); }
             if current.ready.len() != current.windows.len() { return Ok(false); }
             current.busy = true;
+            self.diagnostic(DiagnosticEvent::ArmBegin); self.diagnostic_state(Some(current));
             current.windows.clone()
         };
         let result = (|| {
@@ -231,11 +245,22 @@ impl Coordinator {
             for window in &windows { self.windows.emit_armed(window, token)?; }
             Ok(())
         })();
-        self.unpin(token);
-        if let Err(error) = result { self.rollback(token); return Err(error); }
-        self.check_deadline(token)?;
-        let mut inner = self.lock()?;
-        active_mut(&mut inner, token)?.armed = true;
+        if let Err(error) = result.and_then(|_| self.check_deadline(token)) {
+            self.unpin(token); self.rollback(token); return Err(error);
+        }
+        // Finalize arming atomically with Escape admission. If Escape was
+        // observed, retain the pin until rollback removes the generation; if
+        // not, publish armed and release the pin in the same critical section.
+        let cancelled = {
+            let mut inner = self.lock()?;
+            let current = active_mut(&mut inner, token)?;
+            let cancelled = if current.escape_after_arming { true } else {
+                current.armed = true; current.busy = false; false
+            };
+            self.diagnostic_state(Some(current)); cancelled
+        };
+        self.diagnostic(DiagnosticEvent::ArmEnd);
+        if cancelled { self.rollback_matching(token, true, true); return Err(SnipError::Stale); }
         Ok(true)
     }
     pub fn begin_selection(&self, caller: Caller, token: Token, monitor_id: String) -> Result<bool, SnipError> {
@@ -260,6 +285,7 @@ impl Coordinator {
             let frame = current.frames.iter().find(|frame| frame.monitor.id == monitor_id).cloned().ok_or(SnipError::Unauthorized)?;
             let topology = current.frames.iter().map(|frame| frame.monitor.clone()).collect::<Vec<_>>();
             current.busy = true;
+            self.diagnostic_state(Some(current));
             (frame, retained, topology)
         };
         let result = (|| {
@@ -297,6 +323,8 @@ impl Coordinator {
                 let mut inner = self.lock()?;
                 let current = active_mut(&mut inner, &token)?;
                 current.phase = Phase::Preview;
+                self.selecting_generation.store(0, Ordering::Release);
+                self.diagnostic_state(Some(current));
                 current.frames.clear();
                 let overlays = std::mem::take(&mut current.windows);
                 (inner.previous.take(), overlays)
@@ -375,6 +403,7 @@ impl Coordinator {
         let current = {
             let mut inner = self.lock()?;
             active_mut(&mut inner, &token)?;
+            self.diagnostic_state(None);
             inner.active.take()
         };
         if let Some(current) = current { self.dispose(current); }
@@ -395,12 +424,14 @@ impl Coordinator {
         let crop = preview.crop.clone();
         current.busy = true;
         if save { current.phase = Phase::Saving; }
+        self.diagnostic_state(Some(current));
         Ok(crop)
     }
     fn unpin(&self, token: &Token) {
         if let Ok(mut inner) = self.lock() { if let Ok(current) = active_mut(&mut inner, token) {
             current.busy = false;
             if current.phase == Phase::Saving { current.phase = Phase::Preview; }
+            self.diagnostic_state(Some(current));
         } }
     }
     fn check_deadline(&self, token: &Token) -> Result<(), SnipError> {
@@ -417,19 +448,69 @@ impl Coordinator {
             .map(|current| current.token.clone()));
         if let Some(token) = token { self.rollback(&token); }
     }
-    fn rollback(&self, token: &Token) {
+    /// Native-only cancellation: phase/token admission and removal share one lock.
+    /// A completion already holding the mutation pin wins over cancellation.
+    pub(crate) fn cancel_selecting(&self, token: &Token) -> bool {
         let removed = {
-            let Ok(mut inner) = self.lock() else { return; };
-            if !inner.active.as_ref().is_some_and(|current| &current.token == token && !current.busy) { return; }
-            let removed = inner.active.take();
-            let restored = inner.previous.take();
-            let restore_window = restored.as_ref().map(|previous| previous.window.clone());
-            if let Some(previous) = restored {
-                inner.active = Some(Current { token: previous.token.clone(), phase: Phase::Preview, deadline: self.clock.now(),
-                    frames: Vec::new(), windows: Vec::new(), ready: Vec::new(), armed: false, selected: None, preview: Some(previous), busy: false });
+            let Ok(mut inner) = self.lock() else { return false; };
+            let Ok(current) = active_mut(&mut inner, token) else { self.diagnostic(DiagnosticEvent::CancelRejected); return false; };
+            self.diagnostic_state(Some(current));
+            if current.phase != Phase::Selecting { self.diagnostic(DiagnosticEvent::CancelRejected); return false; }
+            if current.busy {
+                // Only arming has Selecting + !armed + busy. Completion requires
+                // armed=true and must continue to win over cancellation.
+                if current.armed || current.escape_after_arming { self.diagnostic(DiagnosticEvent::CancelRejected); return false; }
+                current.escape_after_arming = true;
+                self.diagnostic(DiagnosticEvent::CancelDeferred); self.diagnostic_state(Some(current));
+                return true;
             }
-            (removed, restore_window)
+            // No unlock between admission and extraction: arming/completion
+            // cannot acquire a new pin after Escape accepted this idle selection.
+            self.extract_rollback(&mut inner)
         };
+        self.diagnostic(DiagnosticEvent::CancelAccepted);
+        self.finish_rollback(removed);
+        true
+    }
+    /// Lock-free observation only, never cancellation authority. Published under
+    /// the same lock as phase changes; generations are never reused.
+    pub(crate) fn observed_selection_generation(&self) -> u64 {
+        self.selecting_generation.load(Ordering::Acquire)
+    }
+    /// Deferred native work resolves the token only for its observed generation.
+    pub(crate) fn selection_token(&self, generation: u64) -> Option<Token> {
+        let inner = self.lock().ok()?;
+        inner.active.as_ref().filter(|current| current.phase == Phase::Selecting
+            && current.token.generation.parse::<u64>().ok() == Some(generation)).map(|current| current.token.clone())
+    }
+    fn rollback(&self, token: &Token) { self.rollback_matching(token, false, false); }
+    fn rollback_matching(&self, token: &Token, selecting_only: bool, finishing_arming: bool) -> bool {
+        let removed = {
+            let Ok(mut inner) = self.lock() else { return false; };
+            if !inner.active.as_ref().is_some_and(|current| &current.token == token
+                && (if finishing_arming { current.busy && !current.armed && current.escape_after_arming } else { !current.busy })
+                && (!selecting_only || current.phase == Phase::Selecting)) { return false; }
+            self.extract_rollback(&mut inner)
+        };
+        if finishing_arming { self.diagnostic(DiagnosticEvent::CancelAccepted); }
+        self.finish_rollback(removed);
+        true
+    }
+    /// Caller retains the authoritative state lock across admission/extraction.
+    fn extract_rollback(&self, inner: &mut Inner) -> (Option<Current>, Option<WindowRef>) {
+        let removed = inner.active.take();
+        self.selecting_generation.store(0, Ordering::Release);
+        let restored = inner.previous.take();
+        let restore_window = restored.as_ref().map(|previous| previous.window.clone());
+        if let Some(previous) = restored {
+            inner.active = Some(Current { token: previous.token.clone(), phase: Phase::Preview, deadline: self.clock.now(),
+                frames: Vec::new(), windows: Vec::new(), ready: Vec::new(), armed: false, selected: None, preview: Some(previous), busy: false, escape_after_arming: false });
+        }
+        self.diagnostic_state(inner.active.as_ref());
+        (removed, restore_window)
+    }
+    /// Native retirement/close/show effects run only after releasing state lock.
+    fn finish_rollback(&self, removed: (Option<Current>, Option<WindowRef>)) {
         if let Some(current) = removed.0 { self.dispose(current); }
         if let Some(window) = removed.1 { let _ = self.windows.show(&window); }
     }

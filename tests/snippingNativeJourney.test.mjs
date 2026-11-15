@@ -10,6 +10,10 @@ import { inflateSync } from 'node:zlib';
 import test from 'node:test';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const enabled = process.platform === 'win32' && process.env.JASONSHELL_SNIP_JOURNEY_TESTS === '1';
+// Additional interactive opt-in: a consenting human presses real Escape while
+// the external synthetic target owns focus. Never inject global input or launch
+// production main/AppBars. Without this flag the existing journey is unchanged.
+const escapeJourney = process.env.JASONSHELL_SNIP_ESCAPE_JOURNEY_TESTS === '1';
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 // Independent PNG reader: not producer/png crate, no clipboard reads, no library
@@ -58,7 +62,7 @@ async function terminateOwned(child) {
   const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
   await once(killer, 'exit');
 }
-test('actual Tauri synthetic offscreen journey and independent saved PNG pixels', { skip: !enabled, timeout: 110_000 }, async t => {
+test('actual Tauri synthetic offscreen journey and independent saved PNG pixels', { skip: !enabled, timeout: escapeJourney ? 180_000 : 110_000 }, async t => {
   let vite, child, fixtureDirectory, exited;
   const messages = [];
   let protocolError, buffer = '';
@@ -118,6 +122,46 @@ test('actual Tauri synthetic offscreen journey and independent saved PNG pixels'
     const send = op => child.stdin.write(`${JSON.stringify({op})}\n`);
     const action = async op => { send(op); return (await wait(m => m.renderer?.op === op, op)).renderer; };
     const inspect = async () => { send('inspect'); return wait(m => m.stage === 'inspect','inspect'); };
+    if (escapeJourney) {
+      for (const entry of ['start-native', 'start']) for (const dragging of [false, true]) {
+        const token = await action(entry);
+        await wait(m => m.stage === 'synthetic-dib-frozen', 'Escape fixture freeze');
+        if (dragging) {
+          const begin = await action('begin-only');
+          assert.equal(begin.generation, token.generation);
+          assert.equal(begin.captureId, token.captureId);
+        }
+        // Do not mislabel the unarmed five-second readiness timeout as Escape.
+        const readyDeadline = Date.now() + 4000;
+        let selecting;
+        do {
+          selecting = await inspect();
+          assert.equal(selecting.phase, 'Some(Selecting)');
+          if (selecting.readinessCount === 1) break;
+          await delay(50);
+        } while (Date.now() < readyDeadline);
+        assert.equal(selecting.phase, 'Some(Selecting)');
+        assert.equal(selecting.readinessCount, 1, 'overlay must ACK readiness before interactive input');
+        assert.equal(selecting.windowCount, 1);
+        assert.equal(selecting.foregroundIsSnip, false, 'selection must begin without a focused helper');
+        assert.equal(selecting.publicationAttempts, 0);
+        process.stdout.write(`# Press real Escape now; entry=${entry}, duringSelection=${dragging}. Keep external synthetic target focused; do not click overlay Cancel.\n`);
+        const deadline = Date.now() + 14_000;
+        let cancelled;
+        do {
+          cancelled = await inspect();
+          assert.equal(cancelled.foregroundIsSnip, false, 'Escape journey must not focus the overlay');
+          if (cancelled.phase === 'None') break;
+          await delay(50);
+        } while (Date.now() < deadline);
+        assert.equal(cancelled.phase, 'None', 'real native Escape must cancel without WebView keydown');
+        assert.equal(cancelled.windowCount, 0);
+        assert.equal(cancelled.frameBytes, 0);
+        assert.equal(cancelled.imageBytes, 0);
+        assert.equal(cancelled.publicationAttempts, 0);
+      }
+      t.diagnostic('Interactive native Escape boundary only: start-native calls real reservation/dispatcher APIs, not WM_HOTKEY; start calls real renderer IPC, not top-bar pointer input. begin-only binds selection via IPC, not physical drag. Actual Alt+S/top-bar and held-pointer journeys still need consent-gated shell smoke.');
+    }
     const started = await action('start');
     assert.match(started.generation, /^[1-9][0-9]*$/); assert.match(started.captureId, /^[0-9a-f]{32}$/);
     const frozen = await wait(m => m.stage === 'synthetic-dib-frozen', 'offscreen DIB');

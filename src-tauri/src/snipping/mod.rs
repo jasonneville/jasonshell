@@ -22,3 +22,7 @@ pub mod foreground;
 pub mod composition;
 #[cfg(windows)]
 pub mod runtime;
+#[cfg(windows)]
+pub mod escape;
+#[cfg(windows)]
+pub mod diagnostics;
