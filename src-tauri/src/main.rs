@@ -111,6 +111,9 @@ fn main() {
     }
 
     let builder = tauri::Builder::default()
+        // No raw DeviceEvent consumers: unregister Tao raw input so the global
+        // Escape hook also receives keys while our own WebView has focus.
+        .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
         .manage(shell_runtime_state())
         .manage(task_preview_state())

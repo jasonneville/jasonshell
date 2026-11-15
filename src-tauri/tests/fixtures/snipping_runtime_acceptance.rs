@@ -78,7 +78,7 @@ mod runtime_acceptance {
             Ok(monitors.iter().map(|m|Frame {monitor:m.clone(),rgba:vec![255;64]}).collect())
         }
     }
-    struct Windows {live:Mutex<HashMap<u64,WindowRef>>,next:Mutex<u64>,trace:Trace,create_gate:Mutex<Option<(mpsc::Sender<()>,mpsc::Receiver<()>)>>}
+    struct Windows {live:Mutex<HashMap<u64,WindowRef>>,next:Mutex<u64>,trace:Trace,create_gate:Mutex<Option<(mpsc::Sender<()>,mpsc::Receiver<()>)>>,armed_gate:Mutex<Option<(mpsc::Sender<()>,mpsc::Receiver<()>)>>}
     impl Windows {
         fn create(&self,t:&Token,m:&MonitorSnapshot,preview:bool)->Result<WindowRef,SnipError> {
             if let Some((entered,release))=self.create_gate.lock().unwrap().take() {
@@ -94,7 +94,13 @@ mod runtime_acceptance {
         fn create_overlay(&self,t:&Token,m:&MonitorSnapshot)->Result<WindowRef,SnipError>{self.create(t,m,false)}
         fn create_preview(&self,t:&Token,m:&MonitorSnapshot,_:u32,_:u32)->Result<WindowRef,SnipError>{self.create(t,m,true)}
         fn emit_context(&self,_:&WindowRef,_:&Context)->Result<(),SnipError>{record(&self.trace,"context");Ok(())}
-        fn emit_armed(&self,_:&WindowRef,_:&Token)->Result<(),SnipError>{record(&self.trace,"armed");Ok(())}
+        fn emit_armed(&self,_:&WindowRef,_:&Token)->Result<(),SnipError>{
+            if let Some((entered,release))=self.armed_gate.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                release.recv_timeout(Duration::from_secs(3)).expect("arming fixture must release emit_armed");
+            }
+            record(&self.trace,"armed");Ok(())
+        }
         fn show(&self,_:&WindowRef)->Result<(),SnipError>{record(&self.trace,"show");Ok(())}
         fn hide(&self,_:&WindowRef)->Result<(),SnipError>{record(&self.trace,"hide");Ok(())}
         fn close(&self,w:WindowRef){assert!(self.live.lock().unwrap().remove(&w.caller.window_id).is_some());record(&self.trace,"close");}
@@ -112,14 +118,17 @@ mod runtime_acceptance {
     impl Work {fn finish(self)->Result<Token,SnipError> {let result=self.result.recv_timeout(Duration::from_secs(2)).expect("runtime worker did not finish within bound"); self.join.join().unwrap(); result}}
     impl Fixture {
         fn new()->Self {
+            Self::with_clipboard(Arc::new(NoPublication))
+        }
+        fn with_clipboard(clipboard:Arc<dyn ClipboardPort>)->Self {
             let trace=Arc::new(Mutex::new(Vec::new())); let (tx,prepared)=mpsc::channel();
             let mut tracker=Tracker::new(); tracker.foreground(10,Some((20,30)),false);
             let edges=Arc::new(Edges {trace:trace.clone(),tracker:Mutex::new(tracker),time:Mutex::new(Instant::now()),visible:Mutex::new(true),foreground:Mutex::new(99),prepared:tx,focus_change_on_valid:Mutex::new(false),fail_emit:Mutex::new(false),flush_effect:Mutex::new("none"),flush_gate:Mutex::new(None),registrations:Mutex::new(HashMap::new()),switch_on_registration:Mutex::new(false)});
-            let windows=Arc::new(Windows {live:Mutex::new(HashMap::new()),next:Mutex::new(100),trace,create_gate:Mutex::new(None)});
+            let windows=Arc::new(Windows {live:Mutex::new(HashMap::new()),next:Mutex::new(100),trace,create_gate:Mutex::new(None),armed_gate:Mutex::new(None)});
             let capture_fail=Arc::new(Mutex::new(false)); let (e,f)=(edges.clone(),capture_fail.clone());
             let runtime=v::construct(bar(),Arc::new(NativeRegistry::default()),edges.clone(),v::Ports {
                 capture:Box::new(move |prepare,release|Arc::new(Capture {prepare,release,edges:e,fail:f})),
-                windows:windows.clone(),clipboard:Arc::new(NoPublication),picker:Arc::new(NoPublication),publisher:Arc::new(NoPublication),clock:Arc::new(Clock(edges.clone()))});
+                windows:windows.clone(),clipboard,picker:Arc::new(NoPublication),publisher:Arc::new(NoPublication),clock:Arc::new(Clock(edges.clone()))});
             Self {runtime,edges,windows,prepared,capture_fail}
         }
         fn launch(&self)->Work {
@@ -135,6 +144,126 @@ mod runtime_acceptance {
         fn accepted(&self)->Token {let work=self.launch();let t=self.pending();v::ack(&self.runtime,bar(),t.clone()).unwrap();assert_eq!(work.finish(),Ok(t.clone()));t}
     }
     impl Drop for Fixture {fn drop(&mut self) {self.runtime.shutdown();}}
+
+    // Production owner's event router, not a second test keyboard state machine.
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/snipping_escape_events.rs"));
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/snipping_escape_native.rs"));
+
+    // Acceptance seam requested from production owner: the SAME native worker
+    // must call native_escape(captured_token, escape_high_bit_is_down). No DOM
+    // keydown, active WebView, renderer-supplied caller, or fake runtime here.
+    // False means no cancellation (including stale/inactive/nonselecting input).
+    fn escape_overlay(f:&Fixture,t:&Token)->Caller {
+        let caller=f.windows.live.lock().unwrap().values().find(|w|w.caller.label.starts_with("snip-overlay-")).unwrap().caller.clone();
+        assert!(f.runtime.coordinator.ready(caller.clone(),t.clone(),"m0".into()).unwrap());
+        caller
+    }
+    #[test]
+    fn snip_runtime_escape_before_and_during_drag_ignores_webview_focus() {
+        for native in [true,false] { for dragging in [false,true] {
+            let f=Fixture::new();
+            let t=if native {f.accepted()} else {
+                let runtime=f.runtime.clone();let work=thread::spawn(move||v::start(&runtime,bar()));
+                let token=f.pending();v::ack(&f.runtime,bar(),token.clone()).unwrap();
+                assert_eq!(work.join().unwrap(),Ok(token.clone()));token
+            };
+            let overlay=escape_overlay(&f,&t);
+            if dragging {assert!(f.runtime.coordinator.begin_selection(overlay,t.clone(),"m0".into()).unwrap());}
+            // External foreground, no focus registration or DOM event delivery.
+            *f.edges.foreground.lock().unwrap()=88;
+            assert!(!f.runtime.native_escape(&t,false),"key-up/unpressed sample must not cancel");
+            assert_eq!(f.runtime.coordinator.inspect().phase,Some(Phase::Selecting));
+            assert!(f.runtime.native_escape(&t,true),"Escape must cancel before pointer-down AND during selection for both start routes");
+            f.clean();assert_eq!(f.count("close"),1);assert_eq!(f.count("restore"),0);
+            assert_eq!(f.count(&format!("retire:{}:{}",t.generation,t.capture_id)),1);
+            assert!(!f.runtime.native_escape(&t,true),"duplicate Escape is a no-op");
+            assert_eq!(f.count("close"),1);f.released(&t);
+        }}
+    }
+    #[test]
+    fn snip_runtime_escape_stale_generation_and_capture_id_cannot_cancel_retry() {
+        let f=Fixture::new();let old=f.accepted();escape_overlay(&f,&old);
+        assert!(f.runtime.native_escape(&old,true));f.clean();
+        let current=f.accepted();escape_overlay(&f,&current);
+        for stale in [old,Token {generation:current.generation.clone(),capture_id:"00000000000000000000000000000000".into()}] {
+            assert!(!f.runtime.native_escape(&stale,true));
+            assert_eq!(f.runtime.coordinator.inspect().token,Some(current.clone()));
+            assert_eq!(f.runtime.coordinator.inspect().phase,Some(Phase::Selecting));
+            assert_eq!(f.count("close"),1);
+        }
+        assert!(f.runtime.native_escape(&current,true));f.clean();assert_eq!(f.count("close"),2);
+    }
+    #[test]
+    fn snip_runtime_escape_preparing_and_shutdown_are_unowned() {
+        let f=Fixture::new();let work=f.launch();let t=f.pending();
+        assert_eq!(f.runtime.coordinator.inspect().phase,Some(Phase::Preparing));
+        assert!(!f.runtime.native_escape(&t,true),"native selection key ownership must not start during preparation");
+        assert_eq!(f.count("capture"),0);f.expire();
+        assert_eq!(work.finish(),Err(SnipError::ReadinessTimeout));f.released(&t);f.clean();
+        f.runtime.shutdown();assert!(!f.runtime.native_escape(&t,true));
+        assert_eq!(f.count("create"),0);assert_eq!(f.count("restore"),0);
+        // A stopped runtime must reject even a still-selecting synthetic port;
+        // an already-absent generation alone cannot establish the stop guard.
+        let f=Fixture::new();let t=f.accepted();let overlay=escape_overlay(&f,&t);
+        f.runtime.shutdown();assert!(!f.runtime.native_escape(&t,true));
+        assert_eq!(f.runtime.coordinator.inspect().phase,Some(Phase::Selecting));
+        assert_eq!(f.count("close"),0);
+        f.runtime.coordinator.cancel(overlay,t).unwrap();f.clean();
+    }
+    struct EscapeClipboard(Trace);
+    impl ClipboardPort for EscapeClipboard {
+        fn publish(&self,_:&CroppedImage,_:usize)->ClipboardOutcome {
+            record(&self.0,"publication");ClipboardOutcome::Rejected("synthetic-only".into())
+        }
+    }
+    #[test]
+    fn snip_runtime_escape_does_not_dismiss_preview_or_republish() {
+        let publication=Arc::new(Mutex::new(Vec::new()));
+        let f=Fixture::with_clipboard(Arc::new(EscapeClipboard(publication.clone())));
+        let t=f.accepted();let overlay=escape_overlay(&f,&t);
+        f.runtime.coordinator.begin_selection(overlay.clone(),t.clone(),"m0".into()).unwrap();
+        f.runtime.coordinator.complete(overlay,t.clone(),"m0".into(),crate::snipping::geometry::LogicalRect {x:0.0,y:0.0,width:2.0,height:2.0}).unwrap();
+        let before=f.runtime.coordinator.inspect();assert_eq!(before.phase,Some(Phase::Preview));
+        for down in [false,true,true] {assert!(!f.runtime.native_escape(&t,down));}
+        let after=f.runtime.coordinator.inspect();
+        assert_eq!(after.phase,before.phase);assert_eq!(after.token,before.token);
+        assert_eq!(after.window_ids,before.window_ids);assert_eq!(after.image_bytes,before.image_bytes);
+        assert_eq!(publication.lock().unwrap().as_slice(),["publication"]);
+        // Cancelling a replacement restores the retained original preview,
+        // instead of dismissing it or relabelling its pixels/publication.
+        let replacement=f.accepted();escape_overlay(&f,&replacement);
+        assert!(f.runtime.native_escape(&replacement,true));
+        let restored=f.runtime.coordinator.inspect();
+        assert_eq!(restored.phase,Some(Phase::Preview));assert_eq!(restored.token,Some(t.clone()));
+        assert_eq!(restored.window_ids,before.window_ids);assert_eq!(restored.image_bytes,before.image_bytes);
+        assert!(!f.runtime.native_escape(&replacement,true));assert!(!f.runtime.native_escape(&t,true));
+        assert_eq!(publication.lock().unwrap().as_slice(),["publication"]);
+        let preview=f.windows.live.lock().unwrap().values().next().unwrap().caller.clone();
+        f.runtime.coordinator.dismiss(preview,t).unwrap();f.clean();
+        assert_eq!(f.count("close"),3,"both overlays and explicit-dismiss preview each close once");
+    }
+    #[test]
+    fn snip_runtime_escape_cannot_interrupt_pinned_completion() {
+        let publication=Arc::new(Mutex::new(Vec::new()));
+        let f=Fixture::with_clipboard(Arc::new(EscapeClipboard(publication.clone())));
+        let t=f.accepted();let overlay=escape_overlay(&f,&t);
+        f.runtime.coordinator.begin_selection(overlay.clone(),t.clone(),"m0".into()).unwrap();
+        let (entered_tx,entered)=mpsc::channel();let (release,release_rx)=mpsc::channel();
+        *f.windows.create_gate.lock().unwrap()=Some((entered_tx,release_rx));
+        let runtime=f.runtime.clone();let completing=t.clone();
+        let worker=thread::spawn(move||runtime.coordinator.complete(overlay,completing,"m0".into(),
+            crate::snipping::geometry::LogicalRect {x:0.0,y:0.0,width:2.0,height:2.0}));
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        let cancelled=f.runtime.native_escape(&t,true);
+        // Release before asserting, so a failed assertion cannot strand worker.
+        release.send(()).unwrap();let result=worker.join().unwrap();
+        assert!(!cancelled,"completion already owns the mutation pin");assert_eq!(result,Ok(true));
+        assert_eq!(f.runtime.coordinator.inspect().phase,Some(Phase::Preview));
+        assert_eq!(publication.lock().unwrap().as_slice(),["publication"]);
+        assert!(!f.runtime.native_escape(&t,true));
+        let preview=f.windows.live.lock().unwrap().values().next().unwrap().caller.clone();
+        f.runtime.coordinator.dismiss(preview,t).unwrap();f.clean();assert_eq!(f.count("close"),2);
+    }
 
     #[test]
     fn snip_runtime_forged_ack_has_zero_composition_and_capture() {

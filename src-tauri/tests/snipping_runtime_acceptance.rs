@@ -1,6 +1,22 @@
 //! Bounded ACTUAL binary-module acceptance runner; never executes shell main.
 use std::{process::Command, thread, time::{Duration, Instant}};
 const CASES: &[&str] = &[
+    "snip_runtime_escape_events_concurrent_cancel_arm_boundary_never_loses_escape",
+    "snip_runtime_escape_mailbox_arming_busy_cannot_lose_selection_cancellation",
+    "snip_runtime_escape_mailbox_completion_pin_still_wins",
+    "snip_runtime_escape_mailbox_full_wake_queue_preserves_latest_generation",
+    "snip_runtime_escape_mailbox_delayed_old_generation_cannot_cancel_replacement",
+    "snip_runtime_escape_mailbox_shutdown_and_foreign_router_cannot_deliver",
+    "snip_runtime_escape_events_held_coordinator_mutex_does_not_block_or_drop_observation",
+    "snip_runtime_escape_events_short_press_release_delivers_without_maintenance_tick",
+    "snip_runtime_escape_events_delayed_delivery_cannot_cancel_replacement",
+    "snip_runtime_escape_events_repeat_keyup_and_other_keys_are_ignored",
+    "snip_runtime_escape_events_shutdown_drop_and_runtime_retirement_release_listener",
+    "snip_runtime_escape_before_and_during_drag_ignores_webview_focus",
+    "snip_runtime_escape_stale_generation_and_capture_id_cannot_cancel_retry",
+    "snip_runtime_escape_preparing_and_shutdown_are_unowned",
+    "snip_runtime_escape_does_not_dismiss_preview_or_republish",
+    "snip_runtime_escape_cannot_interrupt_pinned_completion",
     "snip_runtime_forged_ack_has_zero_composition_and_capture",
     "snip_runtime_exact_ack_once_orders_composition_capture_release",
     "snip_runtime_deadline_rejects_late_ack_and_releases_matching_token",

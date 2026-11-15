@@ -82,6 +82,7 @@ pub struct SnipRuntime {
     preparation_deadline: Mutex<Option<Instant>>,
     hotkey_attempt: AtomicU64,
     hotkey_reported: AtomicU64,
+    escape: Mutex<Option<Arc<super::escape::EventRouter>>>,
 }
 /// Native-only intent/reservation ticket. Drop releases repeat suppression even if
 /// the hotkey owner cannot dispatch its worker. Never serialized or accepted by IPC.
@@ -102,7 +103,7 @@ impl SnipRuntime {
     }
     pub(crate) fn publication_attempts(&self) -> Option<usize> { self.edges.publication_attempts() }
     fn assemble(coordinator: Coordinator, registry: Arc<NativeRegistry>, bar: Caller, edges: Arc<dyn RuntimeEdges>) -> Self {
-        Self { coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None), hotkey_attempt: AtomicU64::new(0), hotkey_reported: AtomicU64::new(0) }
+        Self { coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None), hotkey_attempt: AtomicU64::new(0), hotkey_reported: AtomicU64::new(0), escape: Mutex::new(None) }
     }
     /// Called after shell window construction and before normal activation.
     pub fn install(app: AppHandle, top: WebviewWindow) -> Result<Arc<Self>, SnipError> {
@@ -139,6 +140,7 @@ impl SnipRuntime {
                 Arc::new(move || { if let Some(runtime) = release.upgrade() { runtime.release(); } }));
             Self::assemble(Coordinator::new(capture, windows, clipboard.clone(), picker, Arc::new(NativePublisherPort), Arc::new(NativeClock)), registry, bar, edges)
         });
+        *runtime.escape.lock().map_err(|_| SnipError::Inactive)? = Some(super::escape::install(Arc::downgrade(&runtime))?);
         let weak = Arc::downgrade(&runtime);
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(50));
@@ -150,6 +152,12 @@ impl SnipRuntime {
     }
     /// Native hotkey owner may call this from a worker without renderer mediation.
     pub fn start_native(&self) -> Result<Token, SnipError> { self.start(self.bar.clone()) }
+    /// Trusted native observation only; never exposed as renderer IPC authority.
+    /// Key-up, retired tokens, non-selection phases and stopped runtimes are inert.
+    pub(crate) fn native_escape(&self, token: &Token, escape_down: bool) -> bool {
+        if !escape_down || self.stopped.load(Ordering::Acquire) { return false; }
+        self.coordinator.cancel_selecting(token)
+    }
     /// Hotkey message thread calls BEFORE spawning a worker or emitting UI events.
     pub fn reserve_native_start(self: &Arc<Self>) -> Result<NativeStartReservation, SnipError> {
         if self.starting.load(Ordering::Acquire) { return Err(SnipError::Busy); }
@@ -267,7 +275,7 @@ impl SnipRuntime {
             }
         }
     }
-    pub fn shutdown(&self) { self.stopped.store(true, Ordering::Release); self.release(); self.registry.close_snips(); self.edges.shutdown(); }
+    pub fn shutdown(&self) { self.stopped.store(true, Ordering::Release); if let Ok(escape) = self.escape.lock() { if let Some(escape) = escape.as_ref() { escape.shutdown(); } } self.release(); self.registry.close_snips(); self.edges.shutdown(); }
 }
 /// Test construction replaces only native edges and the six existing coordinator
 /// ports. All reservation, prepare/ack/release, token checks and shutdown code above
