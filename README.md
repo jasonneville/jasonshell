@@ -27,6 +27,8 @@ Screen snipping is implemented as a scoped native flow, but its native Windows j
 
 Renderer entry remains limited to the exact live top-bar instance; the trusted native dispatcher is the separate hotkey entry. The resulting capture/focus origin may be a supported concrete registered ordinary JasonShell surface or an external app, with live monotonic HWND/PID/thread identity; it does not use external foreground history. Retired snipping generations cannot create new native helpers. Preparation holds are passive (they do not show or refocus a helper), queued close cleanup does not wait on observer validation, and hotkey feedback is monotonic and sanitized for retry UI. These are covered by automated contracts, but persistent native freeze and the real cross-window hotkey journey remain unverified. Live Windows E2E is required for acceptance and was not executed.
 
+The repository backports the official Wry PR 1795 teardown ordering fix (commit [`3fbf592feab29ffb269778a6f5573746a2f25a4a`](https://github.com/tauri-apps/wry/commit/3fbf592feab29ffb269778a6f5573746a2f25a4a)) into vendored Wry 0.54.4 at `src-tauri/vendor/wry/`, selected through `[patch.crates-io]` in `src-tauri/Cargo.toml`. Native subclass removal now precedes controller COM release; this is a minimal backport, not a broad framework upgrade. Original Wry licenses and notices remain. The callback facade's pre-patch RED ordering evidence is recorded in `tests/snipping-postmerge-crash-evidence.md`; validation is not a claim that the native app crash is solved.
+
 ## What this repo is for
 
 This repo is a prototype of a Windows-native shell foundation.
@@ -216,6 +218,8 @@ Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasons
 - keeps save operations pinned to their generation/image and refuses replacement while the picker is active
 - uses path-free IPC, exact concrete-window authorization, binary per-monitor image responses, scoped snipping capabilities, bounded helper deadlines, and capture/staging budgets
 
+Wry 0.54.4 is locally patched only because released Wry 0.56.1 is incompatible with the current `tauri-runtime-wry ^0.54.0` line. Retain the vendor path and removal-before-drop fix until a compatible official dependency upgrade replaces it.
+
 Snipping has no annotations, spanning mode, autosave, capture history, upload, or renderer-supplied paths/handles. The runtime remains scoped to the existing primary-monitor AppBar shell ownership; multi-monitor capture is a snipping capture operation, not multi-monitor AppBar ownership.
 
 ### Process manager
@@ -299,7 +303,7 @@ Validation note:
 - Process Manager System Info evidence includes operational child cleanup 7/7 passing, cache/schema 20/20 passing, and ACL 6/6 passing. The latest focused gate has `check`, `build`, 484 component tests, 1,180 Rust tests, and `cargo:check` passing. The Node suite has 1,270 passes and 10 proven baseline failures at HEAD `43af99a6009bd2dee5b7f27d7b425832e307841b`; therefore `npm run validate` exits 1 and is not GREEN. A visible-browser production-mounted mocked-IPC journey plus 13 extended checks passed with verified portable wmux 2.60.0; native hardware/HWND runtime and live shell smoke remain unverified and unauthorized
 - Reproduce the visible journey with `pwsh -NoProfile -File tests/browser/system-info/run-visible.ps1 -WmuxProcessId <current wmux PID>` (observed run: PID 35164, exit 0). The run produced six screenshots, accessibility/results artifacts, and a 62-entry IPC trace under the approved `system-info-visible-e2e` temp directory. This verifies mocked IPC, fixture navigation/modality events, and trusted CDP observation only; it does not verify native HWND, hardware, process termination, or live shell behavior
 - `npm run smoke:fullscreen` is part of the expected Windows smoke path
-- snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, and consumer paste remain unverified
+- snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the callback facade's pre-patch RED and current validation status are documented in `tests/snipping-postmerge-crash-evidence.md`, while the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, consumer paste, and crash resolution remain unverified
 
 ## Caveats
 
