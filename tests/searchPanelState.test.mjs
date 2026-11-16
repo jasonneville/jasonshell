@@ -536,7 +536,8 @@ test('centered search query events cannot fall back to legacy anchored mode', ()
 test('search panel renders a flat visibleRows model instead of grouped buckets', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
 
-  assert.match(source, /visibleRows = buildVisibleSearchRows\(results\);/);
+  assert.match(source, /visibleRows = buildVisibleSearchRows\(results\)\.filter\(/);
+  assert.match(source, /presentation !== 'centered' \|\| searchScope === 'all'/);
   assert.match(source, /\{#each visibleRows as row, index/);
   assert.doesNotMatch(source, /resultGroups = groupSearchResults\(results\)/);
   assert.doesNotMatch(source, /\{#each resultGroups as group/);
@@ -545,10 +546,11 @@ test('search panel renders a flat visibleRows model instead of grouped buckets',
 test('search panel keyboard and aria state follow visibleRows order', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
   const inputTag = source.match(/<input\b[\s\S]*?class="search-panel-query"[\s\S]*?\/>/)?.[0] ?? '';
-  const listboxTag = source.match(/<div\b[\s\S]*?id="search-results"[\s\S]*?role="listbox"[\s\S]*?>/)?.[0] ?? '';
-  const optionTag = source.match(/<div\b[\s\S]*?role="option"[\s\S]*?>/)?.[0] ?? '';
+  const listboxTag = source.match(/<div\b[^<]*?id="search-results"[^<]*?role="listbox"[^<]*?>/)?.[0] ?? '';
+  const optionTag = source.match(/<div\b[^<]*?role="option"[^<]*?>/)?.[0] ?? '';
 
-  assert.match(source, /selectedRowIndex = selectedVisibleRowIndex\(visibleRows, selectedIndex\)/);
+  assert.match(source, /underlyingSelectedRowIndex = selectedVisibleRowIndex\(visibleRows, selectedIndex\)/);
+  assert.match(source, /selectedRowIndex = presentation === 'centered' && underlyingSelectedRowIndex < 0 && visibleRows\.length\s*\? 0 : underlyingSelectedRowIndex/);
   assert.match(inputTag, /aria-activedescendant=\{selectedRow\?\.domId\}/);
   assert.doesNotMatch(listboxTag, /aria-activedescendant=/);
   assert.doesNotMatch(optionTag, /<button|MeltActionButton|tabindex="0"|on:click=\{\(event\) => pinFolderResult/);

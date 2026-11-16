@@ -1,4 +1,5 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#![deny(clashing_extern_declarations)]
 
 mod audio;
 mod audio_panel;
@@ -72,6 +73,12 @@ Terminal with Windows Node.js/Rust installed."
 
 #[cfg(target_os = "windows")]
 fn main() {
+    // A probe request must never fall through into ordinary shell startup.
+    #[cfg(not(all(debug_assertions, feature = "text-document-feasibility")))]
+    if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
+        eprintln!("P02 native probe requires a debug build with text-document-feasibility enabled");
+        std::process::exit(2);
+    }
     // Private clipboard owner must branch before any Tauri/AppBar/hook startup.
     // Only exact Rust-owned helper arguments enter this metadata/binary pipe path.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -598,7 +605,7 @@ fn main() {
         })
         .setup(|app| {
             speech_runtime::spawn_warm_model_async(app.handle().clone());
-            #[cfg(all(target_os = "windows", debug_assertions))]
+            #[cfg(all(target_os = "windows", debug_assertions, any(test, feature = "text-document-feasibility")))]
             if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
                 use tauri::{WebviewUrl, WebviewWindowBuilder};
 

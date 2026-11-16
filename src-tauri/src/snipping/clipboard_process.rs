@@ -2,6 +2,7 @@
 //! Whole-child termination bounds an uninterruptible OLE call without killing a thread.
 use super::{clipboard::{self, Failpoints, PublicationStage, Publisher, ShutdownOutcome}, geometry::{checked_rgba_len, CroppedImage, MAX_STAGING_BYTES}};
 use serde_json::{json, Value};
+use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
 use std::{io::{Read, Write}, os::windows::io::AsRawHandle, path::Path, process::{Child, ChildStdin, ChildStdout, Command, Stdio}, sync::mpsc, thread::JoinHandle, time::{Duration, Instant}};
 use windows::Win32::{Foundation::{CloseHandle, HANDLE}, System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE}};
 
@@ -14,8 +15,6 @@ const EXIT_TIMEOUT: Duration = Duration::from_millis(250);
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn PeekNamedPipe(pipe: *mut std::ffi::c_void, buffer: *mut std::ffi::c_void, size: u32, read: *mut u32, available: *mut u32, remaining: *mut u32) -> i32;
-    fn GetCurrentProcess() -> isize;
-    fn GetProcessHandleCount(process: isize, count: *mut u32) -> i32;
     fn CancelSynchronousIo(thread: *mut std::ffi::c_void) -> i32;
 }
 #[link(name = "user32")]
@@ -303,9 +302,9 @@ pub fn helper_main() -> Result<(), &'static str> {
             2 => { let durable = publisher.flush().is_ok(); emit(Outcome::Committed { durable }.metadata()).map_err(|_| "clipboard-helper-output")?; }
             3 => {
                 let process = unsafe { GetCurrentProcess() }; let mut handles = 0;
-                if unsafe { GetProcessHandleCount(process, &mut handles) } == 0 { return Err("clipboard-helper-counts"); }
+                if unsafe { GetProcessHandleCount(process, &mut handles) }.is_err() { return Err("clipboard-helper-counts"); }
                 let mut counts = serde_json::to_value(clipboard::owned_counts()).map_err(|_| "clipboard-helper-counts")?;
-                counts["gdi"] = json!(unsafe { GetGuiResources(process,0) }); counts["user"] = json!(unsafe { GetGuiResources(process,1) }); counts["processHandles"] = json!(handles);
+                counts["gdi"] = json!(unsafe { GetGuiResources(process.0 as isize,0) }); counts["user"] = json!(unsafe { GetGuiResources(process.0 as isize,1) }); counts["processHandles"] = json!(handles);
                 emit(counts).map_err(|_| "clipboard-helper-output")?;
             }
             4 => {

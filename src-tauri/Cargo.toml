@@ -6,6 +6,9 @@ description = "Windows shell foundation prototype with top and bottom reserved b
 authors = ["jnev1"]
 edition = "2021"
 
+[features]
+text-document-feasibility = []
+
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
 

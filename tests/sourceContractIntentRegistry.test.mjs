@@ -22,6 +22,8 @@ const SOURCE_CONTRACT_INTENTS = {
     'persistentSurfaceLifecycle.test.mjs',
     'bootstrapWindowsContract.test.mjs',
     'runtimeSmokeHarnessContract.test.mjs',
+    'validationRunner.test.mjs', // Package wiring plus injected and subprocess runner behavior.
+    'weeklyHealthGuards.test.mjs', // Dependency ownership and compile-boundary guards, not native acceptance.
     'speechContracts.test.mjs',
     'speechHistoryPanelUi.test.mjs',
     'processManagerAccessibility.test.mjs',
@@ -40,6 +42,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'searchOverhaulPhase0.test.mjs',
     'searchOverhaulPhase6.test.mjs',
     'searchPanelState.test.mjs',
+    'searchPanelPlacementContract.test.mjs', // Static placement wiring only, not native window evidence.
     'searchTypingFreezePhase1.test.mjs',
     'settingsPanelWiring.test.mjs',
     'shellBarResize.test.mjs',
@@ -112,6 +115,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'testModernizationPolicy.test.mjs'
   ],
   securityBoundary: [
+    'stackTextEditorP02RunnerContract.test.mjs', // Isolated probe driver and fail-closed native startup boundary; no native launch.
     'automationProviders.test.mjs',
     'backendBlockingLockBoundaries.test.mjs',
     'backendBlockingLockBoundariesP6.test.mjs',

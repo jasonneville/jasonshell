@@ -29,7 +29,8 @@ These docs capture evidence at a point in time. Use them for leads, then confirm
 
 Scheduled reports are point-in-time evidence, not current product truth. Use them for leads, then confirm against source/tests.
 
-No scheduled audit reports are included in this checkout. For available audit leads, see `current-state-technical-audit-2026-08-28.md` above.
+- `scheduled/11162026_WEEKLY_HEALTH_AUDIT.md`: original weekly audit snapshot; not current validation status.
+- `weekly-health-remediation-2026-11-16.md`: remediation evidence, reproducible gates, and consent-gated native acceptance checklist.
 
 ## Plans and research
 

@@ -142,7 +142,7 @@ test('active task window context menu exposes PID lookup and taskbar pin actions
   assert.match(bottomBarSource, /selection\.kind === 'task-window' && selection\.token === taskContextMenu\?\.token/);
   assert.match(bottomBarSource, /const processId = normalizeTaskGalleryProcessId\(taskWindow\.processId\)/);
   assert.match(bottomBarSource, /if \(selection\.action === 'process'\) \{\s*if \(processId\) await runTaskWindowAction\(taskWindow\.hwnd, 'process', processId\)/);
-  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid \}\)/);
+  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid, toggle: focusPid === null \}\)/);
   assert.match(bottomBarSource, /selection\.action === 'pin'[\s\S]*?runTaskWindowAction\(taskWindow\.hwnd, selection\.action\)/);
   assert.match(taskbarMenuRs, /pub fn run_task_window_action\([\s\S]*?if window\.label\(\) != BOTTOM_BAR_LABEL \{[\s\S]*?"pin" => launchers::pin_task_window_to_taskbar\(request\.hwnd\)/);
   assert.match(taskbarMenuRs, /_ => return Err\("Unknown task window action"\.to_string\(\)\)/);

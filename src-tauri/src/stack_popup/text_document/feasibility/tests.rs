@@ -931,7 +931,9 @@ fn t02_03_authenticated_reopen_and_tamper_refusal() {
         .open(&path)
         .expect("tamper synthetic store");
     raw.seek(SeekFrom::Start(40)).expect("seek");
-    raw.write_all(&[0x55]).expect("tamper");
+    // Ciphertext is randomized: a fixed replacement can equal the original
+    // byte and silently leave the authenticated page unchanged.
+    raw.write_all(&[disk[40] ^ 1]).expect("tamper");
     drop(raw);
     let mut reopened = backing::PageStore::reopen(&path, backing::NODE_PAGE, 0, quota)
         .expect("open structurally complete store");

@@ -32,7 +32,7 @@ test('dedicated changelog policy owns future ledger protocol without rewriting h
 test('repo agent instructions route changelog work out of master spec', () => {
   assert.equal(existsSync(agentsUrl), true);
   const agents = readFileSync(agentsUrl, 'utf8');
-  assert.match(agents, /Read this file and `docs\/current-state-brief\.md` for every task/);
+  assert.match(agents, /`docs\/current-state-brief\.md` is onboarding and lookup/);
   assert.match(agents, /Read full current `master_spec\.md` plus targeted historical material for architecture, security, persistence, native Windows, or cross-cutting work/);
   assert.match(agents, /Use `CHANGELOG_POLICY\.md` for `changelog\.md` history rules/);
   assert.doesNotMatch(agents, /Mandatory first-step ledger protocol/);
