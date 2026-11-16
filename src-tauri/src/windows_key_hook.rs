@@ -3,21 +3,29 @@ use crate::settings::{StandardHotkeySettings, MissingHotkeys};
 #[cfg(windows)]
 use std::sync::{mpsc, Mutex, OnceLock};
 #[cfg(windows)]
+use std::{cell::RefCell, sync::{Arc, atomic::{AtomicBool, AtomicU8, Ordering}}};
+#[cfg(windows)]
 use std::thread::{self, JoinHandle};
 #[cfg(windows)]
 use tauri::{AppHandle, Emitter};
 #[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentThreadId;
 #[cfg(windows)]
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_1,
+    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_1,
     VK_OEM_3, VK_SPACE,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, PM_REMOVE, WM_APP, WM_HOTKEY,
-    SetTimer, KillTimer, WM_TIMER, GetForegroundWindow, IsWindowVisible,
+    CallNextHookEx, GetMessageW, KillTimer, PeekMessageW, PostThreadMessageW,
+    SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, LLKHF_INJECTED,
+    MSG, PM_NOREMOVE, PM_REMOVE, WH_KEYBOARD_LL, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, GetForegroundWindow, IsWindowVisible,
 };
+#[cfg(windows)]
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 
 #[cfg(test)]
 pub const SEARCH_HOTKEY_TOGGLE_SEARCH_EVENT: &str =
@@ -52,6 +60,263 @@ struct RegistryBinding {
     modifier: HotkeyModifier,
     key: u32,
     action: ConfiguredHotkeyAction,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SearchModifiers {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    win: bool,
+}
+
+// Fixed virtual-key space; no allocation or foreground-window dependency.
+// Separate held/owned bits preserve unowned cycles and releases across rebinds.
+struct SearchKeyOwnership {
+    binding: Option<RegistryBinding>,
+    held: [bool; 256],
+    owned: [bool; 256],
+}
+
+impl Default for SearchKeyOwnership {
+    fn default() -> Self {
+        Self { binding: None, held: [false; 256], owned: [false; 256] }
+    }
+}
+
+impl SearchKeyOwnership {
+    fn set_binding(&mut self, binding: Option<RegistryBinding>, trigger_preheld: bool) {
+        let binding = binding.filter(|b| b.action == ConfiguredHotkeyAction::Search);
+        if let Some(binding) = binding {
+            if let Some(held) = self.held.get_mut(binding.key as usize) {
+                *held |= trigger_preheld;
+            }
+        }
+        self.binding = binding;
+    }
+
+    fn handle_event(&mut self, code: i32, key: u32, is_down: bool, modifiers: SearchModifiers,
+        mut queue: impl FnMut() -> bool) -> bool {
+        if code < 0 || key >= 256 { return false; }
+        let index = key as usize;
+        let was_held = self.held[index];
+        self.held[index] = is_down;
+        if self.owned[index] {
+            if !is_down { self.owned[index] = false; }
+            return true;
+        }
+        if !is_down || was_held || modifiers.shift || modifiers.win { return false; }
+        let Some(binding) = self.binding else { return false; };
+        let matches = binding.key == key && match binding.modifier {
+            HotkeyModifier::Ctrl => modifiers.ctrl && !modifiers.alt,
+            HotkeyModifier::Alt => modifiers.alt && !modifiers.ctrl,
+        };
+        if matches && queue() {
+            self.owned[index] = true;
+            return true;
+        }
+        false
+    }
+}
+
+fn reconcile_search_startup_keys(mut snapshot: [bool; 256], observed: [Option<bool>; 256]) -> [bool; 256] {
+    for (sampled, transition) in snapshot.iter_mut().zip(observed) {
+        if let Some(down) = transition { *sampled = down; }
+    }
+    snapshot
+}
+
+#[cfg(windows)]
+const WM_SEARCH_TOGGLE: u32 = WM_APP + 43;
+
+#[cfg(windows)]
+struct SearchDispatch {
+    id: u32,
+    pending: AtomicBool,
+    retired: AtomicBool,
+    // Bit 0 retires admission permanently; bit 1 owns one emission permit;
+    // bit 2 pauses admission while a native capture/fence is active.
+    emission_gate: AtomicU8,
+}
+
+#[cfg(windows)]
+struct SearchEmissionPermit<'a>(&'a SearchDispatch);
+
+#[cfg(windows)]
+impl Drop for SearchEmissionPermit<'_> {
+    fn drop(&mut self) {
+        self.0.pending.store(false, Ordering::Release);
+        // Never erase concurrent retirement when releasing the admitted work.
+        self.0.emission_gate.fetch_and(!2, Ordering::AcqRel);
+    }
+}
+
+#[cfg(windows)]
+impl SearchDispatch {
+    fn try_admit_emission(&self) -> Option<SearchEmissionPermit<'_>> {
+        if !self.pending.load(Ordering::Acquire) { return None; }
+        self.emission_gate.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire).ok()?;
+        // A fence may clear queued work between the initial pending read and
+        // admission. Never revive it when capture subsequently resumes.
+        if !self.pending.load(Ordering::Acquire) {
+            self.emission_gate.fetch_and(!2, Ordering::AcqRel);
+            return None;
+        }
+        Some(SearchEmissionPermit(self))
+    }
+
+    fn retire(&self) {
+        // Linearizes against permit acquisition, without waiting for IPC. Only
+        // an emission admitted before this RMW may complete after retirement.
+        self.emission_gate.fetch_or(1, Ordering::AcqRel);
+        self.retired.store(true, Ordering::Release);
+    }
+
+    // One outstanding delivery. Admission failure passes the entire key cycle.
+    fn queue(&self) -> bool {
+        if self.retired.load(Ordering::Acquire) || self.emission_gate.load(Ordering::Acquire) != 0
+            || self.pending.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_err() {
+            return false;
+        }
+        if unsafe { PostThreadMessageW(self.id, WM_SEARCH_TOGGLE, WPARAM(0), LPARAM(0)) }.is_err() {
+            self.pending.store(false, Ordering::Release);
+            return false;
+        }
+        true
+    }
+}
+
+#[cfg(windows)]
+struct SearchHookState {
+    ownership: SearchKeyOwnership,
+    // LL callbacks run before asynchronous state updates. Seed once, then track
+    // left/right modifier transitions locally, rather than querying in callback.
+    pressed: [bool; 256],
+    startup_observed: Option<[Option<bool>; 256]>,
+    dispatch: Arc<SearchDispatch>,
+}
+
+#[cfg(windows)]
+thread_local! {
+    static SEARCH_HOOK: RefCell<Option<SearchHookState>> = const { RefCell::new(None) };
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn search_keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code < 0 {
+        return CallNextHookEx(None, code, wparam, lparam);
+    }
+    let transition = wparam.0 as u32;
+    if !matches!(transition, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
+        return CallNextHookEx(None, code, wparam, lparam);
+    }
+    // Windows owns this pointer for this callback only. Never retain it.
+    let event = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+    // Injected input passes unchanged and cannot release physical ownership.
+    if event.flags.contains(LLKHF_INJECTED) || event.vkCode >= 256 {
+        return CallNextHookEx(None, code, wparam, lparam);
+    }
+    let consumed = SEARCH_HOOK.with(|slot| {
+        let Ok(mut slot) = slot.try_borrow_mut() else { return false; };
+        let Some(state) = slot.as_mut() else { return false; };
+        let down = matches!(transition, WM_KEYDOWN | WM_SYSKEYDOWN);
+        state.pressed[event.vkCode as usize] = down;
+        if let Some(observed) = state.startup_observed.as_mut() {
+            observed[event.vkCode as usize] = Some(down);
+        }
+        let keys = &state.pressed;
+        let modifiers = SearchModifiers {
+            ctrl: keys[0xa2] || keys[0xa3],
+            alt: keys[0xa4] || keys[0xa5],
+            shift: keys[0xa0] || keys[0xa1],
+            win: keys[0x5b] || keys[0x5c],
+        };
+        state.ownership.handle_event(code, event.vkCode, down, modifiers, || state.dispatch.queue())
+    });
+    if consumed { LRESULT(1) } else { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(windows)]
+fn refresh_search_binding(binding: Option<RegistryBinding>) {
+    SEARCH_HOOK.with(|slot| {
+        if let Some(state) = slot.borrow_mut().as_mut() {
+            let preheld = binding.is_some_and(|b| {
+                state.pressed.get(b.key as usize).copied().unwrap_or(false)
+                    || unsafe { GetAsyncKeyState(b.key as i32) } < 0
+            });
+            state.ownership.set_binding(binding, preheld);
+        }
+    });
+}
+
+#[cfg(windows)]
+fn pause_search_dispatch() {
+    SEARCH_HOOK.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            state.dispatch.emission_gate.fetch_or(4, Ordering::AcqRel);
+            state.dispatch.pending.store(false, Ordering::Release);
+        }
+    });
+}
+
+#[cfg(windows)]
+fn refresh_search_state(state: &NativeState) {
+    if state.capture.is_some() {
+        pause_search_dispatch();
+        refresh_search_binding(None);
+    } else {
+        // Restored/partially rolled-back native slots are the sole authority.
+        refresh_search_binding(state.current[0]);
+        SEARCH_HOOK.with(|slot| {
+            if let Some(state) = slot.borrow().as_ref() {
+                state.dispatch.emission_gate.fetch_and(!4, Ordering::AcqRel);
+            }
+        });
+    }
+}
+
+// Emission is deliberately not on the hook thread. A timer provides a bounded
+// retirement wake even if posting a stop message would fail/full-queue.
+#[cfg(windows)]
+fn start_search_dispatch(app: AppHandle) -> Result<(Arc<SearchDispatch>, JoinHandle<()>), String> {
+    let (ready, wait) = mpsc::sync_channel(1);
+    let worker = thread::Builder::new().name("jasonshell-search-dispatch".into()).spawn(move || {
+        let mut message = MSG::default();
+        unsafe { let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE); }
+        let timer = unsafe { SetTimer(None, 0, 100, None) };
+        if timer == 0 {
+            let _ = ready.send(Err("failed to create Search dispatch retirement timer".to_string()));
+            return;
+        }
+        let dispatch = Arc::new(SearchDispatch {
+            id: unsafe { GetCurrentThreadId() }, pending: AtomicBool::new(false), retired: AtomicBool::new(false),
+            emission_gate: AtomicU8::new(0),
+        });
+        if ready.send(Ok(dispatch.clone())).is_ok() {
+            while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
+                if dispatch.retired.load(Ordering::Acquire) { break; }
+                if message.message == WM_SEARCH_TOGGLE && dispatch.pending.load(Ordering::Acquire) {
+                    let Some(permit) = dispatch.try_admit_emission() else { continue; };
+                    let _ = app.emit_to(crate::shell_windows::TOP_BAR_LABEL,
+                        crate::contracts::events::SEARCH_TOGGLE_CENTERED, ());
+                    drop(permit);
+                }
+            }
+        }
+        dispatch.retire();
+        dispatch.pending.store(false, Ordering::Release);
+        unsafe { let _ = KillTimer(None, timer); }
+    }).map_err(|error| format!("failed to start Search dispatcher: {error}"))?;
+    match wait.recv() {
+        Ok(Ok(dispatch)) => Ok((dispatch, worker)),
+        result => {
+            let _ = worker.join();
+            Err(match result {
+                Ok(Err(error)) => error,
+                _ => "Search dispatcher failed to start".into(),
+            })
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -219,6 +484,7 @@ impl NativeState {
         }).collect::<Vec<_>>()})
     }
     fn fence(&mut self) {
+        pause_search_dispatch();
         let mut queued = MSG::default();
         unsafe { while PeekMessageW(&mut queued, None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE).as_bool() {} }
         self.fence = unsafe { windows::Win32::System::SystemInformation::GetTickCount() };
@@ -331,6 +597,37 @@ static LIFECYCLE_WAKE: OnceLock<Mutex<Option<(u32, mpsc::Sender<ReplaceRequest>)
 #[cfg(windows)]
 fn hotkey_thread() -> &'static Mutex<Option<HotkeyThread>> {
     HOTKEY_THREAD.get_or_init(|| Mutex::new(None))
+}
+
+// Serialize lifecycle operations without retaining a global mutex during native
+// registration, worker startup, IPC dispatch, or bounded shutdown waits.
+#[cfg(windows)]
+static HOTKEY_OPERATION: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+struct HotkeyAccess { state: Option<HotkeyThread> }
+#[cfg(windows)]
+impl std::ops::Deref for HotkeyAccess {
+    type Target = Option<HotkeyThread>;
+    fn deref(&self) -> &Self::Target { &self.state }
+}
+#[cfg(windows)]
+impl std::ops::DerefMut for HotkeyAccess {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.state }
+}
+#[cfg(windows)]
+impl Drop for HotkeyAccess {
+    fn drop(&mut self) {
+        *hotkey_thread().lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = self.state.take();
+        HOTKEY_OPERATION.store(false, Ordering::Release);
+    }
+}
+#[cfg(windows)]
+fn hotkey_access() -> Result<HotkeyAccess, String> {
+    HOTKEY_OPERATION.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .map_err(|_| "hotkey lifecycle operation is already in progress".to_string())?;
+    let mut access = HotkeyAccess { state: None };
+    access.state = hotkey_thread().lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
+    Ok(access)
 }
 
 #[cfg(windows)]
@@ -446,7 +743,7 @@ fn restore_registrations(current: &mut ActiveBindings, previous: &StandardHotkey
 
 #[cfg(windows)]
 fn native_request<T: Send + 'static>(run: impl FnOnce(&mut NativeState, &AppHandle) -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    let mut guard = hotkey_thread().lock().map_err(|_| "hotkey thread lock is poisoned")?;
+    let mut guard = hotkey_access()?;
     reap_finished_thread(&mut guard)?;
     let thread = guard.as_ref().filter(|thread| !thread.stopping).ok_or("hotkey message thread is not running")?;
     request_on_thread(thread, run)
@@ -529,11 +826,8 @@ fn dispatch_hotkey(app_handle: &AppHandle, id: i32, registry: &ActiveBindings) {
     let Some(binding) = registry[index] else { return; };
     match binding.action {
         ConfiguredHotkeyAction::Search => {
-            let _ = app_handle.emit_to(
-                crate::shell_windows::TOP_BAR_LABEL,
-                crate::contracts::events::SEARCH_TOGGLE_CENTERED,
-                (),
-            );
+            // Registration reserves/conflict-checks the chord; only the native
+            // trigger owner queues Search. Never double-toggle via WM_HOTKEY.
         }
         ConfiguredHotkeyAction::Terminal => {
             let _ = app_handle.emit_to(crate::shell_windows::TOP_BAR_LABEL, crate::contracts::events::TERMINAL_TOGGLE_PANEL, ());
@@ -586,58 +880,134 @@ fn dispatch_hotkey(app_handle: &AppHandle, id: i32, registry: &ActiveBindings) {
 fn run_hotkey_thread(
     app_handle: AppHandle,
     requests: mpsc::Receiver<ReplaceRequest>,
-    ready: mpsc::SyncSender<u32>,
+    ready: mpsc::SyncSender<Result<u32, String>>,
 ) {
     let mut message = MSG::default();
     // Force creation of this thread's message queue before publishing its ID.
     unsafe {
         let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
     }
-    if ready.send(unsafe { GetCurrentThreadId() }).is_err() {
+    let (dispatch, dispatch_worker) = match start_search_dispatch(app_handle.clone()) {
+        Ok(dispatcher) => dispatcher,
+        Err(error) => { let _ = ready.send(Err(error)); return; }
+    };
+    // Install inactive observation first. A pre-hook sample could miss a Ctrl
+    // release in the installation gap and misclassify later ordinary Space.
+    SEARCH_HOOK.with(|slot| *slot.borrow_mut() = Some(SearchHookState {
+        ownership: SearchKeyOwnership::default(), pressed: [false; 256],
+        startup_observed: Some([None; 256]), dispatch: dispatch.clone(),
+    }));
+    // The callback is in the process image, whose module remains loaded until
+    // process exit. Supply its handle explicitly for this desktop-wide hook.
+    let hook = match unsafe { GetModuleHandleW(None) }.and_then(|module| unsafe {
+        SetWindowsHookExW(WH_KEYBOARD_LL, Some(search_keyboard_hook),
+            Some(windows::Win32::Foundation::HINSTANCE(module.0)), 0)
+    }) {
+        Ok(hook) => hook,
+        Err(error) => {
+            SEARCH_HOOK.with(|slot| *slot.borrow_mut() = None);
+            dispatch.retire();
+            let _ = dispatch_worker.join();
+            let _ = ready.send(Err(format!("failed to install Search keyboard hook: {error}")));
+            return;
+        }
+    };
+    let mut snapshot = [false; 256];
+    for (key, down) in snapshot.iter_mut().enumerate() {
+        *down = unsafe { GetAsyncKeyState(key as i32) } < 0;
+    }
+    SEARCH_HOOK.with(|slot| {
+        if let Some(state) = slot.borrow_mut().as_mut() {
+            // LL callbacks precede async-state updates: their observed transitions
+            // must override any older per-key sample. No Win32 calls while borrowed.
+            let pressed = reconcile_search_startup_keys(snapshot,
+                state.startup_observed.take().unwrap_or([None; 256]));
+            state.pressed = pressed;
+            state.ownership.held = pressed;
+        }
+    });
+    let mut state = NativeState::new(StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).expect("valid defaults"), [None; 8]);
+    // Thread-owned timer also drains capture/lifecycle requests when a renderer
+    // stalls or a notification post fails. Do not publish readiness without it.
+    let timer = unsafe { SetTimer(None, 0, 100, None) };
+    if timer == 0 {
+        dispatch.retire();
+        let _ = unsafe { UnhookWindowsHookEx(hook) };
+        SEARCH_HOOK.with(|slot| *slot.borrow_mut() = None);
+        let _ = dispatch_worker.join();
+        let _ = ready.send(Err("failed to create hotkey capture retirement timer".into()));
         return;
     }
-    let mut state = NativeState::new(StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).expect("valid defaults"), [None; 8]);
-    // Thread-owned timer wakes even when every renderer stalls or disappears.
-    let timer = unsafe { SetTimer(None, 0, 100, None) };
-    if timer == 0 { return; }
-    while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
+    let published = ready.send(Ok(unsafe { GetCurrentThreadId() })).is_ok();
+    let mut stopping_at = None;
+    let mut drain_timer = 0;
+    while published && unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
         let expired = state.expire(&app_handle);
+        if stopping_at.is_none() { refresh_search_state(&state); }
         match message.message {
             WM_REPLACE_HOTKEYS | WM_TIMER => {
                 while let Ok(request) = requests.try_recv() {
+                    // Dropping an opaque request disconnects its response, so
+                    // callers fail rather than mutating native state after stop.
+                    if stopping_at.is_some() { drop(request); continue; }
+                    refresh_search_binding(None);
                     (request.run)(&mut state, &app_handle);
+                    refresh_search_state(&state);
                 }
             }
             WM_HOTKEY => {
-                // A queued event predating capture/retirement/remap is consumed,
-                // never replayed as a later action. Wrapping subtraction handles
-                // Windows' 32-bit uptime rollover.
-                if expired { continue; }
-                let window = state.capture.as_ref().and_then(|lease| registered_settings_window(&app_handle, &lease.caller).ok());
-                let previous_revision = state.revision;
-                let route = state.route_hotkey_observed(message.wParam.0 as i32, message.time, message.lParam.0 as u32, std::time::Instant::now(), window.is_some());
-                if state.revision != previous_revision { state.fence(); }
-                match route {
-                    HotkeyRoute::Discard => {},
-                    HotkeyRoute::Capture(payload) => {
-                        if let Some(window) = window {
-                            if window.emit_to(tauri::EventTarget::webview_window(window.label()), crate::contracts::events::STANDARD_HOTKEYS_CAPTURE, payload).is_err() { state.retire(); }
-                        } else { state.retire(); }
+                if stopping_at.is_none() && !expired {
+                    // A queued event predating capture/retirement/remap is consumed,
+                    // never replayed as a later action. Wrapping subtraction handles
+                    // Windows' 32-bit uptime rollover.
+                    let window = state.capture.as_ref().and_then(|lease| registered_settings_window(&app_handle, &lease.caller).ok());
+                    let previous_revision = state.revision;
+                    let route = state.route_hotkey_observed(message.wParam.0 as i32, message.time, message.lParam.0 as u32, std::time::Instant::now(), window.is_some());
+                    if state.revision != previous_revision { state.fence(); }
+                    match route {
+                        HotkeyRoute::Discard => {},
+                        HotkeyRoute::Capture(payload) => {
+                            if let Some(window) = window {
+                                if window.emit_to(tauri::EventTarget::webview_window(window.label()), crate::contracts::events::STANDARD_HOTKEYS_CAPTURE, payload).is_err() { state.retire(); }
+                            } else { state.retire(); }
+                        }
+                        HotkeyRoute::Dispatch(id) => dispatch_hotkey(&app_handle, id, &state.current),
                     }
-                    HotkeyRoute::Dispatch(id) => dispatch_hotkey(&app_handle, id, &state.current),
+                    refresh_search_state(&state);
                 }
             }
-            WM_STOP_HOTKEYS => break,
+            WM_STOP_HOTKEYS => {
+                if stopping_at.is_none() {
+                    dispatch.retire();
+                    refresh_search_binding(None);
+                    stopping_at = Some(std::time::Instant::now());
+                    drain_timer = unsafe { SetTimer(None, 0, 10, None) };
+                }
+            }
             _ => {}
+        }
+        if let Some(start) = stopping_at {
+            let owned = SEARCH_HOOK.with(|slot| slot.borrow().as_ref()
+                .is_some_and(|s| s.ownership.owned.iter().any(|owned| *owned)));
+            if !owned || drain_timer == 0 || start.elapsed() >= std::time::Duration::from_millis(250) { break; }
         }
     }
     state.retire();
     let _ = unsafe { KillTimer(None, timer) };
+    dispatch.retire();
+    if drain_timer != 0 { unsafe { let _ = KillTimer(None, drain_timer); } }
+    if let Err(error) = unsafe { UnhookWindowsHookEx(hook) } {
+        eprintln!("failed to unhook Search keyboard hook: {error}");
+    }
+    SEARCH_HOOK.with(|slot| *slot.borrow_mut() = None);
     for (index, binding) in state.current.iter().enumerate() {
         if binding.is_some() {
             unregister_binding(index);
         }
     }
+    // Retired queued work cannot be admitted; a pre-retirement permit may
+    // finish before this thread is reaped and another install can begin.
+    let _ = dispatch_worker.join();
 }
 
 #[cfg(windows)]
@@ -664,7 +1034,13 @@ fn request_on_thread<T: Send + 'static>(thread: &HotkeyThread, run: impl FnOnce(
         .send(ReplaceRequest {
             run: Box::new(move |state, app| {
                 if request_cancelled.load(std::sync::atomic::Ordering::Acquire) { return; }
-                if result_tx.send(run(state, app)).is_err() { state.retire(); }
+                let result = run(state, app);
+                // Refresh before publishing capture/save ACKs, on failure too.
+                refresh_search_state(state);
+                if result_tx.send(result).is_err() {
+                    state.retire();
+                    refresh_search_state(state);
+                }
             }),
         })
         .map_err(|_| "hotkey message thread stopped".to_string())?;
@@ -697,9 +1073,7 @@ pub fn install_windows_key_hook(
 #[cfg(windows)]
 pub(crate) fn install_loaded_windows_key_hook(app_handle: AppHandle, hotkeys: StandardHotkeySettings, missing: MissingHotkeys) -> Result<(), String> {
     let registry = StandardHotkeyRegistry::from_migration(&hotkeys, missing)?;
-    let mut guard = hotkey_thread()
-        .lock()
-        .map_err(|_| "hotkey thread lock is poisoned".to_string())?;
+    let mut guard = hotkey_access()?;
     reap_finished_thread(&mut guard)?;
     if let Some(state) = guard.as_ref() {
         return if state.stopping {
@@ -714,9 +1088,16 @@ pub(crate) fn install_loaded_windows_key_hook(app_handle: AppHandle, hotkeys: St
         .name("jasonshell-hotkeys".into())
         .spawn(move || run_hotkey_thread(app_handle, requests, ready_tx))
         .map_err(|error| format!("failed to start hotkey thread: {error}"))?;
-    let id = ready_rx
-        .recv()
-        .map_err(|_| "hotkey message thread failed to start".to_string())?;
+    let id = match ready_rx.recv() {
+        Ok(Ok(id)) => id,
+        result => {
+            let _ = worker.join();
+            return Err(match result {
+                Ok(Err(error)) => error,
+                _ => "hotkey message thread failed to start".into(),
+            });
+        }
+    };
     let state = HotkeyThread {
         id,
         sender,
@@ -766,9 +1147,7 @@ pub(crate) fn restore_loaded_standard_hotkeys(_app: &AppHandle, hotkeys: &Standa
 }
 #[cfg(windows)]
 fn configure_registry(registry: StandardHotkeyRegistry) -> Result<(), String> {
-    let mut guard = hotkey_thread()
-        .lock()
-        .map_err(|_| "hotkey thread lock is poisoned".to_string())?;
+    let mut guard = hotkey_access()?;
     reap_finished_thread(&mut guard)?;
     let thread = guard
         .as_ref()
@@ -788,6 +1167,9 @@ include!("../tests/fixtures/snipping_registry_acceptance.rs");
 
 #[cfg(test)]
 include!("../tests/fixtures/seven_hotkey_registry_acceptance.rs");
+
+#[cfg(test)]
+include!("../tests/fixtures/search_hotkey_ownership.rs");
 
 #[cfg(not(windows))]
 pub fn configure_standard_hotkeys(
@@ -845,14 +1227,14 @@ fn stop_hotkey_thread(guard: &mut Option<HotkeyThread>) -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn uninstall_windows_key_hook() {
-    if let Some(wake) = LIFECYCLE_WAKE.get() { if let Ok(mut wake) = wake.lock() { *wake = None; } }
-    match hotkey_thread().lock() {
+    match hotkey_access() {
         Ok(mut guard) => {
+            if let Some(wake) = LIFECYCLE_WAKE.get() { if let Ok(mut wake) = wake.lock() { *wake = None; } }
             if let Err(error) = stop_hotkey_thread(&mut guard) {
                 eprintln!("{error}");
             }
         }
-        Err(_) => eprintln!("hotkey thread lock is poisoned; cannot stop hotkey message thread"),
+        Err(error) => eprintln!("cannot stop hotkey message thread: {error}"),
     }
 }
 
