@@ -210,6 +210,8 @@ Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasons
 - centered search UI
 - apps, windows, settings, folders, commands
 - Everything results when available
+- The configured Search shortcut (default `Ctrl+Space`) now uses native trigger-cycle ownership: one immediate queued toggle, with its trigger repeats/release consumed even after Search hides or the modifier is released. Other shortcuts retain OS registration dispatch; ordinary Space and unrelated chords pass through. Hook/dispatcher startup failure is explicit; busy dispatch fails open for the whole gesture. Injected events pass unchanged and cannot end physical ownership.
+- Cross-process Windows acceptance remains unverified: closing Search over playing YouTube must still be checked with consent, along with ordinary Space behavior. The original leak event/root cause is not proven. Orderly shutdown drains owned releases for at most 250ms; abrupt exit, hook timeout/removal, and desktop transitions cannot guarantee suppression. See `tests/search-shortcut-native-acceptance.md`.
 
 ### Screen snipping
 

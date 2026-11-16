@@ -6,12 +6,87 @@ function readSource(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('global shortcuts use OS registration and never suppress raw keyboard events', () => {
+function rustFunction(source, name) {
+  const start = source.indexOf(`fn ${name}(`);
+  assert.notEqual(start, -1, `${name} must exist`);
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}' && --depth === 0) return source.slice(open + 1, index);
+  }
+  assert.fail(`unterminated ${name}`);
+}
+
+test('callback source forwards negative and injected input before borrowing ownership', () => {
+  const callback = rustFunction(readSource('../src-tauri/src/windows_key_hook.rs'), 'search_keyboard_hook');
+  assert.match(callback, /if code < 0\s*\{\s*return CallNextHookEx\(None, code, wparam, lparam\)/);
+  assert.ok(callback.indexOf('if code < 0') < callback.indexOf('lparam.0 as *const KBDLLHOOKSTRUCT'),
+    'negative hook code must not dereference callback data');
+  assert.match(callback, /event\.flags\.contains\(LLKHF_INJECTED\)[\s\S]*?return CallNextHookEx/);
+  assert.ok(callback.indexOf('LLKHF_INJECTED') < callback.indexOf('SEARCH_HOOK.with('));
+  assert.match(callback, /if consumed\s*\{\s*LRESULT\(1\)\s*\}\s*else\s*\{\s*CallNextHookEx/);
+  assert.doesNotMatch(callback, /emit_to|GetAsyncKeyState|eprintln!|println!|format!|Mutex|\.lock\(/,
+    'callback stays free of IPC, input logging, async-state queries, allocation formatting, and mutex waits');
+});
+
+test('message-thread source refreshes ownership from verified registrations even after failed rollback', () => {
+  const run = rustFunction(readSource('../src-tauri/src/windows_key_hook.rs'), 'run_hotkey_thread');
+  const pause = run.indexOf('refresh_search_binding(None)');
+  const replace = run.indexOf('let result = replace_registrations(');
+  const verified = run.indexOf('refresh_search_binding(current[0])');
+  const reply = run.indexOf('request.result.send(result)');
+  assert.ok(pause >= 0 && pause < replace && replace < verified && verified < reply,
+    'pause new ownership, replace/rollback, then publish actual active Search before save result');
+  assert.doesNotMatch(run.slice(replace, verified), /result\.(?:is_ok|is_err)\(|if let Ok/,
+    'verified refresh cannot be success-only: failed rollback can leave Search vacant');
+  const unhook = run.indexOf('UnhookWindowsHookEx(hook)');
+  const clear = run.indexOf('SEARCH_HOOK.with(|slot| *slot.borrow_mut() = None)', unhook);
+  const join = run.indexOf('dispatch_worker.join()', unhook);
+  assert.ok(unhook >= 0 && unhook < clear && clear < join,
+    'remove native callback before clearing its state; finish old dispatcher before reaping thread');
+});
+
+test('startup source installs callback before reconciling authoritative physical key snapshot', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const run = rustFunction(rust, 'run_hotkey_thread');
+  const install = run.indexOf('SetWindowsHookExW(');
+  const snapshot = run.indexOf('GetAsyncKeyState(');
+  assert.ok(install >= 0 && snapshot > install,
+    'pre-install snapshot can miss Ctrl release and steal later bare Space; sample only after hook install');
+  const reconcile = run.indexOf('reconcile_search_startup_keys(');
+  const ready = run.indexOf('ready.send(Ok(');
+  assert.ok(reconcile > snapshot && ready > reconcile,
+    'merge callback-observed transitions and seed preheld ownership before startup ready');
+  const callback = rustFunction(rust, 'search_keyboard_hook');
+  assert.match(callback, /observed\[[^\]]+\]\s*=\s*Some\(down\)/,
+    'startup reconciliation must preserve real callback transitions, not only merge an empty fixture');
+});
+
+test('dispatcher source holds explicit emission admission and retires through the same gate', () => {
+  const rust = readSource('../src-tauri/src/windows_key_hook.rs');
+  const worker = rustFunction(rust, 'start_search_dispatch');
+  const emit = worker.indexOf('app.emit_to(');
+  assert.ok(emit >= 0);
+  assert.match(worker.slice(0, emit), /let Some\([^)]*(?:permit|admission|lease)[^)]*\)\s*=\s*dispatch\.try_admit_emission\(\)/,
+    'a retired=false load is not serialized emission admission');
+  assert.match(worker, /dispatch\.retire\(\)/);
+  const run = rustFunction(rust, 'run_hotkey_thread');
+  const stop = run.slice(run.indexOf('WM_STOP_HOTKEYS =>'));
+  assert.match(stop, /dispatch\.retire\(\)/,
+    'stop must revoke future emission admission, not only set an independent flag');
+});
+
+test('Search owns its native trigger cycle while other shortcuts retain OS registration', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
   assert.match(rust, /RegisterHotKey/);
   assert.match(rust, /UnregisterHotKey/);
   assert.match(rust, /MOD_NOREPEAT/);
-  assert.doesNotMatch(rust, /WH_KEYBOARD_LL|SetWindowsHookExW|GetAsyncKeyState|CallNextHookEx|KBDLLHOOKSTRUCT|SearchHotkeyDecision::Suppress/);
+  for (const nativeBoundary of ['WH_KEYBOARD_LL', 'SetWindowsHookExW', 'UnhookWindowsHookEx', 'CallNextHookEx', 'KBDLLHOOKSTRUCT']) {
+    assert.ok(rust.includes(nativeBoundary), `Search ownership requires ${nativeBoundary}`);
+  }
+  assert.match(rust, /SearchKeyOwnership/);
+  assert.match(rust, /GetAsyncKeyState/, 'install/rebind must not treat a preheld trigger as fresh');
 });
 
 test('native dedicated thread receives WM_HOTKEY in a message loop', () => {
@@ -167,10 +242,15 @@ test('startup fails when required search hotkey hook cannot install', () => {
   assert.match(main, /windows_key_hook::install_loaded_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys, missing_snipping\)\s*\.map_err\(/);
 });
 
-test('native hotkeys do not install a low-level keyboard hook or consume Alt release', () => {
+test('native Search handles normal and system key transitions without a frontend release workaround', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
-  assert.doesNotMatch(rust, /WM_KEYUP|WM_SYSKEYUP|UnhookWindowsHookEx|SearchHotkeyEventKind::KeyUp/);
-  assert.doesNotMatch(rust, /VK_LWIN|VK_RWIN|LeftWin|RightWin/);
+  for (const transition of ['WM_KEYDOWN', 'WM_KEYUP', 'WM_SYSKEYDOWN', 'WM_SYSKEYUP']) {
+    assert.ok(rust.includes(transition), `Search ownership requires ${transition}`);
+  }
+  assert.doesNotMatch(rust, /SendInput|keybd_event/, 'ownership must never synthesize replacement input');
+  const topBar = readSource('../src/components/TopBar.svelte');
+  const toggle = topBar.slice(topBar.indexOf('function toggleCenteredSearchFromHotkey('), topBar.indexOf('function toggleCenteredSearchFromHotkey(') + 500);
+  assert.doesNotMatch(toggle, /setTimeout|requestAnimationFrame|keyup|event\.repeat/, 'native ownership must not delay Search hide');
 });
 
 test('fullscreen guard instrumentation tracks duration and wake counts', () => {

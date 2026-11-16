@@ -40,7 +40,7 @@ test('persisted hotkeys validate canonical bindings and reject unsafe chords', (
   assert.match(rustSettings, /canonicalizes_hotkey_bindings_before_persisting/);
 });
 
-test('registered hotkey IDs dispatch four existing action events', () => {
+test('existing standard action events remain available with one native Search delivery path', () => {
   const rust = readSource('../src-tauri/src/windows_key_hook.rs');
   const contracts = readSource('../src-tauri/src/contracts.rs');
   assert.match(rust, /WM_HOTKEY/);
@@ -57,6 +57,13 @@ test('registered hotkey IDs dispatch four existing action events', () => {
   assert.match(rust, /crate::contracts::events::TERMINAL_TOGGLE_PANEL/);
   assert.match(rust, /crate::contracts::events::STACK_BROWSER_TOGGLE/);
   assert.match(rust, /crate::contracts::events::SPEECH_TOGGLE/);
+  const dispatchStart = rust.indexOf('fn dispatch_hotkey(');
+  const dispatchEnd = rust.indexOf('fn run_hotkey_thread(', dispatchStart);
+  assert.ok(dispatchStart !== -1 && dispatchEnd > dispatchStart);
+  const dispatch = rust.slice(dispatchStart, dispatchEnd);
+  const searchArm = dispatch.match(/ConfiguredHotkeyAction::Search\s*=>\s*(\{[^}]*\}|[^,]*,)/);
+  assert.ok(searchArm, 'WM_HOTKEY dispatcher must explicitly ignore Search');
+  assert.doesNotMatch(searchArm[0], /emit_to|SEARCH_TOGGLE_CENTERED/, 'Search must not double-toggle via WM_HOTKEY');
 });
 
 test('startup and successful settings saves apply hook configuration at runtime', () => {
@@ -115,7 +122,8 @@ test('speech uses registered OS no-repeat hotkey without key-up suppression', ()
   assert.match(rust, /WM_HOTKEY/);
   assert.match(rust, /SPEECH_TOGGLE/);
   assert.match(contracts, /SPEECH_TOGGLE[^\n]*speech:toggle/);
-  assert.doesNotMatch(rust, /SearchHotkeyEventKind::KeyUp|WM_SYSKEYUP/);
+  const speechArm = rust.slice(rust.indexOf('ConfiguredHotkeyAction::Speech =>'), rust.indexOf('ConfiguredHotkeyAction::Snipping =>'));
+  assert.doesNotMatch(speechArm, /SearchKeyOwnership|WM_SYSKEYUP|CallNextHookEx/, 'speech remains outside Search trigger ownership');
 });
 
 test('failed OS replacement retains or restores previous hotkeys and reports failure', () => {
