@@ -10,7 +10,10 @@
 # Clipboard: reads only DIB header metadata after preview, never pixel bytes.
 param(
     [ValidateSet('LegacyDual','SingleDisplay')][string]$AcceptanceProfile='LegacyDual',
-    [switch]$ProfileMetadataOnly
+    [switch]$ProfileMetadataOnly,
+    # Each case starts a fresh owned process. Non-NeverOpened cases require an
+    # existing safe pinned folder; this runner never writes pins or folder data.
+    [ValidateSet('Unobserved','NeverOpened','ExplicitClosed','BlurClosed','Open')][string]$StackVisibilityCase='Unobserved'
 )
 $ErrorActionPreference = 'Stop'
 if (!$ProfileMetadataOnly -and $env:JASONSHELL_SNIP_RELEASE_E2E_TESTS -ne '1') {
@@ -40,6 +43,7 @@ public static class SnipReleaseProbe {
  [DllImport("user32.dll")] public static extern bool AreDpiAwarenessContextsEqual(IntPtr a,IntPtr b);
  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hwnd,System.Text.StringBuilder value,int capacity);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hwnd,System.Text.StringBuilder value,int capacity);
  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd,uint command);
  [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtrW(IntPtr hwnd,int index);
  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd,uint attribute,out RECT rect,uint bytes);
@@ -67,6 +71,7 @@ public static class SnipReleaseProbe {
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
  [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr w,IntPtr l);
+ [DllImport("user32.dll")] public static extern bool PostThreadMessageW(uint thread,uint msg,IntPtr w,IntPtr l);
  [DllImport("user32.dll")] public static extern int GetMessageW(out MSG msg,IntPtr hwnd,uint min,uint max);
  [DllImport("user32.dll")] public static extern void PostQuitMessage(int code);
  [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr hwnd);
@@ -154,6 +159,46 @@ public static class SnipReleaseProbe {
   return list.ToArray();
  }
  public static IntPtr[] Registered(int pid) { var list=new List<IntPtr>(); EnumWindows((h,d)=>{uint p;GetWindowThreadProcessId(h,out p);if(p==pid&&GetPropW(h,"JasonShell.Snip.Instance")!=IntPtr.Zero)list.Add(h);return true;},IntPtr.Zero);return list.ToArray(); }
+ // Exact allowlisted product title is only a discovery hint. Before observation,
+ // bind PID/thread/root/instance; never record arbitrary window text.
+ public static IntPtr StackWindow(int pid){
+  IntPtr result=IntPtr.Zero;int count=0;
+  foreach(var row in AllOwnedIdentities(pid)){
+   var h=new IntPtr(row.Hwnd);var text=new System.Text.StringBuilder(128);
+   if(GetWindowTextW(h,text,text.Capacity)>0&&text.ToString()=="JasonShell Stack"){
+    if(row.Epoch==0)throw new Exception("stack registry not ready");result=h;count++;
+   }
+  }
+  if(count!=1)throw new Exception("stack identity ambiguous");return result;
+ }
+ // OS show/hide event ledger, independent of polling: observes transient Stack
+ // reopening even if it hides again before the next geometry/preview sample.
+ // Events are delivered on a dedicated owned message pump. No screenshots,
+ // titles, paths, or persistent diagnostics; exact identity drift fails closed.
+ public sealed class StackVisibilityWatch : IDisposable {
+  readonly WindowIdentity expected;readonly WinEventProc callback;readonly Thread thread;
+  readonly ManualResetEvent ready=new ManualResetEvent(false);
+  volatile bool stop;volatile bool failed;IntPtr hook;uint observerThread;int shows,hides,invalid;
+  public StackVisibilityWatch(IntPtr hwnd){
+   expected=Identity(hwnd);if(!expected.Live||expected.Epoch==0||expected.Root!=expected.Hwnd)throw new Exception("invalid stack identity");
+   callback=OnEvent;thread=new Thread(Run);thread.IsBackground=true;thread.Start();
+   if(!ready.WaitOne(5000)||failed){Dispose();throw new Exception("stack recorder failed");}
+  }
+  void OnEvent(IntPtr unused,uint evt,IntPtr hwnd,int obj,int child,uint sourceThread,uint time){
+   if(hwnd.ToInt64()!=expected.Hwnd||obj!=0||child!=0)return;
+   var row=Identity(hwnd);
+   if(!row.Live||row.Pid!=expected.Pid||row.Thread!=expected.Thread||row.Epoch!=expected.Epoch||row.Root!=expected.Root){Interlocked.Increment(ref invalid);return;}
+   if(evt==0x8002)Interlocked.Increment(ref shows);if(evt==0x8003)Interlocked.Increment(ref hides);
+  }
+  void Run(){try{
+   observerThread=GetCurrentThreadId();MSG pending;PeekMessageW(out pending,IntPtr.Zero,0,0,0);
+   hook=SetWinEventHook(0x8002,0x8003,IntPtr.Zero,callback,expected.Pid,expected.Thread,0);
+   if(hook==IntPtr.Zero){failed=true;return;}ready.Set();
+   while(!stop){MSG message;int result=GetMessageW(out message,IntPtr.Zero,0,0);if(result<=0){if(result<0)failed=true;break;}TranslateMessage(ref message);DispatchMessageW(ref message);}Pump();
+  }catch{failed=true;}finally{if(hook!=IntPtr.Zero)UnhookWinEvent(hook);ready.Set();}}
+  public int[] Snapshot(){return new[]{Volatile.Read(ref shows),Volatile.Read(ref hides),Volatile.Read(ref invalid),failed?1:0};}
+  public void Dispose(){stop=true;if(observerThread!=0)PostThreadMessageW(observerThread,0x8000,IntPtr.Zero,IntPtr.Zero);if(!thread.Join(5000))throw new Exception("stack recorder cleanup failed");ready.Dispose();}
+ }
  public static int[] Bounds(IntPtr h) {RECT r;if(!GetWindowRect(h,out r))throw new Exception("bounds unavailable");return new[]{r.Left,r.Top,r.Right-r.Left,r.Bottom-r.Top};}
  public static int[] ClientBounds(IntPtr h) {RECT r;POINT p=new POINT();if(!GetClientRect(h,out r)||!ClientToScreen(h,ref p))throw new Exception("client bounds unavailable");return new[]{p.X,p.Y,r.Right-r.Left,r.Bottom-r.Top};}
  public static IntPtr At(int x,int y){return WindowFromPoint(new POINT{X=x,Y=y});}
@@ -280,6 +325,25 @@ function Read-SnipSingleProfile {
     if($rows.Length -ne 1){throw 'single-profile-requires-exactly-one-monitor'}
     New-SnipSingleProfile $rows[0]
 }
+# Pure physical geometry: choose an owned 64px fixture rectangle wholly inside
+# the work area and outside the measured topmost Stack, with 8px clearance.
+# If no safe corner fits, fail instead of clicking through Stack or changing it.
+function New-SnipStackBlurTarget([int[]]$WorkArea,[int[]]$StackBounds) {
+    if($WorkArea.Count -ne 4 -or $StackBounds.Count -ne 4 -or
+        $WorkArea[2] -lt 80 -or $WorkArea[3] -lt 80 -or $StackBounds[2] -le 0 -or $StackBounds[3] -le 0){throw 'stack-blur-invalid-geometry'}
+    [long]$wl=$WorkArea[0];[long]$wt=$WorkArea[1]
+    [long]$wr=$wl+$WorkArea[2];[long]$wb=$wt+$WorkArea[3]
+    [long]$sl=$StackBounds[0];[long]$st=$StackBounds[1]
+    [long]$sr=$sl+$StackBounds[2];[long]$sb=$st+$StackBounds[3]
+    foreach($point in @(@(($wl+8),($wt+8)),@(($wr-72),($wt+8)),@(($wl+8),($wb-72)),@(($wr-72),($wb-72)))){
+        [long]$x=$point[0];[long]$y=$point[1]
+        if($x+64+8 -le $sl -or $x -ge $sr+8 -or $y+64+8 -le $st -or $y -ge $sb+8){
+            if(@($x,$y,($x+64),($y+64)) | Where-Object {$_ -lt [int]::MinValue -or $_ -gt [int]::MaxValue}){throw 'stack-blur-coordinate-overflow'}
+            return [pscustomobject]@{Bounds=[int[]]@($x,$y,64,64);Click=[int[]]@(($x+32),($y+32))}
+        }
+    }
+    throw 'stack-blur-no-unoccluded-fixture-space'
+}
 if($ProfileMetadataOnly){
     if($AcceptanceProfile -ne 'SingleDisplay'){throw 'metadata-only-requires-single-display-profile'}
     $prior=[SnipReleaseProbe]::SetThreadDpiAwarenessContext([IntPtr](-4))
@@ -392,7 +456,7 @@ function Test-SnipPostClickBaseline(
     [object[]]$PreOwned,[object[]]$BeforeOwned,[object[]]$AfterOwned,
     $PreFixture,$CurrentFixture,$PreBar,$CurrentBar,$Observed,
     [long]$ProtectedBarHwnd,[long]$ProtectedBarEpoch,[uint32]$ShellPid,[uint32]$FixturePid,
-    [object[]]$BeforeHelpers=@(),[object[]]$AfterHelpers=@()
+    [object[]]$BeforeHelpers=@(),[object[]]$AfterHelpers=@(),$ApprovedStack=$null
 ) {
     $result=[pscustomobject]@{Accepted=$false;Classification='inconclusive';Reason='owned-inventory-changed';Observed=$Observed}
     if(!(Test-SnipInventoryWithImeAdditions $PreOwned $BeforeOwned $AfterOwned $BeforeHelpers $AfterHelpers $PreBar $ShellPid)){return $result}
@@ -409,6 +473,9 @@ function Test-SnipPostClickBaseline(
     $result.Reason='foreground-not-approved'
     if(Test-SnipIdentitySame $PreFixture $Observed -RequireVisible){$result.Classification='fixtureB'}
     elseif(Test-SnipIdentitySame $PreBar $Observed -RequireVisible){$result.Classification='protectedbar'}
+    elseif($null -ne $ApprovedStack -and $ApprovedStack.Pid -eq $ShellPid -and $ApprovedStack.Epoch -ne 0 -and
+        @($PreOwned | Where-Object {Test-SnipIdentitySame $ApprovedStack $_ -RequireVisible}).Count -eq 1 -and
+        (Test-SnipIdentitySame $ApprovedStack $Observed -RequireVisible)){$result.Classification='approvedstack'}
     else{return $result}
     $result.Accepted=$true;$result.Reason='accepted';return $result
 }
@@ -484,9 +551,12 @@ $script:lastInjectedUpTimestamp = 0L
 $postClickBaseline=$null
 $baselineReason='baseline-capture-error'
 $stage='preflight'; $shell=$null; $fixture=[IntPtr]::Zero; $top=[IntPtr]::Zero; $shellPid=0; $pass=$false
+$stackWatch=$null;$stackHandle=[IntPtr]::Zero
+$approvedStack=$null
 $oldDpi=[SnipReleaseProbe]::SetThreadDpiAwarenessContext([IntPtr](-4))
 try {
     Require (@(Get-Process -Name 'jason-shell' -ErrorAction SilentlyContinue).Count -eq 0) 'existing-shell-conflict'
+    Require ($StackVisibilityCase -ne 'Open' -or $AcceptanceProfile -eq 'SingleDisplay') 'open-stack-requires-single-display-profile'
     Require (![SnipReleaseProbe]::LeftIsDown()) 'left-button-already-held-at-preflight'
     if($AcceptanceProfile -eq 'SingleDisplay'){$singleProfile=Read-SnipSingleProfile;$initialSingleBounds=$singleProfile.Bounds -join ',';$initialSingleDpi=$singleProfile.Dpi}
     $exe=Join-Path $PSScriptRoot '../src-tauri/target/release/jason-shell.exe'
@@ -523,6 +593,57 @@ try {
     [void](Wait-Stage { [SnipReleaseProbe]::GetForegroundWindow() -eq $fixture -and [SnipReleaseProbe]::NeutralFocusCount($fixture) -gt $beforeB -and [SnipReleaseProbe]::NeutralLastFocus() -eq 2 } 'neutral-B-os-foreground-event' 5)
     $script:fixtureBConfirmedTimestamp=[System.Diagnostics.Stopwatch]::GetTimestamp()
     'STAGE post-bar-responsive-external-fixtures genuine-A-to-B=true owned-OS-foreground-events=true shellObserverAcceptance=not-yet-observed'
+    if($StackVisibilityCase -ne 'Unobserved'){
+        $stage='stack-regression-setup'
+        $stackHandle=Wait-Stage {try{[SnipReleaseProbe]::StackWindow($shellPid)}catch{$null}} 'registered-stack' 5
+        Require (![SnipReleaseProbe]::IsWindowVisible($stackHandle)) 'stack-must-start-hidden'
+        if($StackVisibilityCase -ne 'NeverOpened'){
+            Invoke-Element (Find-Name $top 'Toggle Stack Browser')
+            [void](Wait-Stage {[SnipReleaseProbe]::IsWindowVisible($stackHandle) -and (Find-Name $stackHandle 'Close stack browser')} 'stack-open-safe-pinned-folder' 10)
+            if($StackVisibilityCase -eq 'Open'){
+                $approvedStack=[SnipReleaseProbe]::Identity($stackHandle)
+                [uint32]$stackAffinity=0
+                Require ([SnipReleaseProbe]::GetWindowDisplayAffinity($stackHandle,[ref]$stackAffinity) -and $stackAffinity -eq 0) 'ordinary-stack-must-not-be-capture-excluded'
+            }elseif($StackVisibilityCase -eq 'ExplicitClosed'){
+                Invoke-Element (Find-Name $stackHandle 'Close stack browser')
+            }else{
+                # Genuine native focus transfer causes the production blur path.
+                # The initial fixture coordinates can be underneath topmost Stack.
+                # Move only our fixture, never Stack, using its measured bounds.
+                $stackBounds=[SnipReleaseProbe]::Bounds($stackHandle)
+                if($AcceptanceProfile -eq 'SingleDisplay'){$blurWorkArea=$singleProfile.WorkArea}else{
+                    $topBounds=[SnipReleaseProbe]::Bounds($top)
+                    $monitorRows=@([SnipReleaseProbe]::MonitorRows() | Where-Object {
+                        $topBounds[0] -ge $_[0] -and $topBounds[0] -lt $_[0]+$_[2] -and
+                        $topBounds[1] -ge $_[1] -and $topBounds[1] -lt $_[1]+$_[3]
+                    })
+                    Require ($monitorRows.Count -eq 1) 'stack-blur-monitor-ambiguous'
+                    $blurWorkArea=[int[]]$monitorRows[0][4..7]
+                }
+                $blurTarget=New-SnipStackBlurTarget $blurWorkArea $stackBounds
+                $fixtureIdentity=[SnipReleaseProbe]::Identity($fixture)
+                Require ($fixtureIdentity.Pid -eq $PID -and $fixtureIdentity.Live) 'stack-blur-fixture-identity-invalid'
+                $r=$blurTarget.Bounds
+                Require ([SnipReleaseProbe]::SetWindowPos($fixture,[IntPtr]::Zero,$r[0],$r[1],$r[2],$r[3],0x14)) 'stack-blur-fixture-placement-failed'
+                Require (([SnipReleaseProbe]::Bounds($fixture) -join ',') -eq ($r -join ',')) 'stack-blur-fixture-placement-mismatch'
+                Require (Test-SnipIdentitySame $fixtureIdentity ([SnipReleaseProbe]::Identity($fixture)) -RequireVisible) 'stack-blur-fixture-identity-changed'
+                $bx=$blurTarget.Click[0];$by=$blurTarget.Click[1]
+                # No focus-forcing API: verify current native hit ownership first.
+                Assert-InputTarget $fixture $PID $bx $by
+                $beforeBlurFocus=[SnipReleaseProbe]::NeutralFocusCount($fixture)
+                Start-InjectedLeft $fixture $PID $bx $by;Release-InjectedLeft
+                [void](Wait-Stage {[SnipReleaseProbe]::GetForegroundWindow() -eq $fixture -and
+                    [SnipReleaseProbe]::NeutralFocusCount($fixture) -gt $beforeBlurFocus} 'stack-blur-fixture-os-focus-transfer' 5)
+            }
+            if($StackVisibilityCase -ne 'Open'){[void](Wait-Stage {![SnipReleaseProbe]::IsWindowVisible($stackHandle)} 'stack-closed-before-snip' 5)}
+        }
+        if($StackVisibilityCase -ne 'Open' -and [SnipReleaseProbe]::GetForegroundWindow() -ne $fixture){
+            Start-InjectedLeft $fixture $PID $bx $by;Release-InjectedLeft
+            [void](Wait-Stage {[SnipReleaseProbe]::GetForegroundWindow() -eq $fixture} 'stack-case-external-origin' 5)
+        }
+        $stackWatch=[SnipReleaseProbe+StackVisibilityWatch]::new($stackHandle)
+        "STAGE stack-watch case=$StackVisibilityCase expectedVisible=$($StackVisibilityCase -eq 'Open') eventLedger=true"
+    }
     $sequenceBefore=[SnipReleaseProbe]::GetClipboardSequenceNumber()
     if($AcceptanceProfile -eq 'SingleDisplay'){
         $singleProfile=Read-SnipSingleProfile
@@ -572,7 +693,7 @@ try {
         $postClickFixture=[SnipReleaseProbe]::Identity($fixture)
         $postClickBar=[SnipReleaseProbe]::Identity($top)
         $baselineTicks.DecisionStart=[System.Diagnostics.Stopwatch]::GetTimestamp()
-        $postClickBaseline=Test-SnipPostClickBaseline -PreOwned $preClickOwned -BeforeOwned $beforeForegroundInventory -AfterOwned $afterForegroundInventory -PreFixture $preClickFixture -CurrentFixture $postClickFixture -PreBar $preClickBar -CurrentBar $postClickBar -Observed $postClickObserved -ProtectedBarHwnd $top.ToInt64() -ProtectedBarEpoch $script:protectedButtonEpoch.ToInt64() -ShellPid $shellPid -FixturePid $PID -BeforeHelpers $beforeHelperFacts -AfterHelpers $afterHelperFacts
+        $postClickBaseline=Test-SnipPostClickBaseline -PreOwned $preClickOwned -BeforeOwned $beforeForegroundInventory -AfterOwned $afterForegroundInventory -PreFixture $preClickFixture -CurrentFixture $postClickFixture -PreBar $preClickBar -CurrentBar $postClickBar -Observed $postClickObserved -ProtectedBarHwnd $top.ToInt64() -ProtectedBarEpoch $script:protectedButtonEpoch.ToInt64() -ShellPid $shellPid -FixturePid $PID -BeforeHelpers $beforeHelperFacts -AfterHelpers $afterHelperFacts -ApprovedStack $approvedStack
         $baselineTicks.DecisionEnd=[System.Diagnostics.Stopwatch]::GetTimestamp()
         $baselineReason=$postClickBaseline.Reason
         if(!$postClickBaseline.Accepted){Write-SnipBaselineFailure;throw 'post-click-baseline-inconclusive'}
@@ -704,12 +825,20 @@ try {
         Require (($bounds -join ',') -eq ($singleProfile.Preview -join ',')) 'preview-exact-single-bounds-failed'
     }else{Require (($bounds -join ',') -eq '5440,0,960,792') 'preview-exact-secondary-bounds-failed'}
     $foreground=[SnipReleaseProbe]::GetForegroundWindow()
-    if($foreground -eq $preview -or $foreground -ne $fixture){Write-SnipForegroundFailure $foreground 'preview'}
-    Require ($foreground -ne $preview) 'preview-activated'
-    Require ($foreground -eq $fixture) 'external-foreground-not-restored'
+    if($StackVisibilityCase -eq 'Open'){
+        $expectedForeground=[IntPtr]$postClickBaseline.Observed.Hwnd
+        if($foreground -eq $preview -or $foreground -ne $expectedForeground){Write-SnipForegroundFailure $foreground 'preview'}
+        Require ($foreground -ne $preview) 'preview-activated'
+        Require ($foreground -eq $expectedForeground) 'expected-foreground-not-restored'
+    }else{
+        if($foreground -eq $preview -or $foreground -ne $fixture){Write-SnipForegroundFailure $foreground 'preview'}
+        Require ($foreground -ne $preview) 'preview-activated'
+        Require ($foreground -eq $fixture) 'external-foreground-not-restored'
+    }
     [uint32]$previewAffinity=0
     Require ([SnipReleaseProbe]::GetWindowDisplayAffinity($preview,[ref]$previewAffinity) -and $previewAffinity -eq 17) 'preview-exclusion-failed'
-    if($AcceptanceProfile -eq 'SingleDisplay'){"STAGE preview-visible exact=$($singleProfile.Preview -join ',') single-monitor=true excluded=true nonactivating=true external-foreground-restored=true"}else{'STAGE preview-visible exact=(5440,0,960,792) on-secondary=true excluded=true nonactivating=true external-foreground-restored=true'}
+    if($StackVisibilityCase -eq 'Open'){"STAGE preview-visible exact=$($singleProfile.Preview -join ',') single-monitor=true excluded=true nonactivating=true approved-postclick-foreground-preserved=true"}
+    elseif($AcceptanceProfile -eq 'SingleDisplay'){"STAGE preview-visible exact=$($singleProfile.Preview -join ',') single-monitor=true excluded=true nonactivating=true external-foreground-restored=true"}else{'STAGE preview-visible exact=(5440,0,960,792) on-secondary=true excluded=true nonactivating=true external-foreground-restored=true'}
     "TIMING previewValidatedMs=$($buttonClock.ElapsedMilliseconds) selectionCompletionObserved=true"
     $stage='clipboard-image-metadata'
     "DIAG stage=clipboard-before-header elapsedMs=$($visibilityClock.ElapsedMilliseconds) sequenceBefore=$sequenceBefore sequenceNow=$([SnipReleaseProbe]::GetClipboardSequenceNumber())"
@@ -724,6 +853,16 @@ try {
     [void](Wait-Stage { ![SnipReleaseProbe]::IsWindow($preview) -and @($overlays | Where-Object {[SnipReleaseProbe]::IsWindow($_)}).Count -eq 0 } 'snip-windows-dismissed')
     if($AcceptanceProfile -eq 'SingleDisplay'){'STAGE dismiss preview-and-single-overlay-gone=true'}else{'STAGE dismiss preview-and-both-overlays-gone=true'}
     "TIMING dismissConfirmedMs=$($buttonClock.ElapsedMilliseconds)"
+    if($null -ne $stackWatch){
+        $stage='stack-never-reopened'
+        # Stop joins the observer and drains delivered events before reading its
+        # scalar ledger. This is not a compositor/future-event barrier.
+        $stackWatch.Dispose();$stackFacts=$stackWatch.Snapshot();$stackWatch=$null
+        Require ($stackFacts[0] -eq 0 -and $stackFacts[1] -eq 0 -and $stackFacts[2] -eq 0 -and $stackFacts[3] -eq 0) 'stack-transient-visibility-or-identity-failed'
+        $stackExpectedVisible=$StackVisibilityCase -eq 'Open'
+        Require ([SnipReleaseProbe]::IsWindowVisible($stackHandle) -eq $stackExpectedVisible) 'stack-visibility-changed-after-snip'
+        "STAGE stack-preserved case=$StackVisibilityCase showEvents=0 hideEvents=0 identityFailures=0 finalVisible=$stackExpectedVisible capturedPixelsVerified=false"
+    }
     $pass=$true
 } catch {
     # Inventory/verification exceptions can occur while the recorded click is
@@ -746,6 +885,7 @@ try {
 } finally {
     # Must precede window closure even after failure/interruption mid-click/drag.
     Release-InjectedLeft
+    if($null -ne $stackWatch){try{$stackWatch.Dispose()}catch{'CLEANUP BLOCKED stack-recorder-close-timeout';$pass=$false};$stackWatch=$null}
     # Never kill by name. On normal-close timeout report BLOCKED, leave exact PID
     # available for owner-controlled cleanup, and do not launch another instance.
     if($shell -and !$shell.HasExited){

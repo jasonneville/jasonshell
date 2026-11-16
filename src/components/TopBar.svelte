@@ -49,6 +49,7 @@
     STACK_PINS_UPDATED_EVENT,
     unpinStackFolder,
     showStackPopup,
+    requestStackPopupClose,
     toggleStackPopup,
     type StackPin
   } from '../lib/stackPopup';
@@ -857,10 +858,14 @@
 
   function handleTopBarPointerDown(event: MouseEvent) {
     const target = event.target instanceof Node ? event.target : null;
+    // Snipping captures deliberately open shell surfaces; it must not dismiss them.
+    if (target instanceof Element && target.closest('.snip-button')) {
+      return;
+    }
     const stackBrowserTarget = target instanceof Element && target.closest('.stack-browser-button');
     if (!isPinnedFolderPointerTarget(target) && !stackBrowserTarget) {
       if (stackBrowserOpen) {
-        void toggleStackPopup().catch((error) => {
+        void requestStackPopupClose().catch((error) => {
           console.error('Failed to request Stack popup close after top bar pointer press', error);
         });
       }
@@ -2258,7 +2263,7 @@
             </MeltActionButton>
           </div>
         {:else if control.id === 'snip'}
-          <MeltActionButton class="sound-button" ariaLabel="Capture screen region" tooltip="Capture screen region" disabled={snipStartPending} onClick={(event) => {
+          <MeltActionButton class="sound-button snip-button" ariaLabel="Capture screen region" tooltip="Capture screen region" disabled={snipStartPending} onClick={(event) => {
             if (!shouldSuppressTopBarControlClick(suppressNextTopBarControlClickId, 'snip', event)) {
               void requestSnip();
             }

@@ -458,7 +458,9 @@ test('folder, popup-request, editor-back, and surface-close routes use dirty-dra
   assert.doesNotMatch(toggle, /await hideStackPopup\(/, 'top-bar toggle must request the popup dirty-draft guard before hiding');
   assert.match(toggle, /if \(stackBrowserOpen\)[\s\S]*await toggleStackPopup\(\)/, 'top-bar close requests the native event instead of hiding directly');
   assert.match(topBar, /listen\(STACK_POPUP_CLOSED_EVENT, \(\) => \{\s*stackBrowserOpen = false;/, 'only closed notification clears top-bar state');
-  assert.match(topBar, /if \(stackBrowserOpen\)[\s\S]*void toggleStackPopup\(\)/, 'outside-button dismissal also requests guarded close');
+  const outsideDismiss = topBar.slice(topBar.indexOf('function handleTopBarPointerDown('), topBar.indexOf('function isPinnedFolderPointerTarget('));
+  assert.match(outsideDismiss, /if \(stackBrowserOpen\)[\s\S]*void requestStackPopupClose\(\)/, 'outside-button dismissal requests guarded close without reopening hidden Stack');
+  assert.doesNotMatch(outsideDismiss, /toggleStackPopup\(/);
   const nativeToggle = nativePopup.slice(nativePopup.indexOf('pub fn toggle_stack_popup('), nativePopup.indexOf('\n#[tauri::command]', nativePopup.indexOf('pub fn toggle_stack_popup(') + 1));
   assert.doesNotMatch(nativeToggle, /if popup\.is_visible\(\)[\s\S]*?hide_stack_popup_window\(app_handle\)/, 'native toggle must not bypass dirty-draft confirmation');
   assert.match(nativeToggle, /if popup\.is_visible\(\)[\s\S]*?\.emit\(crate::contracts::events::STACK_POPUP_CLOSE_REQUESTED, \(\)\)/, 'native visible toggle targets the popup close listener');

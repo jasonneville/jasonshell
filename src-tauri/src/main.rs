@@ -396,7 +396,7 @@ fn main() {
                 {
                     return;
                 }
-                let _ = window.hide();
+                let _ = stack_popup::hide_stack_popup(window.app_handle().clone());
                 return;
             }
 

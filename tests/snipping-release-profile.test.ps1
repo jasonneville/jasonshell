@@ -8,6 +8,9 @@ if($errors.Count){throw 'release-probe-parser-errors'}
 $function=@($ast.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'New-SnipSingleProfile'},$true))
 if($function.Count -ne 1){throw 'pure-profile-constructor-missing-or-ambiguous'}
 . ([scriptblock]::Create($function[0].Extent.Text))
+$blurFunction=@($ast.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'New-SnipStackBlurTarget'},$true))
+if($blurFunction.Count -ne 1){throw 'pure-stack-blur-target-missing-or-ambiguous'}
+. ([scriptblock]::Create($blurFunction[0].Extent.Text))
 $cs=@($ast.FindAll({param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Value.Contains('public static class SnipReleaseProbe')},$true))
 if($cs.Count -ne 1){throw 'native-helper-source-missing-or-ambiguous'}
 Add-Type -TypeDefinition $cs[0].Value
@@ -55,3 +58,38 @@ foreach($contract in @(
     'GetClipboardSequenceNumber() -ne $sequenceBefore'
 )){if(!$source.Contains($contract)){throw 'legacy-exact-oracle-removed'}}
 "PROFILE PURE PASS validCases=$($cases.Count) invalidCases=$rejected parserErrors=0 CSharpCompile=true nativeMethodsExecuted=0 legacyExactOraclesPresent=true"
+$blurCases=@(
+    # Old SingleDisplay fixture B click (240,135) lies underneath this Stack.
+    @{Work=@(0,23,2560,1370);Stack=@(0,23,2000,500);OldClick=@(240,135)},
+    # Stack covers both top corners; deterministic choice must move below it.
+    @{Work=@(0,23,2560,1370);Stack=@(0,23,2560,600);OldClick=@(240,135)},
+    @{Work=@(-1920,-1040,1920,1040);Stack=@(-1920,-1040,1920,600);OldClick=@(-1680,-928)},
+    @{Work=@(0,0,800,600);Stack=@(500,300,300,300);OldClick=@(600,400)}
+)
+foreach($case in $blurCases){
+    $target=New-SnipStackBlurTarget $case.Work $case.Stack
+    $r=$target.Bounds;$s=$case.Stack;$w=$case.Work;$p=$target.Click
+    if($case.OldClick[0] -lt $s[0] -or $case.OldClick[0] -ge $s[0]+$s[2] -or
+       $case.OldClick[1] -lt $s[1] -or $case.OldClick[1] -ge $s[1]+$s[3]){throw 'overlap-regression-fixture-does-not-cover-old-click'}
+    if($r[0] -lt $w[0] -or $r[1] -lt $w[1] -or $r[0]+$r[2] -gt $w[0]+$w[2] -or $r[1]+$r[3] -gt $w[1]+$w[3]){throw 'blur-target-outside-work-area'}
+    if(!($r[0]+$r[2]+8 -le $s[0] -or $r[0] -ge $s[0]+$s[2]+8 -or
+         $r[1]+$r[3]+8 -le $s[1] -or $r[1] -ge $s[1]+$s[3]+8)){throw 'blur-target-overlaps-stack-or-clearance'}
+    if($p[0] -ne $r[0]+32 -or $p[1] -ne $r[1]+32){throw 'blur-click-not-fixture-center'}
+    Equal (New-SnipStackBlurTarget $case.Work $case.Stack).Bounds $r 'deterministic-blur-target'
+}
+$blurRejected=0
+foreach($case in @(
+    @{Work=@(0,0,800,600);Stack=@(0,0,800,600)},
+    @{Work=@(0,0,79,600);Stack=@(0,0,10,10)},
+    @{Work=@(0,0,800,600);Stack=@(0,0,0,10)},
+    @{Work=@(0,0,800);Stack=@(0,0,10,10)},
+    @{Work=@(2147483640,0,800,600);Stack=@(0,0,10,10)}
+)){
+    $failed=$false;try{$null=New-SnipStackBlurTarget $case.Work $case.Stack}catch{$failed=$true}
+    if(!$failed){throw 'unsafe-blur-target-accepted'};$blurRejected++
+}
+# Placement and hit ownership must precede injected input and confirmed focus.
+if($source -notmatch 'New-SnipStackBlurTarget \$blurWorkArea \$stackBounds[\s\S]*SetWindowPos\(\$fixture[\s\S]*Assert-InputTarget \$fixture \$PID \$bx \$by[\s\S]*Start-InjectedLeft \$fixture \$PID \$bx \$by;Release-InjectedLeft[\s\S]*stack-blur-fixture-os-focus-transfer'){
+    throw 'blur-target-must-be-placed-hit-verified-and-observed-focused'
+}
+"STACK BLUR PURE PASS overlapCases=$($blurCases.Count) rejectedCases=$blurRejected nativeMethodsExecuted=0"

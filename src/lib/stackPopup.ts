@@ -370,6 +370,10 @@ export function toggleStackPopup(): Promise<boolean | null> {
   return invoke(IPC_COMMANDS.toggleStackPopup);
 }
 
+export async function requestStackPopupClose(): Promise<void> {
+  await invoke(IPC_COMMANDS.toggleStackPopup, { closeOnly: true });
+}
+
 function nextStackPopupRequestId() {
   stackPopupRequestSequence += 1;
   return `${Date.now().toString(36)}-${stackPopupRequestSequence.toString(36)}`;

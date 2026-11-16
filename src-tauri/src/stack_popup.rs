@@ -302,6 +302,7 @@ pub fn toggle_stack_popup(
     window: WebviewWindow,
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
+    close_only: Option<bool>,
 ) -> Result<Option<bool>, String> {
     authorize_stack_command(
         &window,
@@ -321,6 +322,10 @@ pub fn toggle_stack_popup(
         // Visibility does not change until the renderer's dirty-editor guard
         // accepts the request. The closed event updates the top-bar state.
         Ok(Some(true))
+    } else if close_only.unwrap_or(false) {
+        // Outside dismissal must never reopen a popup hidden since the caller's
+        // last visibility event. Visible requests still use the dirty-editor guard.
+        Ok(Some(false))
     } else if popup_window::latest_stack_popup_request(state.clone()).is_some() {
         popup_window::reopen_stack_popup_window(app_handle, state)?;
         Ok(Some(true))

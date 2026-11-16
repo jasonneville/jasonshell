@@ -68,6 +68,30 @@ foreach($test in $negative){
     $rejected++
 }
 $source=$ast.Extent.Text
+function New-OpenStackCase {
+    $c=New-Case;$stack=New-Identity 102 10 8
+    $c.PreOwned+=Copy-Identity $stack;$c.BeforeOwned+=Copy-Identity $stack;$c.AfterOwned+=Copy-Identity $stack
+    $c.ApprovedStack=Copy-Identity $stack;$c.Observed=Copy-Identity $stack
+    return $c
+}
+$open=New-OpenStackCase;$openResult=Test-SnipPostClickBaseline @open
+if(!$openResult.Accepted -or $openResult.Classification -ne 'approvedstack'){throw 'exact-approved-stack-rejected'}
+$stackRejected=0
+foreach($mutate in @(
+    {param($c) $c.ApprovedStack=$null},
+    {param($c) $c.ApprovedStack.Epoch=0},
+    {param($c) $c.ApprovedStack.Pid=99},
+    {param($c) $c.Observed.Epoch=9},
+    {param($c) $c.Observed.Thread=999},
+    {param($c) $c.Observed.Visible=$false},
+    {param($c) $c.PreOwned=@($c.PreOwned[0],$c.PreOwned[1])},
+    {param($c) $c.AfterOwned[2].Visible=$false}
+)){
+    $c=New-OpenStackCase;& $mutate $c
+    if((Test-SnipPostClickBaseline @c).Accepted){throw 'unverified-stack-origin-accepted'}
+    $stackRejected++
+}
+"STACK FOCUS PURE PASS accepted=1 rejected=$stackRejected nativeMethodsExecuted=0"
 $ordering='\$beforeForegroundInventory=\[SnipReleaseProbe\]::AllOwnedIdentities\(\$shellPid\)\s+\$baselineTicks.BeforeEnd=\[System.Diagnostics.Stopwatch\]::GetTimestamp\(\)\s+\$beforeHelperFacts=\[SnipReleaseProbe\]::VerifyAddedRootClasses\([^\r\n]+\)\s+Release-InjectedLeft\s+\$postClickForeground=\[SnipReleaseProbe\]::GetForegroundWindow\(\)\s+\$baselineTicks.ForegroundEnd=\[System.Diagnostics.Stopwatch\]::GetTimestamp\(\)\s+\$postClickObserved=\[SnipReleaseProbe\]::Identity\(\$postClickForeground\)\s+\$baselineTicks.AfterStart=\[System.Diagnostics.Stopwatch\]::GetTimestamp\(\)\s+\$afterForegroundInventory=\[SnipReleaseProbe\]::AllOwnedIdentities\(\$shellPid\)'
 if($source -notmatch $ordering){throw 'foreground-must-be-immediate-after-UP-inside-owned-inventory-bracket'}
 $ownedBody=($source -split 'public static WindowIdentity\[\] AllOwnedIdentities',2)[1] -split 'public static IntPtr\[\] Registered',2 | Select-Object -First 1

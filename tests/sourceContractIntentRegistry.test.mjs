@@ -19,6 +19,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'meltMigrationWiring.test.mjs',
     'overlayDismissalWiring.test.mjs',
     'snippingDeviceEventFilterContract.test.mjs', // Native input-filter/lifecycle wiring, not real OS delivery evidence.
+    'snippingStackVisibility.test.mjs', // Executed production handlers/adapters plus native lifecycle source guards; no HWND/pixel proof.
     'persistentSurfaceLifecycle.test.mjs',
     'bootstrapWindowsContract.test.mjs',
     'runtimeSmokeHarnessContract.test.mjs',
