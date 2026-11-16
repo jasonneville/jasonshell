@@ -25,9 +25,86 @@ mod seven_hotkey_acceptance {
         let hotkeys = value["hotkeys"].as_object_mut().unwrap();
         hotkeys.remove("processManager");
         hotkeys.remove("settings");
+        hotkeys.remove("quickCommands");
         if missing_snipping { hotkeys.remove("snipping"); }
         hotkeys.insert("search".into(), serde_json::json!(search));
         value
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_default_is_unique_and_appended() {
+        let value = serde_json::to_value(ShellSettings::default()).unwrap();
+        assert_eq!(value["hotkeys"]["quickCommands"], "Alt+Q");
+        assert_eq!(value["hotkeys"].as_object().unwrap().len(), 8);
+        let values: std::collections::HashSet<_> = value["hotkeys"].as_object().unwrap().values().map(|value| value.as_str().unwrap()).collect();
+        assert_eq!(values.len(), 8);
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_inferred_conflict_and_unrelated_writes_preserve_omission() {
+        for search in ["Ctrl+Space", "Alt+Q"] {
+            let mut value = serde_json::to_value(ShellSettings::default()).unwrap();
+            value["hotkeys"].as_object_mut().unwrap().remove("quickCommands");
+            value["hotkeys"]["search"] = serde_json::json!(search);
+            let file = Fixture::new(value); let before = fs::read(&file.0).unwrap();
+            let loaded = load_settings_from_path(&file.0).expect("inferred Quick Commands must not reject prior Alt+Q owner");
+            assert_eq!(loaded.hotkeys.search.0, search);
+            assert_eq!(serde_json::to_value(&loaded).unwrap()["hotkeys"]["quickCommands"], "Alt+Q");
+            assert_eq!(fs::read(&file.0).unwrap(), before);
+            update_settings_to_path(&file.0, |settings| settings.ui.enable_diagnostics_export = true).unwrap();
+            assert!(file.disk()["hotkeys"].get("quickCommands").is_none(), "unrelated write materialized omitted eighth field");
+            let restarted = load_settings_from_path(&file.0).unwrap();
+            assert_eq!(restarted.hotkeys.search.0, search);
+            assert!(restarted.ui.enable_diagnostics_export);
+        }
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_explicit_duplicates_and_invalid_values_are_strict() {
+        for binding in ["Ctrl+Space", "Alt+P", "", "Q", "Ctrl+Alt+Q", "Alt+Unknown", "Alt+Q\n"] {
+            let mut value = serde_json::to_value(ShellSettings::default()).unwrap();
+            value["hotkeys"]["quickCommands"] = serde_json::json!(binding);
+            let file = Fixture::new(value);
+            assert!(load_settings_from_path(&file.0).is_err(), "explicit Quick Commands {binding:?} must not be ignored/defaulted");
+        }
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_custom_binding_roundtrips() {
+        let mut value = serde_json::to_value(ShellSettings::default()).unwrap();
+        value["hotkeys"]["quickCommands"] = serde_json::json!("Alt+X");
+        let file = Fixture::new(value);
+        let loaded = load_settings_from_path(&file.0).unwrap();
+        assert_eq!(serde_json::to_value(loaded).unwrap()["hotkeys"]["quickCommands"], "Alt+X");
+        update_settings_to_path(&file.0, |settings| settings.ui.enable_diagnostics_export = true).unwrap();
+        assert_eq!(file.disk()["hotkeys"]["quickCommands"], "Alt+X");
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_legacy_owner_omission_survives_unrelated_routes_then_explicit_repair_restart() {
+        for route in ["general", "quick-commands", "panel", "bar-lock"] {
+            let mut value = serde_json::to_value(ShellSettings::default()).unwrap();
+            value["hotkeys"].as_object_mut().unwrap().remove("quickCommands");
+            value["hotkeys"]["search"] = serde_json::json!("Alt+Q");
+            let file = Fixture::new(value);
+            match route {
+                "general" => { update_settings_to_path(&file.0, |settings| settings.ui.enable_diagnostics_export = true).unwrap(); },
+                "quick-commands" => { update_settings_to_path(&file.0, |settings| settings.quick_commands.list_width = 300).unwrap(); },
+                "panel" => { let submitted = load_settings_from_path(&file.0).unwrap(); save_unrelated_settings(&file.0, submitted, true).unwrap(); },
+                "bar-lock" => { save_shell_bar_lock_to_path(&file.0, SaveShellBarLockRequest { edge: crate::appbar::ShellBarResizeEdge::Top, locked: false }).unwrap(); },
+                _ => unreachable!(),
+            }
+            assert!(file.disk()["hotkeys"].get("quickCommands").is_none(), "{route} materialized inferred chord");
+            let restarted = load_settings_from_path(&file.0).unwrap(); assert_eq!(restarted.hotkeys.search.0, "Alt+Q");
+            assert!(missing_hotkeys_at(&file.0).quick_commands);
+            let mut repaired = restarted.hotkeys; repaired.quick_commands.0 = "Alt+X".into();
+            let before = fs::read(&file.0).unwrap();
+            save_standard_hotkeys_transaction(&file.0, repaired.clone(), |_| { assert_eq!(fs::read(&file.0).unwrap(), before); Ok(()) },
+                |path, settings| persist_settings_to_path(path, settings, MissingHotkeys::default()), |_| panic!("successful repair cannot roll back")).unwrap();
+            assert_eq!(file.disk()["hotkeys"]["quickCommands"], "Alt+X");
+            assert!(!missing_hotkeys_at(&file.0).quick_commands);
+            assert_eq!(load_settings_from_path(&file.0).unwrap().hotkeys, repaired);
+        }
     }
 
     #[test]
@@ -35,7 +112,7 @@ mod seven_hotkey_acceptance {
         let value = serde_json::to_value(ShellSettings::default()).unwrap();
         assert_eq!(value["hotkeys"], serde_json::json!({
             "search":"Ctrl+Space", "terminal":"Alt+Backquote", "stackBrowser":"Alt+1",
-            "speechTranscription":"Ctrl+D", "snipping":"Alt+S", "processManager":"Alt+P", "settings":"Alt+O"
+            "speechTranscription":"Ctrl+D", "snipping":"Alt+S", "processManager":"Alt+P", "settings":"Alt+O", "quickCommands":"Alt+Q"
         }));
     }
 
@@ -61,7 +138,7 @@ mod seven_hotkey_acceptance {
                 .expect("unrelated writes must not require shortcut repair");
             let disk = file.disk();
             assert_eq!(disk["hotkeys"]["search"], search);
-            for action in ["snipping", "processManager", "settings"] {
+            for action in ["snipping", "processManager", "settings", "quickCommands"] {
                 assert!(disk["hotkeys"].get(action).is_none(), "{action} must stay omitted until explicit shortcut Save");
             }
             let restarted = load_settings_from_path(&file.0).unwrap();
@@ -123,7 +200,7 @@ mod seven_hotkey_acceptance {
             let restarted = load_settings_from_path(&file.0).unwrap();
             assert_eq!(restarted.hotkeys, previous.hotkeys, "{route} changed committed hotkeys");
             let disk = file.disk();
-            for action in ["snipping", "processManager", "settings"] {
+            for action in ["snipping", "processManager", "settings", "quickCommands"] {
                 assert!(disk["hotkeys"].get(action).is_none(), "{route} materialized {action}");
             }
             match route {
@@ -153,7 +230,7 @@ mod seven_hotkey_acceptance {
             persist_settings_to_path(path, settings, MissingHotkeys::default())
         }, |_| panic!("successful repair must not restore")).unwrap();
         assert_eq!(*effects.borrow(), vec!["register", "persist"]);
-        let disk = file.disk(); assert_eq!(disk["hotkeys"].as_object().unwrap().len(), 7);
+        let disk = file.disk(); assert_eq!(disk["hotkeys"].as_object().unwrap().len(), 8);
         assert_eq!(disk["hotkeys"]["search"], "Alt+P");
         assert_eq!(load_settings_from_path(&file.0).unwrap().hotkeys, repaired);
     }
@@ -200,7 +277,7 @@ mod seven_hotkey_acceptance {
         let hotkeys = serde_json::to_value(StandardHotkeySettings::default()).unwrap();
         let valid = serde_json::json!({"hotkeys": hotkeys, "revision": 1});
         assert!(serde_json::from_value::<SaveStandardHotkeysRequest>(valid.clone()).is_ok());
-        for key in ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings"] {
+        for key in ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings", "quickCommands"] {
             let mut value = valid.clone(); value["hotkeys"].as_object_mut().unwrap().remove(key);
             assert!(serde_json::from_value::<SaveStandardHotkeysRequest>(value).is_err(), "explicit Save silently defaulted {key}");
         }
@@ -261,7 +338,7 @@ mod seven_hotkey_acceptance {
                     |_| Ok(()), |path, settings| persist_settings_to_path(path, settings, MissingHotkeys::default()),
                     |_| panic!("successful publication cannot trigger rollback")),
                 || {
-                    assert_eq!(file.disk()["hotkeys"].as_object().unwrap().len(), 7, "observation must follow real disk commit");
+                    assert_eq!(file.disk()["hotkeys"].as_object().unwrap().len(), 8, "observation must follow real disk commit");
                     if observe_fails { Err("secret-native-channel-diagnostic".into()) }
                     else { Ok(serde_json::json!({"revision":17,"bindings":[]})) }
                 }).unwrap();

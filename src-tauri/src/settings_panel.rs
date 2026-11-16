@@ -11,6 +11,8 @@ const SETTINGS_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 pub struct ShowSettingsPanelRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
+    #[serde(default)]
+    pub toggle: bool,
 }
 
 #[tauri::command]
@@ -21,6 +23,9 @@ pub fn show_settings_panel(
     let panel = app_handle
         .get_webview_window(SETTINGS_PANEL_LABEL)
         .ok_or_else(|| "Settings panel window is unavailable".to_string())?;
+    if request.toggle && panel.is_visible().map_err(|error| format!("Failed to inspect settings panel visibility: {error}"))? {
+        return hide_settings_panel(app_handle);
+    }
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;

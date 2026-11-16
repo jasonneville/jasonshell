@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsPanelSurface from '../../src/components/SettingsPanelSurface.svelte';
 import { defaultShellSettings } from '../../src/lib/settings';
 import { tauriMocks } from './setup';
+import { hotkeyDraftError } from '../../src/lib/standardHotkeys';
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: () => ({ label: 'settings-panel' }) }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ label: 'settings-panel', listen: tauriMocks().listen }) }));
 
 // Production-mounted Settings; only the agreed native boundary is replaced.
-const actions = ['search', 'terminal', 'stackBrowser', 'speechTranscription', 'snipping', 'processManager', 'settings'];
+const actions = ['search', 'terminal', 'stackBrowser', 'speechTranscription', 'snipping', 'processManager', 'settings', 'quickCommands'];
 let committed: ReturnType<typeof defaultShellSettings>;
 let failSave: boolean;
 let failRenew: boolean;
@@ -122,6 +123,41 @@ async function capture(region: ReturnType<typeof within>, name: string, letter: 
 }
 
 describe('seven-action shortcut draft acceptance', () => {
+  it('eight_hotkey Quick Commands appends Alt+Q without changing the existing seven defaults', async () => {
+    const { region } = await mount();
+    const names = ['Search', 'Terminal', 'Stack Browser', 'Speech transcription', 'Screen snipping', 'Process Manager', 'Settings', 'Quick Commands'];
+    const chords = ['Ctrl+Space', 'Alt+Backquote', 'Alt+1', 'Ctrl+D', 'Alt+S', 'Alt+P', 'Alt+O', 'Alt+Q'];
+    names.forEach((name, index) => expect(region.getByRole('button', { name: `Capture ${name} shortcut` }).textContent).toContain(chords[index]));
+    expect(region.getAllByRole('button', { name: /^Capture .* shortcut$/ })).toHaveLength(8);
+    expect(new Set(chords).size).toBe(8);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('eight_hotkey Quick Commands capture/cancel/save/reset follows the same draft transaction', async () => {
+    const { region } = await mount();
+    await capture(region, 'Quick Commands', 'X');
+    expect(writes()).toHaveLength(0);
+    await fireEvent.click(region.getByRole('button', { name: /cancel/i }));
+    expect(region.getByRole('button', { name: 'Capture Quick Commands shortcut' }).textContent).toContain('Alt+Q');
+    await capture(region, 'Quick Commands', 'X');
+    await fireEvent.click(region.getByRole('button', { name: /^save(?: shortcuts)?$/i }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect((writes()[0][1] as any).request.hotkeys.quickCommands).toBe('Alt+X');
+    await fireEvent.click(region.getByRole('button', { name: 'Reset shortcuts to defaults' }));
+    expect(region.getByRole('button', { name: 'Capture Quick Commands shortcut' }).textContent).toContain('Alt+Q');
+    expect(writes()).toHaveLength(1);
+    await fireEvent.click(region.getByRole('button', { name: /cancel/i }));
+    expect(region.getByRole('button', { name: 'Capture Quick Commands shortcut' }).textContent).toContain('Alt+X');
+  });
+
+  it('eight_hotkey Quick Commands rejects duplicates and noncanonical values before Save', () => {
+    for (const binding of ['', 'Q', 'Ctrl+Alt+Q', 'Alt+Unknown', 'Alt+q', 'Alt+Q\n']) {
+      expect(hotkeyDraftError({ ...defaultShellSettings().hotkeys, quickCommands: binding } as any)).toMatch(/invalid.*Quick Commands/i);
+    }
+    expect(hotkeyDraftError({ ...defaultShellSettings().hotkeys, quickCommands: 'Ctrl+Space' } as any)).toMatch(/duplicate.*Quick Commands/i);
+    expect(hotkeyDraftError({ ...defaultShellSettings().hotkeys, quickCommands: 'Alt+Q' } as any)).toBe('');
+  });
+
   it('adds Process Manager and Settings without changing the original five chords', async () => {
     const { region } = await mount();
     const names = ['Search', 'Terminal', 'Stack Browser', 'Speech transcription', 'Screen snipping', 'Process Manager', 'Settings'];

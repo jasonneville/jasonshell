@@ -55,16 +55,19 @@ pub struct StandardHotkeySettings {
     pub process_manager: CanonicalHotkeyBinding,
     #[serde(default = "default_settings_hotkey")]
     pub settings: CanonicalHotkeyBinding,
+    #[serde(default = "default_quick_commands_hotkey")]
+    pub quick_commands: CanonicalHotkeyBinding,
 }
+fn default_quick_commands_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+Q".into()) }
 fn default_process_manager_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+P".into()) }
 fn default_settings_hotkey() -> CanonicalHotkeyBinding { CanonicalHotkeyBinding("Alt+O".into()) }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct MissingHotkeys { pub snipping: bool, pub process_manager: bool, pub settings: bool }
+pub(crate) struct MissingHotkeys { pub snipping: bool, pub process_manager: bool, pub settings: bool, pub quick_commands: bool }
 impl MissingHotkeys {
     fn from_value(value: &Value) -> Self {
         let absent = |key| value.get("hotkeys").and_then(|hotkeys| hotkeys.get(key)).is_none();
-        Self { snipping: absent("snipping"), process_manager: absent("processManager"), settings: absent("settings") }
+        Self { snipping: absent("snipping"), process_manager: absent("processManager"), settings: absent("settings"), quick_commands: absent("quickCommands") }
     }
 }
 fn missing_hotkeys_at(path: &Path) -> MissingHotkeys {
@@ -86,6 +89,7 @@ fn default_standard_hotkeys() -> StandardHotkeySettings {
         snipping: default_snipping_hotkey(),
         process_manager: default_process_manager_hotkey(),
         settings: default_settings_hotkey(),
+        quick_commands: default_quick_commands_hotkey(),
     }
 }
 
@@ -480,10 +484,10 @@ pub struct SaveStandardHotkeysRequest {
 }
 fn deserialize_explicit_hotkeys<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<StandardHotkeySettings, D::Error> {
     let value = Value::deserialize(deserializer)?;
-    let object = value.as_object().ok_or_else(|| serde::de::Error::custom("Expected seven shortcut bindings"))?;
-    let keys = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings"];
+    let object = value.as_object().ok_or_else(|| serde::de::Error::custom("Expected eight shortcut bindings"))?;
+    let keys = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings", "quickCommands"];
     if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
-        return Err(serde::de::Error::custom("Explicit Save requires all seven shortcut bindings"));
+        return Err(serde::de::Error::custom("Explicit Save requires all eight shortcut bindings"));
     }
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
@@ -781,7 +785,7 @@ fn persist_settings_to_path(path: &Path, mut settings: ShellSettings, missing: M
     }
     let mut value = serde_json::to_value(&settings).map_err(|error| format!("failed to serialize shell settings: {error}"))?;
     if let Some(hotkeys) = value.get_mut("hotkeys").and_then(Value::as_object_mut) {
-        for (key, omitted) in [("snipping", missing.snipping), ("processManager", missing.process_manager), ("settings", missing.settings)] {
+        for (key, omitted) in [("snipping", missing.snipping), ("processManager", missing.process_manager), ("settings", missing.settings), ("quickCommands", missing.quick_commands)] {
             if omitted { hotkeys.remove(key); }
         }
     }
@@ -848,6 +852,7 @@ pub(crate) fn validate_hotkeys_with_missing(hotkeys: StandardHotkeySettings, mis
         snipping: canonicalize_hotkey_binding(&hotkeys.snipping.0)?,
         process_manager: canonicalize_hotkey_binding(&hotkeys.process_manager.0)?,
         settings: canonicalize_hotkey_binding(&hotkeys.settings.0)?,
+        quick_commands: canonicalize_hotkey_binding(&hotkeys.quick_commands.0)?,
     };
     let mut unique = HashSet::new();
     for binding in [&normalized.search, &normalized.terminal, &normalized.stack_browser, &normalized.speech_transcription] {
@@ -858,7 +863,8 @@ pub(crate) fn validate_hotkeys_with_missing(hotkeys: StandardHotkeySettings, mis
     // Explicit fields own their chords before inferred additions, regardless of
     // slot order. The snipping exception remains independently provenance-bound.
     for (binding, inferred, default) in [(&normalized.snipping, missing.snipping, "Alt+S"),
-        (&normalized.process_manager, missing.process_manager, "Alt+P"), (&normalized.settings, missing.settings, "Alt+O")] {
+        (&normalized.process_manager, missing.process_manager, "Alt+P"), (&normalized.settings, missing.settings, "Alt+O"),
+        (&normalized.quick_commands, missing.quick_commands, "Alt+Q")] {
         if !inferred && !unique.insert(binding.0.as_str()) { return Err("standard hotkey bindings must be unique".into()); }
         if inferred && binding.0 != default { return Err("invalid inferred hotkey default".into()); }
     }
@@ -870,10 +876,10 @@ include!("../tests/fixtures/snipping_settings_acceptance.rs");
 
 
 pub(crate) fn canonicalize_hotkey_binding(value: &str) -> Result<CanonicalHotkeyBinding, String> {
+    if value.chars().any(char::is_control) { return Err("hotkey binding contains control characters".to_string()); }
     let value = value.trim();
     if value.is_empty() { return Err("hotkey binding must not be empty".to_string()); }
     if value.len() > MAX_HOTKEY_BINDING_LENGTH { return Err("hotkey binding is too long".to_string()); }
-    if value.chars().any(char::is_control) { return Err("hotkey binding contains control characters".to_string()); }
     let parts = value.split('+').map(str::trim).collect::<Vec<_>>();
     if parts.len() < 2 { return Err("hotkey binding must include a modifier".to_string()); }
     if parts.len() != 2 { return Err("Ctrl+Alt hotkeys conflict with AltGr".to_string()); }
@@ -1629,6 +1635,7 @@ mod tests {
             snipping: default_snipping_hotkey(),
             process_manager: default_process_manager_hotkey(),
             settings: default_settings_hotkey(),
+            quick_commands: default_quick_commands_hotkey(),
         }
     }
 

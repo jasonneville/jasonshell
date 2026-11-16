@@ -38,6 +38,7 @@ pub enum ConfiguredHotkeyAction {
     Snipping,
     ProcessManager,
     Settings,
+    QuickCommands,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,13 +55,13 @@ struct RegistryBinding {
 }
 
 #[cfg(windows)]
-type ActiveBindings = [Option<RegistryBinding>; 7];
+type ActiveBindings = [Option<RegistryBinding>; 8];
 
 #[derive(Clone, Debug)]
 pub struct StandardHotkeyRegistry {
-    bindings: [Option<RegistryBinding>; 7],
+    bindings: [Option<RegistryBinding>; 8],
     settings: StandardHotkeySettings,
-    inferred: [bool; 7],
+    inferred: [bool; 8],
 }
 
 impl StandardHotkeyRegistry {
@@ -72,7 +73,7 @@ impl StandardHotkeyRegistry {
     }
     fn from_migration(settings: &StandardHotkeySettings, missing: MissingHotkeys) -> Result<Self, String> {
         let settings = crate::settings::validate_hotkeys_with_missing(settings.clone(), missing)?;
-        let inferred = [false, false, false, false, missing.snipping, missing.process_manager, missing.settings];
+        let inferred = [false, false, false, false, missing.snipping, missing.process_manager, missing.settings, missing.quick_commands];
         let mut bindings = [
                 Some(registry_binding(&settings.search.0, ConfiguredHotkeyAction::Search)?),
                 Some(registry_binding(&settings.terminal.0, ConfiguredHotkeyAction::Terminal)?),
@@ -87,8 +88,9 @@ impl StandardHotkeyRegistry {
                 Some(registry_binding(&settings.snipping.0, ConfiguredHotkeyAction::Snipping)?),
                 Some(registry_binding(&settings.process_manager.0, ConfiguredHotkeyAction::ProcessManager)?),
                 Some(registry_binding(&settings.settings.0, ConfiguredHotkeyAction::Settings)?),
+                Some(registry_binding(&settings.quick_commands.0, ConfiguredHotkeyAction::QuickCommands)?),
             ];
-        for index in 4..7 {
+        for index in 4..bindings.len() {
             if inferred[index] && bindings.iter().enumerate().any(|(other, binding)| other != index && (!inferred[other] || other < index)
                 && binding.zip(bindings[index]).is_some_and(|(a,b)| a.modifier == b.modifier && a.key == b.key)) {
                 bindings[index] = None;
@@ -154,7 +156,7 @@ fn one_virtual_key() -> u32 {
 }
 
 #[cfg(windows)]
-const HOTKEY_IDS: [i32; 7] = [1, 2, 3, 4, 5, 6, 7];
+const HOTKEY_IDS: [i32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 #[cfg(windows)]
 const WM_REPLACE_HOTKEYS: u32 = WM_APP + 41;
 #[cfg(windows)]
@@ -207,8 +209,8 @@ impl NativeState {
     }
     fn status(&self) -> serde_json::Value {
         let hotkeys = &self.registry.settings;
-        let names = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings"];
-        let bindings = [&hotkeys.search, &hotkeys.terminal, &hotkeys.stack_browser, &hotkeys.speech_transcription, &hotkeys.snipping, &hotkeys.process_manager, &hotkeys.settings];
+        let names = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings", "quickCommands"];
+        let bindings = [&hotkeys.search, &hotkeys.terminal, &hotkeys.stack_browser, &hotkeys.speech_transcription, &hotkeys.snipping, &hotkeys.process_manager, &hotkeys.settings, &hotkeys.quick_commands];
         serde_json::json!({"revision": self.revision, "bindings": names.iter().enumerate().map(|(i, action)| {
             let active = self.current[i].is_some();
             serde_json::json!({"action": action, "id": HOTKEY_IDS[i], "binding": bindings[i].0, "active": active,
@@ -244,7 +246,7 @@ impl NativeState {
     fn ack_at(&self, now: std::time::Instant) -> serde_json::Value {
         let lease = self.capture.as_ref().expect("ack requires admitted lease");
         let hotkeys = &self.registry.settings;
-        let bindings = [&hotkeys.search, &hotkeys.terminal, &hotkeys.stack_browser, &hotkeys.speech_transcription, &hotkeys.snipping, &hotkeys.process_manager, &hotkeys.settings];
+        let bindings = [&hotkeys.search, &hotkeys.terminal, &hotkeys.stack_browser, &hotkeys.speech_transcription, &hotkeys.snipping, &hotkeys.process_manager, &hotkeys.settings, &hotkeys.quick_commands];
         serde_json::json!({"leaseId": lease.id, "revision": lease.revision, "sequence": lease.sequence,
             "expiresInMs": lease.deadline.saturating_duration_since(now).as_millis() as u64,
             "registeredBindings": bindings.iter().enumerate().filter(|(i,_)| self.current[*i].is_some()).map(|(_, binding)| binding.0.clone()).collect::<Vec<_>>()})
@@ -291,9 +293,9 @@ impl NativeState {
         if packed >> 16 != binding.key || packed & 0xffff != modifier { return HotkeyRoute::Discard; }
         let Some(lease) = self.capture.as_mut() else { return HotkeyRoute::Dispatch(id); };
         lease.sequence += 1;
-        let names = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings"];
+        let names = ["search", "terminal", "stackBrowser", "speechTranscription", "snipping", "processManager", "settings", "quickCommands"];
         let hotkeys = &self.registry.settings;
-        let bindings = [&hotkeys.search, &hotkeys.terminal, &hotkeys.stack_browser, &hotkeys.speech_transcription, &hotkeys.snipping, &hotkeys.process_manager, &hotkeys.settings];
+        let bindings = [&hotkeys.search, &hotkeys.terminal, &hotkeys.stack_browser, &hotkeys.speech_transcription, &hotkeys.snipping, &hotkeys.process_manager, &hotkeys.settings, &hotkeys.quick_commands];
         HotkeyRoute::Capture(serde_json::json!({"leaseId": lease.id, "revision": lease.revision, "sequence": lease.sequence, "action": names[index], "binding": bindings[index].0}))
     }
 }
@@ -410,7 +412,7 @@ fn install_migrated_registrations(
     mut register: impl FnMut(usize, RegistryBinding) -> Result<(), String>,
     mut unregister: impl FnMut(usize),
 ) -> Result<(), String> {
-    for index in 0..7 {
+    for index in 0..HOTKEY_IDS.len() {
         let Some(binding) = registry.bindings[index] else { continue; };
         match register(index, binding) {
             Ok(()) => current[index] = Some(binding),
@@ -431,7 +433,7 @@ fn install_migrated_registrations(
 fn restore_registrations(current: &mut ActiveBindings, previous: &StandardHotkeyRegistry,
     mut register: impl FnMut(usize, RegistryBinding) -> Result<(), String>, mut unregister: impl FnMut(usize),
 ) -> Result<(), String> {
-    let changed: Vec<_> = (0..7).filter(|i| current[*i] != previous.bindings[*i]).collect();
+    let changed: Vec<_> = (0..HOTKEY_IDS.len()).filter(|i| current[*i] != previous.bindings[*i]).collect();
     for &i in &changed { if current[i].take().is_some() { unregister(i); } }
     let mut errors = Vec::new();
     for i in changed {
@@ -574,6 +576,9 @@ fn dispatch_hotkey(app_handle: &AppHandle, id: i32, registry: &ActiveBindings) {
         ConfiguredHotkeyAction::Settings => {
             let _ = app_handle.emit_to(tauri::EventTarget::webview_window(crate::contracts::surfaces::TOP_BAR), crate::contracts::events::SETTINGS_OPEN_REQUESTED, ());
         }
+        ConfiguredHotkeyAction::QuickCommands => {
+            let _ = app_handle.emit_to(tauri::EventTarget::webview_window(crate::contracts::surfaces::TOP_BAR), crate::contracts::events::QUICK_COMMANDS_TOGGLE, ());
+        }
     }
 }
 
@@ -591,7 +596,7 @@ fn run_hotkey_thread(
     if ready.send(unsafe { GetCurrentThreadId() }).is_err() {
         return;
     }
-    let mut state = NativeState::new(StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).expect("valid defaults"), [None; 7]);
+    let mut state = NativeState::new(StandardHotkeyRegistry::from_settings(&StandardHotkeySettings::default()).expect("valid defaults"), [None; 8]);
     // Thread-owned timer wakes even when every renderer stalls or disappears.
     let timer = unsafe { SetTimer(None, 0, 100, None) };
     if timer == 0 { return; }

@@ -2,6 +2,7 @@ export const IPC_EVENTS = {
   standardHotkeyCapture: 'standard-hotkeys:capture',
   processManagerOpenRequested: 'process-manager:open-requested',
   settingsOpenRequested: 'settings:open-requested',
+  quickCommandsToggle: 'quick-commands:toggle',
   snipContext: 'snip:context',
   snipPrepareBar: 'snip:prepare_bar',
   snipReleaseBar: 'snip:release_bar',

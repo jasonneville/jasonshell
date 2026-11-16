@@ -24,8 +24,21 @@ export function createNative() {
     status() {
       return { revision: this.revision, bindings: Object.entries(this.settings.hotkeys).map(([action, binding], index) => ({ action, binding, id: index + 1, active: true, reason: null, state: 'active' })) };
     },
-    hotkey(action: 'processManager' | 'settings') {
+    hotkey(action: 'processManager' | 'settings' | 'quickCommands') {
+      if (this.lease) { this.capture((this.settings.hotkeys as unknown as Record<string, string>)[action], { action }); return; }
+      if (action === 'quickCommands') { this.emit('top-bar', 'quick-commands:toggle'); return; }
       this.emit(action === 'processManager' ? 'bottom-bar' : 'top-bar', action === 'processManager' ? 'process-manager:open-requested' : 'settings:open-requested');
+    },
+    dismiss(label: 'settings-panel' | 'process-manager') {
+      this.record('dismiss', { label, reason: 'mocked-external-blur' });
+      this.visible[label] = false;
+      if (label === 'settings-panel') {
+        this.settingsFocused = false; this.lease = null;
+        this.emit(label, 'tauri://focus', false);
+      } else {
+        const retired = this.context; this.context = { ...retired, visible: false };
+        this.emit(label, 'process-manager:closed', { context: retired });
+      }
     },
     capture(binding: string, override: Record<string, any> = {}) {
       if (!this.lease) throw new Error('No acknowledged native capture lease');
@@ -49,8 +62,9 @@ export async function emitTo(target: string | { label: string }, name: string, p
 export async function emit(name: string, payload?: unknown) { native().emit('Any', name, payload); }
 export function getCurrentWindow() {
   return { label: label(), listen: (name: string, handler: Listener['handler']) => listen(name, handler, { target: { kind: 'Window', label: label() } }),
-    onFocusChanged: (handler: Listener['handler']) => listen('tauri://focus', handler, { target: { kind: 'Window', label: label() } }),
-    onResized: async () => () => {}, scaleFactor: async () => 1 };
+     onFocusChanged: (handler: Listener['handler']) => listen('tauri://focus', handler, { target: { kind: 'Window', label: label() } }),
+     onDragDropEvent: async (_handler: Listener['handler']) => () => {},
+     onResized: async () => () => {}, scaleFactor: async () => 1 };
 }
 export function getCurrentWebviewWindow() { return getCurrentWindow(); }
 export function convertFileSrc(path: string) { return path; }
@@ -77,12 +91,18 @@ export async function invoke(command: string, args: Record<string, any> = {}) {
   }
   if (command === 'save_shell_settings') { n.settings = structuredClone(args.settings); return structuredClone(n.settings); }
   if (command === 'save_shell_bar_lock') { n.settings.ui[args.request.edge === 'top' ? 'lockTopBarHeight' : 'lockBottomBarHeight'] = args.request.locked; return structuredClone(n.settings); }
-  if (command === 'show_settings_panel') { n.visible['settings-panel'] = true; n.settingsFocused = true; return; }
-  if (command === 'hide_settings_panel') { n.visible['settings-panel'] = false; return; }
+  if (command === 'show_settings_panel') {
+    if (args.request?.toggle && n.visible['settings-panel']) { n.dismiss('settings-panel'); return; }
+    n.visible['settings-panel'] = true; n.settingsFocused = true; return;
+  }
+  if (command === 'hide_settings_panel') { n.dismiss('settings-panel'); return; }
+  if (command === 'hide_process_manager') { n.dismiss('process-manager'); return; }
   if (command === 'show_process_manager') {
+    if (args.request?.toggle && n.visible['process-manager']) { n.dismiss('process-manager'); return; }
     n.visible['process-manager'] = true;
-    n.context = context(n.context.openGeneration + 1, n.context.tabRevision + 1, 'processes');
-    n.emit('process-manager', 'process-manager:open', { focusPid: null, context: n.context }); return;
+    const focusPid = args.request?.focusPid ?? null;
+    n.context = context(n.context.openGeneration + 1, n.context.tabRevision + 1, 'processes', focusPid);
+    n.emit('process-manager', 'process-manager:open', { focusPid, context: n.context }); return;
   }
   if (command === 'get_process_manager_context') return n.context;
   if (command === 'set_process_manager_tab') { n.context = { ...n.context, activeTab: args.tab, tabRevision: args.tabRevision }; return n.context; }
@@ -93,7 +113,7 @@ export async function invoke(command: string, args: Record<string, any> = {}) {
   if (command === 'allocate_task_preview_request_id') return ++n.nextPreview;
   if (command.startsWith('list_') || command === 'get_stack_pins') return [];
   if (command === 'search_engine') return { query: args.request?.query ?? '', sequence: args.request?.sequence ?? 0, results: [], providerTimings: [] };
-  if (['resize_shell_bar', 'report_shell_surface_runtime_metrics', 'request_taskbar_windows_refresh', 'hide_search_panel', 'publish_search_panel', 'hide_task_window_preview', 'hide_task_gallery'].includes(command)) return;
+  if (['show_command_panel', 'hide_command_panel', 'hide_audio_panel', 'hide_tray_panel', 'hide_terminal_panel', 'hide_calendar_panel', 'resize_shell_bar', 'report_shell_surface_runtime_metrics', 'request_taskbar_windows_refresh', 'hide_search_panel', 'publish_search_panel', 'hide_task_window_preview', 'hide_task_gallery'].includes(command)) return;
   n.record('unexpected', { caller: label(), command });
   throw new Error(`Unexpected fixture IPC: ${command}`);
 }

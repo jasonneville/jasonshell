@@ -59,10 +59,18 @@ impl SystemInfoRuntime {
                 if let Ok(mut state) = inner.lock() {
                     let context = state.coordinator.context();
                     if context.visible && (!visible || !focused) {
-                        state.invalidate();
-                        let _ = state.coordinator.hide();
+                        state.suspend();
                     }
                     let context = state.coordinator.context();
+                    // Refocus can retain the same mounted tab after a short blur.
+                    // Resume its cache without publishing a new open/tab context.
+                    if context.visible && visible && focused
+                        && context.active_tab == ProcessManagerTab::SystemInfo
+                        && state.cache.is_none()
+                        && state.warm(now()).is_err()
+                    {
+                        continue;
+                    }
                     for lane in [Lane::Live, Lane::Storage, Lane::Inventory] {
                         if let Some(token) = state.coordinator.admit(
                             lane,
@@ -104,8 +112,7 @@ impl SystemInfoRuntime {
                                 });
                         if let Ok(mut state) = inner.lock() {
                             if !active && state.coordinator.context().visible {
-                                state.invalidate();
-                                let _ = state.coordinator.hide();
+                                state.suspend();
                             }
                             if !state
                                 .coordinator

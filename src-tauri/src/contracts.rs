@@ -438,6 +438,7 @@ pub mod commands {
 }
 
 pub mod events {
+    pub const QUICK_COMMANDS_TOGGLE: &str = "quick-commands:toggle";
     pub const PROCESS_MANAGER_OPEN_REQUESTED: &str = "process-manager:open-requested";
     pub const SETTINGS_OPEN_REQUESTED: &str = "settings:open-requested";
     pub const STANDARD_HOTKEYS_CAPTURE: &str = "standard-hotkeys:capture";
@@ -502,6 +503,7 @@ pub mod events {
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
+        QUICK_COMMANDS_TOGGLE,
         SNIP_CONTEXT,
         SNIP_ARMED,
         SNIP_PREPARE_BAR,
@@ -724,6 +726,7 @@ mod tests {
             events::ALL,
             &[
                 "audio-panel:open",
+                "quick-commands:toggle",
                 "snip:context",
                 "snip:armed",
                 "snip:prepare_bar",

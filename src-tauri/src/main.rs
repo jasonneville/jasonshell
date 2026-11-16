@@ -341,6 +341,21 @@ fn main() {
             taskbar_menu::handle_taskbar_menu_event(app_handle, event);
         })
         .on_window_event(|window, event| {
+            // Retire delayed dismissals on every focus transition, including refocus.
+            static SETTINGS_BLUR_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static PROCESS_MANAGER_BLUR_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let panel_blur_revision = match window.label() {
+                shell_windows::SETTINGS_PANEL_LABEL => Some(&SETTINGS_BLUR_REVISION),
+                shell_windows::PROCESS_MANAGER_LABEL => Some(&PROCESS_MANAGER_BLUR_REVISION),
+                _ => None,
+            };
+            let blur_revision = panel_blur_revision.map(|revision| {
+                if matches!(event, WindowEvent::Focused(_) | WindowEvent::Destroyed) {
+                    revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+                } else {
+                    revision.load(std::sync::atomic::Ordering::SeqCst)
+                }
+            });
             if matches!(event, WindowEvent::Focused(false)) {
                 let held = window.app_handle().try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
                     .is_some_and(|runtime| window.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize)));
@@ -348,7 +363,7 @@ fn main() {
                     // System Info focus admission remains strict even while the
                     // enclosing panel and its renderer state stay visible.
                     if window.label() == shell_windows::PROCESS_MANAGER_LABEL {
-                        let _ = process_manager::retire_system_info(window.app_handle());
+                        let _ = process_manager::suspend_system_info(window.app_handle());
                     }
                     return;
                 }
@@ -398,11 +413,45 @@ fn main() {
             }
 
             if window.label() == shell_windows::PROCESS_MANAGER_LABEL
-                && matches!(event, WindowEvent::Focused(false) | WindowEvent::Destroyed)
+                && matches!(event, WindowEvent::Destroyed)
             {
                 let _ = process_manager::retire_system_info(window.app_handle());
                 let _ = window.hide();
                 return;
+            }
+
+            if let (Some(revision), Some(expected)) = (panel_blur_revision, blur_revision) {
+                if matches!(event, WindowEvent::Focused(false)) {
+                    if window.label() == shell_windows::PROCESS_MANAGER_LABEL {
+                        // Retire work now, not the renderer's still-visible tab context.
+                        let _ = process_manager::suspend_system_info(window.app_handle());
+                    }
+                    let panel = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tauri::async_runtime::spawn_blocking(|| {
+                            std::thread::sleep(Duration::from_millis(150));
+                        }).await;
+                        let dispatcher = panel.clone();
+                        // Guards and effect must share the UI delivery turn: checking
+                        // on this worker and then queueing hide races a later refocus.
+                        let _ = dispatcher.run_on_main_thread(move || {
+                            if revision.load(std::sync::atomic::Ordering::SeqCst) != expected
+                                || !panel.is_visible().unwrap_or(false)
+                                || panel.is_focused().unwrap_or(false)
+                            {
+                                return;
+                            }
+                            if panel.app_handle().try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                                .is_some_and(|runtime| panel.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize))) {
+                                return;
+                            }
+                            if panel.hide().is_ok() && panel.label() == shell_windows::PROCESS_MANAGER_LABEL {
+                                let _ = process_manager::retire_system_info(panel.app_handle());
+                            }
+                        });
+                    });
+                    return;
+                }
             }
 
             if window.label() == shell_windows::QUICK_LAUNCH_PANEL_LABEL
@@ -422,13 +471,6 @@ fn main() {
                     window.clone(),
                     window.app_handle().clone(),
                 );
-                return;
-            }
-
-            if window.label() == shell_windows::SETTINGS_PANEL_LABEL
-                && matches!(event, WindowEvent::Focused(false))
-            {
-                let _ = window.hide();
                 return;
             }
 

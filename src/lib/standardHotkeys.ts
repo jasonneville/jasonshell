@@ -5,7 +5,7 @@ import { broadcastShellSettings, type ShellSettings, type StandardHotkeyAction, 
 export const HOTKEY_ACTION_NAMES: Record<StandardHotkeyAction, string> = {
   search: 'Search', terminal: 'Terminal', stackBrowser: 'Stack Browser',
   speechTranscription: 'Speech transcription', snipping: 'Screen snipping',
-  processManager: 'Process Manager', settings: 'Settings'
+  processManager: 'Process Manager', settings: 'Settings', quickCommands: 'Quick Commands'
 };
 export const HOTKEY_ACTIONS = Object.keys(HOTKEY_ACTION_NAMES) as StandardHotkeyAction[];
 
@@ -34,7 +34,8 @@ export interface HotkeyCaptureEvent {
   binding: string;
 }
 export function isCanonicalHotkey(binding: unknown): binding is string {
-  return typeof binding === 'string' && /^(Ctrl|Alt)\+([A-Z0-9]|Space|Backquote)$/.test(binding);
+  // `$` may match before a final newline; require the match to consume the value.
+  return typeof binding === 'string' && /^(Ctrl|Alt)\+([A-Z0-9]|Space|Backquote)$/.exec(binding)?.[0] === binding;
 }
 export function hotkeyDraftError(hotkeys: StandardHotkeySettings): string {
   for (const action of HOTKEY_ACTIONS) {

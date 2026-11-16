@@ -36,6 +36,6 @@ test('snipping migrates reordered legacy controls and duplicate snip exactly onc
 test('snipping adds Alt+S while preserving all four existing default chords', () => {
   assert.deepEqual(defaultShellSettings().hotkeys, {
     search: 'Ctrl+Space', terminal: 'Alt+Backquote', stackBrowser: 'Alt+1',
-    speechTranscription: 'Ctrl+D', snipping: 'Alt+S', processManager: 'Alt+P', settings: 'Alt+O'
+    speechTranscription: 'Ctrl+D', snipping: 'Alt+S', processManager: 'Alt+P', settings: 'Alt+O', quickCommands: 'Alt+Q'
   });
 });

@@ -20,8 +20,54 @@ mod seven_hotkey_registry_acceptance {
     }
 
     #[test]
+    fn eight_hotkey_quick_commands_registry_appends_id_eight_and_capture_diverts_without_dispatch() {
+        assert_eq!(HOTKEY_IDS.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let registry = registry();
+        let binding = registry.bindings.get(7).copied().flatten().expect("Quick Commands eighth registry slot");
+        assert_eq!(binding.key, b'Q' as u32); assert!(modifiers(binding).contains(MOD_NOREPEAT));
+        let mut native = state(registry);
+        assert_eq!(native.status()["bindings"][7]["action"], "quickCommands");
+        let now = std::time::Instant::now();
+        assert!(matches!(native.route_hotkey_observed(8, 1, packed(binding), now, true), HotkeyRoute::Dispatch(8)));
+        let ack = native.capture_transition(caller(1), "begin", 3, None, now, true).unwrap();
+        assert!(ack["registeredBindings"].as_array().unwrap().contains(&serde_json::json!("Alt+Q")));
+        let payload = match native.route_hotkey_observed(8, 2, packed(binding), now, true) {
+            HotkeyRoute::Capture(payload) => payload,
+            other => panic!("Quick Commands escaped capture: {other:?}"),
+        };
+        assert_eq!(payload["action"], "quickCommands"); assert_eq!(payload["binding"], "Alt+Q");
+        assert_eq!(payload["leaseId"], ack["leaseId"]);
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_inferred_conflict_keeps_prior_owner_and_strict_repair_activates_slot() {
+        let mut settings = StandardHotkeySettings::default(); settings.search.0 = "Alt+Q".into();
+        let registry = StandardHotkeyRegistry::from_migration(&settings, MissingHotkeys { quick_commands: true, ..Default::default() }).unwrap();
+        assert_eq!(registry.bindings[0].unwrap().key, b'Q' as u32);
+        assert!(registry.bindings[..7].iter().all(Option::is_some)); assert!(registry.bindings[7].is_none());
+        let native = state(registry); let status = native.status();
+        assert_eq!(status["bindings"][0]["active"], true); assert_eq!(status["bindings"][7]["active"], false);
+        assert!(status["bindings"][7]["reason"].is_string());
+        assert!(StandardHotkeyRegistry::from_settings(&settings).is_err(), "explicit duplicate must stay strict");
+        settings.quick_commands.0 = "Alt+X".into();
+        let repaired = StandardHotkeyRegistry::from_settings(&settings).unwrap();
+        assert!(repaired.bindings.iter().all(Option::is_some)); assert_eq!(repaired.bindings[7].unwrap().key, b'X' as u32);
+    }
+
+    #[test]
+    fn eight_hotkey_quick_commands_inferred_os_conflict_is_inactive_without_unregistering_existing_seven() {
+        let registry = StandardHotkeyRegistry::from_migration(&StandardHotkeySettings::default(), MissingHotkeys { quick_commands: true, ..Default::default() }).unwrap();
+        let mut current = [None; 8]; let called = RefCell::new(Vec::new());
+        install_migrated_registrations(&mut current, &registry, |index, _| {
+            called.borrow_mut().push(index); if index == 7 { Err("OS owns Alt+Q".into()) } else { Ok(()) }
+        }, |_| panic!("inferred eighth collision must not unregister existing seven")).unwrap();
+        assert_eq!(*called.borrow(), (0..8).collect::<Vec<_>>());
+        assert_eq!(current[..7], registry.bindings[..7]); assert!(current[7].is_none());
+    }
+
+    #[test]
     fn seven_hotkey_ids_append_six_and_seven_and_keep_no_repeat() {
-        assert_eq!(HOTKEY_IDS, [1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(HOTKEY_IDS, [1, 2, 3, 4, 5, 6, 7, 8]);
         let r = registry();
         for (index, action) in [ConfiguredHotkeyAction::Search, ConfiguredHotkeyAction::Terminal,
             ConfiguredHotkeyAction::StackBrowser, ConfiguredHotkeyAction::Speech,
@@ -40,9 +86,10 @@ mod seven_hotkey_registry_acceptance {
         let mut settings = StandardHotkeySettings::default();
         settings.search.0 = "Alt+P".into(); settings.terminal.0 = "Alt+O".into(); settings.stack_browser.0 = "Alt+S".into();
         let r = StandardHotkeyRegistry::from_migration(&settings,
-            MissingHotkeys { snipping: true, process_manager: true, settings: true }).unwrap();
+            MissingHotkeys { snipping: true, process_manager: true, settings: true, ..Default::default() }).unwrap();
         assert!(r.bindings[..4].iter().all(Option::is_some));
-        assert_eq!(&r.bindings[4..], &[None, None, None]);
+        assert_eq!(&r.bindings[4..7], &[None, None, None]);
+        assert!(r.bindings[7].is_some(), "unconflicted eighth action remains active");
         assert_eq!(r.bindings[0].unwrap().key, b'P' as u32);
         assert_eq!(r.bindings[1].unwrap().key, b'O' as u32);
         assert_eq!(r.bindings[2].unwrap().key, b'S' as u32);
@@ -54,18 +101,18 @@ mod seven_hotkey_registry_acceptance {
       for first_inferred in [4, 5] {
         let settings = StandardHotkeySettings::default();
         let r = StandardHotkeyRegistry::from_migration(&settings,
-            MissingHotkeys { snipping: first_inferred == 4, process_manager: true, settings: true }).unwrap();
-        let mut current = [None; 7]; let calls = RefCell::new(Vec::new());
+            MissingHotkeys { snipping: first_inferred == 4, process_manager: true, settings: true, quick_commands: true }).unwrap();
+        let mut current = [None; 8]; let calls = RefCell::new(Vec::new());
         install_migrated_registrations(&mut current, &r, |index, _| {
             calls.borrow_mut().push(index);
             if index >= first_inferred { Err("another app owns inferred chord".into()) } else { Ok(()) }
         }, |_| panic!("tolerated inferred conflicts must not unregister old actions")).unwrap();
         assert_eq!(current[..first_inferred], r.bindings[..first_inferred]);
         assert!(current[first_inferred..].iter().all(Option::is_none));
-        assert_eq!(*calls.borrow(), vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(*calls.borrow(), vec![0, 1, 2, 3, 4, 5, 6, 7]);
         let mut native = state(r); native.current = current;
         let status = native.status();
-        for index in 0..7 {
+        for index in 0..8 {
             assert_eq!(status["bindings"][index]["active"], index < first_inferred);
             assert_eq!(status["bindings"][index]["state"], if index < first_inferred { "active" } else { "inactive" });
         }
@@ -74,11 +121,11 @@ mod seven_hotkey_registry_acceptance {
 
     #[test]
     fn seven_hotkey_explicit_os_conflict_remains_a_strict_startup_failure() {
-        let r = registry(); let mut current = [None; 7]; let removed = RefCell::new(Vec::new());
+        let r = registry(); let mut current = [None; 8]; let removed = RefCell::new(Vec::new());
         let result = install_migrated_registrations(&mut current, &r,
             |index, _| if index == 5 { Err("explicit OS conflict".into()) } else { Ok(()) },
             |index| removed.borrow_mut().push(index));
-        assert!(result.is_err()); assert_eq!(current, [None; 7]);
+        assert!(result.is_err()); assert_eq!(current, [None; 8]);
         assert_eq!(*removed.borrow(), vec![0, 1, 2, 3, 4]);
     }
 
@@ -154,10 +201,10 @@ mod seven_hotkey_registry_acceptance {
         let mut native = state(r); let now = std::time::Instant::now();
         let ack = native.capture_transition(caller(1), "begin", 7, None, now, true).unwrap();
         assert_eq!(ack["revision"], 7); assert_eq!(ack["sequence"], 0); assert_eq!(ack["expiresInMs"], 2000);
-        assert_eq!(ack["registeredBindings"].as_array().unwrap().len(), 6);
+        assert_eq!(ack["registeredBindings"].as_array().unwrap().len(), 7);
         assert!(!ack["registeredBindings"].as_array().unwrap().contains(&serde_json::json!("Alt+P")));
         let status = native.status(); assert_eq!(status["revision"], 2);
-        for index in 0..7 { assert_eq!(status["bindings"][index]["state"], "capturePaused"); }
+        for index in 0..8 { assert_eq!(status["bindings"][index]["state"], "capturePaused"); }
         assert_eq!(status["bindings"][5]["active"], false);
     }
 
@@ -165,7 +212,7 @@ mod seven_hotkey_registry_acceptance {
     fn seven_hotkey_capture_redirects_every_registered_action_to_capture_not_dispatch() {
         let mut native = state(registry()); let now = std::time::Instant::now();
         let ack = native.capture_transition(caller(1), "begin", 3, None, now, true).unwrap();
-        for index in 0..7 {
+        for index in 0..8 {
             let payload = match native.route_hotkey_observed(HOTKEY_IDS[index], 1, packed(native.current[index].unwrap()), now, true) {
                 HotkeyRoute::Capture(payload) => payload,
                 other => panic!("registered action escaped capture: {other:?}"),
@@ -285,7 +332,7 @@ mod seven_hotkey_registry_acceptance {
         let mut native=state(registry());let now=std::time::Instant::now();
         let lease=native.capture_transition(caller(1),"begin",1,None,now,true).unwrap();
         crate::snipping::runtime::runtime_acceptance::exercise_escape_hotkey_coexistence(|router,runtime,selecting| {
-            for index in 0..7 {
+            for index in 0..8 {
                 let routed=native.route_hotkey_observed(HOTKEY_IDS[index],10,packed(native.current[index].unwrap()),now,true);
                 assert!(matches!(routed,HotkeyRoute::Capture(_)),"action {index} must stay captured, never dispatch into another subsystem");
             }

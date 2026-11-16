@@ -60,6 +60,7 @@ export type ShowProcessManagerRequest = {
   anchorLeft: number;
   anchorWidth: number;
   focusPid?: number | null;
+  toggle?: boolean;
 };
 
 export type ProcessKillConfirmation = {

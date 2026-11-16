@@ -908,10 +908,24 @@
     await closePanel();
     await showSettingsPanel({
       anchorLeft: rect.left,
-      anchorWidth: rect.width
+      anchorWidth: rect.width,
+      toggle: true
     }).catch((error) => {
       console.error('Failed to show settings panel', error);
     });
+  }
+
+  function handleSettingsPointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openSettingsPanel(event.currentTarget);
+  }
+
+  function handleSettingsClick(event: MouseEvent) {
+    // Pointer activation already happened on press, even after a long hold or cancel.
+    // Keyboard and assistive/programmatic clicks have detail 0; no sticky suppression.
+    if (event.detail === 0) void openSettingsPanel(event.currentTarget);
   }
 
   async function closeAudioPanel() {
@@ -1941,6 +1955,9 @@
     registerAsyncUnlistener(listen(IPC_EVENTS.settingsOpenRequested, () => {
       if (!disposed) void openSettingsPanel(document.querySelector('.shell-home-button'));
     }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
+    registerAsyncUnlistener(listen(IPC_EVENTS.quickCommandsToggle, () => {
+      if (!disposed) void toggleCommandPanel(document.querySelector('.command-button'));
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipPrepareBar, (event) => { void prepareSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipReleaseBar, (event) => { releaseSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipHotkeyFeedback, (event) => {
@@ -2122,7 +2139,8 @@
     ariaHaspopup="dialog"
     ariaLabel="Open JasonShell settings"
     tooltip="Open JasonShell settings"
-    onClick={(event) => void openSettingsPanel(event.currentTarget)}
+    onPointerDown={handleSettingsPointerDown}
+    onClick={handleSettingsClick}
   >
     <MaterialSymbolIcon name="settings" />
   </MeltActionButton>

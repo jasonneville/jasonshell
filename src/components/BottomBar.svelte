@@ -1179,10 +1179,20 @@
     await hidePreview();
     const rect = button.getBoundingClientRect();
     try {
-      await showProcessManager({ anchorLeft: rect.left, anchorWidth: rect.width, focusPid });
+      await showProcessManager({ anchorLeft: rect.left, anchorWidth: rect.width, focusPid, toggle: focusPid === null });
     } catch (error) {
       console.error('Failed to open process manager', error);
     }
+  }
+  function handleProcessManagerPointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openProcessManager(event.currentTarget);
+  }
+  function handleProcessManagerClick(event: MouseEvent) {
+    // Pointer clicks were handled on press; keyboard clicks remain independent of cancel.
+    if (event.detail === 0) void openProcessManager(event.currentTarget);
   }
   async function openQuickLaunchPanel() {
     if (quickLaunchOpenInFlight) return;
@@ -1471,7 +1481,8 @@
     type="button"
     title="Processes"
     ariaLabel="Open process manager"
-    onClick={(event) => void openProcessManager(event.currentTarget)}
+    onPointerDown={handleProcessManagerPointerDown}
+    onClick={handleProcessManagerClick}
   >
     <MaterialSymbolIcon name="monitor_heart" />
   </MeltActionButton>

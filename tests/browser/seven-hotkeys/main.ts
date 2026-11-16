@@ -1,4 +1,6 @@
 import { createNative, type NativeFixture } from './bridge';
+import './panel-toggles';
+import './quick-command-hotkey';
 const host = window as Window & { __sevenNative?: NativeFixture; __sevenEvidence?: any; __runSeven?: () => Promise<any> };
 host.__sevenNative ??= createNative();
 const n = host.__sevenNative;
@@ -48,26 +50,36 @@ host.__runSeven = async () => {
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     assert(count('show_settings_panel') === shows && count('show_process_manager') === managers, 'foreign target opened a surface');
     n.hotkey('settings'); await until(() => count('show_settings_panel') === shows + 1, 'Settings hotkey did not route through production TopBar');
-    n.hotkey('settings'); await until(() => count('show_settings_panel') === shows + 2, 'repeated Settings hotkey failed to open/focus');
-    assert(count('hide_settings_panel') === 0, 'Settings hotkey toggled closed');
+    n.hotkey('settings'); await until(() => !n.visible['settings-panel'], 'repeated Settings hotkey failed to hide');
+    n.hotkey('settings'); await until(() => n.visible['settings-panel'], 'Settings third hotkey failed to reopen');
     const settingsRoot = doc('settings-panel').querySelector('main');
     button('settings-panel', 'Create copy').click();
     await until(() => !!doc('settings-panel').querySelector('input[maxlength="80"]'), 'theme draft not mounted');
     const themeName = doc('settings-panel').querySelector<HTMLInputElement>('input[maxlength="80"]')!;
     themeName.value = 'Unsaved hotkey journey theme'; themeName.dispatchEvent(new (doc('settings-panel').defaultView!.Event)('input', { bubbles: true }));
-    n.hotkey('settings'); await until(() => count('show_settings_panel') === shows + 3, 'third Settings opening absent');
+    n.hotkey('settings'); await until(() => !n.visible['settings-panel'], 'Settings draft hide absent');
+    n.hotkey('settings'); await until(() => n.visible['settings-panel'], 'Settings draft reopen absent');
     assert(doc('settings-panel').querySelector('main') === settingsRoot && themeName.isConnected && themeName.value === 'Unsaved hotkey journey theme', 'Settings opening remounted/discarded theme draft');
-    passed('paired top-bar routing; repeated Settings opens/focuses; mount and unsaved theme draft retained');
+    passed('paired top-bar routing; Settings toggles hide/reopen; mount and unsaved theme draft retained');
 
     n.hotkey('processManager'); await until(() => count('show_process_manager') === managers + 1, 'PM hotkey did not route through production BottomBar');
     const processes = () => doc('process-manager').querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() === 'Processes';
     assert(processes(), 'PM did not open Processes');
     button('process-manager', 'System Info').click(); await until(() => n.context.activeTab === 'system_info', 'System Info tab not committed');
-    n.hotkey('processManager'); await until(() => count('show_process_manager') === managers + 2 && processes(), 'repeated PM press did not return to Processes');
-    assert(count('hide_process_manager') === 0, 'PM hotkey toggled closed');
-    passed('paired bottom-bar routing; repeated PM opens Processes without toggling');
+    const generation = n.context.openGeneration;
+    n.hotkey('processManager'); await until(() => !n.visible['process-manager'], 'repeated PM press did not hide');
+    assert(n.context.openGeneration === generation, 'PM hide advanced open generation');
+    n.hotkey('processManager'); await until(() => n.visible['process-manager'] && processes(), 'PM reopen did not return to Processes');
+    passed('paired bottom-bar routing; PM toggles hide/reopen and resets Processes only on reopening');
 
     let search = await startCapture('Search');
+    const panelActions = () => n.trace.filter(entry => entry.type === 'invoke' && /(?:show|hide)_(?:settings_panel|process_manager)/.test(entry.command)).length;
+    const beforeCaptureActions = panelActions();
+    n.hotkey('settings'); await until(() => search.textContent?.includes('Alt+O'), 'Settings hotkey did not divert into capture');
+    assert(panelActions() === beforeCaptureActions && n.visible['settings-panel'], 'Settings hotkey executed a panel action during capture');
+    draftButton(/^cancel(?: shortcuts)?$/i).click();
+    await until(() => search.textContent?.includes('Ctrl+Space'), 'Cancel did not clear capture diversion draft');
+    search = await startCapture('Search');
     localChord(search, 'P'); assert(search.textContent?.includes('Ctrl+Space'), 'registered chord captured from local keydown');
     n.emit('process-manager', 'standard-hotkeys:capture', { ...n.lease, sequence: 1, action: 'processManager', binding: 'Alt+P' });
     await new Promise(resolve => requestAnimationFrame(resolve)); assert(search.textContent?.includes('Ctrl+Space'), 'foreign capture populated draft');
@@ -87,7 +99,7 @@ host.__runSeven = async () => {
     await until(() => /Shortcuts saved\./.test(shortcutRegion().textContent ?? ''), 'focus loss after commit falsely reported Save failure');
     assert(!n.settingsFocused && !shortcutRegion().querySelector('[role="alert"]'), 'postcommit focus-loss observation was not exercised cleanly');
     passed('failed strict Save retains draft; retry commits seven-way swap despite postcommit focus loss');
-    n.hotkey('settings'); await until(() => n.settingsFocused, 'Settings did not regain focus before next capture');
+    n.dismiss('settings-panel'); n.hotkey('settings'); await until(() => n.settingsFocused, 'Settings did not regain focus before next capture');
 
     search = await startCapture('Search'); localChord(search, 'X');
     await until(() => search.textContent?.includes('Alt+X'), 'unregistered local chord not captured after ACK');
@@ -99,7 +111,8 @@ host.__runSeven = async () => {
     draftButton(/Reset shortcuts to defaults/i).click(); await until(() => search.textContent?.includes('Ctrl+Space'), 'Reset failed to stage defaults');
     assert(n.settings.hotkeys.search === 'Alt+P' && count('save_standard_hotkeys') === 2, 'Reset persisted without Save');
     draftButton(/^cancel(?: shortcuts)?$/i).click();
-    button('settings-panel', 'Close settings').click(); await until(() => count('hide_settings_panel') === 1, 'Settings close did not hide');
+    const hidden = count('hide_settings_panel');
+    button('settings-panel', 'Close settings').click(); await until(() => count('hide_settings_panel') === hidden + 1, 'Settings close did not hide');
     n.hotkey('settings'); await until(() => n.visible['settings-panel'], 'Settings reopen absent');
     assert(themeName.isConnected && themeName.value === 'Unsaved hotkey journey theme', 'hide/reopen lost unsaved theme draft');
     passed('unregistered local capture after ACK; unrelated control committed-only; Reset/Cancel staged; hide/reopen retains theme draft');
@@ -120,6 +133,7 @@ host.__runSeven = async () => {
     }
     assert(!n.trace.some(entry => entry.type === 'invoke' && /kill_process|start_snip|start_speech/.test(entry.command)), 'capture replayed an action');
     assert(!n.trace.some(entry => entry.type === 'unexpected'), `unhandled fixture IPC: ${n.trace.filter(entry => entry.type === 'unexpected').map(entry => entry.command).join(', ')}`);
+    assert(!n.trace.some(entry => entry.type === 'startup-error'), `surface startup exception: ${JSON.stringify(n.trace.filter(entry => entry.type === 'startup-error'))}`);
     passed('all new listeners pair explicit WebviewWindow targets; capture never replays actions');
     evidence.status = 'PASS';
   } catch (error) { evidence.status = 'FAIL'; evidence.error = error instanceof Error ? error.stack ?? error.message : String(error); }

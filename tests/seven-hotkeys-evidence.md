@@ -1,5 +1,239 @@
 # Seven-action hotkeys: test-owner handoff
 
+## Panel-toggle follow-up: current acceptance
+
+The evidence below records earlier open/focus semantics, not acceptance for the
+new toggle request. Current acceptance supersedes the earlier repeated-open
+claims; historical results are not rewritten as toggle results.
+
+Run the safe existing Vite fixture, then:
+`pwsh -NoProfile -File tests/browser/seven-hotkeys/run-panel-toggles.ps1`.
+The focused production-mounted journey requires both Alt+O/Settings launcher
+and Alt+P/Process Manager launcher to open → hide → reopen. Settings must keep
+its mounted editor and unsaved theme name. PM hide must not create an open
+generation; only reopening resets System Info to Processes. Wrong-target events
+must remain inert. Quick Commands must show → hide → show on repeated clicks.
+
+Initial artifacts: `%LOCALAPPDATA%\Temp\opencode\panel-toggles-browser-red\`
+(`summary.json`, `evidence.json` IPC/event trace, `accessibility.txt`,
+`completed.png`), with runner log `panel-toggles-browser-red.log` beside it.
+These are mocked boundary events and DOM activation, never Windows global keys.
+
+Current safe browser results: focused toggle journey **10/10 PASS**;
+adapted seven-action composite journey **7/7 PASS**. Both commands exit 0.
+Current artifacts are under `%LOCALAPPDATA%\Temp\opencode\`:
+`panel-toggles-browser-current\` and `panel-toggles-seven-current\`, with
+matching `.log` files beside the directories. Original RED artifacts remain intact.
+
+The boundary mock honors optional `request.toggle` on the existing show commands;
+omission remains explicit show. Production explicit-show wrappers are exercised
+twice while visible, with PM PID 101 reaching the real renderer filter. External
+blur dismissal is synthetic; the next hotkey reopens each panel. Quick Commands
+repeat clicks and native-closed notification/reopen both pass. The composite
+journey now verifies toggles and registered Settings hotkey capture diversion.
+Mocked native capture diversion is not independent native suppression evidence.
+
+Focused components: **99/99 PASS** in Settings hotkeys, taskbar group menu and
+System Info (`panel-toggles-components.log`), preserving real targeted menu paths
+and capture lifecycle behavior. `npm run check` passes with zero diagnostics;
+`npm run build` passes (`panel-toggles-check.log`, `panel-toggles-build.log`).
+
+Native visibility and deferred blur decisions require actual-source native
+evidence from the implementation owner. This browser mock intentionally does not
+copy/certify the native launcher-focus timing policy. Live Windows remains
+unauthorized and unperformed. Review remains parent-owned: nested reviewer spawn
+is blocked by the configured subagent-depth limit.
+
+### Pointer activation follow-up (fixture failure resolved)
+
+The expanded browser journey has **14/16 passing**, exit 1, reproduced twice
+after the production pointerdown changes. PM passes long hold (220ms), ignored
+compatibility click, pointercancel→detail-zero activation, secondary/non-primary
+inertness. Settings fails primary pointerdown default/bubbling prevention and
+pointerdown opening before cancellation. Settings programmatic `.click()` toggle
+checks still pass. Even a fresh mounted Settings launcher receives a primary
+cancelable bubbling `PointerEvent` with `isPrimary:true, button:0` without
+`defaultPrevented` or a panel action. Production source contains the intended
+handler; this records browser behavior, not an inferred root cause.
+
+Artifacts: `%LOCALAPPDATA%\Temp\opencode\panel-toggles-pointer-current\`
+(`summary.json`, `evidence.json`, `accessibility.txt`, `completed.png`), runner log
+`panel-toggles-pointer-current.log`. Pointer/mouse events are synthetic DOM events
+executing the real handlers, not trusted OS input or native blur execution.
+
+New actual-native source contracts: `tests/panelToggleNativeContract.test.mjs`,
+**5/5 PASS**, log `panel-toggles-native-contract.log`. They pin native actual
+visibility before show, opt-in defaults, reused Settings capture/PM context
+cleanup, explicit PID menu routes, concrete-window deferred hide, atomic revision
+invalidation on focus/destroy, visible/focus/snipping rechecks, and immediate PM
+retirement before async visual dismissal. These are explicitly source-wiring
+evidence, not runtime HWND timing certification.
+
+The 14/16 failure above was traced by the parent to the fixture's incomplete
+Tauri window API: missing `onDragDropEvent` threw during TopBar onMount and
+aborted deferred pointer-listener installation. The bridge now provides the
+correct asynchronous no-op unlistener. No production fix was required. Each
+surface records uncaught errors/rejections before mounting; both browser journeys
+reject startup exceptions, and the focused journey rejects unexpected IPC too.
+
+Final corrected runs: **17/17 focused PASS**, **7/7 composite PASS**, both exit 0.
+Both Settings and PM now pass immediate primary pointer toggle, default/bubbling
+prevention, 220ms hold followed by pointerup/detail-1 compatibility click (no
+second toggle), pointercancel followed by repeated detail-0 activations, and
+secondary/non-primary inertness. No startup errors or unexpected IPC recorded.
+Artifacts: `%LOCALAPPDATA%\Temp\opencode\panel-toggles-pointer-fixed\` and
+`panel-toggles-seven-fixed\`, matching runner logs beside them. Earlier RED and
+fixture-failure artifacts remain historical, not evidence of a production defect.
+Native source contracts remain **5/5 PASS**; focused components **99/99 PASS** and
+check/build unchanged-source results above are reused. Browser sessions closed;
+the parent-owned fixture server remains available. Parent review is still needed.
+
+### Adversarial native blur follow-up: actual-source RED
+
+The browser 17/17 and source contracts 5/5 did not establish native queued-effect
+ordering or retained PM refocus. Independent review identified those gaps.
+`node --test tests/panelBlurActualSource.test.mjs` now generates an isolated
+offline Rust crate in approved temp, inserts the **current actual** delayed
+`main.rs` branch and full `retire_system_info` function, and imports production
+`system_info.rs` (`RuntimeInner`, coordinator, real token retirement). It compiles
+that code against controlled window/main-thread queue ports. No native app,
+Tauri event loop, hook, global keys or shell state is started. The facade queues
+off-thread `hide` just as a UI-dispatched effect; UI delivery is explicitly held
+until after the test-controlled refocus/reopen. It does not copy the blur reducer.
+
+Initial native RED: **1 pass / 3 fail**, Rust exit 101 / Node exit 1. Ordinary
+unfocused callback hides. Failing observable assertions:
+- `stale queued blur hid a refocused visible panel`;
+- `stale queued blur hid a reopened generation`;
+- `refocused visually retained panel has a closed coordinator`.
+
+Artifacts: `%LOCALAPPDATA%\Temp\opencode\panel-blur-actual-source-red.log`;
+`panel-blur-actual-source\latest.log`, `latest-artifact.txt`, and generated
+`run-p0ZfA0\src\lib.rs`/manifest. The production snippets are regenerated on
+every run, not checked-in snapshots. Only repository-existing serde functionality
+is used, resolved from the local Cargo cache with `--offline`.
+
+Implementation acceptance:
+1. Queue delayed UI callback, then refocus/advance revision before delivery:
+   callback must not hide. A newer generation/revision must likewise survive.
+   Unfocused/current delivery must still hide. Final revision, focus, visibility
+   and snipping guards plus hide must execute together in the main-thread task.
+2. PM blur must reject old System Info tokens immediately. Refocus while visually
+   retained must expose an active production context, permit Processes/System Info
+   tab transitions and fresh live-work admission, and preserve renderer usability.
+   Either separate cache retirement from close or restore/publish active context.
+
+The implementation owner must provide/use the actual refocus lifecycle seam.
+Current facade extracts the delayed `if let (Some(revision), Some(expected))`
+branch; if the fix introduces a new module/helper or a separate refocus branch,
+the extractor must be adapted to execute that actual source too, not a test-only
+replacement policy. Browser retained-refocus recovery/publication checks follow
+the selected native contract. Final gates/review remain pending this fix.
+
+### Adversarial native blur follow-up: fixed-source GREEN
+
+`node --test tests/panelBlurActualSource.test.mjs tests/panelToggleNativeContract.test.mjs`
+now passes: **6/6 actual-source Rust behavioral cases**, plus **5/5 source-wiring
+contracts** (the Node wrapper reports six passing top-level tests). The generated
+facade additionally extracts production `suspend_system_info`, the actual native
+scheduler admission/cache-warming lock block, and the actual collector
+focus-inactive branch. Production `system_info.rs` remains imported directly.
+
+The same held UI queue interleavings that failed RED now pass: refocus/new revision
+before delivery cannot hide; reopened generation survives; normal unfocused UI
+delivery hides once and retires PM context. Blur suspends work/cache without
+changing visible/tab/generation/revision/PID. PM tab transitions and fresh work
+admission succeed after retained refocus. The actual scheduler rewarms a readable
+cache on the same context; all pre-blur worker completions reject without
+clearing resumed tokens. The independent collector-inactive path also suspends
+without silently closing the context and permits subsequent refresh.
+
+Final artifacts under `%LOCALAPPDATA%\Temp\opencode\`:
+- `panel-blur-actual-source-final.log`: wrapper + wiring pass;
+- `panel-blur-actual-source\latest.log`, `latest-artifact.txt`: six native case
+  results and exact generated actual-source crate path;
+- `panel-toggles-pointer-native-fixed\` and matching `.log`: **17/17 browser PASS**;
+- `panel-toggles-seven-native-fixed\` and matching `.log`: **7/7 composite PASS**.
+
+Both browser reruns executed after the native fixes, with no startup errors or
+unexpected IPC. They remain mocked-boundary evidence; native queue/lifecycle
+behavior is established separately by the actual-source facade. Frontend
+check/build and **99/99** focused components are reused because no frontend
+production code changed. Implementation owner reports cargo-check passing with
+264 warnings; that command was not duplicated by the test owner. No task-owned
+defect remains in this focused evidence. Parent review remains pending; no live
+Windows shell, OS registration, hook, hardware telemetry or HWND delivery is
+certified. Browser sessions are closed; parent-owned fixture server is untouched.
+
+### Volume-probe suspension follow-up: actual-source RED
+
+Native-only review found the retained context cannot alone authorize storage
+work after suspension. `node --test tests/volumeProbeSuspensionActualSource.test.mjs`
+now extracts the **actual current** volume `collect` and `unavailable` functions,
+imports production `system_info.rs` and `probe_executor.rs` directly, and runs an
+offline Windows Rust fixture. Only root enumeration and the helper executable
+are test ports: the executor adapter forwards the **production cancellation
+closure** to real `execute_command_observed` with the existing isolated `stall`
+helper. No shell, Tauri app, hardware query or user process is launched/killed.
+
+Initial result: **0/3 pass, 3 fail**, Rust exit 101, Node exit 1:
+- suspended-before-collect work consumes a probe reservation ID (2 vs expected 1)
+  and reaches the executor adapter; stale work must be rejected before reservation;
+- suspension after real child spawn returns `TimedOut`, expected `Cancelled`;
+- retiring only the ProbeToken while WorkToken/context remain current also
+  returns `TimedOut`, expected `Cancelled`.
+
+Both running-child cases already pass kill→before-wait→reaped ordering, exact
+event counts, held OS process-object signaled/exited checks, budget slot retained
+through BeforeWait and Reaped notification, and release only after collector
+observes executor completion. Their final assertion fails on the wrong reason:
+they wait for deadline instead of recognizing suspension/retired ownership.
+
+Artifacts under `%LOCALAPPDATA%\Temp\opencode\`:
+`volume-probe-suspension-red.log`, `volume-probe-suspension\latest.log`,
+`latest-artifact.txt`, and generated `run-Y75qNi\src\lib.rs`/manifest.
+Exact acceptance: current WorkToken ownership must gate probe reservation and
+executor cancellation; a retired ProbeToken must cancel even when the context
+and WorkToken still match. Retired live-child reservations stay held until actual
+kill/wait/reap completes; context must remain unchanged by suspension. A valid
+unsuspended work/probe path must remain admitted (add positive regression with fix).
+
+Prior **6/6** blur lifecycle, **5/5** wiring, **17/17 + 7/7** browser checks remain
+valid for unchanged surfaces but do not cover this volume seam. Browser evidence
+is reused for this native-only follow-up; focused native correction/review pending.
+
+### Volume-probe suspension follow-up: fixed-source GREEN
+
+Final command:
+`node --test tests/volumeProbeSuspensionActualSource.test.mjs tests/panelBlurActualSource.test.mjs tests/panelToggleNativeContract.test.mjs`
+passes (seven top-level Node tests): **6/6 actual-source volume cases**,
+**6/6 actual-source blur/resume cases**, **5/5 wiring contracts**. Expanded volume
+cases cover suspension before reservation, suspension during a real child,
+independent retired-probe cancellation, old WorkToken ID versus a replacement
+with identical context/lane, valid current work decoding/publishing without a
+kill, and legitimate current-work timeout without false cancellation. Child
+process exit and reservation retention through wait/reap remain asserted.
+
+Existing operational cleanup regression:
+`npm run cargo:test -- --test system_info_probe_executor`
+passes **7/7**, exit 0 (264 application build warnings). This includes bounded
+timeout, flood/overflow, exact/empty output, nonzero exit, wire decoding,
+pre-cancellation/spawn failure, and old-epoch slot retention through reap.
+
+Final logs under `%LOCALAPPDATA%\Temp\opencode\`:
+- `panel-native-volume-final.log`: both actual-source wrappers + wiring PASS;
+- `volume-probe-suspension\latest.log`, `latest-artifact.txt`: six case results,
+  generated crate `run-IN9y1O`;
+- `panel-blur-actual-source\latest.log`: six blur/resume cases PASS;
+- `panel-probe-executor-final.log`: operational cleanup seven PASS.
+
+Original volume **0/3 RED** remains recorded above. No task-owned defect remains
+in final focused evidence. Browser **17/17 + 7/7**, frontend **99/99** components,
+check/build are reused for this native-only correction; their production surfaces
+are unchanged. Implementation owner reports cargo-check PASS. Parent final review
+remains required. No live Tauri shell, global hooks/keys, hardware query or user
+process kill was performed; only isolated test-owned helper children were run.
+
 ## Evidence boundary
 
 No live Tauri app, Windows shell hook, AppBar, or native smoke is authorized.

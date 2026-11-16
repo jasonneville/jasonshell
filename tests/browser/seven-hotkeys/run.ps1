@@ -23,3 +23,4 @@ $cases = @($summary.checks | ForEach-Object {
 $checks = @($summary.checks | ForEach-Object { '<li>' + [System.Net.WebUtility]::HtmlEncode([string]$_) + '</li>' }) -join ''
 "<!doctype html><html lang=`"en`"><meta charset=`"utf-8`"><title>Seven hotkeys mocked journey PASS</title><h1>PASS: mocked production-mounted journey</h1><p>Not live Windows shell/OS delivery evidence.</p><ol>$checks</ol><p><a href=`"evidence.json`">IPC/event trace</a> · <a href=`"accessibility.txt`">Accessibility snapshot</a> · <a href=`"junit.xml`">JUnit</a></p><img width=`"100%`" src=`"01-mounted.png`" alt=`"Mounted production surfaces`"><img width=`"100%`" src=`"02-completed.png`" alt=`"Completed journey`"><img width=`"100%`" src=`"03-shortcuts.png`" alt=`"Committed seven shortcut bindings`"></html>" | Set-Content -Encoding utf8 "$Output\report.html"
 Write-Output "PASS: artifacts in $Output"
+agent-browser --session seven-hotkeys close

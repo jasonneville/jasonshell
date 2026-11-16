@@ -10,7 +10,7 @@ test('settings contract exposes fifth snipping hotkey while preserving original 
   const settings = readSource('../src/lib/settings.ts');
   const rustSettings = readSource('../src-tauri/src/settings.rs');
 
-  assert.match(settings, /export type StandardHotkeyAction = 'search' \| 'terminal' \| 'stackBrowser' \| 'speechTranscription' \| 'snipping' \| 'processManager' \| 'settings';/);
+  assert.match(settings, /export type StandardHotkeyAction = 'search' \| 'terminal' \| 'stackBrowser' \| 'speechTranscription' \| 'snipping' \| 'processManager' \| 'settings' \| 'quickCommands';/);
   assert.match(settings, /export interface StandardHotkeySettings \{[^}]*search: CanonicalHotkeyBinding;[^}]*terminal: CanonicalHotkeyBinding;[^}]*stackBrowser: CanonicalHotkeyBinding;[^}]*speechTranscription: CanonicalHotkeyBinding;[^}]*\}/);
   assert.match(settings, /hotkeys: defaultStandardHotkeySettings\(\)/);
   assert.match(settings, /search: 'Ctrl\+Space'/);
@@ -170,4 +170,18 @@ test('native lease expiry and lifecycle retirement are backend-owned rather than
   assert.match(hook, /WM_HOTKEY[\s\S]*route_hotkey_observed\(/);
   const lifecycle = readSource('../src-tauri/src/settings_panel.rs') + readSource('../src-tauri/src/main.rs');
   assert.match(lifecycle, /retire_settings_capture\(/);
+});
+
+test('eighth Quick Commands native dispatch pairs scoped top-bar event with existing launcher toggle handler', () => {
+  const native = readSource('../src-tauri/src/windows_key_hook.rs');
+  const contracts = readSource('../src-tauri/src/contracts.rs');
+  const top = readSource('../src/components/TopBar.svelte');
+  const events = readSource('../src/ipc/events.ts');
+  const arm = native.match(/ConfiguredHotkeyAction::QuickCommands => \{([^}]+)\}/);
+  assert.ok(arm, 'native Quick Commands dispatch arm missing');
+  assert.match(arm[1], /emit_to\(tauri::EventTarget::webview_window\(crate::contracts::surfaces::TOP_BAR\), crate::contracts::events::QUICK_COMMANDS_TOGGLE, \(\)\)/);
+  assert.match(contracts, /QUICK_COMMANDS_TOGGLE: &str = "quick-commands:toggle"/);
+  assert.match(events, /quickCommandsToggle: 'quick-commands:toggle'/);
+  assert.match(top, /listen\(IPC_EVENTS\.quickCommandsToggle,[\s\S]*?toggleCommandPanel\(document\.querySelector\('\.command-button'\)\)[\s\S]*?target: \{ kind: 'WebviewWindow', label: getCurrentWebviewWindow\(\)\.label \}/);
+  assert.match(top, /onClick=\{\(event\) => void toggleCommandPanel\(event\.currentTarget\)\}/);
 });

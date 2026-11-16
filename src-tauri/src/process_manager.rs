@@ -28,6 +28,13 @@ fn authorize_process_manager(window: &WebviewWindow) -> Result<(), String> {
     system_info::authorize_manager(window.label(), || same_registered_instance(window, PROCESS_MANAGER_LABEL)).map_err(str::to_owned)
 }
 #[cfg(target_os = "windows")]
+pub fn suspend_system_info(app: &AppHandle) -> Result<(), String> {
+    let runtime = app.state::<SystemInfoRuntime>();
+    let mut state = runtime.inner.lock().map_err(|_| "state unavailable")?;
+    state.suspend();
+    Ok(())
+}
+#[cfg(target_os = "windows")]
 pub fn retire_system_info(app: &AppHandle) -> Result<ProcessManagerContext, String> {
     // Capture the retired epoch under the lifecycle lock. A newer opening may
     // commit before emission; never reread its context for this close event.
@@ -165,6 +172,8 @@ pub struct ShowProcessManagerRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
     pub focus_pid: Option<u32>,
+    #[serde(default)]
+    pub toggle: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +202,13 @@ pub fn show_process_manager(
     request: ShowProcessManagerRequest,
 ) -> Result<(), String> {
     if window.label() != BOTTOM_BAR_LABEL || !same_registered_instance(&window, BOTTOM_BAR_LABEL) { return Err("unauthorized".into()); }
+    if request.toggle && request.focus_pid.is_none() {
+        let popup = app_handle.get_webview_window(PROCESS_MANAGER_LABEL)
+            .ok_or_else(|| "Process manager window is unavailable".to_string())?;
+        if popup.is_visible().map_err(|error| format!("Failed to inspect process manager visibility: {error}"))? {
+            return hide_process_manager_native(app_handle);
+        }
+    }
     show_process_manager_native(app_handle, request)
 }
 
@@ -270,6 +286,10 @@ pub(crate) fn show_process_manager_native(app_handle: AppHandle, request: ShowPr
 #[tauri::command]
 pub fn hide_process_manager(window: WebviewWindow, app_handle: AppHandle) -> Result<(), String> {
     authorize_process_manager(&window)?;
+    hide_process_manager_native(app_handle)
+}
+
+fn hide_process_manager_native(app_handle: AppHandle) -> Result<(), String> {
     retire_system_info(&app_handle)?;
     let popup = app_handle
         .get_webview_window(PROCESS_MANAGER_LABEL)

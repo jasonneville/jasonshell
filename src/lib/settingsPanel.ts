@@ -4,6 +4,7 @@ import { IPC_COMMANDS } from '../ipc/commands';
 export interface ShowSettingsPanelRequest {
   anchorLeft: number;
   anchorWidth: number;
+  toggle?: boolean;
 }
 
 export function showSettingsPanel(request: ShowSettingsPanelRequest): Promise<void> {
