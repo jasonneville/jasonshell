@@ -15,10 +15,16 @@ vi.mock('@tauri-apps/api/window', async () => {
   return { getCurrentWindow: () => ({ label: 'top-bar', listen: tauriMocks().listen,
     onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()) }) };
 });
+vi.mock('@tauri-apps/api/webviewWindow', async () => {
+  const { tauriMocks } = await import('./setup');
+  return { getCurrentWebviewWindow: () => ({ label: 'top-bar',
+    listen: (name: string, callback: (event: { payload: unknown }) => void) =>
+      tauriMocks().listen(name, callback, { target: { kind: 'WebviewWindow', label: 'top-bar' } }) }) };
+});
 type Token = { generation: string; captureId: string };
 const first: Token = { generation: '7', captureId: '77777777777777777777777777777777' };
 const second: Token = { generation: '8', captureId: '88888888888888888888888888888888' };
-const listeners = new Map<string, (event: { payload: Token }) => void>();
+const listeners = new Map<string, (event: { payload: unknown }) => void>();
 const unlisteners: ReturnType<typeof vi.fn>[] = [];
 let frames: Map<number, FrameRequestCallback>;
 let style: HTMLStyleElement;
@@ -189,4 +195,81 @@ it('IPC registry exposes exact barrier command/events without extra renderer for
   expect(Object.values(IPC_EVENTS)).toContain('snip:prepare_bar');
   expect(Object.values(IPC_EVENTS)).toContain('snip:release_bar');
   expect(Object.values(IPC_COMMANDS)).not.toContain('prepare_snip_intent');
+});
+
+const hotkeyFeedback = 'snip:hotkey_feedback';
+async function feedback(payload: unknown) {
+  expect(listeners.has(hotkeyFeedback), 'TopBar must subscribe to native hotkey feedback').toBe(true);
+  listeners.get(hotkeyFeedback)!({ payload });
+  await tick();
+}
+const started = (attempt: string) => ({ attempt, status: 'started', code: null });
+const failed = (attempt: string, code = 'readiness-timeout') => ({ attempt, status: 'error', code });
+
+it('hotkey feedback listener targets exact current topbar WebviewWindow and disposes', async () => {
+  const { view } = await bar();
+  await waitFor(() => expect(listeners.has(hotkeyFeedback)).toBe(true));
+  const registrations = tauriMocks().listen.mock.calls.filter(([name]) => name === hotkeyFeedback);
+  expect(registrations).toHaveLength(1);
+  expect(registrations[0][2]).toEqual({ target: { kind: 'WebviewWindow', label: 'top-bar' } });
+  view.unmount();
+  expect(listeners.has(hotkeyFeedback)).toBe(false);
+});
+
+it('hotkey feedback shows sanitized accessible timeout retry through existing snip error presentation without invoking start', async () => {
+  const { view, root, button } = await bar();
+  await feedback(started('1')); await feedback(failed('1'));
+  const alert = await view.findByRole('alert');
+  expect(alert.classList.contains('snip-start-error')).toBe(true);
+  expect(alert.textContent).toMatch(/snip|capture|screenshot/i);
+  expect(alert.textContent).toMatch(/timed?\s*out|timeout|time.*out/i);
+  expect(alert.textContent).toMatch(/try again|retry/i);
+  expect(view.queryAllByRole('alert')).toHaveLength(1);
+  expect(calls('start_snip')).toHaveLength(0);expect(calls('snip_bar_ready')).toHaveLength(0);
+  expect(root.classList.contains('snip-preparing')).toBe(false);
+  expect(button.hasAttribute('disabled')).toBe(false);visible(root,button);
+});
+
+it('newer hotkey started clears previous click failure before prepare and stale failure cannot restore it', async () => {
+  startResponse(() => Promise.reject('capture-failed'));
+  const { view, button } = await bar();await fireEvent.click(button);await view.findByRole('alert');
+  await feedback(started('2'));
+  expect(view.queryByRole('alert')).toBeNull();
+  await feedback(failed('1'));expect(view.queryByRole('alert')).toBeNull();
+  expect(calls('start_snip')).toHaveLength(1);
+});
+
+it('hotkey feedback orders decimal attempts beyond Number precision and ignores stale started or error events', async () => {
+  const { view } = await bar();
+  await feedback(started('9007199254740992'));await feedback(failed('9007199254740992'));
+  await view.findByRole('alert');
+  await feedback(started('9007199254740993'));expect(view.queryByRole('alert')).toBeNull();
+  await feedback(failed('9007199254740992'));expect(view.queryByRole('alert')).toBeNull();
+  await feedback(failed('9007199254740993','capture-failed'));
+  const text=(await view.findByRole('alert')).textContent;
+  await feedback(started('9007199254740992'));
+  expect(view.getByRole('alert').textContent).toBe(text);
+});
+
+it('duplicate hotkey error or same-attempt started cannot replace or clear its first announced failure', async () => {
+  const { view } = await bar();await feedback(started('3'));await feedback(failed('3'));
+  const original=await view.findByRole('alert');const text=original.textContent;
+  await feedback(failed('3','capture-failed'));await feedback(started('3'));await feedback(failed('3'));
+  expect(view.queryAllByRole('alert')).toHaveLength(1);
+  expect(view.getByRole('alert')).toBe(original);expect(original.textContent).toBe(text);
+});
+
+it('malformed hotkey feedback cannot mutate failure state or poison the next valid attempt', async () => {
+  const { view } = await bar();await feedback(started('4'));await feedback(failed('4'));
+  const text=view.getByRole('alert').textContent;
+  const invalid: unknown[]=[null,[],{},'error',
+    ...['','0','05','-1','1e3','18446744073709551616','9'.repeat(1000)].map(attempt=>started(attempt)),
+    {attempt:5,status:'started',code:null},{attempt:'5',status:'success',code:null},
+    {attempt:'5',status:'started',code:'capture-failed'},{attempt:'5',status:'error',code:null},
+    failed('5','C:\\private\\token=secret'),failed('5','unknown-code')];
+  for(const payload of invalid){await feedback(payload);expect(view.getByRole('alert').textContent).toBe(text);}
+  await feedback(started('5'));expect(view.queryByRole('alert')).toBeNull();
+  await feedback(failed('5','window-failed'));
+  expect((await view.findByRole('alert')).textContent).toMatch(/try again|retry/i);
+  expect(view.container.textContent).not.toContain('secret');
 });

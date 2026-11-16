@@ -30,7 +30,8 @@
 
 <style>
   :global(.js-context-menu) {
-    background: var(--js-color-surface);
+    background: color-mix(in srgb, var(--js-color-surface-overlay) 73%, transparent);
+    backdrop-filter: blur(8px);
     border: 1px solid color-mix(in srgb, var(--js-color-border) 86%, transparent);
     border-radius: 12px;
     box-shadow: var(--js-shadow-raised);
@@ -45,6 +46,11 @@
 
   :global(.js-context-menu.context-menu-overlay) {
     background: rgb(from var(--js-color-surface-raised) r g b / 1);
+  }
+
+  :global(:root[data-shell-transparency='reduced'] .js-context-menu) {
+    background: rgb(from var(--js-color-surface-raised) r g b / 1);
+    backdrop-filter: none;
   }
 
   :global(.js-context-menu .context-menu-item) {

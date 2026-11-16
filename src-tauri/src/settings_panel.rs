@@ -11,6 +11,8 @@ const SETTINGS_PANEL_EDGE_PADDING_PHYSICAL: i32 = 8;
 pub struct ShowSettingsPanelRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
+    #[serde(default)]
+    pub toggle: bool,
 }
 
 #[tauri::command]
@@ -21,6 +23,9 @@ pub fn show_settings_panel(
     let panel = app_handle
         .get_webview_window(SETTINGS_PANEL_LABEL)
         .ok_or_else(|| "Settings panel window is unavailable".to_string())?;
+    if request.toggle && panel.is_visible().map_err(|error| format!("Failed to inspect settings panel visibility: {error}"))? {
+        return hide_settings_panel(app_handle);
+    }
     let top_bar = app_handle
         .get_webview_window(TOP_BAR_LABEL)
         .ok_or_else(|| "Top bar window is unavailable".to_string())?;
@@ -58,12 +63,23 @@ pub fn show_settings_panel(
 
 #[tauri::command]
 pub fn hide_settings_panel(app_handle: AppHandle) -> Result<(), String> {
+    crate::windows_key_hook::retire_settings_capture();
     let panel = app_handle
         .get_webview_window(SETTINGS_PANEL_LABEL)
         .ok_or_else(|| "Settings panel window is unavailable".to_string())?;
     panel
         .hide()
         .map_err(|error| format!("Failed to hide the settings panel: {error}"))
+}
+
+pub(crate) fn install_capture_lifecycle(app: &AppHandle) -> Result<(), String> {
+    let panel = app.get_webview_window(SETTINGS_PANEL_LABEL).ok_or("Settings panel window is unavailable")?;
+    panel.on_window_event(|event| {
+        if matches!(event, tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) {
+            crate::windows_key_hook::retire_settings_capture();
+        }
+    });
+    Ok(())
 }
 
 fn anchored_panel_x(

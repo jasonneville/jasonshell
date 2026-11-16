@@ -4,7 +4,9 @@ import test from 'node:test';
 
 function readSourceOrEmpty(relativePath) {
   try {
-    return readFileSync(new URL(relativePath, import.meta.url), 'utf8');
+    // Source contracts use LF-delimited Rust blocks; autocrlf checkout must not
+    // hide an existing handler from the parser or bypass its logging assertions.
+    return readFileSync(new URL(relativePath, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   } catch (error) {
     if (error && typeof error === 'object' && error.code === 'ENOENT') {
       return '';

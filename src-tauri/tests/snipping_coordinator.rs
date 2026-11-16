@@ -91,6 +91,8 @@ struct Windows {
     contexts: Mutex<HashMap<u64, Context>>,
     fail: Mutex<Option<String>>,
     context_gate: Mutex<Option<Gate>>,
+    create_gate: Mutex<Option<Gate>>,
+    close_observer: Mutex<Option<Arc<dyn Fn(&WindowRef) + Send + Sync>>>,
 }
 impl Windows {
     fn new(trace: Trace) -> Self {
@@ -109,6 +111,8 @@ impl Windows {
             contexts: Mutex::new(HashMap::new()),
             fail: Mutex::new(None),
             context_gate: Mutex::new(None),
+            create_gate: Mutex::new(None),
+            close_observer: Mutex::new(None),
         }
     }
     fn effect(&self, stage: &str) -> Result<(), SnipError> {
@@ -127,6 +131,8 @@ impl Windows {
         monitor: &MonitorSnapshot,
         preview: bool,
     ) -> Result<WindowRef, SnipError> {
+        let gate = self.create_gate.lock().unwrap().take();
+        if let Some(gate) = gate { gate.wait(); }
         self.effect(if preview {
             "preview"
         } else if monitor.id == "m0" {
@@ -256,10 +262,16 @@ impl WindowPort for Windows {
     }
     fn close(&self, w: WindowRef) {
         record(&self.trace, format!("close:{}", w.caller.window_id));
-        let mut live = self.live.lock().unwrap();
-        if live.get(&w.caller.window_id).is_some_and(|r| r.window == w) {
-            live.remove(&w.caller.window_id);
+        {
+            let mut live = self.live.lock().unwrap();
+            if live.get(&w.caller.window_id).is_some_and(|r| r.window == w) {
+                live.remove(&w.caller.window_id);
+            }
         }
+        // Inject only boundary callback timing. No native destruction or second
+        // coordinator model: callback probes the actual production coordinator.
+        let observer = self.close_observer.lock().unwrap().clone();
+        if let Some(observer) = observer { observer(&w); }
     }
     fn still_same(&self, w: &WindowRef) -> bool {
         self.live
@@ -1329,4 +1341,117 @@ fn group6_reused_preview_label_during_picker_cannot_inherit_publication_authorit
     assert!(!matches!(result, Ok(SaveOutcome::Saved)));
     assert!(!f.core.inspect().save_pin);
     assert!(f.windows.visible(replacement_id));
+}
+
+// Reported post-merge capture/cancel crash: repeat the real coordinator lifecycle
+// with synchronous boundary callbacks. Passing here does not reproduce/certify
+// Win32 destruction, Tao/WebView2 event dispatch, or whole-process survival.
+fn bounded_lifecycle(run: impl FnOnce() + Send + 'static) {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || { run(); let _ = tx.send(()); });
+    rx.recv_timeout(Duration::from_secs(5)).expect("production lifecycle/reentrant close failed or blocked within five seconds");
+    worker.join().unwrap();
+}
+fn observe_reentrant_close(f: &Fixture) {
+    let core = Arc::downgrade(&f.core);
+    *f.windows.close_observer.lock().unwrap() = Some(Arc::new(move |closed| {
+        if let Some(core) = core.upgrade() {
+            let snapshot = core.inspect();
+            assert!(matches!(core.context(closed.caller.clone()), Err(SnipError::Unauthorized)));
+            if let Some(token) = snapshot.token {
+                assert_eq!(core.cancel(closed.caller.clone(), token.clone()), Err(SnipError::Unauthorized));
+                assert_eq!(core.inspect().token, Some(token), "reentrant retired caller must not change current generation");
+            }
+            core.expire();
+        }
+    }));
+}
+fn assert_cleanup_exact_once(f: &Fixture) {
+    let trace = f.trace();
+    let drops = trace.iter().filter(|entry| entry.starts_with("drop:")).collect::<Vec<_>>();
+    assert!(!drops.is_empty());
+    for dropped in drops {
+        assert_eq!(trace.iter().filter(|entry| *entry == dropped).count(), 1, "{dropped}");
+        let closed = dropped.replace("drop:", "close:");
+        assert_eq!(trace.iter().filter(|entry| **entry == closed).count(), 1, "{closed}");
+    }
+}
+
+#[test]
+fn lifecycle_repeated_complete_replace_complete_survives_synchronous_close_callbacks() {
+    bounded_lifecycle(|| {
+        let f = Fixture::new(); observe_reentrant_close(&f);
+        let mut prior: Option<(Token, Caller)> = None;
+        for cycle in 0..8 {
+            let (token, preview) = f.preview();
+            assert_eq!(f.core.inspect().phase, Some(Phase::Preview));
+            assert_eq!(f.core.inspect().token, Some(token.clone()));
+            assert_eq!(f.windows.count(), 1); assert!(f.windows.visible(preview.window_id));
+            assert_eq!(f.clipboard.crops.lock().unwrap().len(), cycle + 1);
+            if let Some((old, caller)) = prior.take() {
+                let before = f.trace();
+                assert_eq!(f.core.dismiss(caller.clone(), old.clone()), Err(SnipError::Unauthorized));
+                assert_eq!(f.core.cancel(caller, old), Err(SnipError::Unauthorized));
+                assert_eq!(f.trace(), before, "late old-generation IPC must have zero side effects");
+                assert_eq!(f.core.inspect().token, Some(token.clone()));
+            }
+            prior = Some((token, preview)); assert_cleanup_exact_once(&f);
+        }
+        let (token, preview) = prior.unwrap(); f.core.dismiss(preview, token).unwrap();
+        f.clean(); assert_cleanup_exact_once(&f);
+    });
+}
+
+#[test]
+fn lifecycle_repeated_complete_replace_cancel_restores_preview_through_reentrant_cleanup() {
+    bounded_lifecycle(|| {
+        let f = Fixture::new(); observe_reentrant_close(&f);
+        let (old, preview) = f.preview();
+        for _ in 0..8 {
+            let (new, overlay, _) = f.selecting();
+            assert!(!f.windows.visible(preview.window_id));
+            f.core.cancel(overlay.clone(), new.clone()).unwrap();
+            assert_eq!(f.core.inspect().token, Some(old.clone()));
+            assert!(f.windows.visible(preview.window_id)); assert_eq!(f.windows.count(), 1);
+            let before = f.trace(); assert_eq!(f.core.cancel(overlay, new), Err(SnipError::Unauthorized));
+            assert_eq!(f.trace(), before); assert_cleanup_exact_once(&f);
+        }
+        assert_eq!(f.clipboard.crops.lock().unwrap().len(), 1, "cancellation cannot republish clipboard");
+        f.core.dismiss(preview, old).unwrap(); f.clean(); assert_cleanup_exact_once(&f);
+    });
+}
+
+#[test]
+fn lifecycle_repeated_cancel_retry_then_complete_cleans_each_resource_once() {
+    bounded_lifecycle(|| {
+        let f = Fixture::new(); observe_reentrant_close(&f);
+        for _ in 0..8 {
+            let (token, overlay, _) = f.selecting(); f.core.cancel(overlay, token).unwrap();
+            f.clean(); assert_cleanup_exact_once(&f);
+        }
+        assert!(f.clipboard.crops.lock().unwrap().is_empty());
+        let (token, preview) = f.preview(); assert!(f.windows.visible(preview.window_id));
+        f.core.dismiss(preview, token).unwrap(); f.clean(); assert_cleanup_exact_once(&f);
+        assert_eq!(f.clipboard.crops.lock().unwrap().len(), 1);
+    });
+}
+
+#[test]
+fn lifecycle_pending_create_late_return_cannot_publish_or_dispose_newer_generation() {
+    let f = Fixture::new(); observe_reentrant_close(&f);
+    let (g, entered, release) = gate(); *f.windows.create_gate.lock().unwrap() = Some(g);
+    let core = f.core.clone(); let (tx, rx) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || { let _ = tx.send(core.start(owner())); });
+    entered.recv_timeout(Duration::from_secs(1)).unwrap();
+    let retired = f.core.inspect().token.unwrap();
+    f.clock.advance(Duration::from_secs(5)); f.core.expire();
+    let (newer, overlay, _) = f.selecting(); let ids = f.core.inspect().window_ids;
+    let contexts = f.windows.contexts.lock().unwrap().len();
+    release.send(()).unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Err(SnipError::Stale)); worker.join().unwrap();
+    assert_ne!(retired, newer); assert_eq!(f.core.inspect().token, Some(newer.clone()));
+    assert_eq!(f.core.inspect().window_ids, ids); assert_eq!(f.windows.count(), 2);
+    assert_eq!(f.windows.contexts.lock().unwrap().len(), contexts, "late create cannot publish stale context");
+    assert!(f.clipboard.crops.lock().unwrap().is_empty());
+    f.core.cancel(overlay, newer).unwrap(); f.clean(); assert_cleanup_exact_once(&f);
 }

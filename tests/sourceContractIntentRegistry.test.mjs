@@ -18,9 +18,13 @@ const SOURCE_CONTRACT_INTENTS = {
     'globalCloseGlyphUniformity.test.mjs',
     'meltMigrationWiring.test.mjs',
     'overlayDismissalWiring.test.mjs',
+    'snippingDeviceEventFilterContract.test.mjs', // Native input-filter/lifecycle wiring, not real OS delivery evidence.
+    'snippingStackVisibility.test.mjs', // Executed production handlers/adapters plus native lifecycle source guards; no HWND/pixel proof.
     'persistentSurfaceLifecycle.test.mjs',
     'bootstrapWindowsContract.test.mjs',
     'runtimeSmokeHarnessContract.test.mjs',
+    'validationRunner.test.mjs', // Package wiring plus injected and subprocess runner behavior.
+    'weeklyHealthGuards.test.mjs', // Dependency ownership and compile-boundary guards, not native acceptance.
     'speechContracts.test.mjs',
     'speechHistoryPanelUi.test.mjs',
     'processManagerAccessibility.test.mjs',
@@ -39,6 +43,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'searchOverhaulPhase0.test.mjs',
     'searchOverhaulPhase6.test.mjs',
     'searchPanelState.test.mjs',
+    'searchPanelPlacementContract.test.mjs', // Static placement wiring only, not native window evidence.
     'searchTypingFreezePhase1.test.mjs',
     'settingsPanelWiring.test.mjs',
     'shellBarResize.test.mjs',
@@ -85,8 +90,11 @@ const SOURCE_CONTRACT_INTENTS = {
     'taskbarLauncherReorder.test.mjs',
     'taskbarUxState.test.mjs',
     'taskPreviewRetention.test.mjs',
+    'taskPreviewBaseline.test.mjs', // Tracked baseline inset-lens source contract.
     'taskPreviewTextPolish.test.mjs',
     'themeRegistry.test.mjs',
+    'themePalette.test.mjs',
+    'themeTerminalBoundary.test.mjs',
     'topBarMicControl.test.mjs',
     'topBarControlReorder.test.mjs',
     'topBarCalendar.test.mjs',
@@ -109,6 +117,7 @@ const SOURCE_CONTRACT_INTENTS = {
   ],
   securityBoundary: [
     'stackExternalRefreshContract.test.mjs',
+    'stackTextEditorP02RunnerContract.test.mjs', // Isolated probe driver and fail-closed native startup boundary; no native launch.
     'automationProviders.test.mjs',
     'backendBlockingLockBoundaries.test.mjs',
     'backendBlockingLockBoundariesP6.test.mjs',

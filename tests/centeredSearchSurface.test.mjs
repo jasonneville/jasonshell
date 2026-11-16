@@ -84,7 +84,7 @@ test('search panel surface owns centered input and resize grip wiring', () => {
 test('centered search surface input owns combobox popup and status description', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
   const inputTag = source.match(/<input\b[\s\S]*?class="search-panel-query"[\s\S]*?\/>/)?.[0] ?? '';
-  const listboxTag = source.match(/<div\b[\s\S]*?id="search-results"[\s\S]*?role="listbox"[\s\S]*?>/)?.[0] ?? '';
+  const listboxTag = source.match(/<div\b[^<]*?id="search-results"[^<]*?role="listbox"[^<]*?>/)?.[0] ?? '';
 
   assert.match(inputTag, /role="combobox"/);
   assert.match(inputTag, /aria-autocomplete="list"/);
@@ -103,7 +103,7 @@ test('centered search surface input owns combobox popup and status description',
 
 test('centered search surface keeps listbox options non-tabbable and pin control out of tab flow', () => {
   const source = readFileSync(new URL('../src/components/SearchPanelSurface.svelte', import.meta.url), 'utf8');
-  const optionTag = source.match(/<div\b[\s\S]*?role="option"[\s\S]*?>/)?.[0] ?? '';
+  const optionTag = source.match(/<div\b[^<]*?role="option"[^<]*?>/)?.[0] ?? '';
 
   assert.match(optionTag, /role="option"/);
   assert.match(optionTag, /tabindex="-1"/);

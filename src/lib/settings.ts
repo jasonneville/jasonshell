@@ -10,7 +10,7 @@ export const CURRENT_SETTINGS_VERSION = 1;
 export const SHELL_SETTINGS_CHANNEL = 'jasonshell.settings.changed';
 export const SHELL_SETTINGS_CHANGED_EVENT = 'jasonshell:settings-changed';
 
-export type StandardHotkeyAction = 'search' | 'terminal' | 'stackBrowser' | 'speechTranscription' | 'snipping';
+export type StandardHotkeyAction = 'search' | 'terminal' | 'stackBrowser' | 'speechTranscription' | 'snipping' | 'processManager' | 'settings' | 'quickCommands';
 export type CanonicalHotkeyBinding = string;
 
 export interface StandardHotkeySettings {
@@ -19,6 +19,9 @@ export interface StandardHotkeySettings {
   stackBrowser: CanonicalHotkeyBinding;
   speechTranscription: CanonicalHotkeyBinding;
   snipping: CanonicalHotkeyBinding;
+  processManager: CanonicalHotkeyBinding;
+  settings: CanonicalHotkeyBinding;
+  quickCommands: CanonicalHotkeyBinding;
 }
 
 export function defaultStandardHotkeySettings(): StandardHotkeySettings {
@@ -27,7 +30,10 @@ export function defaultStandardHotkeySettings(): StandardHotkeySettings {
     terminal: 'Alt+Backquote',
     stackBrowser: 'Alt+1',
     speechTranscription: 'Ctrl+D',
-    snipping: 'Alt+S'
+    snipping: 'Alt+S',
+    processManager: 'Alt+P',
+    settings: 'Alt+O',
+    quickCommands: 'Alt+Q'
   };
 }
 
@@ -191,7 +197,7 @@ export function addShellSettingsChangeListener(listener: (settings: ShellSetting
   };
 }
 
-function broadcastShellSettings(settings: ShellSettings): void {
+export function broadcastShellSettings(settings: ShellSettings): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(SHELL_SETTINGS_CHANGED_EVENT, { detail: settings }));
     try {

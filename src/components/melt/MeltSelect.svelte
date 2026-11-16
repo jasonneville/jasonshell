@@ -12,6 +12,7 @@
   export let value = '';
   export let options: MeltSelectOption[] = [];
   export let placeholder = 'Select';
+  export let restoreFocusOnClose = true;
   export let onChange: (value: string) => void = () => undefined;
   export { className as class };
 
@@ -23,6 +24,7 @@
       }
     },
     sameWidth: true,
+    focus: { onClose: () => restoreFocusOnClose ? undefined : null },
     scrollAlignment: 'nearest'
   });
 

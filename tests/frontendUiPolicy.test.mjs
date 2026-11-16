@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -27,17 +28,56 @@ function collectUiFiles(dir) {
   return entries;
 }
 
-test('app and component UI sources do not use active gradients', () => {
+// Leader-approved visual contracts are declaration-specific, never file-wide.
+// The remaining content of these selectors/files still passes the same ban.
+const approvedGradientDeclarations = {
+  'src/components/TaskGallerySurface.css': { selector: '.task-gallery-panel', property: 'background', value:
+    'var(--js-bg-surface) linear-gradient( color-mix(in srgb, var(--js-bg-surface) 88%, var(--js-color-accent)), var(--js-bg-surface) )' },
+  'src/components/TaskPreviewSurface.css': { selector: '.preview-surface', property: '--preview-chrome', value:
+    'linear-gradient( color-mix(in srgb, var(--js-bg-surface) 88%, var(--js-color-accent)), var(--js-bg-surface) )' },
+  'src/components/SpeechIndicatorSurface.svelte': { selector: '.mic-glyph', property: 'background', value:
+    'linear-gradient(to bottom, #162d49 0%, #335371 calc((1 - var(--mic-level)) * (1 - 0.2 * var(--mic-level)) * 100%), #a3c2e0 calc((1 - var(--mic-level)) * (1 + 0.08 * var(--mic-level)) * 100%), #d7ebfa 100%)' }
+};
+const normalizedWhitespace = value => value.replace(/\s+/g, ' ').trim();
+function assertGradientPolicy(path, text) {
+  const approved = approvedGradientDeclarations[path];
+  if (approved) {
+    const escaped = approved.selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let removed = 0;
+    text = text.replace(new RegExp(`(^|\\n)(\\s*${escaped}\\s*\\{)([^{}]*)(\\})`), (whole, prefix, open, body, close) => {
+      const remaining = body.replace(/([\w-]+)\s*:\s*([^;]+);/g, (declaration, property, value) => {
+        if (property === approved.property && normalizedWhitespace(value) === approved.value) { removed++; return ''; }
+        return declaration;
+      });
+      return prefix + open + remaining + close;
+    });
+    assert.equal(removed, 1, `${path}: approved declaration must retain its exact contract`);
+  }
+  assert.doesNotMatch(text, /\b(?:linear-gradient|radial-gradient|conic-gradient|repeating-linear-gradient|repeating-radial-gradient|background-image)\b|--js-gradient-/, path);
+}
+
+test('UI gradients are prohibited except exact approved outer chrome, preview and speech artwork declarations', () => {
   const files = [
     fileURLToPath(new URL('src/app.css', repoRoot)),
     fileURLToPath(new URL('src/App.svelte', repoRoot)),
     ...collectUiFiles(fileURLToPath(new URL('src/components', repoRoot)))
   ];
-  const forbidden = /\b(?:linear-gradient|radial-gradient|conic-gradient|repeating-linear-gradient|repeating-radial-gradient|background-image)\b|--js-gradient-/;
-
   for (const file of files) {
-    assert.doesNotMatch(readFileSync(file, 'utf8'), forbidden, file);
+    const path = relative(fileURLToPath(repoRoot), file).replaceAll('\\', '/');
+    assertGradientPolicy(path, readFileSync(file, 'utf8'));
   }
+});
+
+test('approved gradient selectors do not allow unknown extra gradients or altered approved declarations', () => {
+  for (const path of Object.keys(approvedGradientDeclarations)) {
+    const original = source(path);
+    assertGradientPolicy(path, original);
+    assert.throws(() => assertGradientPolicy(path, original + '\n.unapproved { background: linear-gradient(red, blue); }'));
+    assert.throws(() => assertGradientPolicy(path, original.replace('linear-gradient(', 'radial-gradient(')));
+    const selector = approvedGradientDeclarations[path].selector;
+    assert.throws(() => assertGradientPolicy(path, original.replace(`${selector} {`, `${selector} { background-image: linear-gradient(red, blue);`)));
+  }
+  assert.throws(() => assertGradientPolicy('src/components/Unapproved.svelte', '.test { background: linear-gradient(red, blue); }'));
 });
 
 test('stack browser exposes editable path input and clickable segment navigation', () => {

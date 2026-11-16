@@ -2,11 +2,21 @@
   // @ts-ignore: CSS side-effect import handled by bundler
   import './SettingsPanelSurface.css';
   import { onMount } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { IPC_EVENTS } from '../ipc/events';
+  import {
+    HOTKEY_ACTION_NAMES, HOTKEY_ACTIONS, hotkeyDraftError, isCanonicalHotkey,
+    getStandardHotkeyStatus, saveStandardHotkeys, beginStandardHotkeyCapture,
+    renewStandardHotkeyCapture, endStandardHotkeyCapture,
+    type StandardHotkeyStatus, type HotkeyCaptureLease, type HotkeyCaptureEvent
+  } from '../lib/standardHotkeys';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import MeltRadioGroup from './melt/MeltRadioGroup.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
   import MeltToggle from './melt/MeltToggle.svelte';
+  import ThemeEditor from './ThemeEditor.svelte';
   import { getSpeechModelStatus, importSpeechModel, importSpeechModelFolder, type SpeechModelStatus } from '../lib/speech';
   import {
     formatShellDate,
@@ -35,20 +45,10 @@
     loadShellSettings,
     saveShellBarLock,
     saveShellSettings,
-    type CanonicalHotkeyBinding,
     type StandardHotkeyAction,
     type ShellSettings
   } from '../lib/settings';
-  import {
-    getInitialShellThemeId,
-    normalizeShellThemeId,
-    setShellTheme,
-    shellThemeOptions,
-    type ShellThemeId
-  } from '../lib/themes';
-
-  const themeOptions = shellThemeOptions();
-  const themeSelectOptions = themeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
+  let themeEditor: ThemeEditor;
   const stackTerminalProfileOptions = STACK_TERMINAL_PROFILE_OPTIONS.map((option) => ({
     value: option.value,
     label: option.label
@@ -63,7 +63,6 @@
   const dateFormatOptions = dateFormatExamples.map((format) => ({ value: format, label: format }));
   let preferences: ShellPreferences = getInitialShellPreferences();
   let shellSettings: ShellSettings = defaultShellSettings();
-  let selectedThemeId: ShellThemeId = getInitialShellThemeId();
   let now = new Date();
   let pendingPowerAction: SystemPowerAction | null = null;
   let powerError = '';
@@ -72,6 +71,20 @@
   let settingsError = '';
   let hotkeyError = '';
   let hotkeyBusy = false;
+  let hotkeyDraft = defaultStandardHotkeySettings();
+  let hotkeyStatus: StandardHotkeyStatus | null = null;
+  let hotkeyNotice = '';
+  let hotkeyMounted = false;
+  let captureListenerReady = false;
+  let captureAction: StandardHotkeyAction | null = null;
+  let capturePending = false;
+  let captureRevision = 0;
+  let captureLease: HotkeyCaptureLease | null = null;
+  let captureDeadline = 0;
+  let captureRenewTimer: ReturnType<typeof setTimeout> | undefined;
+  let captureExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingCaptureEnd: Promise<void> | null = null;
+  let statusRequest = 0;
   let shellSettingsLoaded = false;
   let googleFontLink = '';
   let googleFontStatus = '';
@@ -103,10 +116,23 @@
           : 'Checking speech model…';
 
   onMount(() => {
+    hotkeyMounted = true;
+    let unlistenCapture: (() => void) | undefined;
+    void listen<HotkeyCaptureEvent>(IPC_EVENTS.standardHotkeyCapture, (event) => receiveNativeCapture(event.payload), {
+      target: { kind: 'WebviewWindow', label: getCurrentWindow().label }
+    }).then((unlisten) => {
+      if (!hotkeyMounted) unlisten();
+      else { unlistenCapture = unlisten; captureListenerReady = true; }
+    }).catch(() => { if (hotkeyMounted) hotkeyError = 'Shortcut capture unavailable. Reopen Settings to try again.'; });
+    void refreshHotkeyStatus();
     void loadJsonShellSettings();
     speechModelMounted = true;
     void refreshSpeechModel();
     return () => {
+      hotkeyMounted = false;
+      statusRequest += 1;
+      void retireCapture();
+      unlistenCapture?.();
       speechModelMounted = false;
       speechModelRequest += 1;
       clearTimeout(speechModelTimer);
@@ -185,16 +211,11 @@
     };
     void saveShellBarLock(edge, locked)
       .then((settings) => {
-        shellSettings = settings;
+        if (hotkeyMounted) shellSettings = { ...settings, hotkeys: shellSettings.hotkeys };
       })
       .catch((error) => {
         console.error('Failed to save shell bar lock setting', error);
       });
-  }
-
-  function handleThemeChange(value: string) {
-    selectedThemeId = normalizeShellThemeId(value);
-    setShellTheme(selectedThemeId);
   }
 
   function handleFontChange(value: string) {
@@ -230,7 +251,9 @@
   async function loadJsonShellSettings() {
     try {
       const settings = await loadShellSettings();
+      if (!hotkeyMounted) return;
       shellSettings = settings;
+      hotkeyDraft = { ...settings.hotkeys };
       selectedStackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
       shellSettingsLoaded = true;
       settingsError = '';
@@ -247,13 +270,15 @@
 
     selectedStackTerminalProfile = normalizeStackTerminalProfile(value);
     try {
-      shellSettings = await saveShellSettings({
+      const saved = await saveShellSettings({
         ...shellSettings,
         stackBrowser: {
           ...(shellSettings.stackBrowser ?? { terminalProfile: 'windowsTerminal' }),
           terminalProfile: selectedStackTerminalProfile
         }
       });
+      if (!hotkeyMounted) return;
+      shellSettings = { ...saved, hotkeys: shellSettings.hotkeys };
       settingsError = '';
     } catch (error) {
       console.error('Failed to save Stack Browser terminal profile', error);
@@ -261,16 +286,138 @@
     }
   }
 
-  const hotkeyActionNames: Record<StandardHotkeyAction, string> = {
-    search: 'Search',
-    terminal: 'Terminal',
-    stackBrowser: 'Stack Browser',
-    speechTranscription: 'Speech transcription',
-    snipping: 'Screen snipping'
-  };
+  $: draftValidation = hotkeyDraftError(hotkeyDraft);
+  $: inactiveHotkeys = hotkeyStatus?.bindings.filter((binding) => !binding.active && binding.state !== 'capturePaused') ?? [];
 
-  $: snippingConflictAction = (Object.keys(hotkeyActionNames) as StandardHotkeyAction[])
-    .find((action) => action !== 'snipping' && shellSettings.hotkeys[action] === shellSettings.hotkeys.snipping);
+  function acceptHotkeyStatus(status: StandardHotkeyStatus) {
+    if (hotkeyMounted && (!hotkeyStatus || status.revision >= hotkeyStatus.revision)) hotkeyStatus = status;
+  }
+
+  async function refreshHotkeyStatus() {
+    const request = ++statusRequest;
+    try {
+      const status = await getStandardHotkeyStatus();
+      if (request === statusRequest) acceptHotkeyStatus(status);
+    } catch {
+      if (hotkeyMounted && request === statusRequest) {
+        hotkeyStatus = null;
+        hotkeyError = 'Could not check active shortcuts. Reopen Settings to try again.';
+      }
+    }
+  }
+
+  async function retireCapture() {
+    ++captureRevision;
+    captureAction = null;
+    capturePending = false;
+    clearTimeout(captureRenewTimer);
+    clearTimeout(captureExpiryTimer);
+    const lease = captureLease;
+    captureLease = null;
+    captureDeadline = 0;
+    if (lease) await releaseCaptureLease(lease);
+    await waitForCaptureEnds();
+  }
+
+  async function releaseCaptureLease(lease: HotkeyCaptureLease) {
+    // Late begin acknowledgements own a lease too. Track their release alongside
+    // normal retirement so Save cannot race a native registration/status change.
+    const ending = (pendingCaptureEnd ?? Promise.resolve()).catch(() => undefined)
+      .then(() => endStandardHotkeyCapture(lease));
+    pendingCaptureEnd = ending;
+    try {
+      await ending;
+    } finally {
+      if (pendingCaptureEnd === ending) pendingCaptureEnd = null;
+    }
+  }
+
+  async function waitForCaptureEnds() {
+    // A stale ACK may enqueue another release while the current one completes.
+    while (pendingCaptureEnd) await pendingCaptureEnd;
+  }
+
+  function stopCapture() {
+    void retireCapture().catch(() => {
+      if (hotkeyMounted) hotkeyError = 'Could not end shortcut capture. Shortcuts resume when the capture lease expires.';
+    });
+  }
+
+  function scheduleCaptureLease(lease: HotkeyCaptureLease) {
+    clearTimeout(captureExpiryTimer);
+    captureDeadline = performance.now() + lease.expiresInMs;
+    captureExpiryTimer = setTimeout(() => {
+      if (captureLease !== lease) return;
+      stopCapture();
+      hotkeyError = 'Shortcut capture expired. Click the shortcut to try again.';
+    }, lease.expiresInMs);
+    captureRenewTimer = setTimeout(() => void renewCapture(lease), 500);
+  }
+
+  async function renewCapture(lease: HotkeyCaptureLease) {
+    try {
+      const renewed = await renewStandardHotkeyCapture(lease);
+      if (!hotkeyMounted || captureLease !== lease) return;
+      if (performance.now() >= captureDeadline || renewed.leaseId !== lease.leaseId || renewed.revision !== lease.revision || renewed.sequence < lease.sequence) throw new Error('Capture expired');
+      captureLease = renewed;
+      scheduleCaptureLease(renewed);
+    } catch {
+      if (captureLease !== lease) return;
+      stopCapture();
+      hotkeyError = 'Shortcut capture stopped. Click the shortcut to try again.';
+    }
+  }
+
+  async function startCapture(action: StandardHotkeyAction) {
+    if (!shellSettingsLoaded || hotkeyBusy || !captureListenerReady) return;
+    const retiring = retireCapture();
+    const revision = captureRevision;
+    try {
+      await retiring;
+      if (!hotkeyMounted || revision !== captureRevision) return;
+      captureAction = action;
+      capturePending = true;
+      hotkeyError = '';
+      hotkeyNotice = '';
+      const lease = await beginStandardHotkeyCapture(revision);
+      if (!hotkeyMounted || revision !== captureRevision || captureAction !== action) {
+        await releaseCaptureLease(lease);
+        return;
+      }
+      if (lease.revision !== revision || !lease.leaseId || !Number.isSafeInteger(lease.sequence)
+        || !Array.isArray(lease.registeredBindings) || !lease.registeredBindings.every(isCanonicalHotkey)
+        || !Number.isFinite(lease.expiresInMs) || lease.expiresInMs <= 0) {
+        await releaseCaptureLease(lease);
+        throw new Error('Invalid capture acknowledgement');
+      }
+      captureLease = lease;
+      capturePending = false;
+      scheduleCaptureLease(lease);
+    } catch {
+      if (!hotkeyMounted || revision !== captureRevision) return;
+      stopCapture();
+      hotkeyError = 'Could not start shortcut capture. Click the shortcut to try again.';
+    }
+  }
+
+  function stageBinding(binding: string) {
+    if (!captureAction || !isCanonicalHotkey(binding)) return;
+    hotkeyDraft = { ...hotkeyDraft, [captureAction]: binding };
+    hotkeyError = '';
+    hotkeyNotice = 'Shortcut staged. Save shortcuts to apply.';
+    stopCapture();
+  }
+
+  function receiveNativeCapture(event: HotkeyCaptureEvent) {
+    const lease = captureLease;
+    if (!hotkeyMounted || !lease || !captureAction || performance.now() >= captureDeadline
+      || event?.leaseId !== lease.leaseId || event.revision !== lease.revision
+      || !Number.isSafeInteger(event.sequence) || event.sequence <= lease.sequence
+      || !HOTKEY_ACTIONS.includes(event.action) || !isCanonicalHotkey(event.binding)
+      || !(lease.registeredBindings ?? []).includes(event.binding)) return;
+    captureLease = { ...lease, sequence: event.sequence };
+    stageBinding(event.binding);
+  }
 
   function canonicalKey(event: KeyboardEvent): string | null {
     if (event.code === 'Space') return 'Space';
@@ -280,28 +427,51 @@
     return null;
   }
 
-  async function saveHotkeys(hotkeys: ShellSettings['hotkeys'], failureMessage: string) {
+  async function saveHotkeys() {
     if (!shellSettingsLoaded || hotkeyBusy) return;
+    if (draftValidation) { hotkeyError = draftValidation; return; }
     hotkeyBusy = true;
     hotkeyError = '';
+    hotkeyNotice = '';
     try {
-      const currentSettings = shellSettings;
-      shellSettings = await saveShellSettings({ ...currentSettings, hotkeys: { ...hotkeys } });
+      await retireCapture();
+      // Beginning/retiring capture changes native status revisions even though
+      // configured chords stay unchanged. Save against the post-retirement truth.
+      await refreshHotkeyStatus();
+      if (!hotkeyMounted) return;
+      if (!hotkeyStatus) throw new Error('Active shortcut status unavailable. Try again.');
+      const result = await saveStandardHotkeys({ ...hotkeyDraft }, hotkeyStatus.revision);
+      if (!hotkeyMounted) return;
+      shellSettings = result.settings;
+      hotkeyDraft = { ...result.settings.hotkeys };
+      // Persistence succeeded even if native observation did not. Retire older
+      // reads and never present cached registrations as verification of this Save.
+      ++statusRequest;
+      hotkeyError = '';
+      if (result.status && result.status.revision >= hotkeyStatus.revision) {
+        acceptHotkeyStatus(result.status);
+        hotkeyNotice = 'Shortcuts saved.';
+      } else {
+        hotkeyStatus = null;
+        hotkeyNotice = result.statusError ?? 'Shortcuts saved; runtime status unavailable. Refresh shortcut status.';
+      }
     } catch (error) {
-      console.error(failureMessage, error);
-      hotkeyError = error instanceof Error ? error.message : 'Shortcut could not be saved.';
+      if (!hotkeyMounted) return;
+      const saveError = typeof error === 'string' ? error : error instanceof Error ? error.message : 'Shortcuts could not be saved.';
+      await refreshHotkeyStatus();
+      if (hotkeyMounted) hotkeyError = hotkeyStatus ? saveError : `${saveError} Active shortcut status unavailable.`;
     } finally {
       hotkeyBusy = false;
     }
   }
 
   function captureHotkeyBinding(event: KeyboardEvent) {
+    if (!captureAction) return;
+    if (event.key === 'Tab') { stopCapture(); return; }
     event.preventDefault();
     event.stopImmediatePropagation();
-
-    const target = event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
-    const action = target?.dataset.hotkeyAction as StandardHotkeyAction | undefined;
-    if (!action || !shellSettingsLoaded || hotkeyBusy || event.repeat) return;
+    if (event.key === 'Escape') { stopCapture(); return; }
+    if (!captureLease || capturePending || performance.now() >= captureDeadline || event.repeat) return;
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
 
     const key = canonicalKey(event);
@@ -322,22 +492,24 @@
       return;
     }
 
-    const binding: CanonicalHotkeyBinding = `${event.ctrlKey ? 'Ctrl' : 'Alt'}+${key}`;
-    const duplicate = (Object.keys(shellSettings.hotkeys) as StandardHotkeyAction[])
-      .find((candidate) => candidate !== action && shellSettings.hotkeys[candidate] === binding);
-    if (duplicate) {
-      hotkeyError = `Duplicate shortcut: ${binding} is already assigned to ${hotkeyActionNames[duplicate]}.`;
-      return;
-    }
-
-    void saveHotkeys(
-      { ...shellSettings.hotkeys, [action]: binding },
-      `Failed to save ${hotkeyActionNames[action]} shortcut`
-    );
+    const binding = `${event.ctrlKey ? 'Ctrl' : 'Alt'}+${key}`;
+    // Registered chords are authoritative only through the targeted native event.
+    if ((captureLease.registeredBindings ?? []).includes(binding)) return;
+    stageBinding(binding);
   }
 
   function resetHotkeys() {
-    void saveHotkeys(defaultStandardHotkeySettings(), 'Failed to reset shortcuts');
+    stopCapture();
+    hotkeyDraft = defaultStandardHotkeySettings();
+    hotkeyError = '';
+    hotkeyNotice = 'Defaults staged. Save shortcuts to apply.';
+  }
+
+  function cancelHotkeys() {
+    stopCapture();
+    hotkeyDraft = { ...shellSettings.hotkeys };
+    hotkeyError = '';
+    hotkeyNotice = 'Shortcut changes cancelled.';
   }
 
   function handleDateFormatInput(event: Event) {
@@ -358,8 +530,7 @@
       reducedTransparency: false,
       showSearchShortcutHint: true
     });
-    selectedThemeId = 'base-dark';
-    setShellTheme(selectedThemeId);
+    themeEditor?.resetPresentationTheme();
   }
 
   function requestPowerAction(action: SystemPowerAction) {
@@ -393,6 +564,7 @@
   }
 
   function closePanel() {
+    stopCapture();
     void hideSettingsPanel().catch((error) => {
       console.error('Failed to hide settings panel', error);
     });
@@ -400,13 +572,16 @@
 </script>
 
 <svelte:window
+  on:blur={stopCapture}
   on:keydown={(event) => {
     if (event.key === 'Escape') {
+      if (event.defaultPrevented) return;
       event.preventDefault();
       closePanel();
     }
   }}
 />
+<svelte:document on:visibilitychange={() => { if (document.hidden) stopCapture(); }} />
 
 <main class="settings-panel" aria-labelledby="settings-panel-title">
   <header class="settings-panel-header">
@@ -419,12 +594,7 @@
 
   <section class="settings-section" aria-labelledby="appearance-heading">
     <h2 id="appearance-heading">Appearance</h2>
-    <MeltSelect
-      label="Theme"
-      value={selectedThemeId}
-      options={themeSelectOptions}
-      onChange={handleThemeChange}
-    />
+    <ThemeEditor bind:this={themeEditor} />
 
     <MeltSelect
       label="Font"
@@ -565,46 +735,39 @@
 
   <section class="settings-section hotkey-settings" aria-labelledby="hotkeys-heading">
     <h2 id="hotkeys-heading">Keyboard shortcuts</h2>
-    <p id="hotkey-help" class="settings-help">Focus a shortcut, then press Ctrl or Alt with a letter, number, Space, or Backquote.</p>
+    <p id="hotkey-help" class="settings-help">Click a shortcut, then press Ctrl or Alt with a letter, number, Space, or Backquote. Changes apply only when saved. Escape stops capture.</p>
     <div class="hotkey-list">
-      <div class="hotkey-row">
-        <span>Search</span>
-        <button type="button" class="hotkey-capture" data-hotkey-action="search" aria-label="Capture Search shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
-          <kbd>{shellSettings.hotkeys.search}</kbd>
-        </button>
-      </div>
-      <div class="hotkey-row">
-        <span>Terminal</span>
-        <button type="button" class="hotkey-capture" data-hotkey-action="terminal" aria-label="Capture Terminal shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
-          <kbd>{shellSettings.hotkeys.terminal}</kbd>
-        </button>
-      </div>
-      <div class="hotkey-row">
-        <span>Stack Browser</span>
-        <button type="button" class="hotkey-capture" data-hotkey-action="stackBrowser" aria-label="Capture Stack Browser shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
-          <kbd>{shellSettings.hotkeys.stackBrowser}</kbd>
-        </button>
-      </div>
-      <div class="hotkey-row">
-        <span>Speech transcription</span>
-        <button type="button" class="hotkey-capture" data-hotkey-action="speechTranscription" aria-label="Capture Speech transcription shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
-          <kbd>{shellSettings.hotkeys.speechTranscription}</kbd>
-        </button>
-      </div>
-      <div class="hotkey-row">
-        <span>Screen snipping</span>
-        <button type="button" class="hotkey-capture" data-hotkey-action="snipping" aria-label="Capture Screen snipping shortcut" aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'} disabled={!shellSettingsLoaded || hotkeyBusy} on:keydown={captureHotkeyBinding}>
-          <kbd>{shellSettings.hotkeys.snipping}</kbd>
-        </button>
-      </div>
+      {#each HOTKEY_ACTIONS as action (action)}
+        <div class="hotkey-row">
+          <span>{HOTKEY_ACTION_NAMES[action]}</span>
+          <button type="button" class="hotkey-capture" data-hotkey-action={action}
+            aria-label={`Capture ${HOTKEY_ACTION_NAMES[action]} shortcut`}
+            aria-describedby={hotkeyError ? 'hotkey-error' : 'hotkey-help'}
+            aria-pressed={captureAction === action}
+            disabled={!shellSettingsLoaded || hotkeyBusy || !captureListenerReady}
+            on:click={() => void startCapture(action)} on:blur={stopCapture} on:keydown={captureHotkeyBinding}>
+            <kbd>{hotkeyDraft[action]}</kbd>
+          </button>
+        </div>
+      {/each}
     </div>
-    {#if snippingConflictAction}
-      <p class="settings-error" role="alert">{shellSettings.hotkeys.snipping} is already assigned to {hotkeyActionNames[snippingConflictAction]}. Change either shortcut to enable Screen snipping.</p>
+    {#each inactiveHotkeys as binding (binding.action)}
+      <p class="settings-error" role="status">{HOTKEY_ACTION_NAMES[binding.action]} ({binding.binding}) inactive: {binding.reason ?? 'Shortcut unavailable. Choose another binding and save.'}</p>
+    {/each}
+    <p class="settings-help" role="status" aria-live="polite">
+      {captureAction ? (capturePending ? 'Preparing safe shortcut capture…' : `Listening for ${HOTKEY_ACTION_NAMES[captureAction]} shortcut…`) : hotkeyNotice}
+    </p>
+    {#if draftValidation && !hotkeyError}
+      <p class="settings-error" role="status">{draftValidation}</p>
     {/if}
     {#if hotkeyError}
       <p id="hotkey-error" class="settings-error" role="alert">{hotkeyError}</p>
     {/if}
     <button type="button" class="hotkey-reset" disabled={!shellSettingsLoaded || hotkeyBusy} on:click={resetHotkeys}>Reset shortcuts to defaults</button>
+    <div class="speech-model-actions">
+      <MeltActionButton disabled={!shellSettingsLoaded || hotkeyBusy} onClick={() => void saveHotkeys()}>{hotkeyBusy ? 'Saving shortcuts…' : 'Save shortcuts'}</MeltActionButton>
+      <MeltActionButton disabled={!shellSettingsLoaded || hotkeyBusy} onClick={cancelHotkeys}>Cancel</MeltActionButton>
+    </div>
   </section>
 
   <section class="settings-section" aria-labelledby="shell-bars-heading">

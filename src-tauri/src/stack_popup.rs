@@ -239,8 +239,6 @@ pub(crate) use models::{ClipboardMode, StackClipboard};
 #[cfg(test)]
 pub(crate) use native_drag::native_drag_mechanism;
 #[cfg(test)]
-pub(crate) use open_with::open_with_candidates_for_extension_with_resolver;
-#[cfg(test)]
 pub(crate) use paging::{
     read_stack_folder_page, read_stack_folder_page_with_session, stack_folder_warning,
 };
@@ -306,6 +304,7 @@ pub fn toggle_stack_popup(
     window: WebviewWindow,
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
+    close_only: Option<bool>,
 ) -> Result<Option<bool>, String> {
     authorize_stack_command(
         &window,
@@ -325,6 +324,10 @@ pub fn toggle_stack_popup(
         // Visibility does not change until the renderer's dirty-editor guard
         // accepts the request. The closed event updates the top-bar state.
         Ok(Some(true))
+    } else if close_only.unwrap_or(false) {
+        // Outside dismissal must never reopen a popup hidden since the caller's
+        // last visibility event. Visible requests still use the dirty-editor guard.
+        Ok(Some(false))
     } else if popup_window::latest_stack_popup_request(state.clone()).is_some() {
         popup_window::reopen_stack_popup_window(app_handle, state)?;
         Ok(Some(true))
@@ -2417,7 +2420,7 @@ mod tests {
     use super::{
         available_destination_path, backup_corrupt_pin_store, clipboard_mode_from_drop_effect,
         copy_dir, move_path_with_rename, native_drag_mechanism, next_new_text_document_path,
-        open_with_candidates_for_extension_with_resolver, paste_clipboard_items,
+        paste_clipboard_items,
         paths_match_for_unpin, read_stack_basic_text_file_blocking,
         read_stack_basic_text_file_with_open_hook, read_stack_folder_page,
         read_stack_folder_page_with_session, reorder_pins_by_paths,
@@ -2798,29 +2801,15 @@ mod tests {
     }
 
     #[test]
-    fn suggests_developer_open_with_apps_for_text_extensions() {
-        let candidates =
-            open_with_candidates_for_extension_with_resolver(Some("txt"), |candidate| {
-                match candidate {
-                    "notepad.exe" => Some(PathBuf::from(r"C:\Windows\System32\notepad.exe")),
-                    r"%ProgramFiles%\Notepad++\notepad++.exe" => {
-                        Some(PathBuf::from(r"C:\Program Files\Notepad++\notepad++.exe"))
-                    }
-                    r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe" => Some(PathBuf::from(
-                        r"C:\Users\dev\AppData\Local\Programs\Microsoft VS Code\Code.exe",
-                    )),
-                    _ => None,
-                }
-            })
-            .unwrap();
-
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.label.as_str())
-                .collect::<Vec<_>>(),
-            vec!["Notepad", "Notepad++", "Visual Studio Code"]
-        );
+    fn open_with_candidate_serialization_exposes_no_executable_or_native_pointer() {
+        let candidate = super::models::StackOpenWithCandidate {
+            id: "00410042".into(),
+            label: "Registered application".into(),
+            source: "windows-association".into(),
+        };
+        assert_eq!(serde_json::to_value(candidate).unwrap(), serde_json::json!({
+            "id": "00410042", "label": "Registered application", "source": "windows-association"
+        }));
     }
 
     #[test]

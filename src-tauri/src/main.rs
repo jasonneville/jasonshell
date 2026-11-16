@@ -1,4 +1,5 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#![deny(clashing_extern_declarations)]
 
 mod audio;
 mod audio_panel;
@@ -72,6 +73,12 @@ Terminal with Windows Node.js/Rust installed."
 
 #[cfg(target_os = "windows")]
 fn main() {
+    // A probe request must never fall through into ordinary shell startup.
+    #[cfg(not(all(debug_assertions, feature = "text-document-feasibility")))]
+    if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
+        eprintln!("P02 native probe requires a debug build with text-document-feasibility enabled");
+        std::process::exit(2);
+    }
     // Private clipboard owner must branch before any Tauri/AppBar/hook startup.
     // Only exact Rust-owned helper arguments enter this metadata/binary pipe path.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -111,6 +118,9 @@ fn main() {
     }
 
     let builder = tauri::Builder::default()
+        // No raw DeviceEvent consumers: unregister Tao raw input so the global
+        // Escape hook also receives keys while our own WebView has focus.
+        .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
         .manage(shell_runtime_state())
         .manage(task_preview_state())
@@ -319,6 +329,11 @@ fn main() {
             providers::resolve_provider_registry,
             settings::load_shell_settings,
             settings::save_shell_settings,
+            settings::get_standard_hotkey_status,
+            settings::save_standard_hotkeys,
+            settings::begin_standard_hotkey_capture,
+            settings::renew_standard_hotkey_capture,
+            settings::end_standard_hotkey_capture,
             workspaces::list_workspaces,
             workspaces::create_workspace,
             workspaces::update_workspace,
@@ -339,6 +354,33 @@ fn main() {
             taskbar_menu::handle_taskbar_menu_event(app_handle, event);
         })
         .on_window_event(|window, event| {
+            // Retire delayed dismissals on every focus transition, including refocus.
+            static SETTINGS_BLUR_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static PROCESS_MANAGER_BLUR_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let panel_blur_revision = match window.label() {
+                shell_windows::SETTINGS_PANEL_LABEL => Some(&SETTINGS_BLUR_REVISION),
+                shell_windows::PROCESS_MANAGER_LABEL => Some(&PROCESS_MANAGER_BLUR_REVISION),
+                _ => None,
+            };
+            let blur_revision = panel_blur_revision.map(|revision| {
+                if matches!(event, WindowEvent::Focused(_) | WindowEvent::Destroyed) {
+                    revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+                } else {
+                    revision.load(std::sync::atomic::Ordering::SeqCst)
+                }
+            });
+            if matches!(event, WindowEvent::Focused(false)) {
+                let held = window.app_handle().try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                    .is_some_and(|runtime| window.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize)));
+                if held {
+                    // System Info focus admission remains strict even while the
+                    // enclosing panel and its renderer state stay visible.
+                    if window.label() == shell_windows::PROCESS_MANAGER_LABEL {
+                        let _ = process_manager::suspend_system_info(window.app_handle());
+                    }
+                    return;
+                }
+            }
             if window.label() == shell_windows::STACK_POPUP_LABEL
                 && matches!(event, WindowEvent::Destroyed)
             {
@@ -390,11 +432,45 @@ fn main() {
             }
 
             if window.label() == shell_windows::PROCESS_MANAGER_LABEL
-                && matches!(event, WindowEvent::Focused(false) | WindowEvent::Destroyed)
+                && matches!(event, WindowEvent::Destroyed)
             {
                 let _ = process_manager::retire_system_info(window.app_handle());
                 let _ = window.hide();
                 return;
+            }
+
+            if let (Some(revision), Some(expected)) = (panel_blur_revision, blur_revision) {
+                if matches!(event, WindowEvent::Focused(false)) {
+                    if window.label() == shell_windows::PROCESS_MANAGER_LABEL {
+                        // Retire work now, not the renderer's still-visible tab context.
+                        let _ = process_manager::suspend_system_info(window.app_handle());
+                    }
+                    let panel = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tauri::async_runtime::spawn_blocking(|| {
+                            std::thread::sleep(Duration::from_millis(150));
+                        }).await;
+                        let dispatcher = panel.clone();
+                        // Guards and effect must share the UI delivery turn: checking
+                        // on this worker and then queueing hide races a later refocus.
+                        let _ = dispatcher.run_on_main_thread(move || {
+                            if revision.load(std::sync::atomic::Ordering::SeqCst) != expected
+                                || !panel.is_visible().unwrap_or(false)
+                                || panel.is_focused().unwrap_or(false)
+                            {
+                                return;
+                            }
+                            if panel.app_handle().try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                                .is_some_and(|runtime| panel.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize))) {
+                                return;
+                            }
+                            if panel.hide().is_ok() && panel.label() == shell_windows::PROCESS_MANAGER_LABEL {
+                                let _ = process_manager::retire_system_info(panel.app_handle());
+                            }
+                        });
+                    });
+                    return;
+                }
             }
 
             if window.label() == shell_windows::QUICK_LAUNCH_PANEL_LABEL
@@ -414,13 +490,6 @@ fn main() {
                     window.clone(),
                     window.app_handle().clone(),
                 );
-                return;
-            }
-
-            if window.label() == shell_windows::SETTINGS_PANEL_LABEL
-                && matches!(event, WindowEvent::Focused(false))
-            {
-                let _ = window.hide();
                 return;
             }
 
@@ -507,6 +576,10 @@ fn main() {
                     if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
                         return;
                     }
+                    if app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                        .is_some_and(|runtime| panel.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize))) {
+                        return;
+                    }
                     let _ = app_handle.emit_to(
                         shell_windows::TOP_BAR_LABEL,
                         command_panel::COMMAND_PANEL_CLOSED_EVENT,
@@ -544,7 +617,7 @@ fn main() {
         })
         .setup(|app| {
             speech_runtime::spawn_warm_model_async(app.handle().clone());
-            #[cfg(all(target_os = "windows", debug_assertions))]
+            #[cfg(all(target_os = "windows", debug_assertions, any(test, feature = "text-document-feasibility")))]
             if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
                 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -571,6 +644,7 @@ fn main() {
             let snip_runtime = snipping::runtime::SnipRuntime::install(app.handle().clone(), windows.top.clone())
                 .map_err(|_| "snipping native initialization failed")?;
             app.manage(snip_runtime);
+            settings_panel::install_capture_lifecycle(app.handle())?;
             let (shell_settings, missing_snipping) = settings::load_hotkey_startup_settings(app.handle())?;
             search::providers::apps::initialize_app_index_cache(app.handle());
             search::providers::apps::warm_app_index_async();

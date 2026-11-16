@@ -43,6 +43,11 @@ pub mod surfaces {
 }
 
 pub mod commands {
+    pub const GET_STANDARD_HOTKEY_STATUS: &str = "get_standard_hotkey_status";
+    pub const SAVE_STANDARD_HOTKEYS: &str = "save_standard_hotkeys";
+    pub const BEGIN_STANDARD_HOTKEY_CAPTURE: &str = "begin_standard_hotkey_capture";
+    pub const RENEW_STANDARD_HOTKEY_CAPTURE: &str = "renew_standard_hotkey_capture";
+    pub const END_STANDARD_HOTKEY_CAPTURE: &str = "end_standard_hotkey_capture";
     pub const START_SNIP: &str = "start_snip";
     pub const GET_SNIP_CONTEXT: &str = "get_snip_context";
     pub const GET_SNIP_IMAGE: &str = "get_snip_image";
@@ -443,10 +448,15 @@ pub mod commands {
 }
 
 pub mod events {
+    pub const QUICK_COMMANDS_TOGGLE: &str = "quick-commands:toggle";
+    pub const PROCESS_MANAGER_OPEN_REQUESTED: &str = "process-manager:open-requested";
+    pub const SETTINGS_OPEN_REQUESTED: &str = "settings:open-requested";
+    pub const STANDARD_HOTKEYS_CAPTURE: &str = "standard-hotkeys:capture";
     pub const SNIP_CONTEXT: &str = "snip:context";
     pub const SNIP_ARMED: &str = "snip:armed";
     pub const SNIP_PREPARE_BAR: &str = "snip:prepare_bar";
     pub const SNIP_RELEASE_BAR: &str = "snip:release_bar";
+    pub const SNIP_HOTKEY_FEEDBACK: &str = "snip:hotkey_feedback";
     pub const AUDIO_PANEL_OPEN: &str = "audio-panel:open";
     pub const AUDIO_PANEL_CLOSED: &str = "audio-panel:closed";
     pub const SPEECH_HISTORY_PANEL_OPEN: &str = "speech-history-panel:open";
@@ -505,10 +515,12 @@ pub mod events {
 
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
+        QUICK_COMMANDS_TOGGLE,
         SNIP_CONTEXT,
         SNIP_ARMED,
         SNIP_PREPARE_BAR,
         SNIP_RELEASE_BAR,
+        SNIP_HOTKEY_FEEDBACK,
         AUDIO_PANEL_CLOSED,
         SPEECH_HISTORY_PANEL_OPEN,
         SPEECH_HISTORY_PANEL_CLOSED,
@@ -728,10 +740,12 @@ mod tests {
             events::ALL,
             &[
                 "audio-panel:open",
+                "quick-commands:toggle",
                 "snip:context",
                 "snip:armed",
                 "snip:prepare_bar",
                 "snip:release_bar",
+                "snip:hotkey_feedback",
                 "audio-panel:closed",
                 "speech-history-panel:open",
                 "speech-history-panel:closed",

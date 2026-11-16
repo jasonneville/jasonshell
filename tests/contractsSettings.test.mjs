@@ -272,6 +272,10 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'command-panel:closed',
     'process-manager:open',
     'process-manager:closed',
+    'process-manager:open-requested',
+    'settings:open-requested',
+    'quick-commands:toggle',
+    'standard-hotkeys:capture',
     'quick-command:run-updated',
     'quick-launch-panel:closed',
     'quick-launch-panel:open',
@@ -291,6 +295,7 @@ test('Rust event contracts are authoritative and cover frontend event constants'
     'snip:armed',
     'snip:prepare_bar',
     'snip:release_bar',
+    'snip:hotkey_feedback',
     'speech:toggle',
     'speech-history-panel:open',
     'speech-history-panel:closed',
@@ -387,7 +392,10 @@ test('settings wrapper declares versioned schema and stable command names', () =
       terminal: 'Alt+Backquote',
       stackBrowser: 'Alt+1',
       speechTranscription: 'Ctrl+D',
-      snipping: 'Alt+S'
+      snipping: 'Alt+S',
+      processManager: 'Alt+P',
+      settings: 'Alt+O',
+      quickCommands: 'Alt+Q'
     }
   });
 });

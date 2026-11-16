@@ -5,6 +5,23 @@ import { IPC_COMMANDS, IPC_EVENTS } from '../ipc';
 import type { Rect } from './snipSelection';
 
 export interface SnipToken { generation: string; captureId: string }
+export type SnipHotkeyFeedback = { attempt: string } & (
+  | { status: 'started'; code: null }
+  | { status: 'error'; code: string }
+);
+// Native hotkey_failure suppresses busy/stale rather than announcing failures.
+const hotkeyFailureCodes = new Set([
+  'inactive', 'unauthorized', 'invalid-selection', 'topology-changed',
+  'capture-failed', 'readiness-timeout', 'window-failed', 'image-failed'
+]);
+export function isSnipHotkeyFeedback(value: unknown): value is SnipHotkeyFeedback {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const feedback = value as Record<string, unknown>;
+  if (typeof feedback.attempt !== 'string' || !/^[1-9][0-9]{0,19}$/.test(feedback.attempt)
+    || BigInt(feedback.attempt) > 18446744073709551615n) return false;
+  return (feedback.status === 'started' && feedback.code === null)
+    || (feedback.status === 'error' && typeof feedback.code === 'string' && hotkeyFailureCodes.has(feedback.code));
+}
 export interface SnipContext extends SnipToken {
   phase: 'selecting' | 'preview'; monitorId: string; width: number; height: number;
   scaleFactor?: number; originX?: number; originY?: number;

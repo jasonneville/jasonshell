@@ -7,6 +7,7 @@ const surfaceLoaderSource = readFileSync(new URL('../src/lib/surfaceLoader.ts', 
 const topBarSource = readFileSync(new URL('../src/components/TopBar.svelte', import.meta.url), 'utf8');
 const settingsPanelSource = readFileSync(new URL('../src/components/SettingsPanelSurface.svelte', import.meta.url), 'utf8');
 const settingsPanelCss = readFileSync(new URL('../src/components/SettingsPanelSurface.css', import.meta.url), 'utf8');
+const themeEditorSource = readFileSync(new URL('../src/components/ThemeEditor.svelte', import.meta.url), 'utf8');
 const shellSurfaceSource = readFileSync(new URL('../src/lib/shellSurface.ts', import.meta.url), 'utf8');
 const ipcCommandsSource = readFileSync(new URL('../src/ipc/commands.ts', import.meta.url), 'utf8');
 const wrapperSource = readFileSync(new URL('../src/lib/settingsPanel.ts', import.meta.url), 'utf8');
@@ -52,7 +53,12 @@ test('settings panel exposes live theme, font, date, clock, and useful UI prefer
   ]) {
     assert.match(settingsPanelSource, new RegExp(text));
   }
-  assert.match(settingsPanelSource, /setShellTheme\(selectedThemeId\)/);
+  // Theme interaction is now a production child with coordinated draft
+  // confirmation; mounted coverage lives in components/theme-editor.test.ts.
+  assert.match(settingsPanelSource, /import ThemeEditor from '\.\/ThemeEditor\.svelte'/);
+  assert.match(settingsPanelSource, /<ThemeEditor\b/);
+  assert.match(themeEditorSource, /<MeltSelect label="Theme"/);
+  assert.match(themeEditorSource, /await requestShellThemeSelection\(id\)/);
   assert.match(settingsPanelSource, /patchShellPreferences/);
   assert.match(settingsPanelSource, /formatShellDate/);
   assert.match(settingsPanelSource, /formatShellTime/);

@@ -3,6 +3,7 @@
   import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { reportShellSurfaceRuntimeMetrics } from '../lib/runtimeMetrics';
   import {
     launchPinnedTaskbarLauncher,
@@ -48,6 +49,7 @@
     STACK_PINS_UPDATED_EVENT,
     unpinStackFolder,
     showStackPopup,
+    requestStackPopupClose,
     toggleStackPopup,
     type StackPin
   } from '../lib/stackPopup';
@@ -165,7 +167,7 @@
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
   import TopBarMicControl from './TopBarMicControl.svelte';
-  import { startSnip, snipBarReady, isSnipToken, sameSnip, type SnipToken } from '../lib/snipping';
+  import { startSnip, snipBarReady, isSnipToken, isSnipHotkeyFeedback, sameSnip, type SnipToken } from '../lib/snipping';
   import { IPC_EVENTS } from '../ipc/events';
 
   let now = new Date();
@@ -177,6 +179,25 @@
   let snipBarMounted = false;
   let snipStartPending = false;
   let snipStartError = '';
+  let latestSnipHotkeyAttempt = 0n;
+  let snipHotkeyErrorReported = false;
+
+  function receiveSnipHotkeyFeedback(value: unknown) {
+    // Validate the complete payload before advancing the exact u64 watermark.
+    if (!snipBarMounted || !isSnipHotkeyFeedback(value)) return;
+    const attempt = BigInt(value.attempt);
+    if (attempt < latestSnipHotkeyAttempt) return;
+    if (attempt > latestSnipHotkeyAttempt) {
+      latestSnipHotkeyAttempt = attempt;
+      snipHotkeyErrorReported = false;
+      snipStartError = '';
+    }
+    if (value.status !== 'error' || snipHotkeyErrorReported) return;
+    snipHotkeyErrorReported = true;
+    snipStartError = value.code === 'readiness-timeout'
+      ? 'Screen snip timed out. Try again.'
+      : 'Could not capture screen. Try again.';
+  }
 
   async function requestSnip() {
     if (snipStartPending || snipPreparing) return;
@@ -837,10 +858,14 @@
 
   function handleTopBarPointerDown(event: MouseEvent) {
     const target = event.target instanceof Node ? event.target : null;
+    // Snipping captures deliberately open shell surfaces; it must not dismiss them.
+    if (target instanceof Element && target.closest('.snip-button')) {
+      return;
+    }
     const stackBrowserTarget = target instanceof Element && target.closest('.stack-browser-button');
     if (!isPinnedFolderPointerTarget(target) && !stackBrowserTarget) {
       if (stackBrowserOpen) {
-        void toggleStackPopup().catch((error) => {
+        void requestStackPopupClose().catch((error) => {
           console.error('Failed to request Stack popup close after top bar pointer press', error);
         });
       }
@@ -888,10 +913,24 @@
     await closePanel();
     await showSettingsPanel({
       anchorLeft: rect.left,
-      anchorWidth: rect.width
+      anchorWidth: rect.width,
+      toggle: true
     }).catch((error) => {
       console.error('Failed to show settings panel', error);
     });
+  }
+
+  function handleSettingsPointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openSettingsPanel(event.currentTarget);
+  }
+
+  function handleSettingsClick(event: MouseEvent) {
+    // Pointer activation already happened on press, even after a long hold or cancel.
+    // Keyboard and assistive/programmatic clicks have detail 0; no sticky suppression.
+    if (event.detail === 0) void openSettingsPanel(event.currentTarget);
   }
 
   async function closeAudioPanel() {
@@ -1918,8 +1957,17 @@
     void loadSearchCatalog();
     void loadSearchMode();
     void loadStackPins();
+    registerAsyncUnlistener(listen(IPC_EVENTS.settingsOpenRequested, () => {
+      if (!disposed) void openSettingsPanel(document.querySelector('.shell-home-button'));
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
+    registerAsyncUnlistener(listen(IPC_EVENTS.quickCommandsToggle, () => {
+      if (!disposed) void toggleCommandPanel(document.querySelector('.command-button'));
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipPrepareBar, (event) => { void prepareSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipReleaseBar, (event) => { releaseSnipBar(event.payload); }));
+    registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipHotkeyFeedback, (event) => {
+      receiveSnipHotkeyFeedback(event.payload);
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
       const index = resolveVisibleSearchRowResultIndex(searchResults, event.payload);
@@ -2096,7 +2144,8 @@
     ariaHaspopup="dialog"
     ariaLabel="Open JasonShell settings"
     tooltip="Open JasonShell settings"
-    onClick={(event) => void openSettingsPanel(event.currentTarget)}
+    onPointerDown={handleSettingsPointerDown}
+    onClick={handleSettingsClick}
   >
     <MaterialSymbolIcon name="settings" />
   </MeltActionButton>
@@ -2214,7 +2263,7 @@
             </MeltActionButton>
           </div>
         {:else if control.id === 'snip'}
-          <MeltActionButton class="sound-button" ariaLabel="Capture screen region" tooltip="Capture screen region" disabled={snipStartPending} onClick={(event) => {
+          <MeltActionButton class="sound-button snip-button" ariaLabel="Capture screen region" tooltip="Capture screen region" disabled={snipStartPending} onClick={(event) => {
             if (!shouldSuppressTopBarControlClick(suppressNextTopBarControlClickId, 'snip', event)) {
               void requestSnip();
             }

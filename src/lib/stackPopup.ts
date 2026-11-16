@@ -263,8 +263,7 @@ type StackPasteResult = {
 export type StackOpenWithCandidate = {
   id: string;
   label: string;
-  executable: string;
-  source: string;
+  source: 'windows-association';
 };
 
 export type StackNativeDragOutcome = {
@@ -408,6 +407,10 @@ export async function showStackPopup(request: ShowStackPopupRequest): Promise<vo
 
 export function toggleStackPopup(): Promise<boolean | null> {
   return invoke(IPC_COMMANDS.toggleStackPopup);
+}
+
+export async function requestStackPopupClose(): Promise<void> {
+  await invoke(IPC_COMMANDS.toggleStackPopup, { closeOnly: true });
 }
 
 function nextStackPopupRequestId() {

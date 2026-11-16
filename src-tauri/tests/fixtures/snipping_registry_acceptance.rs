@@ -4,8 +4,9 @@ mod snip_acceptance {
     fn snip_hotkey_registry_preserves_ids_one_to_four_adds_fifth_no_repeat_alt_s() {
         let settings=crate::settings::StandardHotkeySettings::default();
         let registry=StandardHotkeyRegistry::from_settings(&settings).unwrap();
-        assert_eq!(HOTKEY_IDS,[1,2,3,4,5]);
-        assert_eq!(registry.bindings.len(),5);
+        assert_eq!(&HOTKEY_IDS[..5], &[1,2,3,4,5], "original snipping-era IDs must not move");
+        assert_eq!(HOTKEY_IDS,[1,2,3,4,5,6,7,8]);
+        assert_eq!(registry.bindings.len(),8);
         // Amended registry stores optional fifth; original four remain present in order.
         for (slot,action) in [ConfiguredHotkeyAction::Search,ConfiguredHotkeyAction::Terminal,
             ConfiguredHotkeyAction::StackBrowser,ConfiguredHotkeyAction::Speech,ConfiguredHotkeyAction::Snipping].into_iter().enumerate() {

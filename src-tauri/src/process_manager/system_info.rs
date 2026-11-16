@@ -95,6 +95,11 @@ impl Coordinator {
         self.context.tab_revision = revision;
         Ok(())
     }
+    /// Reject pre-blur work without closing the mounted renderer's tab context.
+    pub fn suspend_work(&mut self) {
+        self.outstanding = [None; 3];
+        self.due = [0; 3];
+    }
     pub fn activate(
         &mut self,
         generation: u64,
@@ -148,6 +153,14 @@ impl Coordinator {
         };
         self.outstanding[index] = Some(token);
         Some(token)
+    }
+    /// Context equality alone cannot authorize work retired by a focus suspension.
+    pub fn owns_work(&self, token: WorkToken) -> bool {
+        self.outstanding[token.lane.index()] == Some(token)
+            && self.context.visible
+            && self.context.active_tab == ProcessManagerTab::SystemInfo
+            && self.context.open_generation == token.generation
+            && self.context.tab_revision == token.revision
     }
     pub fn complete(&mut self, token: WorkToken, now_ms: u64) -> bool {
         let index = token.lane.index();
@@ -606,6 +619,10 @@ impl Default for RuntimeInner {
     }
 }
 impl RuntimeInner {
+    pub fn suspend(&mut self) {
+        self.invalidate();
+        self.coordinator.suspend_work();
+    }
     pub fn invalidate(&mut self) {
         if let Some(old) = &self.cache {
             self.probes.retire(old.open_generation, old.tab_revision);

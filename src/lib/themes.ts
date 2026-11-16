@@ -1,3 +1,7 @@
+import { loadSavedThemeState, writeSavedThemeState, type SavedThemeState, SAVED_THEMES_STORAGE_KEY } from './themePersistence.js';
+import { THEME_PALETTE_TOKENS, resolveThemePaletteColor, validateCustomTheme, type CustomTheme } from './themePalette.js';
+import { installThemePreviewSync, previewSelectionGuard, requestPreviewSelection, currentPreviewTheme, reportThemeSyncError } from './themePreview.js';
+
 export const SHELL_THEME_STORAGE_KEY = 'jasonshell.theme';
 export const SHELL_THEME_CHANNEL = 'jasonshell.theme.changed';
 
@@ -20,6 +24,8 @@ export interface ThemeDocumentElementLike {
   dataset: Record<string, string | undefined>;
   style?: {
     colorScheme?: string;
+    setProperty?(name: string, value: string): void;
+    removeProperty?(name: string): string | void;
   };
 }
 
@@ -60,6 +66,9 @@ export const SHELL_THEMES = [
   { id: 'andromeda', label: 'Andromeda', family: 'Editor', mode: 'dark', accent: '#04d9c4' }
 ] as const satisfies readonly ShellTheme[];
 
+for (const theme of SHELL_THEMES) Object.freeze(theme);
+Object.freeze(SHELL_THEMES);
+
 export type ShellThemeId = (typeof SHELL_THEMES)[number]['id'];
 
 export const defaultShellThemeId: ShellThemeId = 'base-dark';
@@ -67,7 +76,7 @@ export const defaultShellThemeId: ShellThemeId = 'base-dark';
 const THEME_IDS = new Set<string>(SHELL_THEMES.map((theme) => theme.id));
 
 export function shellThemeOptions(): ShellTheme[] {
-  return SHELL_THEMES.map((theme) => ({ ...theme }));
+  return [...SHELL_THEMES.map((theme) => ({ ...theme })), ...getSavedThemeState().customThemes.map(customThemeOption)];
 }
 
 export function normalizeShellThemeId(value: unknown): ShellThemeId {
@@ -81,15 +90,11 @@ export function shellThemeById(value: unknown): ShellTheme {
   return SHELL_THEMES.find((theme) => theme.id === id) ?? SHELL_THEMES[0];
 }
 
-export function storedShellThemeId(storage: ThemeStorageLike | null = browserStorage()): ShellThemeId {
-  try {
-    return normalizeShellThemeId(storage?.getItem(SHELL_THEME_STORAGE_KEY));
-  } catch (_error) {
-    return defaultShellThemeId;
-  }
+export function storedShellThemeId(storage: ThemeStorageLike | null = browserStorage()): string {
+  return loadSavedThemeState(storage).state.selectedId;
 }
 
-export function getInitialShellThemeId(): ShellThemeId {
+export function getInitialShellThemeId(): string {
   return storedShellThemeId();
 }
 
@@ -100,20 +105,17 @@ export function applyShellTheme(
     storage?: ThemeStorageLike | null;
   } = {}
 ): ShellTheme {
-  const theme = shellThemeById(value);
+  const state = loadSavedThemeState(options.storage === null ? browserStorage() : options.storage ?? browserStorage()).state;
+  const custom = state.customThemes.find((item) => item.id === value);
+  const theme = custom ? customThemeOption(custom) : shellThemeById(value);
+  if (options.storage !== null) {
+    writeSavedThemeState({ ...state, selectedId: theme.id }, state.revision, options.storage ?? browserStorage());
+  }
   const documentElement = options.documentElement ?? browserDocumentElement();
   if (documentElement) {
-    documentElement.dataset.theme = theme.id;
+    applyThemeToElement(custom ?? theme.id, documentElement);
     if (documentElement.style) {
       documentElement.style.colorScheme = theme.mode;
-    }
-  }
-
-  if (options.storage !== null) {
-    try {
-      (options.storage ?? browserStorage())?.setItem(SHELL_THEME_STORAGE_KEY, theme.id);
-    } catch (_error) {
-      // Theme preference is cosmetic; failed persistence must not break shell surfaces.
     }
   }
 
@@ -121,8 +123,10 @@ export function applyShellTheme(
 }
 
 export function setShellTheme(value: unknown): ShellTheme {
+  if (previewSelectionGuard()) throw new Error('A theme editor is open; use requestShellThemeSelection to coordinate selection');
   const theme = applyShellTheme(value);
   broadcastTheme(theme.id);
+  publishSavedThemeState();
   return theme;
 }
 
@@ -131,17 +135,25 @@ export function installShellThemeSync(): () => void {
   const channel = browserBroadcastChannel();
 
   const applyRemoteTheme = (value: unknown) => {
-    applyShellTheme(value, { storage: null });
+    if (typeof value === 'string' && !loadSavedThemeState().initial) {
+      refreshSavedThemes();
+      return;
+    }
+    if (!currentPreviewTheme()) applyShellTheme(value, { storage: null });
   };
 
   const handleStorage = (event: StorageEvent) => {
+    if (event.key === SAVED_THEMES_STORAGE_KEY) refreshSavedThemes();
     if (event.key === SHELL_THEME_STORAGE_KEY) {
       applyRemoteTheme(event.newValue);
     }
   };
 
   if (channel) {
-    channel.onmessage = (event) => applyRemoteTheme(event.data);
+    channel.onmessage = (event) => {
+      if (event.data && typeof event.data === 'object' && event.data.type === 'saved-changed' && event.data.version === 1) refreshSavedThemes();
+      else if (typeof event.data === 'string') applyRemoteTheme(event.data);
+    };
   }
 
   if (typeof window !== 'undefined') {
@@ -149,8 +161,10 @@ export function installShellThemeSync(): () => void {
   }
 
   applyRemoteTheme(theme.id);
+  const uninstallPreview = installThemePreviewSync();
 
   return () => {
+    uninstallPreview();
     if (channel) {
       channel.close();
     }
@@ -164,13 +178,69 @@ function broadcastTheme(id: string): void {
   const channel = browserBroadcastChannel();
   try {
     channel?.postMessage(id);
+  } catch {
+    reportThemeSyncError('Theme was saved, but live synchronization is unavailable; reopen other surfaces to refresh');
   } finally {
     channel?.close();
   }
 }
 
 function browserStorage(): ThemeStorageLike | null {
-  return typeof window === 'undefined' ? null : window.localStorage;
+  try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
+}
+
+function customThemeOption(theme: CustomTheme): ShellTheme {
+  return { id: theme.id, label: theme.label, family: 'Custom', mode: theme.mode, accent: resolveThemePaletteColor(theme.palette, '--js-color-accent') };
+}
+
+export function getSavedThemeState(): SavedThemeState { return loadSavedThemeState().state; }
+const savedListeners = new Set<(state: SavedThemeState) => void>();
+export function subscribeShellThemes(listener: (state: SavedThemeState) => void): () => void {
+  savedListeners.add(listener);
+  listener(getSavedThemeState());
+  return () => { savedListeners.delete(listener); };
+}
+export function refreshSavedThemes(): void {
+  const state = getSavedThemeState();
+  if (!currentPreviewTheme()) applyShellTheme(state.selectedId, { storage: null });
+  for (const listener of savedListeners) {
+    try { listener(getSavedThemeState()); } catch { reportThemeSyncError('Theme was saved, but a picker could not refresh'); }
+  }
+}
+export function publishSavedThemeState(): void {
+  refreshSavedThemes();
+  const channel = browserBroadcastChannel();
+  try { channel?.postMessage({ type: 'saved-changed', version: 1 }); }
+  catch { reportThemeSyncError('Theme was saved, but live synchronization is unavailable; reopen other surfaces to refresh'); }
+  finally { channel?.close(); }
+}
+export function applyThemeToElement(value: string | CustomTheme, element: ThemeDocumentElementLike | null = browserDocumentElement()): void {
+  if (!element) return;
+  if (typeof value === 'string') {
+    const theme = shellThemeById(value);
+    delete element.dataset.customTheme;
+    element.dataset.theme = theme.id;
+    for (const name of THEME_PALETTE_TOKENS) element.style?.removeProperty?.(name.replace('--js-', '--js-custom-'));
+    if (element.style) element.style.colorScheme = theme.mode;
+    return;
+  }
+  const theme = validateCustomTheme(value);
+  element.dataset.theme = theme.baseBuiltinId;
+  element.dataset.customTheme = theme.id;
+  if (element.style) element.style.colorScheme = theme.mode;
+  for (const [name, color] of Object.entries(theme.palette)) {
+    element.style?.setProperty?.(name.replace('--js-', '--js-custom-'), color.replace(/var\((--js-[\w-]+)\)/g, (_match, ref: string) => `var(${ref.replace('--js-', '--js-custom-')})`));
+  }
+}
+
+export async function requestShellThemeSelection(id: string): Promise<boolean> {
+  if (previewSelectionGuard()) return requestPreviewSelection(id);
+  commitShellThemeSelection(id);
+  return true;
+}
+export function commitShellThemeSelection(id: string): void {
+  applyShellTheme(id);
+  publishSavedThemeState();
 }
 
 function browserDocumentElement(): ThemeDocumentElementLike | null {

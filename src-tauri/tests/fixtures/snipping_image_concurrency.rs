@@ -1,4 +1,10 @@
 // Included at actual Coordinator module scope under cfg(test). No codec replacement.
+// Test-only mutex access for native callback contention coverage. Keeps the real
+// Coordinator lock/state private in production and never installs an OS hook.
+pub(crate) fn snip_test_with_coordinator_lock(coordinator: &Coordinator, action: impl FnOnce()) {
+    let _guard = coordinator.inner.lock().unwrap();
+    action();
+}
 mod image_concurrency_verification {
     use super::*;
     use std::{cell::RefCell, collections::HashMap, io::Cursor, sync::{mpsc, atomic::{AtomicUsize, Ordering}}, thread};

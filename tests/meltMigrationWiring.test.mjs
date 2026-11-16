@@ -169,7 +169,7 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
   assert.match(stackPopupSource, /<MeltActionButton onClick=\{cancelInlineEditor\}>Cancel<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton class=\{sortHeader\('name'\)\.className\} role="columnheader" ariaColindex=\{1\} ariaSort=\{sortHeader\('name'\)\.ariaSort\} onClick=\{\(\) => sortBy\('name'\)\}/);
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!selectedEntry\}[^>]*onClick=\{\(\) => selectedEntry && void activateEntry\(selectedEntry\)\}>Open<\/ContextMenuItem>/);
-  assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{selectedEntry\?\.entryType !== 'File'\}>Open with ▸<\/ContextMenuItem>/);
+  assert.match(stackPopupSource, /<button\b[^>]*class="context-menu-item submenu-trigger"[^>]*role="menuitem"[^>]*aria-haspopup="menu"[^>]*aria-expanded=\{openWithOpen\}[^>]*disabled=\{selectedEntry\?\.entryType !== 'File'\}/);
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!currentPath\}[^>]*onClick=\{beginCreateFolder\}>New Folder<\/ContextMenuItem>/);
   assert.match(stackPopupSource, /\{#if deleteConfirmation\}\s*<StackConfirmDialog[^>]*confirmLabel="Delete"[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*dismissOnBackdrop=\{false\}[^>]*returnFocus=\{detailsGrid\}[^>]*onCancel=\{cancelDeleteConfirmation\}[^>]*onConfirm=\{\(\) => void confirmDeleteSelection\(\)\}/);
 
@@ -181,7 +181,9 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
 
 test('top-bar action and pinned-folder controls use Melt-backed buttons without breaking shell flows', () => {
   assert.match(topBarSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
-  assert.match(topBarSource, /<MeltActionButton\s+class="shell-home-button"[\s\S]*ariaHaspopup="dialog"[\s\S]*openSettingsPanel\(event\.currentTarget\)/);
+  assert.match(topBarSource, /<MeltActionButton\s+class="shell-home-button"[^<]*ariaHaspopup="dialog"[^<]*onPointerDown=\{handleSettingsPointerDown\}[^<]*onClick=\{handleSettingsClick\}/);
+  assert.match(topBarSource, /function handleSettingsPointerDown\(event: PointerEvent\)[\s\S]*?openSettingsPanel\(event\.currentTarget\)/);
+  assert.match(topBarSource, /if \(event\.detail === 0\) void openSettingsPanel\(event\.currentTarget\)/);
   assert.match(topBarSource, /<MeltActionButton\s+class="rail-scroll left"[\s\S]*scrollRailLeft\(\)/);
   assert.match(topBarSource, /<MeltActionButton\s+class="rail-scroll right"[\s\S]*scrollRailRight\(\)/);
   assert.match(topBarSource, /<MeltActionButton[\s\S]*dataPath=\{pin\.path\}[\s\S]*ariaLabel=\{`Open pinned folder \$\{pin\.name\}`\}/);
@@ -233,12 +235,16 @@ test('bottom-bar command buttons use Melt-backed action buttons without changing
   assert.match(bottomBarSource, /function handlePreviewHideRequest\(/);
   assert.match(bottomBarSource, /onContextMenu=\{\(event\) => void openTaskMenu\(taskWindow, event\)\}/);
   assert.match(bottomBarSource, /<img class="task-icon" src=\{taskWindow\.iconDataUrl\} alt="" draggable="false" \/>/);
-  assert.match(bottomBarSource, /<span class="task-label">\{taskWindowLabel\(taskWindow\)\}<\/span>/);
+  // The shipped ticker preserves taskWindowLabel inside the same label host;
+  // rendered motion/clipping coverage is in components/overflow-ticker.test.ts.
+  assert.match(bottomBarSource, /import OverflowTicker from '\.\/OverflowTicker\.svelte'/);
+  assert.match(bottomBarSource, /<span class="task-label"><OverflowTicker text=\{taskWindowLabel\(taskWindow\)\} \/><\/span>/);
   assert.match(bottomBarSource, /querySelectorAll<HTMLButtonElement>\('\.task-button'\)/);
 
-  assert.match(bottomBarSource, /<MeltActionButton\s+class="process-manager-button"[\s\S]*type="button"[\s\S]*title="Processes"[\s\S]*ariaLabel="Open process manager"[\s\S]*onClick=\{\(event\) => void openProcessManager\(event\)\}/);
+  assert.match(bottomBarSource, /<MeltActionButton\s+class="process-manager-button"[^<]*type="button"[^<]*title="Processes"[^<]*ariaLabel="Open process manager"[^<]*onPointerDown=\{handleProcessManagerPointerDown\}[^<]*onClick=\{handleProcessManagerClick\}/);
+  assert.match(bottomBarSource, /if \(event\.detail === 0\) void openProcessManager\(event\.currentTarget\)/);
   assert.match(bottomBarSource, /event\.currentTarget as HTMLButtonElement \| null/);
-  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid \}\)/);
+  assert.match(bottomBarSource, /showProcessManager\(\{ anchorLeft: rect\.left, anchorWidth: rect\.width, focusPid, toggle: focusPid === null \}\)/);
 
   assert.doesNotMatch(bottomBarSource, /<button[\s\S]*class="launcher-button"/);
   assert.doesNotMatch(bottomBarSource, /<button[\s\S]*class="task-button"/);

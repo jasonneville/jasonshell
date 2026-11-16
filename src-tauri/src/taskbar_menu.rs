@@ -305,6 +305,7 @@ pub fn run_task_window_action(
                     anchor_left: 0.0,
                     anchor_width: 0.0,
                     focus_pid: Some(focus_pid),
+                    toggle: false,
                 },
             )
         }
@@ -415,6 +416,7 @@ pub fn handle_taskbar_menu_event(app_handle: &AppHandle, event: MenuEvent) {
                         anchor_left: 0.0,
                         anchor_width: 0.0,
                         focus_pid: Some(focus_pid),
+                        toggle: false,
                     },
                 )
             }

@@ -68,6 +68,7 @@ beforeEach(() => {
   tauriMocks().invoke.mockImplementation(async (command: string) => {
     switch (command) {
       case 'load_shell_settings': return defaultShellSettings();
+      case 'get_standard_hotkey_status': return { revision: 1, bindings: [] };
       case 'get_speech_model_status': return { state: 'missing', source: null, error: null };
       case 'start_snip': return token();
       case 'get_snip_context': return { ...context };
@@ -508,7 +509,7 @@ it('Settings exposes Alt+S and reports legacy duplicate conflict without silentl
   tauriMocks().invoke.mockImplementation((command, args) => command === 'load_shell_settings' ? Promise.resolve(settings) : invoke(command, args));
   view.unmount(); const legacy = render(await component('SettingsPanelSurface'));
   await waitFor(() => expect(legacy.container.textContent).toMatch(/conflict|already assigned|duplicate/i));
-  expect(legacy.getByRole('alert').textContent).toMatch(/Alt\+S is already assigned to Terminal\. Change either shortcut to enable Screen snipping\./);
+   expect(legacy.container.textContent).toMatch(/Duplicate shortcut: Alt\+S is assigned to Terminal and Screen snipping\. Change either shortcut before saving\./);
   expect((await legacy.findByRole('button', { name: 'Capture Terminal shortcut' })).textContent).toContain('Alt+S');
   expect(calls('save_shell_settings')).toHaveLength(0);
 });

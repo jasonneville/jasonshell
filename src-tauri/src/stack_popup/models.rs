@@ -490,7 +490,6 @@ impl StackFileOperationProgress {
 pub struct StackOpenWithCandidate {
     pub id: String,
     pub label: String,
-    pub executable: String,
     pub source: String,
 }
 

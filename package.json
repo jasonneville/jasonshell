@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run themes:check && tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "npm run themes:check && svelte-check --tsconfig ./tsconfig.json",
+    "themes:generate": "node scripts/generate-theme-palettes.mjs",
+    "themes:check": "node scripts/generate-theme-palettes.mjs --check",
     "test:node": "node scripts/clean-dist-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
     "test:component": "node scripts/run-component-tests.mjs",
     "test:search": "npm run test:node",
@@ -18,7 +20,7 @@
     "cargo:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "smoke:runtime": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/runtime-smoke.ps1 -DryRun",
     "smoke:fullscreen": "powershell -ExecutionPolicy Bypass -File scripts/smoke-fullscreen-appbar.ps1",
-    "validate": "npm run check && npm run build && npm run test:component && npm run test:node && npm run cargo:test && npm run cargo:check",
+    "validate": "node scripts/run-validation.mjs",
     "pretauri": "node scripts/prepare-rustc-wrapper.mjs",
     "tauri": "tauri"
   },
@@ -31,11 +33,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
-    "afplay": "^1.0.4",
-    "bun": "^1.3.13",
-    "bunx": "^0.1.0",
-    "melt": "^0.44.0",
-    "osascript": "^1.2.0"
+    "melt": "^0.44.0"
   },
   "devDependencies": {
     "@codemirror/commands": "6.11.0",

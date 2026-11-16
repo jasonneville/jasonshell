@@ -39,3 +39,21 @@ Component cases mock body geometry explicitly (30px production row height, 240px
 Component coverage includes rapid physical-press/compatibility sequences, delayed Stash detail/diff responses, busy Git ignore confirmation, cancellation focus restoration, destructive-call exclusion, ordinary click/keyboard behavior, and popup unmount/remount cleanup. Busy ignore starts exactly one explicitly confirmed bridge operation; side buttons must add no commands while it remains pending.
 
 Terminal limitation: current popup imports `StackTerminalPane` and keeps terminal-mode functions/state, but renders neither a terminal pane nor a control invoking its mode switch. No test-only production hook is added. Cleanup tests use an isolated terminal input target after popup unmount; this establishes no leaked capture listener, **not** live mounted-terminal integration or native terminal behavior.
+
+## Explicit-origin push acceptance
+
+After starting the same Vite fixture, use the installed CLI workflow:
+
+```powershell
+agent-browser skills get core
+agent-browser --session jasonshell-push open http://127.0.0.1:4178
+agent-browser --session jasonshell-push snapshot -i
+# Use the fresh snapshot ref for "Run explicit origin push journey".
+agent-browser --session jasonshell-push find role button click --name "Run explicit origin push journey"
+agent-browser --session jasonshell-push wait --text "push: PASS"
+agent-browser --session jasonshell-push get text '#result'
+```
+
+The push journey mounts the production popup, enters the repo, opens its Git panel, types a commit message, and runs both Push and Commit & Push without a browser repository URL. Five isolated scenarios cover each action's success and push rejection, plus commit rejection. Visible feedback and `pushSamples` retain each scenario's command ledger. Commit failure must never push; push failure after a successful commit must clear the message, disable Commit & Push, and allow a Push-only retry without recommitting. Unknown IPC remains denied. Component tests additionally hold commit/push promises to verify duplicate suppression and exercise successful operations with a refresh-callback warning.
+
+This browser fixture proves rendered UI → production IPC wrapper → substituted command behavior, not native Git transport. Native `explicit_origin_push` Rust tests use the production trusted executable and isolated local bare repositories, assert actual remote refs/SHA, and clean up via RAII. Neither suite contacts a real remote, launches Tauri, or mutates Windows shell state.

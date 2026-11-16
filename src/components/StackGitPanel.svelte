@@ -91,6 +91,7 @@
     canStageGitSelection,
     canUnstageGitSelection,
     confirmStackGitDiscard,
+    getBoundedStackGitDiffLines,
     groupStackGitEntries,
     parseStackGitUnifiedDiffRows
   } from '../lib/stackGitPanelState';
@@ -797,16 +798,7 @@
     return result?.content ?? '';
   }
 
-  function getDiffLines(text: string) {
-    const lines = text.split(/\r?\n/);
-    if (lines.length <= maxRenderedDiffLines) return lines;
-    return [
-      ...lines.slice(0, maxRenderedDiffLines),
-      `Diff truncated after ${maxRenderedDiffLines.toLocaleString()} lines (${lines.length.toLocaleString()} total).`
-    ];
-  }
-
-  $: renderedDiffRows = parseStackGitUnifiedDiffRows(getDiffLines(diffText || 'Loading diff...'));
+  $: renderedDiffRows = parseStackGitUnifiedDiffRows(getBoundedStackGitDiffLines(diffText || 'Loading diff...', maxRenderedDiffLines));
   $: diffGutterWidth = `${Math.max(3, ...renderedDiffRows.flatMap((row) => [String(row.oldLineNumber).length, String(row.newLineNumber).length]))}ch`;
 
   async function stagePaths(paths: string[]) {
@@ -833,13 +825,6 @@
 
   async function commitChanges(pushAfter = false) {
     if (!status || !commitMessage.trim() || !canCommit || gitMutationBlocked) return;
-    if (pushAfter && !status.remoteRepositoryUrl) {
-      beginOperation('Pushing');
-      await tick();
-      failOperation('Pushing', new Error('No remote configured'), 'Push failed');
-      operationBusy = false;
-      return;
-    }
     beginOperation('Committing');
     operationLabel = 'Committing';
     await tick();
@@ -1699,7 +1684,7 @@
       <div class="stack-git-sync-actions" aria-label="Git sync actions">
         <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked} aria-label="Fetch" title="Fetch" on:click={() => void syncRemote('fetch')}>↓</button>
         <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked} aria-label="Pull" title="Pull" on:click={() => void syncRemote('pull')}>⇣</button>
-        <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked || !remoteUrl} aria-label="Push" title="Push" on:click={() => void syncRemote('push')}>⇡</button>
+        <button type="button" class="stack-git-icon-button" disabled={!status || gitMutationBlocked} aria-label="Push" title="Push" on:click={() => void syncRemote('push')}>⇡</button>
       </div>
 
       <div class="stack-git-view-tabs" role="tablist" aria-label="Repository views">
@@ -2064,7 +2049,7 @@
         <button type="button" class="stack-git-commit-stash" disabled={!status || gitMutationBlocked || !hasDirtyWorkingTree} on:click={() => void stashChanges()}>Stash</button>
         <div class="stack-git-commit-actions__primary">
           <button type="submit" class="stack-git-button--outline" disabled={!commitMessage.trim() || !canCommit || gitMutationBlocked}>Commit</button>
-          <button type="button" class="stack-git-button--primary" disabled={!commitMessage.trim() || !canCommit || gitMutationBlocked || !remoteUrl} on:click={() => void commitChanges(true)}>Commit &amp; Push</button>
+          <button type="button" class="stack-git-button--primary" disabled={!commitMessage.trim() || !canCommit || gitMutationBlocked} on:click={() => void commitChanges(true)}>Commit &amp; Push</button>
         </div>
       </div>
     </form>

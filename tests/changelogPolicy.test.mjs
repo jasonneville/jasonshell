@@ -87,7 +87,12 @@ test('docs index local pointers resolve and scheduled docs stay explicitly index
   assert.doesNotMatch(docsIndex, /scheduled\/\*_/);
   assert.doesNotMatch(docsIndex, /no scheduled-docs directory/i);
   assert.match(docsIndex, /Scheduled reports are point-in-time evidence, not current product truth/);
-  assert.match(docsIndex, /No scheduled audit reports are included in this checkout/);
+  const hasIndexedScheduledReports = localDocLinks.some((link) => /^(?:docs\/)?scheduled\//.test(link));
+  assert.equal(
+    /No scheduled audit reports are included in this checkout/.test(docsIndex),
+    !hasIndexedScheduledReports,
+    'scheduled-report availability copy must agree with explicit index entries',
+  );
   assert.match(docsIndex, /current-state-technical-audit-2026-08-28\.md/);
   assert.doesNotMatch(docsIndex, /docs\/scheduled\/\d{8}[^`\s]*\.md`/);
 

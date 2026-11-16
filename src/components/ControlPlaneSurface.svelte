@@ -1,6 +1,7 @@
 <script lang="ts">
   import './ControlPlaneSurface.css';
   import { Tabs } from 'melt/builders';
+  import { onMount } from 'svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
   import MeltSelect from './melt/MeltSelect.svelte';
   import {
@@ -17,10 +18,9 @@
   import type { ShellSettings } from '../lib/settings';
   import {
     getInitialShellThemeId,
-    normalizeShellThemeId,
-    setShellTheme,
+    requestShellThemeSelection,
+    subscribeShellThemes,
     shellThemeOptions,
-    type ShellThemeId
   } from '../lib/themes';
   import type { DeveloperSearchResponse } from '../features/search/developerProviders';
   import type { WorkspaceProfile } from '../lib/workspaces';
@@ -38,9 +38,14 @@
 
   let activeSectionId: ControlPlaneSectionId = 'settings';
   let filterQuery = '';
-  let selectedThemeId: ShellThemeId = getInitialShellThemeId();
-  const themeOptions = shellThemeOptions();
-  const themeSelectOptions = themeOptions.map((theme) => ({ value: theme.id, label: theme.label }));
+  let selectedThemeId = getInitialShellThemeId();
+  let themeSelectOptions = shellThemeOptions().map((theme) => ({ value: theme.id, label: theme.label }));
+  let themeError = '';
+  let themeSelectionPending = false;
+  onMount(() => subscribeShellThemes(() => {
+    selectedThemeId = getInitialShellThemeId();
+    themeSelectOptions = shellThemeOptions().map((theme) => ({ value: theme.id, label: theme.label }));
+  }));
   const sectionTabs = new Tabs<ControlPlaneSectionId>({
     value: () => activeSectionId,
     onValueChange: (sectionId) => {
@@ -68,9 +73,15 @@
     activeSectionId = visibleSections[0].id;
   }
 
-  function handleThemeChange(value: string) {
-    selectedThemeId = normalizeShellThemeId(value);
-    setShellTheme(selectedThemeId);
+  async function handleThemeChange(value: string) {
+    if (themeSelectionPending) return;
+    themeError = '';
+    themeSelectionPending = true;
+    try {
+      await requestShellThemeSelection(value);
+    } catch (error) {
+      themeError = error instanceof Error ? error.message : 'Theme selection unavailable. Open Settings and cancel or save the theme draft, then retry.';
+    } finally { themeSelectionPending = false; }
   }
 </script>
 
@@ -126,6 +137,8 @@
       placeholder="Shell theme"
       onChange={handleThemeChange}
     />
+    {#if themeError}<p role="alert">{themeError}</p>{/if}
+    {#if themeSelectionPending}<p role="status">Return to Settings to confirm this theme selection if a theme draft is open.</p>{/if}
   </div>
 
   <div
@@ -133,7 +146,7 @@
     aria-label="Control-plane sections"
     {...sectionTabs.triggerList}
   >
-    {#each visibleSections as section}
+    {#each visibleSections as section (section.id)}
       <button
         {...sectionTabs.getTrigger(section.id)}
         type="button"
@@ -147,7 +160,7 @@
   </div>
 
   <div class="control-plane-grid">
-    {#each visibleSections as section}
+    {#each visibleSections as section (section.id)}
       {@const tabContent = sectionTabs.getContent(section.id)}
       <section
         {...tabContent}
@@ -164,7 +177,7 @@
         </div>
 
         <div class="section-actions" aria-label={`${section.label} actions`}>
-          {#each section.actions as action}
+          {#each section.actions as action (action.id)}
             <MeltActionButton
               disabled={action.disabled}
               ariaLabel={action.ariaLabel}
@@ -177,7 +190,7 @@
 
         {#if section.items.length}
           <ul class="summary-list" aria-label={`${section.label} summary items`}>
-            {#each section.items as item}
+            {#each section.items as item (item.id)}
               <li class={`tone-${item.tone}`}>
                 <strong>{item.title}</strong>
                 <span>{item.meta}</span>

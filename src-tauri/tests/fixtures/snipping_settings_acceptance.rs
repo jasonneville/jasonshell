@@ -1,3 +1,5 @@
+include!("seven_hotkey_settings_acceptance.rs");
+
 // Child of ACTUAL settings module, giving acceptance access to existing private
 // load/validate/transaction seams without production visibility edits or mock validator.
 mod snip_acceptance {

@@ -2,6 +2,7 @@
 //! Oplock refusal is observable evidence, never replaced with metadata polling.
 use super::contract::ProtocolErrorCode;
 use super::{failure, io_failure, Result};
+use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
 use std::{
     ffi::c_void,
     fs::File,
@@ -146,7 +147,6 @@ extern "system" {
     ) -> i32;
     fn CreateDirectoryW(path: *const u16, security: *const SecurityAttributes) -> i32;
     fn LocalFree(memory: *mut c_void) -> *mut c_void;
-    fn GetCurrentProcess() -> Handle;
     fn CreateFileMappingW(
         file: Handle,
         security: *const c_void,
@@ -583,7 +583,7 @@ pub(crate) fn private_directory(path: &Path) -> Result<()> {
 
 pub(crate) fn current_user_sid() -> Result<String> {
     let mut raw_token = ptr::null_mut();
-    if unsafe { OpenProcessToken(GetCurrentProcess(), 8, &mut raw_token) } == 0 {
+    if unsafe { OpenProcessToken(GetCurrentProcess().0, 8, &mut raw_token) } == 0 {
         return Err(os_error());
     }
     let token = owned(raw_token)?;
@@ -895,7 +895,6 @@ struct IoCounters {
 extern "system" {
     fn K32GetProcessMemoryInfo(process: Handle, counters: *mut ProcessMemory, size: u32) -> i32;
     fn GetProcessIoCounters(process: Handle, counters: *mut IoCounters) -> i32;
-    fn GetProcessHandleCount(process: Handle, count: *mut u32) -> i32;
     fn GetCurrentProcessId() -> u32;
 }
 #[derive(serde::Serialize)]
@@ -920,12 +919,12 @@ pub(crate) fn process_sample() -> Result<ProcessSample> {
     // SAFETY: correctly sized native structs and current-process pseudo handle.
     unsafe {
         if K32GetProcessMemoryInfo(
-            GetCurrentProcess(),
+            GetCurrentProcess().0,
             &mut memory,
             std::mem::size_of::<ProcessMemory>() as u32,
         ) == 0
-            || GetProcessIoCounters(GetCurrentProcess(), &mut io) == 0
-            || GetProcessHandleCount(GetCurrentProcess(), &mut handles) == 0
+            || GetProcessIoCounters(GetCurrentProcess().0, &mut io) == 0
+            || GetProcessHandleCount(GetCurrentProcess(), &mut handles).is_err()
         {
             return Err(os_error());
         }

@@ -122,12 +122,7 @@ pub fn collect(inner: &Arc<Mutex<RuntimeInner>>, origin: Instant, work: WorkToke
             let Ok(mut state) = inner.lock() else {
                 break;
             };
-            let context = state.coordinator.context();
-            if !context.visible
-                || context.active_tab != ProcessManagerTab::SystemInfo
-                || context.open_generation != work.generation
-                || context.tab_revision != work.revision
-            {
+            if !state.coordinator.owns_work(work) {
                 break;
             }
             state.probes.reserve(
@@ -152,11 +147,8 @@ pub fn collect(inner: &Arc<Mutex<RuntimeInner>>, origin: Instant, work: WorkToke
                         inner
                             .lock()
                             .map(|state| {
-                                let c = state.coordinator.context();
-                                !c.visible
-                                    || c.active_tab != ProcessManagerTab::SystemInfo
-                                    || c.open_generation != work.generation
-                                    || c.tab_revision != work.revision
+                                !state.coordinator.owns_work(work)
+                                    || !state.probes.may_publish(&token, work.generation, work.revision)
                             })
                             .unwrap_or(true)
                     },
@@ -168,7 +160,7 @@ pub fn collect(inner: &Arc<Mutex<RuntimeInner>>, origin: Instant, work: WorkToke
         let publish = inner
             .lock()
             .map(|mut state| {
-                let publish = state
+                let publish = state.coordinator.owns_work(work) && state
                     .probes
                     .may_publish(&token, work.generation, work.revision);
                 state.probes.reaped(&token);

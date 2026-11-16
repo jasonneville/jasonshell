@@ -195,7 +195,8 @@ async function runActualWindowProbe() {
   const stdout = createWriteStream(stdoutPath);
   const stderr = createWriteStream(stderrPath);
   const started = new Date().toISOString();
-  const child = spawn('cargo', ['run', '--manifest-path', 'src-tauri/Cargo.toml'], {
+  const args = ['run', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'text-document-feasibility'];
+  const child = spawn('cargo', args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
@@ -229,7 +230,7 @@ async function runActualWindowProbe() {
   await persistCommandRecord(output, commands, {
     id,
     executable: 'cargo',
-    args: ['run', '--manifest-path', 'src-tauri/Cargo.toml'],
+    args,
     environment: { P02_NATIVE_PROBE_ROOT: output },
     started,
     finished: new Date().toISOString(),

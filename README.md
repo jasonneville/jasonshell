@@ -23,7 +23,13 @@ Core shell rule: the top and bottom bars reserve primary-monitor AppBar work are
 
 Current truth boundary: workspace restoration is reserved and not implemented; startup commands are not executed automatically; automation forwarding is planned and not wired; multi-monitor support is planning-only, with live shell ownership remaining a single-monitor runtime.
 
-Screen snipping is implemented as a scoped native flow, but its native Windows journey is not yet certified. The crop control is appended after Sound in the existing top-bar order; its configurable fifth hotkey defaults to `Alt+S`. A legacy `Alt+S` assigned to Search is preserved and reported as an actionable conflict rather than silently remapped (for example: “Legacy Alt+S on Search preserved; snipping inactive until shortcut conflict repaired”). The original four hotkeys and control order remain unchanged.
+Screen snipping is implemented as a scoped native flow, but its native Windows journey is not yet certified. The crop control is appended after Sound in the existing top-bar order; its configurable fifth hotkey defaults to `Alt+S`. A legacy `Alt+S` assigned to Search is preserved and reported as an actionable conflict rather than silently remapped (for example: “Legacy Alt+S on Search preserved; snipping inactive until shortcut conflict repaired”). The original five hotkeys and control order remain unchanged; Process Manager adds `Alt+P`, Settings adds `Alt+O`, and Quick Commands adds `Alt+Q` as the sixth, seventh, and eighth global shortcuts.
+
+Global shortcuts are editable in Settings. The eight-key editor is draft-based: capture changes stage locally, **Reset** stages all eight defaults, **Save** applies them together, and **Cancel** restores the committed bindings. Unrelated Settings controls cannot commit the shortcut draft. `Alt+P` toggles Process Manager (reopening on **Processes**) and `Alt+O` toggles Settings, matching their launcher buttons; Settings remains mounted so its theme draft is retained. Explicit Process Manager task/context-menu requests still show/focus the requested PID. Quick Commands uses `Alt+Q` and its existing launcher to toggle the same panel. During shortcut capture, all eight registered chords are redirected only to the acknowledged Settings capture lease; no shortcut action executes. Native leases expire after 2 seconds and wake every 100 ms; the frontend renews at 500 ms. Capture requires the exact registered, visible, focused Settings instance. Scoped historical evidence remains in `tests/seven-hotkeys-evidence.md` and `tests/quick-command-hotkey-evidence.md`; it is not current aggregate status. Live Windows delivery remains uncertified and consent-gated.
+
+Renderer entry remains limited to the exact live top-bar instance; the trusted native dispatcher is the separate hotkey entry. The resulting capture/focus origin may be a supported concrete registered ordinary JasonShell surface or an external app, with live monotonic HWND/PID/thread identity; it does not use external foreground history. Retired snipping generations cannot create new native helpers. Preparation holds are passive (they do not show or refocus a helper), queued close cleanup does not wait on observer validation, and hotkey feedback is monotonic and sanitized for retry UI. These are covered by automated contracts, but persistent native freeze and the real cross-window hotkey journey remain unverified. Live Windows E2E is required for acceptance and was not executed.
+
+The repository backports the official Wry PR 1795 teardown ordering fix (commit [`3fbf592feab29ffb269778a6f5573746a2f25a4a`](https://github.com/tauri-apps/wry/commit/3fbf592feab29ffb269778a6f5573746a2f25a4a)) into vendored Wry 0.54.4 at `src-tauri/vendor/wry/`, selected through `[patch.crates-io]` in `src-tauri/Cargo.toml`. Native subclass removal now precedes controller COM release; this is a minimal backport, not a broad framework upgrade. Original Wry licenses and notices remain. The callback facade's pre-patch RED ordering evidence is recorded in `tests/snipping-postmerge-crash-evidence.md`; validation is not a claim that the native app crash is solved.
 
 ## What this repo is for
 
@@ -139,6 +145,14 @@ npm run tauri dev
 
 ## Feature overview
 
+### Custom themes
+
+Settings → Appearance includes the custom-theme editor. Select a built-in or saved theme, then use **Create copy** (or **Duplicate theme**) to make a named custom theme. Built-in themes remain unchanged. Saved custom themes can be edited, renamed through **Theme name**, duplicated, or deleted; deleting the active theme applies **Base Dark**.
+
+While editing, core colors and **Advanced colors & tints** preview across the shell. Color fields support hexadecimal color values and alpha; linked aliases can be overridden, while composite shadow/focus geometry remains preset-owned. Contrast guidance is a non-blocking estimate, not a native translucency guarantee. Hiding Settings keeps the draft; **Cancel** discards it and restores the saved theme. **Reset colors** restores the source-copy baseline, while **Save & apply** writes the collection and selection before closing the preview. Name-only edits still require Save.
+
+Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasonshell.theme` IDs remain a compatibility mirror/read path. The collection supports up to 100 custom themes and 512 KiB of serialized storage; names are limited to 1–80 characters. Unsupported future schema data is preserved read-only, and concurrent collection/theme revisions are rejected rather than silently overwritten. There is no terminal palette editor or theme import/export surface.
+
 ### Top bar
 
 - hosts shell controls and search entry
@@ -175,6 +189,10 @@ npm run tauri dev
 - while Stack Browser is visible, including when unfocused, external filesystem changes automatically refresh visible rows and Git status. Repository watching covers the canonical worktree plus the actual Git directory and common metadata directory (up to three native notification roots), so changes outside the shown subfolder are included; non-repository folders watch the current folder
 - external notifications are event-driven, debounced, coalesced, and single-flight with one dirty follow-up. Refreshes update rows in place and preserve drafts, viewport, search, selection, and focus. Hiding, closing, unmounting, or leaving the repository stops the watch; reopening catches up. Watch errors expose a path-free diagnostic and **Refresh** fallback without discarding the last good snapshot
 - watching uses native Windows directory notifications, not Git interval polling, new dependencies, or persistence
+- **Open with** for files enumerates Windows-registered association handlers for the file extension. Labels and presentation-only IDs come from Windows; this is not a list of every installed app and its order is not guaranteed to match Explorer
+- selecting a handler re-enumerates the current exact handler identity, then invokes it through the Shell `IDataObject` path. Renderer IDs are never executable authority; there is no executable fallback, default-association write, or saved app list
+- the **Choose app...** route remains the native Windows picker and is available even when no registered handlers are returned
+- the submenu keeps loading, empty, and error states explicit, guards stale lookups, and supports pointer grace plus keyboard entry/return navigation. Native association/picker and packaged-app smoke remain unverified
 - On Windows, drag a file or folder row to Explorer or another Shell drop target with the primary mouse button; dragging multiple selected rows from the current folder requests a copy-only native Shell/OLE drag. Dragging rows from different parent folders reports an unsupported operation rather than sending an invalid payload. Released gestures cancel silently; native errors appear in the popup. Incoming drops remain supported.
 - Native outbound drag has only static/compile validation so far. Explorer/Teams transfer, cancellation, focus behavior, and symlink identity still require consent-gated live Windows smoke; a returned `copied` effect indicates the Shell accepted a copy effect, not that the destination contents were independently verified.
 - Changes, History, Stashes, and Branches views
@@ -200,10 +218,13 @@ npm run tauri dev
 - centered search UI
 - apps, windows, settings, folders, commands
 - Everything results when available
+- The configured Search shortcut (default `Ctrl+Space`) now uses native trigger-cycle ownership: one immediate queued toggle, with its trigger repeats/release consumed even after Search hides or the modifier is released. Other shortcuts retain OS registration dispatch; ordinary Space and unrelated chords pass through. Hook/dispatcher startup failure is explicit; busy dispatch fails open for the whole gesture. Injected events pass unchanged and cannot end physical ownership.
+- Cross-process Windows acceptance remains unverified: closing Search over playing YouTube must still be checked with consent, along with ordinary Space behavior. The original leak event/root cause is not proven. Orderly shutdown drains owned releases for at most 250ms; abrupt exit, hook timeout/removal, and desktop transitions cannot guarantee suppression. See `tests/search-shortcut-native-acceptance.md`.
 
 ### Screen snipping
 
-- starts only from the exact live top-bar instance or the trusted native snipping hotkey dispatcher
+- starts only from the exact live top-bar renderer instance or the trusted native snipping hotkey dispatcher; other panel renderers cannot invoke the start command
+- capture/focus origin is a supported concrete registered ordinary shell surface or an external app; live origin epochs and HWND/PID/thread identity reject stale or recycled targets
 - freezes all currently enumerated monitors before creating capture overlays; normal top/bottom bars, panels, and their tooltips remain in the capture, while snipping overlays and the prior preview are capture-excluded
 - binds the first backend-accepted monitor pointer-down to the generation; the crop is converted from trusted native monitor metadata
 - publishes automatic Copy immediately after hidden preview preparation and before showing the preview; the reported result remains truthful for committed, warning, rejected, or publication-unknown outcomes
@@ -211,7 +232,18 @@ npm run tauri dev
 - keeps save operations pinned to their generation/image and refuses replacement while the picker is active
 - uses path-free IPC, exact concrete-window authorization, binary per-monitor image responses, scoped snipping capabilities, bounded helper deadlines, and capture/staging budgets
 
+Wry 0.54.4 is locally patched only because released Wry 0.56.1 is incompatible with the current `tauri-runtime-wry ^0.54.0` line. Retain the vendor path and removal-before-drop fix until a compatible official dependency upgrade replaces it.
+
 Snipping has no annotations, spanning mode, autosave, capture history, upload, or renderer-supplied paths/handles. The runtime remains scoped to the existing primary-monitor AppBar shell ownership; multi-monitor capture is a snipping capture operation, not multi-monitor AppBar ownership.
+
+### Keyboard shortcuts
+
+- eight configurable global shortcuts: Search `Ctrl+Space`, Terminal `Alt+Backquote`, Stack Browser `Alt+1`, Speech transcription `Ctrl+D`, Screen snipping `Alt+S`, Process Manager `Alt+P`, Settings `Alt+O`, and Quick Commands `Alt+Q`
+- the first five bindings retain their existing behavior; Process Manager and Settings hotkeys and launcher buttons toggle their mounted surfaces. Reopening Process Manager selects Processes; hiding Settings retains its theme draft. Explicit Process Manager task/context-menu requests still show and focus the requested PID
+- shortcut edits use an explicit draft/save transaction; **Reset** stages all eight defaults, **Save** applies them together, and **Cancel** restores committed values
+- upgrade inference is conservative: an omitted new field keeps its default only when available; if its chord is owned by an existing binding (including a prior `Alt+Q` owner), the existing owner remains active and the newcomer is inactive until repaired. Omitted new fields remain omitted through unrelated settings writes and restart until a successful strict eight-field Save
+- the five shortcut IPC commands are Settings-only and require the exact registered, visible, focused Settings instance. Capture retains OS registrations, redirects acknowledged events to Settings without executing actions, and retires on lifecycle loss or lease expiry. Process Manager permissions are unchanged
+- failed registration or persistence uses the exact prior verified native snapshot for restoration; partial rollback is reported truthfully rather than claiming inactive slots were restored
 
 ### Process manager
 
@@ -270,15 +302,20 @@ npm run dev
 npm run build
 npm run preview
 npm run check
+npm run themes:generate
+npm run themes:check
 npm run test:node
 npm run test:component
 npm run test:search
 npm run p03:experiment
+npm run precargo:check
 npm run cargo:check
+npm run precargo:test
 npm run cargo:test
 npm run smoke:runtime
 npm run smoke:fullscreen
 npm run validate
+npm run pretauri
 npm run tauri
 ```
 
@@ -286,10 +323,10 @@ Validation note:
 
 - `npm run test:component` uses `scripts/run-component-tests.mjs` to canonicalize the Windows Vitest CLI drive letter, preventing Node/Vite path-case differences from creating duplicate test collectors. Public commands and forwarded test arguments are unchanged
 - Windows native behavior still needs manual smoke
-- Process Manager System Info evidence includes operational child cleanup 7/7 passing, cache/schema 20/20 passing, and ACL 6/6 passing. The latest focused gate has `check`, `build`, 484 component tests, 1,180 Rust tests, and `cargo:check` passing. The Node suite has 1,270 passes and 10 proven baseline failures at HEAD `43af99a6009bd2dee5b7f27d7b425832e307841b`; therefore `npm run validate` exits 1 and is not GREEN. A visible-browser production-mounted mocked-IPC journey plus 13 extended checks passed with verified portable wmux 2.60.0; native hardware/HWND runtime and live shell smoke remain unverified and unauthorized
-- Reproduce the visible journey with `pwsh -NoProfile -File tests/browser/system-info/run-visible.ps1 -WmuxProcessId <current wmux PID>` (observed run: PID 35164, exit 0). The run produced six screenshots, accessibility/results artifacts, and a 62-entry IPC trace under the approved `system-info-visible-e2e` temp directory. This verifies mocked IPC, fixture navigation/modality events, and trusted CDP observation only; it does not verify native HWND, hardware, process termination, or live shell behavior
+- `npm run validate` runs all six independent gates in order: check, build, component tests, Node tests, Rust tests, Rust check. Failure, signal, or spawn error is reported without skipping later gates; any failed stage makes the final exit nonzero. No live smoke is included
+- Reproduce the System Info visible journey with `pwsh -NoProfile -File tests/browser/system-info/run-visible.ps1 -WmuxProcessId <current wmux PID>`. This verifies mocked IPC, fixture navigation/modality events, and trusted CDP observation only; it does not verify native HWND, hardware, process termination, or live shell behavior. Dated snapshots and native acceptance gates live in `docs/weekly-health-remediation-2026-11-16.md`
 - `npm run smoke:fullscreen` is part of the expected Windows smoke path
-- snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, and consumer paste remain unverified
+- snipping product/coordinator/save/hotkey/native-registry/runtime tests provide bounded automated evidence; the callback facade's pre-patch RED and current validation status are documented in `tests/snipping-postmerge-crash-evidence.md`, while the standalone native synthetic-region journey, real mouse/AppBar/mixed-DPI hardware, consumer paste, and crash resolution remain unverified
 
 ## Caveats
 

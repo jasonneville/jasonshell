@@ -44,8 +44,7 @@ test('top-bar search renders icon-only button that opens centered search', () =>
 test('centered search panel renders independent clear button for non-empty displayed query', () => {
   const source = readSource('../src/components/SearchPanelSurface.svelte');
 
-  assert.match(source, /function hasCenteredSearchClearValue\(\)/);
-  assert.match(source, /\{#if presentation === 'centered' && hasCenteredSearchClearValue\(\)\}/);
+  assert.match(source, /\{#if presentation === 'centered'\}[\s\S]*?\{#if displayedQuery\}\s*<MeltActionButton\s+class="search-panel-clear-button"/);
   assert.match(source, /ariaLabel="Clear search"/);
   assert.match(source, /class="search-panel-clear-button"/);
   assert.match(source, /onClick=\{\(\) => void clearCenteredSearch\(\)\}/);

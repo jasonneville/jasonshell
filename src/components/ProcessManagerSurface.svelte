@@ -201,7 +201,10 @@
     isOpen = next.visible;
     activeTab = next.activeTab;
     stopRefreshTimer();
-    if (!isOpen) return;
+    if (!isOpen) {
+      releaseHiddenProcessPayload();
+      return;
+    }
     if (opening) {
       const focusPid = next.focusPid ?? null;
       processFilter = focusPid === null ? '' : String(focusPid);
@@ -293,9 +296,16 @@
     }
   }
 
+  function releaseHiddenProcessPayload() {
+    processes = [];
+    taskbarProcessPids = [];
+    armedKillPid = null;
+    // killingPid guards an already dispatched operation until it settles.
+  }
+
   function closeSurface() {
     isOpen = false;
-    armedKillPid = null;
+    releaseHiddenProcessPayload();
     inFlightRequest += 1;
     ++tabIntent;
     pendingRefresh = null;

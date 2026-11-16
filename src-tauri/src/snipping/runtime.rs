@@ -1,16 +1,31 @@
 //! Managed production coordinator and path-free, concrete-instance IPC boundary.
 #[cfg(test)]
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/snipping_runtime_acceptance.rs"));
-use super::{coordinator::*, foreground::{ForegroundObserver, Intent}, native::*, native_registry::NativeRegistry};
-use std::{collections::BTreeMap, sync::{Arc, Mutex, Condvar, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use super::{coordinator::*, foreground::{ForegroundObserver, Intent}, native::*, native_registry::{NativeRegistry, FocusRegistration}};
+use std::{collections::BTreeMap, sync::{Arc, Mutex, Condvar, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant}};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 use serde_json::{Value, json};
 use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetForegroundWindow, IsWindowVisible}};
 struct Pending { token: Token, bar: Caller, deadline: Instant, ack: bool }
+/// Pure decision over freshly checked native registrations. Shared by real
+/// focus-loss callbacks and injected native-adapter fixtures; no HWND authority
+/// or renderer command is created by this policy.
+pub(crate) fn focus_loss_held(source_hwnd: isize, foreground_hwnd: isize,
+    source: Option<&FocusRegistration>, destination: Option<&FocusRegistration>,
+    token: Option<&Token>, phase: Option<Phase>) -> bool {
+    let (Some(source), Some(destination), Some(token)) = (source, destination, token) else { return false; };
+    matches!(phase, Some(Phase::Preparing | Phase::Selecting))
+        && source_hwnd != 0 && foreground_hwnd != 0 && source_hwnd != foreground_hwnd
+        && source.hwnd == source_hwnd && destination.hwnd == foreground_hwnd
+        && source.instance != 0 && destination.instance != 0 && source.instance != destination.instance
+        && source.pid != 0 && source.pid == destination.pid && source.thread != 0 && destination.thread != 0
+        && source.token.is_none() && destination.token.as_ref() == Some(token)
+}
 /// Narrow native boundaries shared by production and cfg(test) runtime fixtures.
 /// Implementations must fail closed; runtime owns all token/ack/reservation state.
 pub(crate) trait RuntimeEdges: Send + Sync {
     fn intent(&self) -> Result<Intent, SnipError>;
+    fn native_intent(&self) -> Result<Intent, SnipError> { self.intent() }
     fn valid(&self, intent: Intent) -> bool;
     fn bar(&self) -> Result<(), SnipError>;
     fn emit(&self, event: &str, token: &Token) -> Result<(), SnipError>;
@@ -20,6 +35,8 @@ pub(crate) trait RuntimeEdges: Send + Sync {
     fn restore(&self, intent: Intent, owned_foreground: isize);
     fn shutdown(&self);
     fn publication_attempts(&self) -> Option<usize> { None }
+    fn feedback(&self, _attempt: u64, _code: Option<&str>) {}
+    fn focus_registration(&self, _hwnd: isize) -> Option<FocusRegistration> { None }
 }
 struct NativeEdges { registry: Arc<NativeRegistry>, bar: Caller, observer: ForegroundObserver, clipboard: Arc<NativeClipboardPort> }
 impl NativeEdges {
@@ -28,20 +45,28 @@ impl NativeEdges {
     }
 }
 impl RuntimeEdges for NativeEdges {
+    fn focus_registration(&self, hwnd: isize) -> Option<FocusRegistration> { self.registry.focus_registration(hwnd) }
     fn intent(&self) -> Result<Intent, SnipError> { self.observer.snapshot() }
+    fn native_intent(&self) -> Result<Intent, SnipError> { self.observer.snapshot_native() }
     fn valid(&self, intent: Intent) -> bool { self.observer.valid(intent) }
     fn bar(&self) -> Result<(), SnipError> {
         let window = self.window()?;
         if !unsafe { IsWindowVisible(HWND(window.hwnd().map_err(|_| SnipError::Unauthorized)?.0)) }.as_bool() { return Err(SnipError::Inactive); }
         Ok(())
     }
-    fn emit(&self, event: &str, token: &Token) -> Result<(), SnipError> { self.window()?.emit(event, token_json(token)).map_err(|_| SnipError::WindowFailed) }
+    fn emit(&self, event: &str, token: &Token) -> Result<(), SnipError> { let window = self.window()?; window.emit_to(EventTarget::WebviewWindow { label: window.label().into() }, event, token_json(token)).map_err(|_| SnipError::WindowFailed) }
     fn flush(&self, deadline: Instant) -> Result<(), SnipError> { super::composition::flush(deadline) }
     fn now(&self) -> Instant { Instant::now() }
     fn foreground(&self) -> isize { unsafe { GetForegroundWindow() }.0 as isize }
     fn restore(&self, intent: Intent, owned_foreground: isize) { self.observer.restore_validated(intent, owned_foreground); }
     fn shutdown(&self) { self.clipboard.shutdown(); self.observer.stop(); }
     fn publication_attempts(&self) -> Option<usize> { Some(self.clipboard.publication_attempts()) }
+    fn feedback(&self, attempt: u64, code: Option<&str>) {
+        if let Ok(window) = self.window() {
+            let _ = window.emit_to(EventTarget::WebviewWindow { label: window.label().into() }, "snip:hotkey_feedback",
+                json!({"attempt":attempt.to_string(),"status":if code.is_some() { "error" } else { "started" },"code":code}));
+        }
+    }
 }
 pub struct SnipRuntime {
     pub coordinator: Coordinator,
@@ -55,15 +80,30 @@ pub struct SnipRuntime {
     starting: AtomicBool,
     stopped: AtomicBool,
     preparation_deadline: Mutex<Option<Instant>>,
+    hotkey_attempt: AtomicU64,
+    hotkey_reported: AtomicU64,
+    escape: Mutex<Option<Arc<super::escape::EventRouter>>>,
 }
 /// Native-only intent/reservation ticket. Drop releases repeat suppression even if
 /// the hotkey owner cannot dispatch its worker. Never serialized or accepted by IPC.
-pub struct NativeStartReservation { runtime: Arc<SnipRuntime>, intent: Intent, deadline: Instant }
+pub struct NativeStartReservation { runtime: Arc<SnipRuntime>, intent: Intent, deadline: Instant, attempt: u64 }
 impl Drop for NativeStartReservation { fn drop(&mut self) { self.runtime.starting.store(false, Ordering::Release); } }
 impl SnipRuntime {
+    /// Passive, generation-scoped focus hold. Release never shows or focuses a
+    /// surface; ordinary picker/drag hold counters remain entirely independent.
+    pub fn holds_focus_loss(&self, hwnd: isize) -> bool {
+        if self.stopped.load(Ordering::Acquire) { return false; }
+        let foreground = self.edges.foreground();
+        let source = self.edges.focus_registration(hwnd);
+        let destination = self.edges.focus_registration(foreground);
+        let snapshot = self.coordinator.inspect();
+        let held = focus_loss_held(hwnd, foreground, source.as_ref(), destination.as_ref(), snapshot.token.as_ref(), snapshot.phase);
+        // A user switch during registration resolution must win, too.
+        held && !self.stopped.load(Ordering::Acquire) && self.edges.foreground() == foreground
+    }
     pub(crate) fn publication_attempts(&self) -> Option<usize> { self.edges.publication_attempts() }
     fn assemble(coordinator: Coordinator, registry: Arc<NativeRegistry>, bar: Caller, edges: Arc<dyn RuntimeEdges>) -> Self {
-        Self { coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None) }
+        Self { coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None), hotkey_attempt: AtomicU64::new(0), hotkey_reported: AtomicU64::new(0), escape: Mutex::new(None) }
     }
     /// Called after shell window construction and before normal activation.
     pub fn install(app: AppHandle, top: WebviewWindow) -> Result<Arc<Self>, SnipError> {
@@ -79,6 +119,15 @@ impl SnipRuntime {
         let registry = Arc::new(NativeRegistry::default());
         let entry = registry.reserve("top-bar".into(), None, None, false)?;
         entry.bind(top)?; let bar = entry.reference.caller.clone();
+        // All ordinary shell surfaces are constructed before runtime installation.
+        // Each receives a native instance epoch, also checked after HWND reuse.
+        for (label, window) in app.webview_windows() {
+            if label == "top-bar" || label.starts_with("snip-") { continue; }
+            registry.reserve(label, None, None, false)?.bind(window)?;
+        }
+        let origins = registry.clone();
+        let bar_hwnd = registry.entry(&WindowRef { caller: bar.clone(), monitor_id: None })?.window()?.hwnd().map_err(|_| SnipError::WindowFailed)?.0 as isize;
+        observer.set_surface_resolver(Arc::new(move |hwnd| origins.foreground_identity(hwnd)), bar_hwnd);
         let clipboard = Arc::new(NativeClipboardPort::new()?);
         let edges: Arc<dyn RuntimeEdges> = Arc::new(NativeEdges { registry: registry.clone(), bar: bar.clone(), observer, clipboard: clipboard.clone() });
         let runtime: Arc<Self> = Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
@@ -91,6 +140,7 @@ impl SnipRuntime {
                 Arc::new(move || { if let Some(runtime) = release.upgrade() { runtime.release(); } }));
             Self::assemble(Coordinator::new(capture, windows, clipboard.clone(), picker, Arc::new(NativePublisherPort), Arc::new(NativeClock)), registry, bar, edges)
         });
+        *runtime.escape.lock().map_err(|_| SnipError::Inactive)? = Some(super::escape::install(Arc::downgrade(&runtime))?);
         let weak = Arc::downgrade(&runtime);
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(50));
@@ -102,15 +152,35 @@ impl SnipRuntime {
     }
     /// Native hotkey owner may call this from a worker without renderer mediation.
     pub fn start_native(&self) -> Result<Token, SnipError> { self.start(self.bar.clone()) }
+    /// Trusted native observation only; never exposed as renderer IPC authority.
+    /// Key-up, retired tokens, non-selection phases and stopped runtimes are inert.
+    pub(crate) fn native_escape(&self, token: &Token, escape_down: bool) -> bool {
+        if !escape_down || self.stopped.load(Ordering::Acquire) { return false; }
+        self.coordinator.cancel_selecting(token)
+    }
     /// Hotkey message thread calls BEFORE spawning a worker or emitting UI events.
     pub fn reserve_native_start(self: &Arc<Self>) -> Result<NativeStartReservation, SnipError> {
-        let (intent, deadline) = self.reserve_intent(self.bar.clone())?;
-        Ok(NativeStartReservation { runtime: self.clone(), intent, deadline })
+        if self.starting.load(Ordering::Acquire) { return Err(SnipError::Busy); }
+        let attempt = self.hotkey_attempt.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1)).map_err(|_| SnipError::Inactive)? + 1;
+        match self.reserve_intent_for(self.bar.clone(), true) {
+            Ok((intent, deadline)) => {
+                self.edges.feedback(attempt, None);
+                Ok(NativeStartReservation { runtime: self.clone(), intent, deadline, attempt })
+            },
+            Err(error) => { self.edges.feedback(attempt, None); self.hotkey_failure(attempt, error); Err(error) }
+        }
+    }
+    fn hotkey_failure(&self, attempt: u64, failure: SnipError) {
+        if self.hotkey_attempt.load(Ordering::Acquire) != attempt || failure == SnipError::Busy || failure == SnipError::Stale { return; }
+        if self.hotkey_reported.fetch_max(attempt, Ordering::AcqRel) >= attempt { return; }
+        self.edges.feedback(attempt, Some(&error(failure)));
     }
     /// Worker consumes the exact native reservation; never recaches activated UI.
     pub fn run_native_start(self: &Arc<Self>, reservation: NativeStartReservation) -> Result<Token, SnipError> {
         if !Arc::ptr_eq(self, &reservation.runtime) { return Err(SnipError::Unauthorized); }
-        self.run_reserved(self.bar.clone(), reservation.intent, reservation.deadline)
+        let result = self.run_reserved(self.bar.clone(), reservation.intent, reservation.deadline);
+        if let Err(error) = result { self.hotkey_failure(reservation.attempt, error); }
+        result
     }
     fn start(&self, caller: Caller) -> Result<Token, SnipError> {
         let (intent, deadline) = self.reserve_intent(caller.clone())?;
@@ -119,6 +189,9 @@ impl SnipRuntime {
         self.run_reserved(caller, intent, deadline)
     }
     fn reserve_intent(&self, caller: Caller) -> Result<(Intent, Instant), SnipError> {
+        self.reserve_intent_for(caller, false)
+    }
+    fn reserve_intent_for(&self, caller: Caller, native: bool) -> Result<(Intent, Instant), SnipError> {
         if caller != self.bar || self.stopped.load(Ordering::Acquire) { return Err(SnipError::Unauthorized); }
         if self.starting.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() { return Err(SnipError::Busy); }
         let result = (|| {
@@ -126,7 +199,7 @@ impl SnipRuntime {
             let snapshot = self.coordinator.inspect();
             if snapshot.phase.is_some_and(|phase| phase != Phase::Preview) || snapshot.save_pin { return Err(SnipError::Busy); }
             let deadline = self.edges.now() + Duration::from_secs(5);
-            self.edges.intent().map(|intent| (intent, deadline))
+            (if native { self.edges.native_intent() } else { self.edges.intent() }).map(|intent| (intent, deadline))
         })();
         if result.is_err() { self.starting.store(false, Ordering::Release); }
         result
@@ -143,6 +216,7 @@ impl SnipRuntime {
     fn prepare(&self, deadline: Instant) -> Result<(), SnipError> {
         let deadline = deadline.min(self.preparation_deadline.lock().map_err(|_| SnipError::Inactive)?.ok_or(SnipError::Inactive)?);
         let token = self.coordinator.inspect().token.ok_or(SnipError::Inactive)?;
+        self.registry.bind_origin_generation(token.clone())?;
         self.edges.bar()?;
         let original = self.original.lock().map_err(|_| SnipError::Inactive)?.ok_or(SnipError::Inactive)?;
         if !self.edges.valid(original) { return Err(SnipError::Inactive); }
@@ -201,7 +275,7 @@ impl SnipRuntime {
             }
         }
     }
-    pub fn shutdown(&self) { self.stopped.store(true, Ordering::Release); self.release(); self.registry.close_snips(); self.edges.shutdown(); }
+    pub fn shutdown(&self) { self.stopped.store(true, Ordering::Release); if let Ok(escape) = self.escape.lock() { if let Some(escape) = escape.as_ref() { escape.shutdown(); } } self.release(); self.registry.close_snips(); self.edges.shutdown(); }
 }
 /// Test construction replaces only native edges and the six existing coordinator
 /// ports. All reservation, prepare/ack/release, token checks and shutdown code above

@@ -1,7 +1,7 @@
 import '../../../src/app.css';
 import { mount, unmount, tick } from 'svelte';
 import StackPopupSurface from '../../../src/components/StackPopupSurface.svelte';
-import { child, fixtureRowHeight, installLargeDirectoryFixture, largeDirectoryCount, largeFileName, ledger, resetBridge } from './bridge';
+import { child, fixtureRowHeight, installLargeDirectoryFixture, installPushFixture, largeDirectoryCount, largeFileName, ledger, overrides, resetBridge } from './bridge';
 
 let popup: ReturnType<typeof mount> | null = null;
 const events: { type: string; button: number; phase: string; prevented: boolean; branch: boolean; diff: boolean; confirmation: boolean }[] = [];
@@ -186,15 +186,55 @@ async function viewportJourney() {
   await sidePress(3, element('[aria-label="Close editor and return to folder"]')!);
   await checkRestored(latest, reads);
 }
-async function run(journey: 'git' | 'editor' | 'viewport') {
+const pushSamples: { action: string; outcome: string; ledger: typeof ledger; feedback: string }[] = [];
+async function pushJourney() {
+  pushSamples.length = 0;
+  const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Git panel"] button')]
+    .find((item) => item.getAttribute('aria-label') === name || item.textContent?.trim() === name)!;
+  for (const action of ['Push', 'Commit & Push']) {
+    for (const outcome of ['success', 'push-failure', ...(action === 'Commit & Push' ? ['commit-failure'] : [])]) {
+      await openRepo();
+      installPushFixture({
+        commitError: outcome === 'commit-failure' ? 'fixture commit rejected' : undefined,
+        pushError: outcome === 'push-failure' ? 'fixture non-fast-forward' : undefined
+      });
+      element('.stack-git-branch')!.click();
+      await until(() => exists('[aria-label="Git panel"]'), 'Git panel missing');
+      const message = element('[aria-label="Commit message"]') as HTMLTextAreaElement;
+      message.value = 'browser explicit origin'; message.dispatchEvent(new Event('input', { bubbles: true }));
+      await tick();
+      await until(() => button('Commit') && !button('Commit').disabled, 'Staged commit state not ready');
+      assert(button(action) && !button(action).disabled, `${action} must be available without browser URL`);
+      button(action).click();
+      const expected = outcome === 'commit-failure' ? 'Committing failed: fixture commit rejected'
+        : outcome === 'push-failure' ? 'Pushing failed: fixture non-fast-forward'
+          : action === 'Push' ? 'Pushed' : 'Committed and pushed';
+      await until(() => element('[aria-label="Git panel"]')?.textContent?.includes(expected), `Missing feedback: ${expected}`);
+      await until(() => !button('Push').disabled, 'Operation did not settle');
+      const commands = () => ledger.filter(({ command }) => ['stack_git_commit', 'stack_git_push'].includes(command)).map(({ command }) => command);
+      const expectedCommands = outcome === 'commit-failure' ? ['stack_git_commit'] : action === 'Push' ? ['stack_git_push'] : ['stack_git_commit', 'stack_git_push'];
+      assert(JSON.stringify(commands()) === JSON.stringify(expectedCommands), `Wrong commit/push order: ${commands()}`);
+      if (action === 'Commit & Push' && outcome === 'push-failure') {
+        assert(message.value === '' && button('Commit & Push').disabled, 'Committed message was not cleared after failed push');
+        overrides.set('stack_git_push', () => ({ repositoryRoot: child, summary: 'Pushed', output: 'retry succeeded' }));
+        button('Push').click();
+        await until(() => element('[aria-label="Git panel"]')?.textContent?.includes('Pushed'), 'Retry feedback missing');
+        assert(JSON.stringify(commands()) === JSON.stringify([...expectedCommands, 'stack_git_push']), 'Push retry recommitted');
+      }
+      pushSamples.push({ action, outcome, ledger: ledger.map((entry) => ({ ...entry })), feedback: element('[aria-label="Git panel"]')!.textContent! });
+    }
+  }
+}
+async function run(journey: 'git' | 'editor' | 'viewport' | 'push') {
   // Make click delivery observable before the first reset, bridge await, or animation frame.
   element('#result')!.textContent = `${journey}: Running`;
-  try { await (journey === 'git' ? gitJourney() : journey === 'editor' ? editorJourney() : viewportJourney()); element('#result')!.textContent = `${journey}: PASS\n${JSON.stringify({ events, viewports, ledger }, null, 2)}`; return { passed: true, events, viewports, ledger }; }
+  try { await (journey === 'git' ? gitJourney() : journey === 'editor' ? editorJourney() : journey === 'push' ? pushJourney() : viewportJourney()); element('#result')!.textContent = `${journey}: PASS\n${JSON.stringify({ events, viewports, pushSamples, ledger }, null, 2)}`; return { passed: true, events, viewports, pushSamples, ledger }; }
   catch (error) { element('#result')!.textContent = `${journey}: FAIL ${String(error)}\n${JSON.stringify({ events, viewports, ledger }, null, 2)}`; return { passed: false, error: String(error), events, viewports, ledger }; }
 }
-Object.assign(window, { stackMouse: { reset, run, events, viewports, ledger } });
+Object.assign(window, { stackMouse: { reset, run, events, viewports, pushSamples, ledger } });
 element('#reset')!.onclick = () => { void reset(); };
 element('#git')!.onclick = () => { void run('git'); };
 element('#editor')!.onclick = () => { void run('editor'); };
 element('#viewport')!.onclick = () => { void run('viewport'); };
+element('#push')!.onclick = () => { void run('push'); };
 void reset();
