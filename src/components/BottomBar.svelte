@@ -976,6 +976,12 @@
     pendingTaskGalleryGroupKey = null;
   }
   function cancelTaskGroupPointerDrag() {
+    // Escape/capture cancellation can still be followed by a native pointer
+    // click on the capsule. Retire that gesture, just as normal release does;
+    // keyboard clicks remain independent and a fresh press clears suppression.
+    if (pendingTaskGalleryGroupKey) {
+      suppressClickTaskGalleryGroupKey = pendingTaskGalleryGroupKey;
+    }
     releaseTaskGroupPointerCapture();
     if (taskGroupDragStarted && taskGroupDragOriginalOrder.length) {
       taskGroupOrder = taskGroupDragOriginalOrder;
