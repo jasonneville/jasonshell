@@ -51,6 +51,9 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
       result = folderPage(path, names); break;
     }
     case 'get_stack_git_status': result = args.path === child ? status : null; break;
+    case 'get_stack_git_context': result = args.path === child ? { repositoryRoot: child, gitDir: `${child}\\.git`, canonicalPath: child } : null; break;
+    case 'get_stack_git_summary': result = args.path === child ? status : null; break;
+    case 'get_stack_git_metadata': result = args.path === child ? { repositoryRoot: child, gitDir: `${child}\\.git`, remoteRepositoryUrl: null, ahead: null, behind: null } : null; break;
     case 'resolve_stack_item_icons': result = { items: [], cacheHits: 0, cacheMisses: 0 }; break;
     case 'load_shell_settings': result = { stackBrowser: { terminalProfile: 'windowsTerminal' } }; break;
     case 'read_stack_basic_text_file': result = { path: args.path, content: '# Saved draft', byteLength: 13, identity: 'fixture-identity' }; break;

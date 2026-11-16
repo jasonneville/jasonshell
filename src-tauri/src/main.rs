@@ -116,6 +116,7 @@ fn main() {
         .manage(task_preview_state())
         .manage(search_panel_state())
         .manage(stack_popup_state())
+        .manage(std::sync::Arc::new(stack_popup::folder_watch::FolderWatchRuntime::default()))
         .manage(diagnostics::diagnostics_state())
         .manage(speech_runtime::SpeechRuntimeState::default())
         .manage(process_manager::SystemInfoRuntime::default())
@@ -252,6 +253,11 @@ fn main() {
             stack_popup::read_stack_basic_text_file,
             stack_popup::save_stack_basic_text_file,
             stack_popup::get_stack_git_status,
+            stack_popup::start_stack_folder_watch,
+            stack_popup::stop_stack_folder_watch,
+            stack_popup::get_stack_git_context,
+            stack_popup::get_stack_git_summary,
+            stack_popup::get_stack_git_metadata,
             stack_popup::open_stack_git_remote_url,
             stack_popup::stack_git_add_paths,
             stack_popup::stack_git_ignore_path,
@@ -334,6 +340,12 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if window.label() == shell_windows::STACK_POPUP_LABEL
+                && matches!(event, WindowEvent::Destroyed)
+            {
+                stack_popup::folder_watch::retire(window.app_handle());
+                return;
+            }
+            if window.label() == shell_windows::STACK_POPUP_LABEL
                 && matches!(event, WindowEvent::Focused(true))
             {
                 stack_popup::restore_stack_popup_topmost(window.app_handle());
@@ -354,7 +366,7 @@ fn main() {
                 {
                     return;
                 }
-                let _ = window.hide();
+                let _ = stack_popup::hide_stack_popup(window.app_handle().clone());
                 return;
             }
 
@@ -591,6 +603,7 @@ fn main() {
     app.run(|app_handle, event| {
         #[cfg(target_os = "windows")]
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+            stack_popup::folder_watch::shutdown(app_handle);
             if let Some(runtime) = app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>() { runtime.shutdown(); }
             if let Some(state) = app_handle.try_state::<speech_runtime::SpeechRuntimeState>() {
                 speech_runtime::shutdown(&state);

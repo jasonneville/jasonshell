@@ -169,6 +169,12 @@ npm run tauri dev
 
 - browse folders
 - file operations
+- Git status uses a current-repository identity snapshot: ordinary navigation within the same repository verifies canonical context, reuses the lightweight summary, and avoids new summary/enrichment scans; destination badges are shown only after that context validation
+- the lightweight summary covers branch, porcelain counts, and badge paths. Remote URL and ahead/behind data are deferred metadata; the full Git workbench keeps its existing enrichment behavior
+- **Refresh** and successful local Git mutations, including editor saves, invalidate the repository snapshot. A locally successful commit still invalidates it when a follow-up push fails. Stale refresh generations are ignored; failed summary or metadata refreshes retain the last good snapshot
+- while Stack Browser is visible, including when unfocused, external filesystem changes automatically refresh visible rows and Git status. Repository watching covers the canonical worktree plus the actual Git directory and common metadata directory (up to three native notification roots), so changes outside the shown subfolder are included; non-repository folders watch the current folder
+- external notifications are event-driven, debounced, coalesced, and single-flight with one dirty follow-up. Refreshes update rows in place and preserve drafts, viewport, search, selection, and focus. Hiding, closing, unmounting, or leaving the repository stops the watch; reopening catches up. Watch errors expose a path-free diagnostic and **Refresh** fallback without discarding the last good snapshot
+- watching uses native Windows directory notifications, not Git interval polling, new dependencies, or persistence
 - On Windows, drag a file or folder row to Explorer or another Shell drop target with the primary mouse button; dragging multiple selected rows from the current folder requests a copy-only native Shell/OLE drag. Dragging rows from different parent folders reports an unsupported operation rather than sending an invalid payload. Released gestures cancel silently; native errors appear in the popup. Incoming drops remain supported.
 - Native outbound drag has only static/compile validation so far. Explorer/Teams transfer, cancellation, focus behavior, and symlink identity still require consent-gated live Windows smoke; a returned `copied` effect indicates the Shell accepted a copy effect, not that the destination contents were independently verified.
 - Changes, History, Stashes, and Branches views

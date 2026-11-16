@@ -146,7 +146,8 @@ it.each(['determinate', 'indeterminate', 'completed', 'failed'])('operation %s t
     reject(new Error('Fixture paste denied'));
     await waitFor(() => expect(status().textContent).toContain('Paste failed ·'));
     expect(status().classList.contains('error')).toBe(true);
-    expect(status().textContent).not.toContain('Fixture paste denied'); // Existing operation priority, not fallback error text.
+    expect(status().textContent).toContain('Fixture paste denied'); // Paste keeps operation priority while exposing its stored failure.
+    expect(within(status()).getByTitle('Fixture paste denied')).toBeTruthy();
   } else {
     await waitFor(() => expect(status().textContent).toContain('Preparing ·'));
     expect(status().querySelector('.stack-operation-spinner')?.getAttribute('aria-hidden')).toBe('true');
@@ -154,7 +155,8 @@ it.each(['determinate', 'indeterminate', 'completed', 'failed'])('operation %s t
   if (mode !== 'determinate') expect(within(status()).queryByRole('progressbar')).toBeNull();
   if (mode === 'completed' || mode === 'failed') expect(status().querySelector('.stack-operation-spinner')).toBeNull();
   const fullText = status().textContent!.trim();
-  expect(within(status()).getByTitle(fullText)).toBeTruthy();
+  if (mode === 'failed') expect(within(status()).getByTitle(/^Paste failed ·/)).toBeTruthy();
+  else expect(within(status()).getByTitle(fullText)).toBeTruthy();
   expect(fullText).not.toContain('of 1 items');
   expect(fullText).not.toContain('Loading icons');
   expectInlineStatus();

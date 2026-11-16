@@ -136,14 +136,23 @@ pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), Strin
         guard.restore_focus_after_hold = false;
     }
 
-    app_handle
+    let popup = app_handle
         .get_webview_window(STACK_POPUP_LABEL)
-        .ok_or_else(|| "Stack popup window is unavailable".to_string())?
+        .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
+    popup
         .hide()
         .map_err(|error| format!("Failed to hide the stack popup: {error}"))?;
-    app_handle
+    super::folder_watch::retire(&app_handle);
+    // Deliver authoritative retirement to the mounted popup even when hide and
+    // reopen happen too quickly for focus/document visibility observation.
+    let popup_closed = popup.emit_to(tauri::EventTarget::WebviewWindow {
+        label: popup.label().into(),
+    }, "stack-popup:closed", ())
+        .map_err(|error| format!("Failed to publish stack popup retirement: {error}"));
+    let top_closed = app_handle
         .emit_to(TOP_BAR_LABEL, "stack-popup:closed", ())
-        .map_err(|error| format!("Failed to publish stack popup closed state: {error}"))
+        .map_err(|error| format!("Failed to publish stack popup closed state: {error}"));
+    popup_closed.and(top_closed)
 }
 
 pub(crate) fn latest_stack_popup_request(

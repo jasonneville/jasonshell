@@ -108,6 +108,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'testModernizationPolicy.test.mjs'
   ],
   securityBoundary: [
+    'stackExternalRefreshContract.test.mjs',
     'automationProviders.test.mjs',
     'backendBlockingLockBoundaries.test.mjs',
     'backendBlockingLockBoundariesP6.test.mjs',

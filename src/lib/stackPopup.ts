@@ -8,6 +8,19 @@ export const STACK_POPUP_LABEL = 'stack-popup';
 export const TOP_BAR_LABEL = 'top-bar';
 export const STACK_POPUP_OPEN_EVENT = 'stack-popup:open';
 export const STACK_POPUP_CLOSE_REQUESTED_EVENT = 'stack-popup:close-requested';
+export const STACK_FOLDER_CHANGED_EVENT = 'stack-popup:folder-changed';
+export const STACK_FOLDER_WATCH_ERROR_EVENT = 'stack-popup:folder-watch-error';
+export type StackFolderWatch = { watchId: string; canonicalPath: string };
+export type StackFolderWatchChange = { watchId: string };
+export type StackFolderWatchError = { watchId: string; message: string };
+
+export function startStackFolderWatch(path: string): Promise<StackFolderWatch> {
+  return invoke(IPC_COMMANDS.startStackFolderWatch, { path });
+}
+
+export function stopStackFolderWatch(watchId: string): Promise<void> {
+  return invoke(IPC_COMMANDS.stopStackFolderWatch, { watchId });
+}
 export const STACK_PINS_UPDATED_EVENT = 'stack-pins:updated';
 export type { StackFileOperationProgress };
 
@@ -66,6 +79,32 @@ export type StackGitStatus = {
   conflicts: number;
   entries: StackGitFileStatus[];
 };
+
+export type StackGitContext = {
+  repositoryRoot: string;
+  gitDir: string;
+  canonicalPath: string;
+};
+
+export type StackGitMetadata = {
+  repositoryRoot: string;
+  gitDir: string;
+  remoteRepositoryUrl: string | null;
+  ahead: number | null;
+  behind: number | null;
+};
+
+export async function getStackGitContext(path: string): Promise<StackGitContext | null> {
+  return invoke<StackGitContext | null>(IPC_COMMANDS.getStackGitContext, { path });
+}
+
+export async function getStackGitSummary(path: string): Promise<StackGitStatus | null> {
+  return invoke<StackGitStatus | null>(IPC_COMMANDS.getStackGitSummary, { path });
+}
+
+export async function getStackGitMetadata(path: string): Promise<StackGitMetadata | null> {
+  return invoke<StackGitMetadata | null>(IPC_COMMANDS.getStackGitMetadata, { path });
+}
 
 export type StackGitOperationResult = {
   repositoryRoot: string;
@@ -535,8 +574,14 @@ export function copyStackItems(paths: string[], cut: boolean): Promise<void> {
   return invoke(cut ? IPC_COMMANDS.cutStackItems : IPC_COMMANDS.copyStackItems, { paths });
 }
 
-export async function pasteStackItems(destinationPath: string, operationId = crypto.randomUUID()): Promise<StackPasteListing> {
+export async function pasteStackItems(
+  destinationPath: string,
+  operationId = crypto.randomUUID(),
+  onPasted?: () => void
+): Promise<StackPasteListing> {
   const result = await invoke<StackPasteResult>(IPC_COMMANDS.pasteStackItems, { destination: destinationPath, operationId });
+  // Mutation succeeded independently of the following, fallible folder read.
+  if (result.pasted?.length) onPasted?.();
   const listing = await listStackFolder(destinationPath);
   return { ...listing, pasteFailures: result.failures ?? [] };
 }

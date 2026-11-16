@@ -20,6 +20,7 @@
   export let path: string;
   export let onDirtyChange: (dirty: boolean) => void;
   export let onDismiss: (dirty: boolean) => void;
+  export let onSaved: (() => void) | null = null;
 
   let editorHost: HTMLDivElement | null = null;
   let editorAdapter: StackTextEditorAdapter | null = null;
@@ -96,6 +97,7 @@
       initialContent = result.content;
       fileIdentity = result.identity;
       saveConflict = false;
+      onSaved?.();
     } catch (error) {
       if (disposed || sequence !== requestSequence) return;
       const message = error instanceof Error && error.message ? error.message : String(error);

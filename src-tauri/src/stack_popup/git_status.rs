@@ -10,6 +10,7 @@ use crate::stack_popup::models::{
     StackGitTreeEntry, StackGitTreeRequest,
 };
 use crate::stack_popup::process_runner::{run_process, ProcessRunError, ProcessRunSpec};
+use crate::stack_popup::models::{StackGitContext, StackGitMetadata};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,26 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 const DEFAULT_LOG_LIMIT: usize = 40;
+
+#[cfg(test)]
+mod refresh_acceptance {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/native/stack_git_refresh.rs"));
+}
+
+#[cfg(test)]
+mod refresh_latency_evidence {
+    #[test]
+    #[ignore = "opt-in read-only checkout latency measurement; run alone with GIT_TRACE2_EVENT"]
+    fn measure_existing_initial_status() {
+        let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for sample in 0..6 {
+            let started = std::time::Instant::now();
+            let status = super::stack_git_status_for_path(checkout.to_str().unwrap())
+                .expect("checkout status").expect("checkout repository");
+            eprintln!("STACK_GIT_BASELINE sample={sample} elapsed_us={} entries={}", started.elapsed().as_micros(), status.entries.len());
+        }
+    }
+}
 const MAX_LOG_LIMIT: usize = 200;
 const GIT_READ_TIMEOUT_SECS: u64 = 10;
 const GIT_LOCAL_MUTATION_TIMEOUT_SECS: u64 = 30;
@@ -33,6 +54,7 @@ enum GitRunMode {
 
 #[derive(Debug, PartialEq, Eq)]
 enum GitCommandError {
+    MissingConfig,
     Spawn(String),
     Timeout(String),
     Internal(String),
@@ -46,6 +68,7 @@ enum GitCommandError {
 impl GitCommandError {
     fn into_message(self) -> String {
         match self {
+            Self::MissingConfig => "Git configuration key is absent".to_string(),
             Self::Spawn(msg)
             | Self::Timeout(msg)
             | Self::Internal(msg)
@@ -184,6 +207,92 @@ pub(crate) async fn stack_git_create_branch_async(
         .map_err(|error| format!("Failed to join stack git branch create task: {error}"))?
 }
 
+pub(crate) async fn stack_git_context_for_path_async(path: String) -> Result<Option<StackGitContext>, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_context_for_path(&path))
+        .await.map_err(|error| format!("Failed to join stack git context task: {error}"))?
+}
+
+pub(crate) async fn stack_git_summary_for_path_async(path: String) -> Result<Option<StackGitStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_summary_for_path(&path))
+        .await.map_err(|error| format!("Failed to join stack git summary task: {error}"))?
+}
+
+pub(crate) async fn stack_git_metadata_for_path_async(path: String) -> Result<Option<StackGitMetadata>, String> {
+    tauri::async_runtime::spawn_blocking(move || stack_git_metadata_for_path(&path))
+        .await.map_err(|error| format!("Failed to join stack git metadata task: {error}"))?
+}
+
+fn stack_git_context_for_path(path: &str) -> Result<Option<StackGitContext>, String> {
+    if !Path::new(path).is_dir() {
+        return Ok(None);
+    }
+    // Resolve links before asking Git: lexical ancestry is not working-tree identity.
+    let folder = canonicalize_existing_path(Path::new(path))?;
+    let Some(output) = git_stdout(&folder, &["rev-parse", "--show-toplevel", "--absolute-git-dir"])? else {
+        return Ok(None);
+    };
+    let mut lines = output.lines();
+    let root = lines.next().filter(|value| !value.is_empty())
+        .ok_or_else(|| "Git repository unavailable".to_string())?;
+    let git_dir = lines.next().filter(|value| !value.is_empty())
+        .ok_or_else(|| "Git directory unavailable".to_string())?;
+    let root = canonicalize_existing_path(Path::new(root))?;
+    let git_dir = canonicalize_existing_path(Path::new(git_dir))?;
+    Ok(Some(StackGitContext {
+        repository_root: root.to_string_lossy().into_owned(),
+        git_dir: git_dir.to_string_lossy().into_owned(),
+        canonical_path: folder.to_string_lossy().into_owned(),
+    }))
+}
+
+pub(super) fn stack_git_watch_roots(path: &str) -> Result<Option<(PathBuf, PathBuf, PathBuf)>, String> {
+    // Folder notifications remain available when the optional Git installation
+    // is absent. Other Git discovery failures must not invent repository roots.
+    if trusted_git_path().is_err() {
+        return Ok(None);
+    }
+    let Some(context) = stack_git_context_for_path(path)? else { return Ok(None); };
+    let root = PathBuf::from(context.repository_root);
+    let common = git_stdout(&root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?
+        .ok_or_else(|| "Git common directory unavailable".to_string())?;
+    let common = canonicalize_existing_path(Path::new(common.trim()))?;
+    Ok(Some((root, PathBuf::from(context.git_dir), common)))
+}
+
+fn stack_git_summary_for_path(path: &str) -> Result<Option<StackGitStatus>, String> {
+    let Some(context) = stack_git_context_for_path(path)? else { return Ok(None); };
+    let root = Path::new(&context.repository_root);
+    let branch = git_stdout(root, &["branch", "--show-current"])?
+        .map(|value| value.trim().to_string()).unwrap_or_default();
+    let Some(output) = git_stdout_bytes(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])? else {
+        return Ok(None);
+    };
+    let empty = HashMap::new();
+    Ok(Some(stack_git_status_from_porcelain(root, branch, None, (None, None), &output, &empty, &empty, &empty)))
+}
+
+#[cfg(test)]
+pub(super) fn query_watch_summary(path: &Path) -> Result<(), String> {
+    let path = path.to_str().ok_or_else(|| "Git path is not valid Unicode".to_string())?;
+    stack_git_summary_for_path(path).map(|_| ())
+}
+
+fn stack_git_metadata_for_path(path: &str) -> Result<Option<StackGitMetadata>, String> {
+    let Some(context) = stack_git_context_for_path(path)? else { return Ok(None); };
+    let root = Path::new(&context.repository_root);
+    let branch = git_stdout(root, &["branch", "--show-current"])?
+        .map(|value| value.trim().to_string()).unwrap_or_default();
+    let remote_repository_url = git_metadata_remote_repository_url(root, &branch)?;
+    let (ahead, behind) = git_metadata_ahead_behind(root, &branch)?;
+    Ok(Some(StackGitMetadata {
+        repository_root: context.repository_root,
+        git_dir: context.git_dir,
+        remote_repository_url,
+        ahead,
+        behind,
+    }))
+}
+
 fn stack_git_status_for_path(path: &str) -> Result<Option<StackGitStatus>, String> {
     let folder = PathBuf::from(path);
     if !folder.is_dir() {
@@ -250,6 +359,55 @@ fn git_ahead_behind(folder: &Path) -> (Option<usize>, Option<usize>) {
     let behind = parts.next().and_then(|v| v.parse().ok());
     let ahead = parts.next().and_then(|v| v.parse().ok());
     (ahead, behind)
+}
+
+fn git_metadata_ahead_behind(
+    folder: &Path,
+    branch: &str,
+) -> Result<(Option<usize>, Option<usize>), String> {
+    if branch.is_empty() {
+        return Ok((None, None));
+    }
+    // Successful empty ref output distinguishes an absent upstream (including an
+    // unborn branch) from operational rev-parse/rev-list failures.
+    let branch_ref = format!("refs/heads/{branch}");
+    let upstream = run_git(folder, &["for-each-ref", "--format=%(upstream)", "--", &branch_ref])?;
+    if upstream.stdout_truncated {
+        return Err("Git upstream output truncated".to_string());
+    }
+    if upstream.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Ok((None, None));
+    }
+    let output = run_git(folder, &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])?;
+    if output.stdout_truncated {
+        return Err("Git ahead/behind output truncated".to_string());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut counts = text.split_whitespace();
+    let behind = counts.next().and_then(|value| value.parse::<usize>().ok());
+    let ahead = counts.next().and_then(|value| value.parse::<usize>().ok());
+    match (ahead, behind, counts.next()) {
+        (Some(ahead), Some(behind), None) => Ok((Some(ahead), Some(behind))),
+        _ => Err("Git ahead/behind output invalid".to_string()),
+    }
+}
+
+fn git_metadata_remote_repository_url(folder: &Path, branch: &str) -> Result<Option<String>, String> {
+    for remote in ["origin", "upstream"] {
+        let key = format!("remote.{remote}.url");
+        let output = match run_git_command(folder, &["config", "--get", &key], None, GitRunMode::Read) {
+            Ok(output) => output,
+            Err(GitCommandError::MissingConfig) => continue,
+            Err(error) => return Err(error.into_message()),
+        };
+        if output.stdout_truncated {
+            return Err("Git remote configuration output truncated".to_string());
+        }
+        if let Some(url) = normalize_git_remote_url(String::from_utf8_lossy(&output.stdout).trim(), branch) {
+            return Ok(Some(url));
+        }
+    }
+    Ok(None)
 }
 
 fn stack_git_add_paths(request: StackGitStageRequest) -> Result<StackGitOperationResult, String> {
@@ -1169,6 +1327,8 @@ fn count_untracked_file_lines(
     relative_path: &str,
     budget: &mut UntrackedBudget,
 ) -> Option<(usize, usize)> {
+    #[cfg(test)]
+    refresh_acceptance::record_untracked_read();
     const MAX_BYTES: u64 = 1_048_576;
     const MAX_FILES: usize = 256;
     const MAX_TOTAL_BYTES: u64 = 8 * 1_048_576;
@@ -1433,11 +1593,18 @@ fn run_git_command(
     stdin: Option<Vec<u8>>,
     mode: GitRunMode,
 ) -> Result<crate::stack_popup::process_runner::ProcessRunOutput, GitCommandError> {
+    #[cfg(test)]
+    refresh_acceptance::record_command(args)?;
     let timeout = git_timeout_for_mode(mode);
     let mut envs = vec![
         ("GIT_TERMINAL_PROMPT".to_string(), Some("0".to_string())),
         ("GCM_INTERACTIVE".to_string(), Some("never".to_string())),
     ];
+    if matches!(mode, GitRunMode::Read | GitRunMode::OptionalProbe) {
+        // Read-side index refreshes must not feed the filesystem subscription
+        // that requested this summary. Explicit mutations keep normal locking.
+        envs.push(("GIT_OPTIONAL_LOCKS".to_string(), Some("0".to_string())));
+    }
     let spec = ProcessRunSpec {
         program: trusted_git_path()
             .map_err(GitCommandError::Spawn)?
@@ -1458,6 +1625,13 @@ fn run_git_command(
     };
     match run_process(spec) {
         Ok(output) => Ok(output),
+        // `config --get` uses exit 1 for a missing key. Require the exact
+        // command shape and empty, untruncated streams, not arbitrary failure.
+        Err(ProcessRunError::NonZero {
+            status: Some(1), stdout, stderr,
+            stdout_truncated: false, stderr_truncated: false, ..
+        }) if args.len() == 3 && args[0] == "config" && args[1] == "--get"
+            && stdout.is_empty() && stderr.is_empty() => Err(GitCommandError::MissingConfig),
         Err(error) => Err(map_git_process_error(error)),
     }
 }

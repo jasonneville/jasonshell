@@ -108,7 +108,7 @@ test('stack browser entire status sits inline after Pin before Search without fo
   assert.match(statusStyles, /overflow:\s*hidden/, 'long status stays inside its reserved line');
   assert.match(statusStyles, /white-space:\s*nowrap/, 'narrow status does not wrap over file controls');
   assert.match(statusStyles, /text-overflow:\s*ellipsis/, 'long status has a visible truncation cue');
-  assert.match(statusSource, /title=\{errorMessage \|\| stackState\.statusMessage\}/, 'full long error or status remains available on hover');
+  assert.match(statusSource, /title=\{errorMessage \|\| gitErrorMessage \|\| stackState\.statusMessage\}/, 'full file/Git error or status remains available on hover');
   assert.match(statusSource, /title=\{iconHydrationStatusMessage\}/, 'full secondary status remains available on hover');
   assert.match(statusSource, /title=\{operationStatusText\(activeOperation\)\}/, 'full operation text remains available');
   assert.match(statusSource, /role="status"\s+aria-live="polite"/, 'entire inline status remains a live region');

@@ -1,6 +1,7 @@
 mod auth;
 mod clipboard;
 mod file_ops;
+pub(crate) mod folder_watch;
 mod git_status;
 mod icons;
 mod items;
@@ -39,6 +40,7 @@ pub struct StackPathSuggestion {
 pub(crate) use auth::authorize_stack_command_caller;
 pub(crate) use auth::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 pub use models::{
+    StackGitContext, StackGitMetadata,
     PinnedStackFolder, ShowStackPopupRequest, StackBasicTextFile, StackFolderPage,
     StackGitBranchRequest, StackGitBranches, StackGitCommitFileDiff, StackGitCommitFileDiffRequest,
     StackGitCommitFiles, StackGitCommitFilesRequest, StackGitCommitRequest, StackGitDiff,
@@ -878,6 +880,51 @@ fn is_reparse_point(metadata: &fs::Metadata) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
     false
+}
+
+#[tauri::command]
+pub async fn start_stack_folder_watch(window: WebviewWindow, path: String) -> Result<folder_watch::StackFolderWatch, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::START_STACK_FOLDER_WATCH,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    folder_watch::start(window, path).await
+}
+
+#[tauri::command]
+pub async fn stop_stack_folder_watch(window: WebviewWindow, watch_id: String) -> Result<(), String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::STOP_STACK_FOLDER_WATCH,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    folder_watch::stop(window, watch_id).await
+}
+
+#[tauri::command]
+pub async fn get_stack_git_context(window: WebviewWindow, path: String) -> Result<Option<StackGitContext>, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::GET_STACK_GIT_CONTEXT,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_context_for_path_async(path).await
+}
+
+#[tauri::command]
+pub async fn get_stack_git_summary(window: WebviewWindow, path: String) -> Result<Option<StackGitStatus>, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::GET_STACK_GIT_SUMMARY,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_summary_for_path_async(path).await
+}
+
+#[tauri::command]
+pub async fn get_stack_git_metadata(window: WebviewWindow, path: String) -> Result<Option<StackGitMetadata>, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::GET_STACK_GIT_METADATA,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    git_status::stack_git_metadata_for_path_async(path).await
 }
 
 #[tauri::command]

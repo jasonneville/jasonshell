@@ -72,7 +72,8 @@ test('stack popup remains visible when focus moves to top-bar pinned folders', (
   assert.match(stackFocusLoss, /stack_popup::suppress_stack_popup_focus_loss\(window\.app_handle\(\)\)/);
   assert.match(stackFocusLoss, /get_webview_window\(shell_windows::TOP_BAR_LABEL\)/);
   assert.match(stackFocusLoss, /top_bar\.is_focused\(\)\.ok\(\)/);
-  assert.match(stackFocusLoss, /let _ = window\.hide\(\)/);
+  assert.match(stackFocusLoss, /let _ = stack_popup::hide_stack_popup\(window\.app_handle\(\)\.clone\(\)\)/);
+  assert.doesNotMatch(stackFocusLoss, /window\.hide\(\)/, 'focus loss must use watch-retirement-aware common hide');
 });
 
 test('tray open event targets tray-panel and reloads icons on every show', () => {

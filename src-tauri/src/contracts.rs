@@ -158,6 +158,11 @@ pub mod commands {
     pub const READ_STACK_BASIC_TEXT_FILE: &str = "read_stack_basic_text_file";
     pub const SAVE_STACK_BASIC_TEXT_FILE: &str = "save_stack_basic_text_file";
     pub const GET_STACK_GIT_STATUS: &str = "get_stack_git_status";
+    pub const START_STACK_FOLDER_WATCH: &str = "start_stack_folder_watch";
+    pub const STOP_STACK_FOLDER_WATCH: &str = "stop_stack_folder_watch";
+    pub const GET_STACK_GIT_CONTEXT: &str = "get_stack_git_context";
+    pub const GET_STACK_GIT_SUMMARY: &str = "get_stack_git_summary";
+    pub const GET_STACK_GIT_METADATA: &str = "get_stack_git_metadata";
     pub const OPEN_STACK_GIT_REMOTE_URL: &str = "open_stack_git_remote_url";
     pub const STACK_GIT_ADD_PATHS: &str = "stack_git_add_paths";
     pub const STACK_GIT_IGNORE_PATH: &str = "stack_git_ignore_path";
@@ -346,6 +351,11 @@ pub mod commands {
         READ_STACK_BASIC_TEXT_FILE,
         SAVE_STACK_BASIC_TEXT_FILE,
         GET_STACK_GIT_STATUS,
+        START_STACK_FOLDER_WATCH,
+        STOP_STACK_FOLDER_WATCH,
+        GET_STACK_GIT_CONTEXT,
+        GET_STACK_GIT_SUMMARY,
+        GET_STACK_GIT_METADATA,
         OPEN_STACK_GIT_REMOTE_URL,
         STACK_GIT_ADD_PATHS,
         STACK_GIT_IGNORE_PATH,
@@ -464,6 +474,8 @@ pub mod events {
     pub const SEARCH_PANEL_SELECT: &str = "search-panel:select";
     pub const SEARCH_PANEL_UPDATE: &str = "search-panel:update";
     pub const STACK_POPUP_OPEN: &str = "stack-popup:open";
+    pub const STACK_FOLDER_CHANGED: &str = "stack-popup:folder-changed";
+    pub const STACK_FOLDER_WATCH_ERROR: &str = "stack-popup:folder-watch-error";
     pub const STACK_POPUP_CLOSE_REQUESTED: &str = "stack-popup:close-requested";
     pub const STACK_FILE_OPERATION_PROGRESS: &str = "stack-operation:progress";
     pub const STACK_POPUP_CLOSED: &str = "stack-popup:closed";
@@ -523,6 +535,8 @@ pub mod events {
         SEARCH_PANEL_SELECT,
         SEARCH_PANEL_UPDATE,
         STACK_POPUP_OPEN,
+        STACK_FOLDER_CHANGED,
+        STACK_FOLDER_WATCH_ERROR,
         STACK_POPUP_CLOSE_REQUESTED,
         STACK_FILE_OPERATION_PROGRESS,
         STACK_POPUP_CLOSED,
@@ -744,6 +758,8 @@ mod tests {
                 "search-panel:select",
                 "search-panel:update",
                 "stack-popup:open",
+                "stack-popup:folder-changed",
+                "stack-popup:folder-watch-error",
                 "stack-popup:close-requested",
                 "stack-operation:progress",
                 "stack-popup:closed",

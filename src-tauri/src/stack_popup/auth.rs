@@ -73,6 +73,14 @@ pub(crate) fn authorize_stack_command_caller(
 #[cfg(test)]
 pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
     StackCommandAuth::AllowedCallers {
+        command: contracts::commands::START_STACK_FOLDER_WATCH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::STOP_STACK_FOLDER_WATCH,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
         command: contracts::commands::LIST_PINNED_STACK_FOLDERS,
         callers: &[
             contracts::surfaces::TOP_BAR,
@@ -231,6 +239,18 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
     },
     StackCommandAuth::AllowedCallers {
         command: contracts::commands::GET_STACK_GIT_STATUS,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::GET_STACK_GIT_CONTEXT,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::GET_STACK_GIT_SUMMARY,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::GET_STACK_GIT_METADATA,
         callers: &[contracts::surfaces::STACK_POPUP],
     },
     StackCommandAuth::AllowedCallers {

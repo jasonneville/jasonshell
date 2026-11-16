@@ -1,0 +1,7 @@
+# Stack Git refresh browser acceptance
+
+Run `node node_modules/vite/bin/vite.js --config tests/browser/stack-git-refresh/vite.config.ts`, open http://127.0.0.1:4187, click **Run Git refresh journey**, and inspect `#result` plus `window.stackGitRefreshEvidence`.
+
+This mounts the production popup/editor, imports production global CSS, delays IPC with controlled promises and records every invocation. It checks initial summary versus workbench/enrichment separation and ordering, branch DOM continuity through delayed same-repo context and Back/Forward, absence of unverified row badges, zero extra summary/metadata calls, retained snapshot on Refresh failure without implicit retry, an actual CodeMirror edit followed by a successful save invalidation, and stale metadata after a nested-repository transition. The completion handler freezes the checks/ledger for artifact capture. No native shell is launched. Mocked IPC does not certify canonical filesystem resolution: native acceptance owns that boundary.
+
+**Run paste review regression** is the separate reviewer-regression journey. It verifies successful native paste still invalidates when the subsequent folder read fails, all-failed paste does not invalidate, and a Refresh metadata probe failure preserves the known remote link with a diagnostic. Inspect `#review-result` and `window.stackGitRefreshReviewEvidence`. Rerun both journeys after the production fixes; the original 16-case navigation journey remains required, not replaced by this narrower path.

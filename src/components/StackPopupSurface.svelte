@@ -20,7 +20,15 @@
     endStackPopupFocusLossHold,
     emitStackFolderListingDiagnostics,
     extractStackArchive,
-    getStackGitStatus,
+    getStackGitContext,
+    getStackGitSummary,
+    getStackGitMetadata,
+    startStackFolderWatch,
+    stopStackFolderWatch,
+    STACK_FOLDER_CHANGED_EVENT,
+    STACK_FOLDER_WATCH_ERROR_EVENT,
+    type StackFolderWatchChange,
+    type StackFolderWatchError,
     getStackPopupRequest,
     hideStackPopup,
     listStackOpenWithCandidates,
@@ -226,10 +234,19 @@
   let stackSortLockedByUser = false;
   let gitStatus: StackGitStatus | null = null;
   let gitStatusPath = '';
-  let gitStatusPending: StackGitStatus | null | undefined = undefined;
-  let gitStatusPendingPath = '';
-  let gitStatusRequestSequence = 0;
+  type GitContext = NonNullable<Awaited<ReturnType<typeof getStackGitContext>>>;
+  let gitRepositoryContext: GitContext | null = null;
+  let gitRepositoryGeneration = 0;
+  let gitRefreshRevision = 0;
+  let gitContextSequence = 0;
+  let gitVerifiedFolder = '';
+  let gitSummaryPending: { generation: number; revision: number; promise: Promise<void> } | null = null;
+  let gitSummaryRequested = false;
+  let gitDisposed = false;
+  let gitErrorMessage = '';
   let gitStatusPopupOpen = false;
+  let gitPanelRefresh: () => void = () => {};
+  let editorSaved: () => void = () => {};
   let gitStatusPopupFilter: StackGitFileStatusKind | 'all' = 'all';
   let stackBrowserViewMode: StackBrowserViewMode = 'files';
   let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
@@ -242,6 +259,20 @@
   let activeOperation: StackFileOperationProgress | null = null;
   let operationClock = Date.now();
   let operationClockTimer: number | null = null;
+  let folderWatchVisible = true;
+  let folderWatchEpoch = 0;
+  let desiredFolderWatch: { key: string; path: string; epoch: number } | null = null;
+  let activeFolderWatch: { key: string; watchId: string; epoch: number } | null = null;
+  let folderWatchChain: Promise<void> = Promise.resolve();
+  let folderWatchErrorMessage = '';
+  let folderWatchTimer: number | null = null;
+  let externalRefreshDirty = false;
+  let externalGitDirty = false;
+  let externalRefreshPending = false;
+  let folderWatchDeliveryReady = false;
+  let folderWatchStartingEpoch: number | null = null;
+  let pendingFolderWatchErrors: StackFolderWatchError[] = [];
+  let folderReadPending: { sequence: number; promise: Promise<StackFolderListing> } | null = null;
   $: stackTerminalProfileLabel =
     STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
   $: currentPath = stackState.currentPath;
@@ -273,7 +304,9 @@
     const latestRequestTimer = window.setInterval(() => {
       void reconcileLatestStackPopupRequest();
     }, 250);
-    void initializeOpenRequestDelivery(unlisteners, () => disposed);
+    void initializeFolderWatchDelivery(unlisteners, () => disposed).then(() => {
+      if (!disposed) void initializeOpenRequestDelivery(unlisteners, () => disposed);
+    });
     void getCurrentWindow().listen(STACK_POPUP_CLOSE_REQUESTED_EVENT, () => {
       closeStackPopupFromSurface();
     }).then((unlisten) => {
@@ -312,6 +345,10 @@
 
     return () => {
       disposed = true;
+      gitDisposed = true;
+      gitRepositoryGeneration += 1;
+      gitContextSequence += 1;
+      suspendFolderWatch();
       if (typeToSelectTimer !== null) {
         window.clearTimeout(typeToSelectTimer);
       }
@@ -329,6 +366,235 @@
       }
     };
   });
+
+  async function initializeFolderWatchDelivery(unlisteners: Array<() => void>, isDisposed: () => boolean) {
+    const popup = getCurrentWindow();
+    const registrations = [
+      popup.listen<StackFolderWatchChange>(STACK_FOLDER_CHANGED_EVENT, ({ payload }) => {
+        if (payload.watchId === activeFolderWatch?.watchId) queueExternalRefresh(true);
+      }),
+      popup.listen<StackFolderWatchError>(STACK_FOLDER_WATCH_ERROR_EVENT, ({ payload }) => {
+        if (payload.watchId === activeFolderWatch?.watchId) failFolderWatch(payload);
+        else if (folderWatchStartingEpoch !== null && folderWatchStartingEpoch === desiredFolderWatch?.epoch) {
+          // A native worker can fail after registration but before its ACK
+          // reaches this renderer. Admit only the ACK's exact token below.
+          pendingFolderWatchErrors = [...pendingFolderWatchErrors, payload].slice(-4);
+        }
+      }),
+      popup.listen('stack-popup:closed', () => suspendFolderWatch()),
+      popup.listen('tauri://destroyed', () => suspendFolderWatch())
+    ];
+    // Focus is only a visibility observation, never an eligibility requirement.
+    if (typeof popup.onFocusChanged === 'function') registrations.push(popup.onFocusChanged(() => { void observeFolderWatchVisibility(); }));
+    const listeners = await Promise.allSettled(registrations);
+    folderWatchDeliveryReady = listeners.every((registration) => registration.status === 'fulfilled');
+    for (const registration of listeners) {
+      if (registration.status === 'rejected') {
+        if (!isDisposed()) folderWatchErrorMessage = 'Automatic folder updates unavailable. Use Refresh.';
+        continue;
+      }
+      if (isDisposed()) registration.value();
+      else unlisteners.push(registration.value);
+    }
+    if (isDisposed()) return;
+    const visibilityChanged = () => { void observeFolderWatchVisibility(); };
+    document.addEventListener('visibilitychange', visibilityChanged);
+    unlisteners.push(() => document.removeEventListener('visibilitychange', visibilityChanged));
+  }
+
+  async function popupIsVisible() {
+    if (gitDisposed || !folderWatchVisible) return false;
+    try {
+      const visible = await getCurrentWindow().isVisible();
+      return visible && folderWatchVisible && !gitDisposed;
+    } catch {
+      return false;
+    }
+  }
+
+  function failFolderWatch(error: StackFolderWatchError) {
+    folderWatchErrorMessage = `Automatic folder updates stopped: ${error.message}. Use Refresh to retry.`;
+    suspendFolderWatch();
+  }
+
+  async function observeFolderWatchVisibility() {
+    if (gitDisposed) return;
+    try {
+      if (!await getCurrentWindow().isVisible()) suspendFolderWatch();
+    } catch {
+      // Failure to establish visibility never admits background work.
+      suspendFolderWatch();
+    }
+  }
+
+  function suspendFolderWatch() {
+    if (folderWatchVisible) {
+      gitRefreshRevision += 1;
+      gitSummaryRequested = false;
+    }
+    folderWatchVisible = false;
+    folderWatchEpoch += 1;
+    const epoch = folderWatchEpoch;
+    desiredFolderWatch = null;
+    externalRefreshDirty = false;
+    externalGitDirty = false;
+    if (folderWatchTimer !== null) window.clearTimeout(folderWatchTimer);
+    folderWatchTimer = null;
+    const retired = activeFolderWatch;
+    activeFolderWatch = null;
+    folderWatchChain = folderWatchChain.then(async () => {
+      if (retired) await stopStackFolderWatch(retired.watchId);
+    }).catch((error) => {
+      if (!gitDisposed && epoch === folderWatchEpoch) folderWatchErrorMessage = `Automatic folder updates unavailable: ${operationErrorMessage(error, 'Watch cleanup failed')}. Use Refresh.`;
+    });
+  }
+
+  function reconcileFolderWatch(folderPath: string, context: GitContext | null, catchup = true) {
+    if (!folderWatchVisible || gitDisposed || !folderWatchDeliveryReady) return Promise.resolve();
+    const key = context ? `${context.repositoryRoot}\0${context.gitDir}` : `folder:${folderPath}`;
+    if (desiredFolderWatch?.key === key) return folderWatchChain;
+    const desired = { key, path: context?.repositoryRoot ?? folderPath, epoch: ++folderWatchEpoch };
+    desiredFolderWatch = desired;
+    const retired = activeFolderWatch;
+    activeFolderWatch = null;
+    folderWatchChain = folderWatchChain.then(async () => {
+      if (retired) await stopStackFolderWatch(retired.watchId);
+      if (!await popupIsVisible() || desiredFolderWatch !== desired) return;
+      folderWatchStartingEpoch = desired.epoch;
+      pendingFolderWatchErrors = [];
+      let watch: Awaited<ReturnType<typeof startStackFolderWatch>>;
+      let earlyError: StackFolderWatchError | undefined;
+      try {
+        watch = await startStackFolderWatch(desired.path);
+        earlyError = pendingFolderWatchErrors.find((error) => error.watchId === watch.watchId);
+      } finally {
+        folderWatchStartingEpoch = null;
+        pendingFolderWatchErrors = [];
+      }
+      if (!await popupIsVisible() || gitDisposed || desiredFolderWatch !== desired) {
+        await stopStackFolderWatch(watch.watchId);
+        return;
+      }
+      activeFolderWatch = { key, watchId: watch.watchId, epoch: desired.epoch };
+      if (earlyError) {
+        failFolderWatch(earlyError);
+        return;
+      }
+      folderWatchErrorMessage = '';
+      // Registration can follow foreground reads. Catch up current rows and
+      // any existing summary to close that event-delivery gap.
+      if (catchup) queueExternalRefresh(gitSummaryRequested);
+    }).catch(async (error) => {
+      if (!gitDisposed && desiredFolderWatch === desired) {
+        await joinPendingGitSummary();
+        if (gitDisposed || desiredFolderWatch !== desired) return;
+        folderWatchErrorMessage = `Automatic folder updates unavailable: ${operationErrorMessage(error, 'Watch start failed')}. Use Refresh to retry.`;
+      }
+    });
+    return folderWatchChain;
+  }
+
+  function queueExternalRefresh(refreshGit: boolean) {
+    if (!folderWatchVisible || !activeFolderWatch || gitDisposed) return;
+    externalRefreshDirty = true;
+    externalGitDirty ||= refreshGit;
+    if (externalRefreshPending) return;
+    if (folderWatchTimer !== null) window.clearTimeout(folderWatchTimer);
+    folderWatchTimer = window.setTimeout(() => {
+      folderWatchTimer = null;
+      void drainExternalRefresh();
+    }, 200);
+  }
+
+  async function drainExternalRefresh() {
+    if (externalRefreshPending) return;
+    externalRefreshPending = true;
+    try {
+      while (externalRefreshDirty && activeFolderWatch && await popupIsVisible()) {
+        if (!activeFolderWatch) break;
+        const watch = activeFolderWatch;
+        const epoch = folderWatchEpoch;
+        const path = stackState.currentPath;
+        const loadSequence = folderLoadSequence;
+        const refreshGit = externalGitDirty;
+        externalRefreshDirty = false;
+        externalGitDirty = false;
+        try {
+          await folderReadPending?.promise;
+        } catch {
+          // Catchup still retries rows after a failed foreground read.
+        }
+        await joinPendingGitSummary();
+        if (!await popupIsVisible() || gitDisposed || epoch !== folderWatchEpoch || watch !== activeFolderWatch) continue;
+        if (path !== stackState.currentPath || loadSequence !== folderLoadSequence) {
+          externalRefreshDirty = true;
+          externalGitDirty ||= refreshGit;
+          continue;
+        }
+        const contextReady = await revalidateExternalGitContext(path, loadSequence, epoch);
+        if (!contextReady || !await popupIsVisible() || gitDisposed || path !== stackState.currentPath || loadSequence !== folderLoadSequence) {
+          // Navigation can supersede the context read after this flight has
+          // consumed its dirty flags. Keep that work only under the exact same
+          // subscription; the next flight must read the newly current folder.
+          if (!gitDisposed && folderWatchVisible && watch === activeFolderWatch && epoch === folderWatchEpoch
+            && (path !== stackState.currentPath || loadSequence !== folderLoadSequence)) {
+            externalRefreshDirty = true;
+            externalGitDirty ||= refreshGit;
+          }
+          continue;
+        }
+        const currentEpoch = folderWatchEpoch;
+        const rows = refreshExternalFolderRows(path, loadSequence, currentEpoch);
+        if (refreshGit && contextReady) invalidateGitSummary();
+        await Promise.all([rows, joinPendingGitSummary()]);
+      }
+    } finally {
+      externalRefreshPending = false;
+    }
+  }
+
+  async function joinPendingGitSummary() {
+    while (gitSummaryPending) await gitSummaryPending.promise;
+  }
+
+  async function revalidateExternalGitContext(path: string, loadSequence: number, epoch: number) {
+    const sequence = ++gitContextSequence;
+    try {
+      const context = await getStackGitContext(path);
+      if (!await popupIsVisible() || gitDisposed || sequence !== gitContextSequence || epoch !== folderWatchEpoch || path !== stackState.currentPath || loadSequence !== folderLoadSequence) return false;
+      if (!sameGitRepository(gitRepositoryContext, context) && (gitRepositoryContext || context)) retireGitRepository(context);
+      gitRepositoryContext = context;
+      gitVerifiedFolder = context ? path : '';
+      gitStatusPath = gitVerifiedFolder;
+      // This flight reads rows/status after registration itself, so a replaced
+      // watch does not enqueue a redundant registration-gap catchup.
+      await reconcileFolderWatch(path, context, false);
+      return sequence === gitContextSequence;
+    } catch (error) {
+      if (!await popupIsVisible() || gitDisposed || sequence !== gitContextSequence || epoch !== folderWatchEpoch || path !== stackState.currentPath || loadSequence !== folderLoadSequence) return false;
+      retireGitRepository(null);
+      gitErrorMessage = `Git context unavailable: ${operationErrorMessage(error, 'Try Refresh')}. Retry with Refresh.`;
+      // Git discovery is optional. Native registration independently verifies
+      // the current folder and can still deliver plain filesystem changes.
+      await reconcileFolderWatch(path, null, false);
+      return sequence === gitContextSequence;
+    }
+  }
+
+  async function refreshExternalFolderRows(path: string, loadSequence: number, epoch: number) {
+    try {
+      const listing = await listStackFolder(path);
+      if (!await popupIsVisible() || gitDisposed || epoch !== folderWatchEpoch || path !== stackState.currentPath || loadSequence !== folderLoadSequence) return;
+      // Commit a complete listing in-place: do not navigate, refocus, reset
+      // sorting/search/scroll, or remount an open editor or inline input.
+      stackState = applyStackFolderListing(stackState, path, listing);
+      scheduleVisibleIconHydration(path, loadSequence);
+    } catch (error) {
+      if (!gitDisposed && epoch === folderWatchEpoch && path === stackState.currentPath && loadSequence === folderLoadSequence) {
+        folderWatchErrorMessage = `Automatic folder refresh failed: ${operationErrorMessage(error, 'Folder unavailable')}. Use Refresh.`;
+      }
+    }
+  }
 
   async function initializeOpenRequestDelivery(unlisteners: Array<() => void>, isDisposed: () => boolean) {
     try {
@@ -370,6 +636,12 @@
       return;
     }
 
+    const popup = getCurrentWindow();
+    const visibilityEpoch = folderWatchEpoch;
+    if (typeof popup.isVisible === 'function' && !await popup.isVisible()) return;
+    if (visibilityEpoch !== folderWatchEpoch && !folderWatchVisible) return;
+    if (requestKey === lastHandledOpenRequestKey || requestKey === pendingOpenRequestKey) return;
+    folderWatchVisible = true;
     pendingOpenRequestKey = requestKey;
     try {
       lastHandledOpenRequestKey = requestKey;
@@ -412,13 +684,12 @@
     const loadSequence = ++folderLoadSequence;
     stackSortLockedByUser = false;
     startNewIconHydrationSession(folderPath);
-    void refreshStackGitStatus(folderPath, loadSequence);
     const listingStartedAt = performance.now();
     let firstPaintDurationMs = 0;
     loadingPath = folderPath;
     errorMessage = '';
     try {
-      const listing = await listStackFolder(folderPath, async (page) => {
+      const read = listStackFolder(folderPath, async (page) => {
         if (loadSequence !== folderLoadSequence) {
           return;
         }
@@ -430,6 +701,8 @@
         }
         maybeFocusDetailsGridAfterPageAppend();
       });
+      folderReadPending = { sequence: loadSequence, promise: read };
+      const listing = await read;
       if (loadSequence !== folderLoadSequence) {
         return;
       }
@@ -438,7 +711,7 @@
       iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
       prepareGitStateForFolderCommit(folderPath);
       stackState = commitValidatedStackFolderListing(stackState, folderPath, listing);
-      promotePendingGitStatus(folderPath);
+      void resolveFolderGitContext(folderPath);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       pathDraft = stackState.currentPath;
       pathDraftBase = stackState.currentPath;
@@ -450,6 +723,7 @@
         errorMessage = operationErrorMessage(error, `Folder unavailable: ${folderPath}`);
       }
     } finally {
+      if (folderReadPending?.sequence === loadSequence) folderReadPending = null;
       if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
         loadingPath = null;
       }
@@ -587,9 +861,9 @@
     let mergedListing: StackFolderListing | null = null;
     loadingPath = folderPath;
     errorMessage = '';
-    void refreshStackGitStatus(folderPath, loadSequence);
+    void resolveFolderGitContext(folderPath);
     try {
-      const listing = await listStackFolder(folderPath, async (page) => {
+      const read = listStackFolder(folderPath, async (page) => {
         if (loadSequence !== folderLoadSequence) {
           return;
         }
@@ -603,11 +877,12 @@
         }
         prepareGitStateForFolderCommit(folderPath);
         stackState = applyStackFolderListing(stackState, folderPath, mergedListing);
-        promotePendingGitStatus(folderPath);
         scheduleVisibleIconHydration(folderPath, loadSequence);
         updateDetailsViewport();
         maybeFocusDetailsGridAfterPageAppend();
       });
+      folderReadPending = { sequence: loadSequence, promise: read };
+      const listing = await read;
       if (loadSequence !== folderLoadSequence) {
         return;
       }
@@ -616,7 +891,6 @@
       iconDiagnosticsMetadataCompleteDurationMs = Math.max(0, performance.now() - listingStartedAt);
       prepareGitStateForFolderCommit(folderPath);
       stackState = applyStackFolderListing(stackState, folderPath, mergedListing ?? listing);
-      promotePendingGitStatus(folderPath);
       scheduleVisibleIconHydration(folderPath, loadSequence);
       updateDetailsViewport();
       maybeFocusDetailsGridAfterPageAppend();
@@ -626,50 +900,127 @@
         errorMessage = error instanceof Error ? error.message : String(error || 'Folder unavailable');
       }
     } finally {
+      if (folderReadPending?.sequence === loadSequence) folderReadPending = null;
       if (loadSequence === folderLoadSequence && loadingPath === folderPath) {
         loadingPath = null;
       }
     }
   }
 
-  async function refreshStackGitStatus(folderPath: string, loadSequence: number) {
-    const requestSequence = ++gitStatusRequestSequence;
-    gitStatusPending = undefined;
-    gitStatusPendingPath = folderPath;
+  function sameGitRepository(left: Pick<GitContext, 'repositoryRoot' | 'gitDir'> | null, right: Pick<GitContext, 'repositoryRoot' | 'gitDir'> | null) {
+    return left !== null && right !== null
+      && left.repositoryRoot === right.repositoryRoot && left.gitDir === right.gitDir;
+  }
+
+  function retireGitRepository(context: GitContext | null) {
+    gitRepositoryGeneration += 1;
+    gitRefreshRevision = 0;
+    gitRepositoryContext = context;
+    gitSummaryPending = null;
+    gitSummaryRequested = false;
+    gitStatus = null;
+    gitVerifiedFolder = '';
+    gitStatusPath = '';
+    gitErrorMessage = '';
+    gitStatusPopupOpen = false;
+  }
+
+  async function resolveFolderGitContext(folderPath: string) {
+    const sequence = ++gitContextSequence;
+    if (folderPath !== gitVerifiedFolder) {
+      gitVerifiedFolder = '';
+      gitStatusPath = '';
+    }
     try {
-      const status = await getStackGitStatus(folderPath);
-      if (
-        requestSequence !== gitStatusRequestSequence
-        || loadSequence !== folderLoadSequence
-        || folderPath !== gitStatusPendingPath
-      ) {
-        return;
-      }
-      if (folderPath === stackState.currentPath) {
-        gitStatus = status;
+      const context = await getStackGitContext(folderPath);
+      if (gitDisposed || !folderWatchVisible || sequence !== gitContextSequence) return;
+      if (!sameGitRepository(gitRepositoryContext, context)) retireGitRepository(context);
+      if (context) {
+        gitRepositoryContext = context;
+        gitVerifiedFolder = folderPath;
         gitStatusPath = folderPath;
-        gitStatusPending = undefined;
-        gitStatusPendingPath = '';
-      } else {
-        gitStatusPending = status;
       }
+      const watchReady = reconcileFolderWatch(folderPath, context);
+      if (context && !gitSummaryRequested) void requestGitSummary();
+      await watchReady;
     } catch (error) {
-      if (requestSequence === gitStatusRequestSequence && loadSequence === folderLoadSequence) {
-        console.debug('Stack git status unavailable', error);
-        gitStatusPending = undefined;
-        gitStatusPendingPath = '';
-      }
+      if (gitDisposed || !folderWatchVisible || sequence !== gitContextSequence) return;
+      retireGitRepository(null);
+      gitErrorMessage = `Git context unavailable: ${operationErrorMessage(error, 'Try Refresh')}. Retry with Refresh.`;
+      await reconcileFolderWatch(folderPath, null);
     }
   }
 
-  function promotePendingGitStatus(folderPath: string) {
-    if (folderPath !== gitStatusPendingPath || gitStatusPending === undefined) {
-      return;
+  function ownsGitRequest(generation: number, revision: number) {
+    return !gitDisposed && generation === gitRepositoryGeneration && revision === gitRefreshRevision;
+  }
+
+  function requestGitSummary(): Promise<void> {
+    const context = gitRepositoryContext;
+    if (!context || !folderWatchVisible || gitDisposed) return Promise.resolve();
+    const generation = gitRepositoryGeneration;
+    const revision = gitRefreshRevision;
+    if (gitSummaryPending?.generation === generation && gitSummaryPending.revision === revision) {
+      return gitSummaryPending.promise;
     }
-    gitStatus = gitStatusPending;
-    gitStatusPath = folderPath;
-    gitStatusPending = undefined;
-    gitStatusPendingPath = '';
+    gitErrorMessage = '';
+    gitSummaryRequested = true;
+    const promise = (async () => {
+      try {
+        const status = await getStackGitSummary(context.repositoryRoot);
+        if (!ownsGitRequest(generation, revision)) return;
+        if (status && status.repositoryRoot !== context.repositoryRoot) throw new Error('Repository changed.');
+        // A refresh retains the known remote link until this revision's metadata arrives.
+        gitStatus = status ? { ...status, remoteRepositoryUrl: gitStatus?.remoteRepositoryUrl ?? status.remoteRepositoryUrl } : null;
+        gitStatusPath = gitVerifiedFolder;
+        await tick();
+        if (status && ownsGitRequest(generation, revision)) void enrichGitSummary(context, generation, revision);
+      } catch (error) {
+        if (ownsGitRequest(generation, revision)) {
+          gitErrorMessage = `Git refresh failed: ${operationErrorMessage(error, 'Status unavailable')}. Retry with Refresh.`;
+        }
+      } finally {
+        if (gitSummaryPending?.generation === generation && gitSummaryPending.revision === revision) gitSummaryPending = null;
+      }
+    })();
+    gitSummaryPending = { generation, revision, promise };
+    return promise;
+  }
+
+  async function enrichGitSummary(context: GitContext, generation: number, revision: number) {
+    try {
+      const metadata = await getStackGitMetadata(context.repositoryRoot);
+      if (!ownsGitRequest(generation, revision) || !metadata || !sameGitRepository(context, metadata) || !gitStatus) return;
+      gitStatus = { ...gitStatus, remoteRepositoryUrl: metadata.remoteRepositoryUrl, ahead: metadata.ahead, behind: metadata.behind };
+    } catch (error) {
+      if (ownsGitRequest(generation, revision)) gitErrorMessage = `Git metadata unavailable: ${operationErrorMessage(error, 'Try Refresh')}. Retry with Refresh.`;
+    }
+  }
+
+  function invalidateGitSummary(generation = gitRepositoryGeneration) {
+    if (generation !== gitRepositoryGeneration || !gitRepositoryContext) return;
+    gitRefreshRevision += 1;
+    gitSummaryRequested = false;
+    if (folderWatchVisible && gitVerifiedFolder === stackState.currentPath) void requestGitSummary();
+  }
+
+  function captureGitInvalidation() {
+    const generation = gitRepositoryGeneration;
+    const contextSequence = gitContextSequence;
+    const folderPath = stackState.currentPath;
+    return () => {
+      // The first context can finish while a save/mutation is pending. Its new
+      // generation still owns this operation if no navigation superseded it.
+      if (generation === gitRepositoryGeneration
+        || (contextSequence === gitContextSequence && folderPath === gitVerifiedFolder)) invalidateGitSummary();
+    };
+  }
+
+  async function refreshCurrentFolder() {
+    folderWatchVisible = true;
+    if (!activeFolderWatch) desiredFolderWatch = null;
+    invalidateGitSummary();
+    await loadFolder(currentPath);
   }
 
   function prepareGitStateForFolderCommit(folderPath: string) {
@@ -677,6 +1028,8 @@
       return;
     }
     gitStatusPopupOpen = false;
+    gitVerifiedFolder = '';
+    gitStatusPath = '';
   }
 
   function startNewIconHydrationSession(folderPath: string) {
@@ -931,6 +1284,7 @@
       await openFolder(entry.path);
     } else if (entry.entryType === 'File' && isStackBasicTextFile(entry.path)) {
       captureFolderViewport();
+      editorSaved = captureGitInvalidation();
       editorPath = entry.path;
       return;
     } else {
@@ -1014,8 +1368,9 @@
     }
 
     const operationId = beginFileOperation('paste', 'planning');
+    const refreshGit = captureGitInvalidation();
     try {
-      const listing = await invokePaste(currentPath, operationId);
+      const listing = await invokePaste(currentPath, operationId, refreshGit);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
       errorMessage = pasteFailureSummary(listing.pasteFailures);
       finishFileOperation(operationId, errorMessage || undefined);
@@ -1051,6 +1406,7 @@
   }
 
   async function confirmDeleteSelection() {
+    const refreshGit = captureGitInvalidation();
     const pendingDelete = deleteConfirmation;
     if (!pendingDelete) {
       return;
@@ -1076,6 +1432,7 @@
           failures.push(operationErrorMessage(error, `Failed to delete ${path}`));
         }
       }
+      if (failures.length < pendingDelete.paths.length) refreshGit();
       refreshFileOperation(operationId);
       const listing = await listStackFolder(pendingDelete.folderPath);
       if (currentPath === pendingDelete.folderPath) {
@@ -1119,8 +1476,10 @@
     if (!currentPath) {
       return;
     }
+    const refreshGit = captureGitInvalidation();
     try {
       const created = await newStackTextFile(currentPath);
+      refreshGit();
       const listing = await listStackFolder(currentPath);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
       const renamePlan = stackBrowserCreatedTextFileRenamePlan(created);
@@ -1254,6 +1613,7 @@
     void requestEditorExit(async () => {
       await stopCurrentStackTerminal();
       stackBrowserViewMode = 'files';
+      suspendFolderWatch();
       await hideStackPopup();
     }).catch((error) => {
       console.error('Failed to hide stack popup', error);
@@ -1323,8 +1683,10 @@
       return;
     }
 
+    const refreshGit = captureGitInvalidation();
     try {
       const createdEntry = await newStackFolder(currentPath, name);
+      refreshGit();
       const listing = await listStackFolder(currentPath);
       stackState = selectStackEntry(
         applyStackFolderListing(stackState, currentPath, listing),
@@ -1430,8 +1792,10 @@
     }
 
     const operationId = beginFileOperation('extract', 'extracting', { currentPath: archive.path, determinate: false });
+    const refreshGit = captureGitInvalidation();
     try {
       await invokeExtract(archive.path, destinationMode, extractor, operationId);
+      refreshGit();
       refreshFileOperation(operationId);
       const listing = await listStackFolder(currentPath);
       stackState = applyStackFolderListing(stackState, currentPath, listing);
@@ -1455,8 +1819,10 @@
       return;
     }
 
+    const refreshGit = captureGitInvalidation();
     try {
       const renamedEntry = await renameStackItem(selectedEntry.path, nextName);
+      refreshGit();
       const listing = await listStackFolder(currentPath);
       stackState = selectStackEntry(
         applyStackFolderListing(stackState, currentPath, listing),
@@ -1509,6 +1875,7 @@
     closeMenus();
     captureFolderViewport();
     gitStatusPopupFilter = filter;
+    gitPanelRefresh = captureGitInvalidation();
     gitStatusPopupOpen = true;
   }
 
@@ -1652,7 +2019,7 @@
     activeOperation = { ...activeOperation, phase: 'deleting', determinate: false, completedItems, totalItems, currentPath };
   }
 
-  const invokePaste = pasteStackItems as unknown as (destinationPath: string, operationId: string) => ReturnType<typeof pasteStackItems>;
+  const invokePaste = pasteStackItems;
   const invokeDelete = deleteStackItem as unknown as (path: string, operationId: string) => ReturnType<typeof deleteStackItem>;
   const invokeExtract = extractStackArchive as unknown as (
     archivePath: string,
@@ -1951,17 +2318,20 @@
     entry: StackEntry,
     status: StackGitStatus | null,
     statusPath: string,
-    folderPath: string
+    folderPath: string,
+    canonicalPath: string | undefined
   ) {
     if (!status || statusPath !== folderPath) {
       return null;
     }
+    // Native context verified this folder's alias; compare rows in canonical Git coordinates.
+    const entryPath = canonicalPath ? `${canonicalPath.replace(/[\\/]+$/, '')}${entry.path.slice(folderPath.replace(/[\\/]+$/, '').length)}` : entry.path;
     let nestedStatus: StackGitFileStatusKind | null = null;
     for (const item of status.entries) {
-      if (stackGitStatusPathMatchesEntry(entry.path, item.path, false)) {
+      if (stackGitStatusPathMatchesEntry(entryPath, item.path, false)) {
         return item.status;
       }
-      if (entry.entryType === 'Folder' && stackGitStatusPathMatchesEntry(entry.path, item.path, true)) {
+      if (entry.entryType === 'Folder' && stackGitStatusPathMatchesEntry(entryPath, item.path, true)) {
         nestedStatus = stackGitStatusPriority(nestedStatus, item.status);
       }
     }
@@ -2291,9 +2661,10 @@
       return;
     }
     const operationId = beginFileOperation('paste', move ? 'moving' : 'copying');
+    const refreshGit = captureGitInvalidation();
     try {
       await copyStackItems(paths, move);
-      const listing = await invokePaste(destinationPath, operationId);
+      const listing = await invokePaste(destinationPath, operationId, refreshGit);
       if (destinationPath === currentPath) {
         stackState = applyStackFolderListing(stackState, currentPath, listing);
       } else {
@@ -2622,20 +2993,21 @@
             {/each}
           </nav>
         {/if}
-        {#if gitStatus && gitStatusPath === currentPath}
+        {#if gitStatus}
           <div class="stack-git-summary" aria-label={`Git ${gitStatus.branch} ${stackGitSummaryParts(gitStatus).map((part) => part.title).join(', ') || 'clean'}`}>
-            <button type="button" class="stack-git-branch" on:click={() => openGitStatusPopup('all')}>{gitStatus.branch}</button>
+            <button type="button" class="stack-git-branch" disabled={gitVerifiedFolder !== currentPath} on:click={() => openGitStatusPopup('all')}>{gitStatus.branch}</button>
             {#if stackGitSummaryParts(gitStatus).length}
-              {#each stackGitSummaryParts(gitStatus) as part}
-                <button type="button" class={`stack-git-count git-status-${part.status}`} title={part.title} on:click={() => openGitStatusPopup(part.status)}>{part.label}</button>
+              {#each stackGitSummaryParts(gitStatus) as part (part.status)}
+                <button type="button" class={`stack-git-count git-status-${part.status}`} disabled={gitVerifiedFolder !== currentPath} title={part.title} on:click={() => openGitStatusPopup(part.status)}>{part.label}</button>
               {/each}
             {:else}
-              <button type="button" class="stack-git-clean" on:click={() => openGitStatusPopup('all')}>clean</button>
+              <button type="button" class="stack-git-clean" disabled={gitVerifiedFolder !== currentPath} on:click={() => openGitStatusPopup('all')}>clean</button>
             {/if}
             {#if gitStatus.remoteRepositoryUrl}
               <button
                 type="button"
                 class="stack-git-remote-link"
+                disabled={gitVerifiedFolder !== currentPath}
                 title={`Open remote repository ${gitStatus.remoteRepositoryUrl}`}
                 aria-label="Open remote repository in browser"
                 on:click={() => void openGitRemoteRepository(gitStatus?.remoteRepositoryUrl)}
@@ -2648,7 +3020,7 @@
     <div class="stack-actions">
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Back" tooltip="Back" disabled={!canGoBack} onClick={() => void navigateHistory(-1)}><MaterialSymbolIcon name="arrow_back" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Forward" tooltip="Forward" disabled={!canGoForward} onClick={() => void navigateHistory(1)}><MaterialSymbolIcon name="arrow_forward" /></MeltActionButton>
-      <MeltActionButton class="stack-action-icon-button" ariaLabel="Refresh" tooltip="Refresh" onClick={() => void loadFolder(currentPath)}><MaterialSymbolIcon name="refresh" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Refresh" tooltip="Refresh" onClick={() => void refreshCurrentFolder()}><MaterialSymbolIcon name="refresh" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel={selectedEntry?.entryType === 'Folder' ? 'Copy folder' : 'Copy selected item'} tooltip={selectedEntry?.entryType === 'Folder' ? 'Copy folder' : 'Copy selected item'} disabled={!hasSelection} onClick={() => void copySelected(false)}><MaterialSymbolIcon name={selectedEntry?.entryType === 'Folder' ? 'folder_copy' : 'file_copy'} /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Cut selected item" tooltip="Cut selected item" disabled={!hasSelection} onClick={() => void copySelected(true)}><MaterialSymbolIcon name="content_cut" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Paste into current folder" tooltip="Paste into current folder" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}><MaterialSymbolIcon name="content_paste" /></MeltActionButton>
@@ -2659,7 +3031,7 @@
       <div class="stack-pin-status">
         <MeltActionButton class="stack-action-icon-button" ariaLabel="Pin to quick bar" tooltip="Pin to quick bar" disabled={!currentPath} onClick={() => void pinCurrentFolderToQuickBar()}><MaterialSymbolIcon name="add_location" /></MeltActionButton>
         <span class="stack-status-separator" aria-hidden="true"></span>
-        <div class="stack-status" class:error={!!errorMessage || activeOperation?.phase === 'failed'} class:info={!errorMessage} role="status" aria-live="polite">
+        <div class="stack-status" class:error={!!errorMessage || !!gitErrorMessage || !!folderWatchErrorMessage || activeOperation?.phase === 'failed'} class:info={!errorMessage && !gitErrorMessage && !folderWatchErrorMessage} role="status" aria-live="polite">
           {#if activeOperation}
             <div class="stack-operation-status" title={operationStatusText(activeOperation)}>
               {#if activeOperation.determinate}
@@ -2672,9 +3044,15 @@
                 <span class="stack-operation-spinner" aria-hidden="true"></span>
               {/if}
               <span>{operationStatusText(activeOperation)}</span>
+              {#if activeOperation.operation === 'paste' && activeOperation.error}
+                <span title={activeOperation.error}>{activeOperation.error}</span>
+              {/if}
             </div>
           {:else}
-            <span title={errorMessage || stackState.statusMessage}>{errorMessage || stackState.statusMessage}</span>
+            <span title={errorMessage || gitErrorMessage || stackState.statusMessage}>{errorMessage || gitErrorMessage || stackState.statusMessage}</span>
+          {/if}
+          {#if folderWatchErrorMessage}
+            <span title={folderWatchErrorMessage}>{folderWatchErrorMessage}</span>
           {/if}
           {#if !activeOperation && loadingPath}
             <span title="Loading...">Loading...</span>
@@ -2732,15 +3110,15 @@
     </form>
   {/if}
   {#if editorPath}
-    <StackTextEditor bind:this={textEditor} path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} />
+    <StackTextEditor bind:this={textEditor} path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} onSaved={editorSaved} />
   {:else if gitStatusPopupOpen}
     <StackGitPanel
       bind:this={gitPanel}
       folderPath={currentPath}
-      initialStatus={gitStatus}
+      initialStatus={null}
       initialChangeFilter={gitStatusPopupFilter}
       onClose={closeGitStatusPopup}
-      onRefresh={() => void refreshStackGitStatus(currentPath, folderLoadSequence)}
+      onRefresh={gitPanelRefresh}
     />
   {:else}
     <div
@@ -2780,7 +3158,7 @@
         {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
           {@const entry = virtualRow.item}
           {@const fileIcon = stackFileIconForEntry(entry)}
-          {@const gitEntryStatus = stackGitStatusForEntry(entry, gitStatus, gitStatusPath, currentPath)}
+          {@const gitEntryStatus = stackGitStatusForEntry(entry, gitStatus, gitStatusPath, currentPath, gitRepositoryContext?.canonicalPath)}
           <button
             class:selected={stackState.selectedPaths.includes(entry.path)}
             class:subdued={entry.isHidden || entry.isSystem}
@@ -2825,7 +3203,7 @@
               <span>{entry.name}</span>
               {#if stackAttributeLabels(entry).length}
                 <span class="item-badges" aria-label={stackAttributeLabels(entry).join(', ')}>
-                  {#each stackAttributeLabels(entry) as label}
+                  {#each stackAttributeLabels(entry) as label (label)}
                     <span>{label}</span>
                   {/each}
                 </span>

@@ -843,8 +843,10 @@
     beginOperation('Committing');
     operationLabel = 'Committing';
     await tick();
+    let committed = false;
     try {
       const result = await stackPopup.stackGitCommit(folderPath, commitMessage.trim(), stagedEntries.map((entry) => entry.path));
+      committed = true;
       const commitOutput = normalizeOperationOutput(result.output);
       const outputParts = [{ heading: 'Commit', output: commitOutput }];
       statusMessage = result.summary;
@@ -871,6 +873,8 @@
         operationRefreshWarning = operationErrorMessage(refreshError, 'Refresh warning');
       }
     } catch (error) {
+      // Commit remains a successful local mutation even if its follow-up push fails.
+      if (committed) onRefresh?.();
       failOperation(operationLabel || 'Committing', error, pushAfter ? 'Commit and push failed' : 'Commit failed');
       return;
     } finally {
@@ -879,9 +883,9 @@
   }
 
   async function refreshAfterMutation(refreshBranchState = false) {
+    onRefresh?.();
     await refreshStatus();
     if (refreshBranchState) await refreshBranches(true);
-    onRefresh?.();
   }
 
   async function syncRemote(operation: 'fetch' | 'pull' | 'push') {

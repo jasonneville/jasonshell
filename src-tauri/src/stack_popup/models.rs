@@ -124,6 +124,24 @@ pub struct StackGitStatus {
     pub entries: Vec<StackGitFileStatus>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitContext {
+    pub repository_root: String,
+    pub git_dir: String,
+    pub canonical_path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackGitMetadata {
+    pub repository_root: String,
+    pub git_dir: String,
+    pub remote_repository_url: Option<String>,
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackGitStageRequest {
