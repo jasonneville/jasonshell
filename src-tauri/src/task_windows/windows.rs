@@ -46,6 +46,8 @@ const TASKBAR_REFRESH_MANUAL_COALESCE: Duration = Duration::from_millis(120);
 
 static TASKBAR_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static TASKBAR_SNAPSHOT_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
+static SNAPSHOTS_STOPPED: AtomicBool = AtomicBool::new(false);
+static SNAPSHOT_WORKERS: OnceLock<crate::shutdown_workers::WorkerGroup> = OnceLock::new();
 static TASKBAR_REFRESH_TX: OnceLock<mpsc::SyncSender<TaskbarRefreshRequest>> = OnceLock::new();
 static LAST_TASKBAR_SNAPSHOT: OnceLock<Mutex<Option<TaskbarWindowsSnapshot>>> = OnceLock::new();
 static LAST_TASKBAR_SNAPSHOT_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
@@ -120,20 +122,23 @@ pub(super) fn list_open_task_windows() -> Result<Vec<TaskbarWindow>, String> {
 }
 
 pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
+    if SNAPSHOTS_STOPPED.load(Ordering::Acquire) { return; }
     if TASKBAR_SNAPSHOT_WORKER_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
     // One pending request is enough: the next scan publishes complete state.
     let (tx, rx) = mpsc::sync_channel::<TaskbarRefreshRequest>(8);
     let _ = TASKBAR_REFRESH_TX.set(tx);
-    thread::spawn(move || {
+    let _ = SNAPSHOT_WORKERS.get_or_init(Default::default).spawn(move || {
         let mut last_refresh_at = Instant::now();
         loop {
+            if SNAPSHOTS_STOPPED.load(Ordering::Acquire) { return; }
             let next_refresh_at = last_refresh_at + TASKBAR_SNAPSHOT_REFRESH_CADENCE;
             match rx.recv_timeout(next_refresh_at.saturating_duration_since(Instant::now())) {
                 Ok(mut request) => {
                     let mut due = request_due_at(request);
                     loop {
+                        if SNAPSHOTS_STOPPED.load(Ordering::Acquire) { return; }
                         let now = Instant::now();
                         if now >= due {
                             break;
@@ -269,6 +274,7 @@ fn coalesce_request(
 }
 
 pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<(), String> {
+    let _work = SNAPSHOT_WORKERS.get_or_init(Default::default).enter()?;
     let current_process_id = std::process::id();
     let foreground = unsafe { GetForegroundWindow() };
     let mut handles = Vec::new();
@@ -365,6 +371,11 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
         );
     }
     Ok(())
+}
+
+pub(super) fn stop_and_drain_snapshots() -> Result<(), String> {
+    SNAPSHOTS_STOPPED.store(true, Ordering::Release);
+    SNAPSHOT_WORKERS.get_or_init(Default::default).drain()
 }
 
 pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>, String> {

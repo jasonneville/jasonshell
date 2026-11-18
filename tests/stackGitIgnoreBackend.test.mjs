@@ -28,10 +28,13 @@ test('frontend wrapper sends fixed request model', () => {
 test('backend facade authorizes stack-popup and delegates to async blocking implementation', () => {
   assert.match(
     stackPopupSource,
-    /pub async fn stack_git_ignore_path[\s\S]*?STACK_GIT_IGNORE_PATH[\s\S]*?callers:\s*&\[crate::shell_windows::STACK_POPUP_LABEL\][\s\S]*?stack_git_ignore_path_async\(request\)\.await/
+     /pub async fn stack_git_ignore_path[\s\S]*?STACK_GIT_IGNORE_PATH[\s\S]*?callers:\s*&\[crate::shell_windows::STACK_POPUP_LABEL\][\s\S]*?admit_mutation\(window\.app_handle\(\)\)\?;\s*retain_stack_mutation\(admission, git_status::stack_git_ignore_path_async\(request\)\)\.await/
   );
   assert.match(
     gitStatusSource,
     /pub\(crate\) async fn stack_git_ignore_path_async[\s\S]*?spawn_blocking\(move \|\| stack_git_ignore_path\(request\)\)/
   );
+  const retained = stackPopupSource.match(/async fn retain_stack_mutation<T, F>[^]*?\n\}/)?.[0] ?? '';
+  assert.match(retained, /tauri::async_runtime::spawn\(async move \{\s*let _admission = admission;\s*effect\.await\s*\}\)\.await\.map_err/,
+    'IPC cancellation must not drop admission before the delegated blocking effect completes');
 });

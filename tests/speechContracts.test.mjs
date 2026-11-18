@@ -51,7 +51,12 @@ test('speech commands and managed runtime are registered in Tauri main', () => {
   assert.match(mainSource, /speech_runtime::get_speech_history/);
   assert.match(mainSource, /speech_runtime::copy_speech_history_transcript/);
   assert.match(mainSource, /speech_runtime::stop_speech_capture/);
-  assert.match(mainSource, /speech_runtime::shutdown/);
+  const exit = readFileSync(new URL('../src-tauri/src/graceful_exit.rs', import.meta.url), 'utf8');
+  const runtime = readFileSync(new URL('../src-tauri/src/speech_runtime.rs', import.meta.url), 'utf8');
+  assert.match(exit, /crate::speech_runtime::stop_and_drain_speech\(app\)/);
+  const drain = runtime.slice(runtime.indexOf('pub(crate) fn stop_and_drain_speech('), runtime.indexOf('\n#[cfg(test)]', runtime.indexOf('pub(crate) fn stop_and_drain_speech(')));
+  assert.match(drain, /shutting_down\.store\(true, Ordering::Release\)[\s\S]*focus\.closed = true;[\s\S]*if focus\.in_flight != 0 \{ return Err\(/);
+  assert.match(drain, /capture\.intake\.first_close\(InputCloseReason::Shutdown\)[\s\S]*state\.workers\.spawn\(move \|\| drop\(capture\)\)\?;[\s\S]*state\.workers\.drain\(\)\?;[\s\S]*DrainReceipt \{ finished: true \}/);
 });
 
 test('model-free fresh builds do not require ignored speech binaries as bundle resources', () => {

@@ -471,6 +471,7 @@ fn tdt_model_warmup_begins_nonblocking_during_tauri_setup() {
     let main = main_source();
     let setup = main
         .find(".setup(|app|")
+        .or_else(|| main.find(".setup(move |app|"))
         .map(|index| &main[index..])
         .unwrap_or_else(|| panic!("Tauri setup closure should exist"));
 
@@ -773,7 +774,7 @@ fn worker_completion_terminal_emit_rechecks_shutdown_generation_under_lifecycle_
 #[test]
 fn stop_emit_failure_closes_extracted_capture_intake_before_recovery_return() {
     let source = runtime_source();
-    let stop = function_body(&source, "stop_speech_capture");
+    let stop = function_body(&source, "stop_speech_capture_blocking");
 
     let capture_take = index_of(stop, "inner.capture.take");
     let emit_failure = index_of(stop, "if let Err(error) = emit(&app, &event)");
@@ -851,7 +852,14 @@ fn transcription_timeout_emit_rechecks_shutdown_generation_under_lifecycle_gate(
 #[test]
 fn stop_speech_capture_holds_lifecycle_gate_through_transcribing_handoff() {
     let source = runtime_source();
-    let stop = function_body(&source, "stop_speech_capture");
+    let entry = function_body(&source, "stop_speech_capture");
+    let admission = index_of(entry, "crate::graceful_exit::admit_mutation(&app)?");
+    let worker = index_of(entry, "tauri::async_runtime::spawn_blocking(move || {");
+    let retained = index_of(entry, "let (_admission, _work) = (admission, work)");
+    let delegated = index_of(entry, "stop_speech_capture_blocking(app.clone(), &state, request)");
+    assert!(admission < worker && worker < retained && retained < delegated,
+        "entry must reserve admission and retain it inside the actual worker while forwarding the original nonce-bearing request");
+    let stop = function_body(&source, "stop_speech_capture_blocking");
 
     let commit_guard = stop.find("state.commit.lock").unwrap_or_else(|| {
         panic!(
@@ -864,6 +872,7 @@ fn stop_speech_capture_holds_lifecycle_gate_through_transcribing_handoff() {
     let intake_close = index_of(stop, "intake.first_close(InputCloseReason::Finish)");
     let drop_commit_before_close = stop[commit_guard..intake_close]
         .find("drop(commit)")
+        .or_else(|| stop[commit_guard..intake_close].find("drop(_commit)"))
         .map(|index| commit_guard + index);
 
     assert!(

@@ -1,4 +1,7 @@
 use crate::contracts::surfaces;
+#[cfg(all(test, windows))]
+#[path = "../tests/fixtures/graceful_exit_quick_probe.rs"]
+pub(crate) mod shutdown_test_probe;
 use crate::settings::{
     self, validate_quick_command_args, validate_quick_command_commands,
     validate_quick_command_entry, QuickCommandEntry, QuickCommandMode, QuickCommandTranscriptEntry,
@@ -9,14 +12,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+#[path = "quick_commands/windows_launch.rs"]
+mod windows_launch;
 use std::path::Path;
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::Command;
+#[cfg(test)]
+use std::process::Stdio;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 const QUICK_COMMAND_ARTIFACT_OPEN_AUTH: StackCommandAuth = StackCommandAuth::AllowedCallers {
@@ -28,22 +34,29 @@ const QUICK_COMMAND_ARTIFACT_OPEN_AUTH: StackCommandAuth = StackCommandAuth::All
 use windows::core::PCWSTR;
 #[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
 #[cfg(windows)]
 use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, QueryInformationJobObject, JobObjectBasicAccountingInformation,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
-#[cfg(windows)]
+#[cfg(all(windows, test))]
+use std::os::windows::process::CommandExt;
+#[cfg(all(windows, test))]
+use windows::Win32::System::JobObjects::AssignProcessToJobObject;
+#[cfg(all(windows, test))]
 use windows::Win32::System::Threading::{
-    OpenProcess, OpenThread, ResumeThread, TerminateProcess, CREATE_SUSPENDED,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    OpenProcess, OpenThread, ResumeThread, CREATE_SUSPENDED,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
     THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
 };
+#[cfg(all(windows, test))]
+use windows::Win32::System::Threading::{TerminateProcess, PROCESS_SET_QUOTA};
 
 const HISTORY_LIMIT: usize = 20;
 const OUTPUT_LIMIT: usize = 16 * 1024;
@@ -60,6 +73,173 @@ const MARKER_SUFFIX: &str = "\x07";
 static RUNS: OnceLock<Mutex<HashMap<String, QuickCommandRunState>>> = OnceLock::new();
 static NEXT_RUN_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(all(test, windows))]
+type AfterCreateHook = Box<dyn FnOnce(u32)>;
+
+#[cfg(all(test, windows))]
+thread_local! {
+    static AFTER_SUSPENDED_CREATE: std::cell::RefCell<Option<AfterCreateHook>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_ROOT_EXIT_DRAIN: std::cell::RefCell<Option<Box<dyn FnOnce() + Send>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_CONTAINED_CREATE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_EXIT_JOB_TERMINATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install a one-shot barrier on the fixture thread that will launch the command.
+#[cfg(all(test, windows))]
+pub(crate) fn set_after_suspended_create_for_test(callback: impl FnOnce(u32) + 'static) {
+    AFTER_SUSPENDED_CREATE.with(|slot| {
+        assert!(slot.replace(Some(Box::new(callback))).is_none());
+    });
+}
+
+/// Install on the launch thread; the launched root's waiter calls it before
+/// terminating surviving descendants, independently of the shell exit drain.
+#[cfg(all(test, windows))]
+pub(crate) fn set_before_root_exit_drain_for_test(callback: impl FnOnce() + Send + 'static) {
+    BEFORE_ROOT_EXIT_DRAIN.with(|slot| {
+        assert!(slot.replace(Some(Box::new(callback))).is_none());
+    });
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn set_before_contained_create_for_test(callback: impl FnOnce() + 'static) {
+    BEFORE_CONTAINED_CREATE.with(|slot| {
+        assert!(slot.replace(Some(Box::new(callback))).is_none());
+    });
+}
+
+/// Install on the thread that will drain. Runs after observation and before
+/// the first termination signal, with no registry mutex held.
+#[cfg(all(test, windows))]
+pub(crate) fn set_before_exit_job_termination_for_test(callback: impl FnOnce() + 'static) {
+    BEFORE_EXIT_JOB_TERMINATION.with(|slot| {
+        assert!(slot.replace(Some(Box::new(callback))).is_none());
+    });
+}
+
+#[cfg(windows)]
+static OWNED_RUNS: OnceLock<Mutex<HashMap<String, Arc<OwnedQuickRun>>>> = OnceLock::new();
+#[cfg(windows)]
+struct OwnedQuickRun {
+    job: Arc<QuickCommandJobHandle>,
+    holder_job: QuickCommandJobHandle,
+    worker: Mutex<Option<std::thread::JoinHandle<Result<(), String>>>>,
+    worker_failed: AtomicBool,
+    job_stop_failed: AtomicBool,
+    worker_ready: AtomicBool,
+    creating: AtomicBool,
+}
+#[cfg(windows)]
+fn owned_runs() -> &'static Mutex<HashMap<String, Arc<OwnedQuickRun>>> { OWNED_RUNS.get_or_init(|| Mutex::new(HashMap::new())) }
+#[cfg(windows)]
+fn job_accounting(job: &QuickCommandJobHandle) -> Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, String> {
+    let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+    unsafe { QueryInformationJobObject(Some(job.0), JobObjectBasicAccountingInformation,
+        (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(), std::mem::size_of_val(&info) as u32, None) }
+        .map_err(|_| "Owned command job completion is unavailable")?;
+    Ok(info)
+}
+#[cfg(windows)]
+fn job_active_processes(job: &QuickCommandJobHandle) -> Result<u32, String> {
+    job_accounting(job).map(|info| info.ActiveProcesses)
+}
+#[cfg(windows)]
+fn reap_owned_run(id: &str, owned: &Arc<OwnedQuickRun>) -> Result<bool, String> {
+    if !owned.worker_ready.load(Ordering::Acquire) { return Ok(false); }
+    if job_active_processes(&owned.job)? != 0 || job_active_processes(&owned.holder_job)? != 0 { return Ok(false); }
+    let mut worker = owned.worker.lock().map_err(|_| "Owned command worker unavailable")?;
+    if worker.as_ref().is_some_and(|worker| !worker.is_finished()) { return Ok(false); }
+    if let Some(worker) = worker.take() {
+        if !matches!(worker.join(), Ok(Ok(()))) { owned.worker_failed.store(true, Ordering::Release); }
+    }
+    if owned.worker_failed.load(Ordering::Acquire) { return Err("Owned command worker completion failed; ownership retained".into()); }
+    owned_runs().lock().map_err(|_| "Owned command registry unavailable")?.remove(id);
+    runs().lock().map_err(|_| "Command history unavailable")?.remove(id);
+    Ok(true)
+}
+
+/// Native-owned job handles, never renderer PIDs, are the termination authority.
+/// Signal all jobs before polling any. Stream/history workers cannot hold up
+/// the verification of process death, and a retired root can still have children.
+/// Call only after admission is sealed. `Ok` verifies the active cohort at the
+/// initial accounting samples, with no later additions; it does not attest to
+/// processes already retired from job accounting before those samples.
+/// `Err` means unverified, not that termination was skipped or failed.
+#[cfg(windows)]
+pub(crate) fn drain_owned_quick_commands(deadline: Instant) -> Result<(), String> {
+    let owned = owned_runs().lock().unwrap_or_else(|poison| poison.into_inner())
+        .values().cloned().collect::<Vec<_>>();
+    // Job accounting can reach zero before the kernel signals a terminating
+    // process. Keep observation handles from before termination as well.
+    let mut observed = Vec::new();
+    let mut complete_snapshot = true;
+    let mut owned = owned.into_iter().map(|run| {
+        // A pending CreateProcessW can add a suspended root without entering
+        // the resume gate. Do not certify this run's snapshot in that case.
+        complete_snapshot &= !run.creating.load(Ordering::Acquire);
+        let totals = [&*run.job, &run.holder_job].map(|job| {
+            if Instant::now() < deadline {
+                if let Ok(sample) = job_accounting(job) {
+                    if let Ok(handles) = windows_launch::observe_job_members(job.0) {
+                        let count = handles.iter().filter(|handle| !windows_launch::has_exited(handle)).count();
+                        complete_snapshot &= sample.TotalProcesses != u32::MAX
+                            && count == sample.ActiveProcesses as usize
+                            && job_accounting(job).is_ok_and(|current| {
+                                current.ActiveProcesses == sample.ActiveProcesses
+                                    && current.TotalProcesses == sample.TotalProcesses
+                            });
+                        observed.extend(handles);
+                        return Some(sample.TotalProcesses);
+                    }
+                }
+            }
+            complete_snapshot = false;
+            None
+        });
+        (run, totals)
+    }).collect::<Vec<_>>();
+    #[cfg(test)]
+    if let Some(callback) = BEFORE_EXIT_JOB_TERMINATION.with(std::cell::RefCell::take) {
+        callback();
+    }
+    for (run, _) in &owned {
+        // SAFETY: this is our retained, non-inherited job handle.
+        let _ = unsafe { TerminateJobObject(run.job.0, 1) };
+        let _ = unsafe { TerminateJobObject(run.holder_job.0, 1) };
+    }
+    loop {
+        owned.retain(|(run, totals)| {
+            // A racing creation can only create a suspended process; never
+            // interpret zero as final until its creation attempt has retired.
+            let creating = run.creating.load(Ordering::Acquire);
+            match (job_accounting(&run.job), job_accounting(&run.holder_job)) {
+                (Ok(root), Ok(holder)) if root.ActiveProcesses == 0 && holder.ActiveProcesses == 0 => {
+                    // TotalProcesses includes exited processes. A fork after
+                    // the snapshot means the new member was not proven dead,
+                    // even if Windows already removed it from active counts.
+                    complete_snapshot &= *totals == [Some(root.TotalProcesses), Some(holder.TotalProcesses)];
+                    creating
+                }
+                _ => {
+                    let _ = unsafe { TerminateJobObject(run.job.0, 1) };
+                    let _ = unsafe { TerminateJobObject(run.holder_job.0, 1) };
+                    true
+                }
+            }
+        });
+        if owned.is_empty() && observed.iter().all(windows_launch::has_exited) {
+            return if complete_snapshot { Ok(()) } else { Err("Owned command job termination could not be verified".into()) };
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err("Owned command job termination could not be verified".into()); }
+        std::thread::sleep(remaining.min(Duration::from_millis(10)));
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -107,7 +287,7 @@ struct QuickCommandRunState {
     process_id: u32,
     started_at_epoch_ms: u64,
     started_at_filetime_100ns: u64,
-    stdin: Option<ChildStdin>,
+    stdin: Option<std::io::PipeWriter>,
     running: bool,
     stopping: bool,
     pending: Option<QuickCommandPendingInput>,
@@ -216,6 +396,7 @@ pub fn run_quick_command(
     request: RunQuickCommandRequest,
 ) -> Result<QuickCommandSpawnResult, String> {
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::RUN_QUICK_COMMAND, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     if request.id.trim().is_empty() {
         return Err("quick command id must not be empty".into());
     }
@@ -267,6 +448,7 @@ pub fn send_quick_command_input(
     request: SendQuickCommandInputRequest,
 ) -> Result<(), String> {
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::SEND_QUICK_COMMAND_INPUT, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     let mut runs_guard = runs()
         .lock()
         .map_err(|_| "quick command runtime state is poisoned".to_string())?;
@@ -482,8 +664,10 @@ pub async fn stop_quick_command(
     request: StopQuickCommandRequest,
 ) -> Result<(), String> {
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::STOP_QUICK_COMMAND, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     let app_handle = app_handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         stop_running_quick_command(
             &app_handle,
             request.process_id,
@@ -502,6 +686,11 @@ pub fn list_quick_command_history(
     request: Option<RunQuickCommandRequest>,
 ) -> Result<Vec<settings::QuickCommandRunHistoryEntry>, String> {
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::LIST_QUICK_COMMAND_HISTORY, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    #[cfg(windows)]
+    {
+        let finished = owned_runs().lock().map_err(|_| "Owned command registry unavailable")?.iter().map(|(id, run)| (id.clone(), run.clone())).collect::<Vec<_>>();
+        for (id, run) in finished { let _ = reap_owned_run(&id, &run); }
+    }
     let settings = settings::load_shell_settings_for_app(&app_handle)?;
     let mut history = runs()
         .lock()
@@ -529,6 +718,7 @@ pub fn save_quick_commands_settings(
     quick_commands: settings::QuickCommandsSettings,
 ) -> Result<settings::QuickCommandsSettings, String> {
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::SAVE_QUICK_COMMANDS_SETTINGS, callers: &[crate::shell_windows::COMMAND_PANEL_LABEL] }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     settings::update_shell_settings_for_app(&app_handle, |settings| {
         settings.quick_commands.entries = quick_commands.entries;
         settings.quick_commands.list_width = quick_commands.list_width;
@@ -610,47 +800,58 @@ fn build_command_block_script(commands: &[String]) -> String {
         + &commands.join("\r\n")
 }
 
-fn spawn_quick_command(
+#[cfg(windows)]
+pub(crate) fn spawn_quick_command(
     app_handle: AppHandle,
     plan: &QuickCommandSpawnPlan,
     command_id: String,
     run_id: String,
     on_exit: impl FnOnce(settings::QuickCommandRunHistoryEntry) + Send + 'static,
 ) -> Result<u32, String> {
-    let mut command = Command::new(&plan.executable);
-    command
-        .args(&plan.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(cwd) = &plan.cwd {
-        command.current_dir(cwd);
-    }
-    #[cfg(windows)]
-    command.creation_flags(CREATE_SUSPENDED.0);
-    #[cfg(windows)]
-    let job = create_quick_command_job()?;
-    #[cfg(windows)]
-    let job_handle = Arc::new(job);
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("failed to run quick command '{}': {e}", plan.executable))?;
-    let process_id = child.id();
-    #[cfg(windows)]
-    let started_at_filetime_100ns =
-        match assign_and_resume_quick_command_process(job_handle.0, process_id) {
-            Ok(started_at_filetime_100ns) => started_at_filetime_100ns,
-            Err(error) => {
-                cleanup_suspended_quick_command_process(process_id);
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
+    let job_handle = Arc::new(create_quick_command_job()?);
+    let owned = Arc::new(OwnedQuickRun {
+        job: job_handle.clone(), worker: Mutex::new(None), worker_failed: AtomicBool::new(false),
+        holder_job: create_quick_command_job()?,
+        job_stop_failed: AtomicBool::new(false), worker_ready: AtomicBool::new(false),
+        creating: AtomicBool::new(true),
+    });
+    crate::graceful_exit::while_running(&app_handle, || {
+        let mut jobs = owned_runs().lock().map_err(|_| "Owned command registry unavailable")?;
+        if jobs.contains_key(&run_id) { return Err("Quick Command run id already exists"); }
+        jobs.insert(run_id.clone(), owned.clone());
+        Ok(())
+    })??;
+    // PROC_THREAD_ATTRIBUTE_JOB_LIST binds the tracked job to the process in
+    // CreateProcessW. Creation may block, so no admission lock is held here.
+    let launch = (|| {
+        let (child, primary_thread) = windows_launch::create_suspended(plan, job_handle.0, owned.holder_job.0)?;
+        #[cfg(test)]
+        if let Some(callback) = AFTER_SUSPENDED_CREATE.with(std::cell::RefCell::take) {
+            callback(child.id);
+        }
+        let created = process_creation_time_for_handle(child.process())?;
+        // If shutdown won while CreateProcessW was in flight, no user code can
+        // execute: the process is still suspended and already job-contained.
+        crate::graceful_exit::while_running(&app_handle, || windows_launch::resume(&primary_thread))??;
+        Ok::<_, String>((child, created))
+    })();
+    owned.creating.store(false, Ordering::Release);
+    let (child, started_at_filetime_100ns) = match launch {
+        Ok(launch) => launch,
+        Err(error) => {
+            let _ = unsafe { TerminateJobObject(job_handle.0, 1) };
+            let _ = unsafe { TerminateJobObject(owned.holder_job.0, 1) };
+            owned.worker_ready.store(true, Ordering::Release);
+            let _ = reap_owned_run(&run_id, &owned);
+            return Err(error);
+        }
+    };
+    let process_id = child.id;
+    // Keep the original process handle alive independently of the output pipes.
+    let (process, stdin, stdout, stderr) = child.into_parts();
     let started_at_epoch_ms = current_epoch_ms();
-    let stdin = child.stdin.take();
     runs()
-        .lock()
-        .map_err(|_| "quick command runtime state is poisoned".to_string())?
+        .lock().unwrap_or_else(|poison| poison.into_inner())
         .insert(
             run_id.clone(),
             QuickCommandRunState {
@@ -659,7 +860,7 @@ fn spawn_quick_command(
                 process_id,
                 started_at_epoch_ms,
                 started_at_filetime_100ns,
-                stdin,
+                stdin: Some(stdin),
                 running: true,
                 stopping: false,
                 pending: None,
@@ -676,18 +877,22 @@ fn spawn_quick_command(
                 job: Arc::clone(&job_handle),
             },
         );
-    std::thread::spawn(move || {
+    #[cfg(windows)]
+    let owned_worker = owned.clone();
+    #[cfg(test)]
+    let before_root_drain = BEFORE_ROOT_EXIT_DRAIN.with(std::cell::RefCell::take);
+    let worker = std::thread::Builder::new().spawn(move || {
         let run_id_stdout = run_id.clone();
         let run_id_stderr = run_id.clone();
         let app_for_stdout = app_handle.clone();
         let app_for_stderr = app_handle.clone();
-        let stdout = child.stdout.take().map(|s| {
-            std::thread::spawn(move || capture_stream(&app_for_stdout, s, true, run_id_stdout))
-        });
-        let stderr = child.stderr.take().map(|s| {
-            std::thread::spawn(move || capture_stream(&app_for_stderr, s, false, run_id_stderr))
-        });
-        let status = child.wait();
+        let stdout = std::thread::spawn(move || capture_stream(&app_for_stdout, stdout, true, run_id_stdout));
+        let stderr = std::thread::spawn(move || capture_stream(&app_for_stderr, stderr, false, run_id_stderr));
+        let status = windows_launch::wait(&process);
+        #[cfg(test)]
+        if let Some(callback) = before_root_drain {
+            callback();
+        }
         let finished_at_epoch_ms = current_epoch_ms();
         let stopping = runs()
             .lock()
@@ -695,24 +900,27 @@ fn spawn_quick_command(
             .and_then(|mut runs| runs.get_mut(&run_id).map(claim_root_exit))
             .unwrap_or(false);
         #[cfg(windows)]
-        if !stopping {
-            let _ = unsafe { TerminateJobObject(job_handle.0, 1) };
+        if !matches!(job_active_processes(&job_handle), Ok(0))
+            && unsafe { TerminateJobObject(job_handle.0, 1) }.is_err() {
+            // Do not drop the job or stream workers. A later native drain can
+            // terminate this original job even after its root has exited.
+            owned_worker.job_stop_failed.store(true, Ordering::Release);
         }
-        let (stdout, stdout_truncated, stderr, stderr_truncated) = if stopping {
-            (vec![], false, vec![], false)
-        } else {
-            let (stdout, stdout_truncated) = stdout.and_then(|h| h.join().ok()).unwrap_or_default();
-            let (stderr, stderr_truncated) = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
-            (stdout, stdout_truncated, stderr, stderr_truncated)
-        };
-        let exit_code = status.ok().and_then(|s| s.code());
+        let _ = stopping;
+        // Explicit Stop must join both streams too; inherited descendant pipe
+        // handles cannot outlive a falsely completed run.
+        let stdout_result = stdout.join();
+        let stderr_result = stderr.join();
+        let (stdout, stdout_truncated) = stdout_result.map_err(|_| "Command stdout worker failed")?;
+        let (stderr, stderr_truncated) = stderr_result.map_err(|_| "Command stderr worker failed")?;
+        let exit_code = Some(status?);
         let (history, exit_payload) = {
             let mut runs = runs().lock().ok();
             let Some(runs) = runs.as_mut() else {
-                return;
+                return Err("Command completion history unavailable".into());
             };
             let Some(state) = runs.get_mut(&run_id) else {
-                return;
+                return Err("Command completion ownership unavailable".into());
             };
             let stopped = state.stopping;
             let terminal_kind = if stopped { "stopped" } else { "exit" };
@@ -782,9 +990,31 @@ fn spawn_quick_command(
         };
         emit_run_snapshot(&app_handle, &exit_payload);
         on_exit(history);
-        let _ = runs().lock().ok().and_then(|mut runs| runs.remove(&run_id));
+        // UI/history state may retire now. OWNED_RUNS independently retains
+        // the original job and this worker until verified native reaping.
+        runs().lock().map_err(|_| "Command history unavailable")?.remove(&run_id);
+        Ok(())
     });
-    Ok(process_id)
+    let result = match worker {
+        Ok(worker) => {
+            *owned.worker.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(worker);
+            Ok(process_id)
+        }
+        Err(_) => {
+            let _ = unsafe { TerminateJobObject(owned.job.0, 1) };
+            Err("Quick Command output worker unavailable".into())
+        }
+    };
+    owned.worker_ready.store(true, Ordering::Release);
+    result
+}
+
+#[cfg(not(windows))]
+pub(crate) fn spawn_quick_command(
+    _app: AppHandle, _plan: &QuickCommandSpawnPlan, _command_id: String, _run_id: String,
+    _on_exit: impl FnOnce(settings::QuickCommandRunHistoryEntry) + Send + 'static,
+) -> Result<u32, String> {
+    Err("Quick Commands require Windows job containment".into())
 }
 
 fn capture_stream(
@@ -1202,29 +1432,12 @@ impl DefaultQuickCommandTerminator {
 impl QuickCommandTerminator for DefaultQuickCommandTerminator {
     fn terminate(
         &self,
-        process_id: u32,
-        started_at_filetime_100ns: u64,
+        _process_id: u32,
+        _started_at_filetime_100ns: u64,
         job: Arc<QuickCommandJobHandle>,
     ) -> Result<(), String> {
-        struct HandleGuard(HANDLE);
-        impl Drop for HandleGuard {
-            fn drop(&mut self) {
-                let _ = unsafe { CloseHandle(self.0) };
-            }
-        }
-        let process_handle = unsafe {
-            OpenProcess(
-                PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
-                false,
-                process_id,
-            )
-        }
-        .map_err(|e| format!("failed to stop quick command: {e}"))?;
-        let process_guard = HandleGuard(process_handle);
-        let verified = process_creation_time_for_handle(process_guard.0)?;
-        if verified != started_at_filetime_100ns {
-            return Err("quick command is no longer running".into());
-        }
+        // The already-validated run owns this exact job, even if its root
+        // exits naturally just before stop and leaves surviving descendants.
         unsafe { TerminateJobObject(job.0, 1) }
             .map_err(|e| format!("failed to stop quick command: {e}"))?;
         Ok(())
@@ -1472,7 +1685,7 @@ fn create_quick_command_job() -> Result<QuickCommandJobHandle, String> {
     Ok(job)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn assign_and_resume_quick_command_process(job: HANDLE, process_id: u32) -> Result<u64, String> {
     let process = unsafe {
         OpenProcess(
@@ -1501,7 +1714,7 @@ fn assign_and_resume_quick_command_process(job: HANDLE, process_id: u32) -> Resu
     Ok(started_at_filetime_100ns)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn open_root_suspended_thread(process_id: u32) -> Result<HANDLE, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
         .map_err(|e| format!("failed to inspect quick command thread: {e}"))?;
@@ -1534,7 +1747,7 @@ fn open_root_suspended_thread(process_id: u32) -> Result<HANDLE, String> {
     Err("failed to locate suspended quick command thread".into())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn cleanup_suspended_quick_command_process(process_id: u32) {
     if let Ok(handle) = unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) } {
         let _ = unsafe { TerminateProcess(handle, 1) };
@@ -1788,7 +2001,7 @@ mod tests {
 
     fn quick_commands_production_source() -> &'static str {
         QUICK_COMMANDS_SOURCE
-            .split("#[cfg(test)]")
+            .split("#[cfg(test)]\nmod tests {")
             .next()
             .unwrap_or(QUICK_COMMANDS_SOURCE)
     }
@@ -1916,6 +2129,16 @@ mod tests {
 
     #[test]
     fn stop_marks_run_stopping_before_termination() {
+        let mut run = quick_command_test_state("run-stopping");
+        let snapshot = mark_stopping(&mut run, 2);
+        assert!(run.running && run.stopping);
+        assert_eq!(snapshot.kind, "stopping");
+        assert_eq!(run.transcript.back().unwrap().kind, "stopping");
+        let source = quick_commands_production_source();
+        let mark = source.find("mark_stopping(run, sequence)").unwrap();
+        let emit = source[mark..].find("&stopping_snapshot,").unwrap() + mark;
+        let terminate = source[emit..].find("terminator.terminate(").unwrap() + emit;
+        assert!(!source[mark..terminate].contains(".remove("));
         assert!(
             quick_commands_production_source().contains("fn mark_stopping")
                 && quick_commands_production_source().contains("run.stopping = true"),
@@ -1926,16 +2149,12 @@ mod tests {
                 && quick_commands_production_source().contains("kind: \"stopping\".into()"),
             "stop must emit stopping snapshot before final stopped/error result"
         );
-        assert!(
-            !quick_commands_production_source()
-                .contains("let mut state = runs_guard.remove(run_id).unwrap();"),
-            "stop must not remove run from registry before termination completes"
-        );
     }
 
     #[test]
     fn stop_failure_restores_running_state_and_preserves_transcript() {
-        let before = quick_command_test_state("run-stop-fail");
+        let mut before = quick_command_test_state("run-stop-fail");
+        mark_stopping(&mut before, 2);
         let before_transcript = before.transcript.clone();
         let before_stdout = before.stdout.clone();
         let before_stderr = before.stderr.clone();
@@ -1946,6 +2165,8 @@ mod tests {
                     .contains("restore_running_after_stop_failure"),
             "termination failure must use explicit rollback path"
         );
+        rollback_stopping(&mut before);
+        assert!(!before.stopping);
         assert_eq!(before.transcript, before_transcript);
         assert_eq!(before.stdout, before_stdout);
         assert_eq!(before.stderr, before_stderr);
@@ -1957,15 +2178,20 @@ mod tests {
         assert!(
             quick_commands_production_source().contains("trait QuickCommandTerminator")
                 && quick_commands_production_source().contains("DefaultQuickCommandTerminator"),
-            "termination must expose injectable seam for final same-handle identity test"
+            "termination must target a retained job through the terminator boundary"
         );
         assert!(
             quick_commands_production_source().contains("Arc<QuickCommandJobHandle>")
                 && quick_commands_production_source()
-                    .contains("process_creation_time_for_handle(process_guard.0)")
+                    .contains("run.started_at_filetime_100ns != started_at_filetime_100ns")
                 && quick_commands_production_source().contains("TerminateJobObject"),
             "root PID reuse must be rejected before job termination"
         );
+        let stop = quick_commands_production_source().split_once("let (job, stopping_snapshot) = {").unwrap().1;
+        assert!(stop.find("run.started_at_filetime_100ns != started_at_filetime_100ns").unwrap()
+            < stop.find("Arc::clone(&run.job)").unwrap());
+        let terminator = stop.split_once("let terminator = DefaultQuickCommandTerminator::new();").unwrap().1;
+        assert!(terminator.trim_start().starts_with("if let Err(error) = terminator.terminate(process_id, started_at_filetime_100ns, job)"));
     }
 
     #[test]
@@ -1982,17 +2208,17 @@ mod tests {
     fn stop_state_uses_arc_job_handle_and_checked_resume_thread() {
         let source = quick_commands_production_source();
         assert!(source.contains("job: Arc<QuickCommandJobHandle>"));
-        assert!(!source.contains("job: Option<usize>"));
-        assert!(source.contains("ResumeThread(thread_guard.0)") && source.contains("u32::MAX"));
-        let assign = source
-            .split("fn assign_and_resume_quick_command_process")
-            .nth(1)
-            .expect("assign/resume helper must exist");
+        let state = source.split_once("struct QuickCommandRunState {").unwrap().1.split_once("\n}").unwrap().0;
+        assert!(state.contains("job: Arc<QuickCommandJobHandle>"));
+        assert!(!state.contains("job: Option<usize>"));
+        let native_launch = include_str!("quick_commands/windows_launch.rs");
+        assert!(native_launch.contains("ResumeThread(HANDLE(thread.as_raw_handle())) } != 1"));
+        let assign = source.split_once("windows_launch::create_suspended(plan, job_handle.0,").unwrap().1;
         let capture = assign
-            .find("process_creation_time_for_handle(process_guard.0)")
+            .find("process_creation_time_for_handle(child.process())")
             .expect("root identity must be captured from opened process handle");
         let resume = assign
-            .find("ResumeThread(thread_guard.0)")
+            .find("windows_launch::resume(&primary_thread)")
             .expect("suspended root must be resumed");
         assert!(
             capture < resume,
@@ -2034,13 +2260,18 @@ mod tests {
     }
 
     #[test]
-    fn stopped_root_does_not_wait_for_descendant_held_output_pipes() {
-        assert!(
-            quick_commands_production_source().contains(
-                "let (stdout, stdout_truncated, stderr, stderr_truncated) = if stopping"
-            ) && quick_commands_production_source().contains("(vec![], false, vec![], false)"),
-            "stopped root must finalize without joining pipe readers that descendants may keep open"
-        );
+    fn stopped_root_terminates_owned_descendants_and_joins_both_output_workers() {
+        let source = quick_commands_production_source();
+        let owned_worker = source.split_once("let owned_worker = owned.clone();").expect("owned completion authority").1;
+        let worker = owned_worker.split_once("let worker = std::thread::Builder::new().spawn(move || {").expect("owned completion worker").1;
+        let terminate = worker.find("TerminateJobObject(job_handle.0, 1)").expect("stop original owned job before pipe joins");
+        let stdout = worker.find("let stdout_result = stdout.join();").expect("join stdout worker");
+        let stderr = worker.find("let stderr_result = stderr.join();").expect("join stderr worker");
+        let complete = worker.find("emit_run_snapshot(&app_handle, &exit_payload)").expect("publish completed state");
+        assert!(terminate < stdout && terminate < stderr && stdout < complete && stderr < complete,
+            "owned descendants must be terminated and both pipe workers joined before completion");
+        assert!(!worker[..complete].contains("(vec![], false, vec![], false)"),
+            "explicit stop must not discard still-owned pipe worker handles");
     }
 
     #[cfg(windows)]

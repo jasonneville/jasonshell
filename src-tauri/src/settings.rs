@@ -401,6 +401,7 @@ pub fn save_shell_settings(
         command: crate::contracts::commands::SAVE_SHELL_SETTINGS,
         callers: &[crate::contracts::surfaces::COMMAND_PANEL, crate::contracts::surfaces::SETTINGS_PANEL],
     }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     if window.label() == crate::contracts::surfaces::COMMAND_PANEL {
         save_shell_settings_for_app(&app_handle, settings)
     } else {
@@ -447,6 +448,7 @@ pub fn save_shell_bar_height(
         command: crate::contracts::commands::SAVE_SHELL_BAR_HEIGHT,
         callers: &[crate::contracts::surfaces::TOP_BAR, crate::contracts::surfaces::BOTTOM_BAR],
     }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     save_shell_bar_height_for_app(&app_handle, request)
         .map(|settings| ShellBarSettingsResponse(settings_for_caller(settings, "")))
 }
@@ -461,6 +463,7 @@ pub fn save_shell_bar_lock(
         command: crate::contracts::commands::SAVE_SHELL_BAR_LOCK,
         callers: &[crate::contracts::surfaces::SETTINGS_PANEL],
     }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     save_shell_bar_lock_for_app(&app_handle, request)
         .map(|settings| ShellBarSettingsResponse(settings_for_caller(settings, "")))
 }
@@ -518,6 +521,7 @@ pub async fn get_standard_hotkey_status(window: WebviewWindow, app_handle: AppHa
 #[tauri::command]
 pub async fn save_standard_hotkeys(window: WebviewWindow, app_handle: AppHandle, request: SaveStandardHotkeysRequest) -> Result<Value, String> {
     settings_hotkey_worker(window, app_handle, move |app, caller| {
+        let _admission = crate::graceful_exit::admit_mutation(&app)?;
         let path = settings_path(&app)?;
         standard_hotkey_save_response(
             || save_standard_hotkeys_transaction(&path, request.hotkeys,
@@ -574,7 +578,10 @@ fn save_standard_hotkeys_transaction<Snapshot>(path: &Path, hotkeys: StandardHot
 #[cfg(windows)]
 #[tauri::command]
 pub async fn begin_standard_hotkey_capture(window: WebviewWindow, app_handle: AppHandle, request: BeginStandardHotkeyCaptureRequest) -> Result<Value, String> {
-    settings_hotkey_worker(window, app_handle, move |_, caller| crate::windows_key_hook::capture_command(caller, "begin", request.revision, None)).await
+    settings_hotkey_worker(window, app_handle, move |app, caller| {
+        let _admission = crate::graceful_exit::admit_mutation(&app)?;
+        crate::windows_key_hook::capture_command(caller, "begin", request.revision, None)
+    }).await
 }
 #[cfg(windows)]
 #[tauri::command]
@@ -729,6 +736,8 @@ fn save_shell_bar_lock_to_path(
 }
 
 fn settings_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(all(test, windows))]
+    if let Some(path) = shutdown_test_probe::override_path(app_handle) { return Ok(path); }
     app_handle
         .path()
         .app_local_data_dir()
@@ -2151,3 +2160,6 @@ mod tests {
         assert!(error.contains("unsupported quick command order version"));
     }
 }
+#[cfg(all(test, windows))]
+#[path = "../tests/fixtures/graceful_exit_settings_probe.rs"]
+pub(crate) mod shutdown_test_probe;

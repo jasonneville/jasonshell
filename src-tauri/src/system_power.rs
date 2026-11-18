@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use tauri::WebviewWindow;
+use tauri::{Manager, WebviewWindow};
 use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -23,22 +23,31 @@ struct PowerActionPlan {
 }
 
 #[tauri::command]
-pub fn trigger_system_power_action(window: WebviewWindow, request: SystemPowerActionRequest) -> Result<(), String> {
+pub async fn trigger_system_power_action(window: WebviewWindow, request: SystemPowerActionRequest) -> Result<(), String> {
     authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
         command: "trigger_system_power_action",
         callers: &[crate::contracts::surfaces::SETTINGS_PANEL],
     }).map_err(CallerAuthError::into_string)?;
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    tauri::async_runtime::spawn_blocking(move || {
+    let _admission = admission;
     match request.action {
         SystemPowerAction::Sleep => trigger_sleep(),
         SystemPowerAction::Restart | SystemPowerAction::Shutdown => {
             let plan = power_action_plan(request.action);
-            std::process::Command::new(plan.program)
+            let mut child = std::process::Command::new(plan.program)
                 .args(plan.args)
                 .spawn()
-                .map(|_| ())
-                .map_err(|error| format!("Failed to trigger system power action: {error}"))
+                .map_err(|_| "Failed to trigger system power action")?;
+            loop {
+                match child.wait() {
+                    Ok(status) => return if status.success() { Ok(()) } else { Err("System power request was rejected".into()) },
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                }
+            }
         }
     }
+    }).await.map_err(|_| "System power request worker unavailable".to_string())?
 }
 
 fn power_action_plan(action: SystemPowerAction) -> PowerActionPlan {
@@ -82,7 +91,8 @@ mod tests {
     #[test]
     fn power_caller_policy_accepts_settings_only_and_redacts_denial() {
         use crate::stack_popup::{authorize_stack_command_caller, StackCommandAuth};
-        let handler = include_str!("system_power.rs").split("pub fn trigger_system_power_action(").nth(1).unwrap().split("fn power_action_plan(").next().unwrap();
+        let production = include_str!("system_power.rs").split("#[cfg(test)]").next().unwrap();
+        let handler = production.split_once("pub async fn trigger_system_power_action(").unwrap().1.split("fn power_action_plan(").next().unwrap();
         assert!(handler.contains("callers: &[crate::contracts::surfaces::SETTINGS_PANEL]"), "handler must bind exactly settings panel policy");
         let auth = StackCommandAuth::AllowedCallers {
             command: "trigger_system_power_action",
@@ -98,12 +108,17 @@ mod tests {
 
     #[test]
     fn power_action_requires_caller_before_any_native_power_operation() {
-        let source = include_str!("system_power.rs");
-        let handler = source.split("pub fn trigger_system_power_action(").nth(1).unwrap().split("fn power_action_plan(").next().unwrap();
+        let source = include_str!("system_power.rs").split("#[cfg(test)]").next().unwrap();
+        let handler = source.split_once("pub async fn trigger_system_power_action(").unwrap().1.split("fn power_action_plan(").next().unwrap();
         assert!(handler.contains("WebviewWindow"), "power action needs a trusted invoking webview label");
         let guard = handler.find("authorize_stack_command(").expect("power action must check caller");
         let effect = handler.find("match request.action").unwrap();
         assert!(guard < effect, "deny before sleep or shutdown spawn");
+        let admission = handler.find("crate::graceful_exit::admit_mutation(window.app_handle())?").expect("native freeze admission must reject before power effects");
+        let worker = handler.find("tauri::async_runtime::spawn_blocking(move || {").expect("actual native power worker");
+        let retained = handler.find("let _admission = admission;").expect("actual worker retains admission through completion");
+        assert!(guard < admission && admission < worker && worker < retained && retained < effect,
+            "authorize, then reserve before scheduling, then retain admission inside actual power worker");
     }
 
     #[test]

@@ -370,6 +370,14 @@ pub fn cleanup_shell_surfaces(app_handle: &AppHandle) -> AppResult<()> {
     result
 }
 
+/// Runs on the independent restore lane immediately after exit acceptance.
+/// Signal the guards, but do not wait for completion before attempting restore.
+pub(crate) fn restore_on_shell_exit(app: &AppHandle) {
+    if cleanup_shell_surfaces(app).is_err() {
+        eprintln!("AppBar restoration was incomplete during JasonShell exit");
+    }
+}
+
 fn rollback_activation_side_effects(
     mut effects: ActivationSideEffects,
 ) -> Result<CleanupSideEffects, (String, CleanupSideEffects)> {
@@ -432,6 +440,7 @@ pub fn resize_shell_bar(
     app_handle: AppHandle,
     request: ResizeShellBarRequest,
 ) -> Result<ResizeShellBarResponse, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     resize_shell_bar_for_app(&app_handle, request).map_err(|error| error.to_string())
 }
 
@@ -1413,15 +1422,19 @@ fn begin_cleanup_plan(state: &Mutex<ShellRuntimeState>) -> AppResult<CleanupSide
         }
         let handles = take_runtime_guard_handles(&mut state);
         state.activation_phase = ActivationPhase::CleanupInProgress;
-        drop(state);
-        stop_runtime_guard_handles(handles)
+        // Shutdown cannot wait for either guard worker. An in-flight taskbar
+        // operation shares the snapshot mutex with restoration; after the stop
+        // signal, no new operation may modify those snapshots.
+        if let Some(stop) = handles.fullscreen_stop { stop.store(true, Ordering::Release); }
+        if let Some(stop) = handles.taskbar_stop { stop.store(true, Ordering::Release); }
+        handles.legacy_taskbar_guard_owned
     };
+    explorer::request_taskbar_reconcile();
 
+    let legacy_snapshots = legacy_owned.and_then(|owned| owned.lock().ok().map(|items| items.clone()));
     let mut state = state.lock().expect("shell runtime state is poisoned");
-    if let Some(legacy_owned) = legacy_owned {
-        if let Ok(snapshots) = legacy_owned.lock() {
-            state.hidden_explorer_taskbars = snapshots.clone();
-        }
+    if let Some(snapshots) = legacy_snapshots {
+        state.hidden_explorer_taskbars = snapshots;
     }
     if state.cleaned_up {
         state.activation_phase = ActivationPhase::Idle;
@@ -1730,7 +1743,7 @@ fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
     let Ok(mut state) = state.try_lock() else {
         return Ok(());
     };
-    if state.cleaned_up {
+    if state.cleaned_up || state.activation_phase == ActivationPhase::CleanupInProgress {
         return Ok(());
     }
     if state.activation_phase != ActivationPhase::CommittedReserved {
@@ -1788,7 +1801,8 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
         let Ok(mut state) = state.try_lock() else {
             return Ok(());
         };
-        if state.cleaned_up || state.fullscreen_state == FullscreenAppBarState::Reserved {
+        if state.cleaned_up || state.activation_phase == ActivationPhase::CleanupInProgress
+            || state.fullscreen_state == FullscreenAppBarState::Reserved {
             return Ok(());
         }
         if state.activation_phase != ActivationPhase::CommittedReserved {
@@ -1886,7 +1900,7 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
         Ok(()) => {
             let state = app_handle.state::<Mutex<ShellRuntimeState>>();
             let mut state = state.lock().expect("shell runtime state is poisoned");
-            if state.cleaned_up {
+            if state.cleaned_up || state.activation_phase == ActivationPhase::CleanupInProgress {
                 return Ok(());
             }
 
@@ -2060,6 +2074,7 @@ fn start_taskbar_guard(state: &mut ShellRuntimeState, monitor_rect: RECT) {
     let guard = thread::spawn(move || {
         while !stop_signal.load(Ordering::Relaxed) {
             if let Ok(mut snapshots) = owned.lock() {
+                if stop_signal.load(Ordering::Acquire) { break; }
                 let _ = explorer::reconcile_primary_taskbar_ownership(&mut snapshots, monitor_rect);
             }
             thread::sleep(Duration::from_millis(100));
@@ -2085,6 +2100,7 @@ fn start_taskbar_guard_v2(
                 break;
             }
             if let Ok(mut snapshots) = owned.lock() {
+                if stop_signal.load(Ordering::Acquire) { break; }
                 let _ = explorer::reconcile_owned_taskbars(&mut snapshots);
             }
         }

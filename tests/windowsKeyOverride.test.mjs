@@ -215,12 +215,16 @@ test('Stack Browser toggle reopens latest request without emitting open event', 
   assert.match(popupWindow, /reopen_stack_popup_window[\s\S]*show_stack_popup_window_inner\([\s\S]*false/);
 });
 
-test('native hook installs during setup and cleans up on exit', () => {
+test('native hook installs during setup and accepted exit attempts its drain', () => {
   const main = readSource('../src-tauri/src/main.rs');
 
   assert.match(main, /let \(shell_settings, missing_snipping\) = settings::load_hotkey_startup_settings\(app\.handle\(\)\)/);
   assert.match(main, /windows_key_hook::install_loaded_windows_key_hook\(app\.handle\(\)\.clone\(\), shell_settings\.hotkeys, missing_snipping\)/);
-  assert.match(main, /windows_key_hook::uninstall_windows_key_hook\(\)/);
+  const exit = readSource('../src-tauri/src/graceful_exit.rs');
+  const hook = readSource('../src-tauri/src/windows_key_hook.rs');
+  assert.match(exit, /crate::windows_key_hook::stop_and_drain_hotkeys\(\)/);
+  assert.match(rustFunction(hook, 'stop_and_drain_hotkeys'), /EXIT_RETIRED\.store\(true,[\s\S]*retire_settings_capture\(\);[\s\S]*if let Err\(error\) = stop_hotkey_thread\(&mut guard\)[\s\S]*return Err\(error\);[\s\S]*if EXIT_DRAIN_FAILED\.load[\s\S]*return Err\([\s\S]*DrainReceipt \{ finished: true \}/);
+  assert.match(main, /RunEvent::ExitRequested \{ api, code, \.\. \} = event[\s\S]*?api\.prevent_exit\(\)/);
 });
 
 test('Settings hotkey controls stay disabled until settings load succeeds', () => {

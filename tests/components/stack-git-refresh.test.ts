@@ -33,7 +33,7 @@ it('same-repo child, Back, Forward retain branch DOM and badges without another 
   await open(); await waitFor(() => expect(calls('get_stack_git_metadata')).toHaveLength(1));
   const original = branch(); const counts = ['get_stack_git_summary', 'get_stack_git_status', 'get_stack_git_metadata'].map((name) => calls(name).length);
   await fireEvent.dblClick(screen.getByText('src')); await screen.findByText('draft.txt');
-  expect(branch()).toBe(original); expect(screen.getByText('draft.txt').closest('[data-stack-entry-path]')?.getAttribute('data-git-status')).toBe('modified');
+  expect(branch()).toBe(original); await waitFor(() => expect(screen.getByText('draft.txt').closest('[data-stack-entry-path]')?.getAttribute('data-git-status')).toBe('modified'));
   await fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true })); await screen.findByText('src');
   await fireEvent.click(screen.getByRole('button', { name: 'Forward', exact: true })); await screen.findByText('draft.txt');
   expect(['get_stack_git_summary', 'get_stack_git_status', 'get_stack_git_metadata'].map((name) => calls(name).length)).toEqual(counts);
@@ -41,7 +41,7 @@ it('same-repo child, Back, Forward retain branch DOM and badges without another 
 it.each([nested, submodule, linked, sibling, junction])('verified boundary %s never reuses enclosing repository status', async (path) => {
   await open(); const next = deferred<ReturnType<typeof summary>>(); overrides.set('get_stack_git_summary', () => next.promise);
   await navigate(path); await waitFor(() => expect(calls('get_stack_git_context').some((call) => call.args.path === path)).toBe(true));
-  expect(branch()?.textContent).not.toBe('main'); next.resolve(summary(path));
+  await waitFor(() => expect(branch()?.textContent).not.toBe('main')); next.resolve(summary(path));
   await waitFor(() => expect(branch()?.textContent).toBe('other'));
 });
 it('leaving repository clears snapshot; returning fetches fresh rather than using multi-repo cache', async () => {

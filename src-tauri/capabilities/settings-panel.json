@@ -5,6 +5,7 @@
     "settings-panel"
   ],
   "permissions": [
+    "allow-request-shell-exit",
     "core:default",
     "core:window:default",
     "allow-get-standard-hotkey-status",

@@ -37,6 +37,12 @@ On upgrade, omitted new fields infer their defaults. If an inferred chord confli
 - Do not turn planned persistence, restoration, startup execution, automation forwarding, or multi-monitor behavior into claimed current behavior through docs alone.
 - Do not use changelog or legacy plans as current truth without confirming against source/tests.
 
+## Settings graceful-exit lookup
+
+- User-facing contract: [`README.md#settings-only-graceful-exit`](../README.md#settings-only-graceful-exit).
+- Architecture and lifecycle contract: [`master_spec.md#settings-only-graceful-exit`](../master_spec.md#settings-only-graceful-exit).
+- Consent-gated acceptance checklist: [`smoke-test-windows.md#settings-graceful-exit-acceptance-pending--not-run`](smoke-test-windows.md#settings-graceful-exit-acceptance-pending--not-run). It remains pending/not run; live Tauri, process, and AppBar smoke requires explicit human consent.
+
 ## Validation basics
 
 Package scripts are the command source of truth: `npm run test:node`, `npm run check`, `npm run build`, `npm run cargo:test`, `npm run cargo:check`, `npm run smoke:runtime`, `npm run smoke:fullscreen`, and `npm run validate`.

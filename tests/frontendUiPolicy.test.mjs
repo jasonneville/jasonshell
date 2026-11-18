@@ -84,7 +84,9 @@ test('stack browser exposes editable path input and clickable segment navigation
   const stackPopupSource = source('src/components/StackPopupSurface.svelte');
 
   assert.match(stackPopupSource, /class="stack-path-editor"[\s\S]*on:submit\|preventDefault=\{\(\) => void submitPathDraft\(\)\}/);
-  assert.match(stackPopupSource, /const read = listStackFolder\(folderPath, async \(page\) => \{[\s\S]*?\}\);[\s\S]*folderReadPending = \{ sequence: loadSequence, promise: read \};[\s\S]*const listing = await read;[\s\S]*if \(loadSequence !== folderLoadSequence\)[\s\S]*commitValidatedStackFolderListing\(stackState, folderPath, listing\)/);
+  const submitPath = stackPopupSource.slice(stackPopupSource.indexOf('async function submitPathDraft('), stackPopupSource.indexOf('function resetPathDraft('));
+  assert.match(submitPath, /const read = listStackFolder\(folderPath, async \(page\) => \{[\s\S]*?\}\);[\s\S]*folderReadPending = \{ sequence: loadSequence, promise: read \};[\s\S]*const listing = await read;\s*if \(disposed \|\| loadSequence !== folderLoadSequence\) \{\s*return;\s*\}[\s\S]*stackState = commitValidatedStackFolderListing\(stackState, folderPath, listing\)/);
+  assert.match(submitPath, /finally \{\s*if \(folderReadPending\?\.sequence === loadSequence\) folderReadPending = null;/, 'completion releases only its own pending read');
   assert.match(stackPopupSource, /<input[\s\S]*aria-label="Current folder path"[\s\S]*value=\{pathDraft\}[\s\S]*on:keydown=\{handlePathKeydown\}/);
   assert.match(stackPopupSource, /function handlePathKeydown\(event: KeyboardEvent\)[\s\S]*event\.key === 'Escape'[\s\S]*resetPathDraft\(\)/);
   assert.match(stackPopupSource, /<nav class="path-segments" aria-label="Path segments">/);

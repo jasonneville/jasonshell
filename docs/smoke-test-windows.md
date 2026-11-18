@@ -13,6 +13,28 @@ Use this after the static validation gates pass. These checks require a Windows 
 - Do not claim automated assistive-technology support. NVDA, JAWS, DPI/scaling, and multi-monitor evidence is manual-only and must identify tester/tool, display setup, and observed result.
 - Official Node test entry is `npm run test:node`; it cleans repo-local `dist-tests`, rebuilds `tsconfig.test.json`, then runs `node --test tests/*.test.mjs`. Direct `node --test ...` is unsafe unless `dist-tests` is known fresh because stale compiled helpers can mask source changes.
 
+## Settings Graceful Exit Acceptance (Pending / Not Run)
+
+This is a consent-gated acceptance checklist for the Settings-only graceful-exit implementation. It is not a product-complete claim. Do not launch live Tauri, terminate processes, reserve or restore AppBars, or run this section without explicit human consent for each applicable action class.
+
+### Cancel and unsaved-work paths
+
+- With the Exit confirmation focused, press **Escape**, then use **Cancel**. Verify focus returns to **Exit JasonShell** and there are zero writes, hides, cleanup calls, or final-exit admissions.
+- Leave unsaved Stack, theme, or shortcut work in place. Verify the confirmation warns that unsaved work will be lost, while Escape/Cancel remain benign. Existing save/edit controls remain unchanged; no draft handshake or recovery screen appears.
+- Verify opening the confirmation does not save, discard, hide Settings, start cleanup, or admit final exit. Escape/Cancel return benignly. Confirm sends one path-free request and displays **Exiting JasonShell**; after acceptance, no renderer reply is required.
+
+### Accepted exit
+
+- After acceptance, verify the native JasonShell process exits within three seconds, independently of Tauri or cleanup completion. An independent control app must remain alive.
+- Verify JasonShell-owned Quick Command job trees when possible. If verification fails, exit must still proceed; kernel kill-on-close is only a fallback, not proof of verified draining.
+- Verify AppBar and Explorer work is best effort and early, never a blocker for exit. No OS shutdown/restart/power action is sent.
+- Send duplicate exit IPC requests and verify they do not reset the deadline or create a second exit path. Do not test retry or postaccept recovery UI: none exists.
+
+### Evidence boundary and current status
+
+- Automated browser and coordinator tests are partial evidence only; they do **not** certify real HWND/process reaping or desktop restoration. Do not claim validation pass or target support until the relevant evidence exists. No postaccept failure state is expected or retained.
+- **Not run:** live Tauri/Windows shell smoke, installed-app process termination/reaping, and live AppBar/Explorer behavior. These require explicit human consent and remain acceptance gaps.
+
 ## Preflight
 
 - Confirm `npm run check`, `npm run build`, `npm run test:node`, `npm run cargo:test`, and `npm run cargo:check` pass or record the exact failure.

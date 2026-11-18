@@ -6,7 +6,10 @@ use serde::Serialize;
 use system_info::{RuntimeInner, ProcessManagerContext, ProcessManagerTab, Lane};
 const PROCESS_MANAGER_LABEL: &str = "process-manager";
 const PROCESS_MANAGER_CLOSED_EVENT: &str = "process-manager:closed";
-mod shell_windows { pub const PROCESS_MANAGER_LABEL: &str = "process-manager"; }
+mod shell_windows { pub const PROCESS_MANAGER_LABEL: &str = "process-manager"; pub const SETTINGS_PANEL_LABEL: &str = "settings-panel"; }
+// This fixture exercises the Process Manager blur branch only. Settings exit
+// retention is covered by the dedicated actual coordinator/window fixture.
+mod graceful_exit { pub fn holds_settings(_: &super::Window) -> bool { false } }
 enum WindowEvent { Focused(bool), Destroyed }
 struct SystemInfoRuntime { inner: Mutex<RuntimeInner> }
 type Callback = Box<dyn FnOnce() + Send>;

@@ -35,6 +35,9 @@
   let fileIdentity = '';
   let draft = '';
   let saving = false;
+  let reloadPending = false;
+
+  export function hasPendingFileOperation() { return saving || reloadPending; }
   let markdown = false;
   let editorMode: 'preview' | 'edit' = 'edit';
   let requestSequence = 0;
@@ -72,7 +75,7 @@
     });
     editorAdapter = mountedAdapter;
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    if (!disposed && filePath === path && editorAdapter === mountedAdapter) mountedAdapter.focusAtStart();
+    if (!disposed && filePath === path && editorAdapter === mountedAdapter && !document.hidden && document.hasFocus()) mountedAdapter.focusAtStart();
   }
 
   function setEditorMode(mode: 'preview' | 'edit') {
@@ -177,12 +180,13 @@
     editorAdapter = mountedAdapter;
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     if (disposed || sequence !== requestSequence || filePath !== path || editorAdapter !== mountedAdapter) return;
-    mountedAdapter.focusAtStart();
+    if (!document.hidden && document.hasFocus()) mountedAdapter.focusAtStart();
   }
 
   async function reloadDiskVersion(filePath: string) {
     const sequence = ++requestSequence;
     reloadErrorMessage = '';
+    reloadPending = true;
     try {
       const result = await readStackBasicTextFile(filePath);
       if (disposed || sequence !== requestSequence || filePath !== path) return;
@@ -190,6 +194,8 @@
     } catch (error) {
       if (disposed || sequence !== requestSequence || filePath !== path) return;
       reloadErrorMessage = error instanceof Error && error.message ? error.message : String(error);
+    } finally {
+      reloadPending = false;
     }
   }
 

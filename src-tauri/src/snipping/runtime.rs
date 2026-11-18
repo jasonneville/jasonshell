@@ -34,6 +34,7 @@ pub(crate) trait RuntimeEdges: Send + Sync {
     fn foreground(&self) -> isize;
     fn restore(&self, intent: Intent, owned_foreground: isize);
     fn shutdown(&self);
+    fn stop_and_drain(&self) -> Result<(), String> { Err("native snipping drain is unavailable".into()) }
     fn publication_attempts(&self) -> Option<usize> { None }
     fn feedback(&self, _attempt: u64, _code: Option<&str>) {}
     fn focus_registration(&self, _hwnd: isize) -> Option<FocusRegistration> { None }
@@ -60,6 +61,11 @@ impl RuntimeEdges for NativeEdges {
     fn foreground(&self) -> isize { unsafe { GetForegroundWindow() }.0 as isize }
     fn restore(&self, intent: Intent, owned_foreground: isize) { self.observer.restore_validated(intent, owned_foreground); }
     fn shutdown(&self) { self.clipboard.shutdown(); self.observer.stop(); }
+    fn stop_and_drain(&self) -> Result<(), String> {
+        let clipboard = self.clipboard.stop_and_drain();
+        let observer = self.observer.stop_and_drain();
+        clipboard.and(observer)
+    }
     fn publication_attempts(&self) -> Option<usize> { Some(self.clipboard.publication_attempts()) }
     fn feedback(&self, attempt: u64, code: Option<&str>) {
         if let Ok(window) = self.window() {
@@ -69,6 +75,8 @@ impl RuntimeEdges for NativeEdges {
     }
 }
 pub struct SnipRuntime {
+    workers: super::shutdown_workers::WorkerGroup,
+    exit_admission: Mutex<Option<Arc<dyn Fn() -> Result<Box<dyn Send>, String> + Send + Sync>>>,
     pub coordinator: Coordinator,
     pub registry: Arc<NativeRegistry>,
     bar: Caller,
@@ -86,7 +94,7 @@ pub struct SnipRuntime {
 }
 /// Native-only intent/reservation ticket. Drop releases repeat suppression even if
 /// the hotkey owner cannot dispatch its worker. Never serialized or accepted by IPC.
-pub struct NativeStartReservation { runtime: Arc<SnipRuntime>, intent: Intent, deadline: Instant, attempt: u64 }
+pub struct NativeStartReservation { runtime: Arc<SnipRuntime>, intent: Intent, deadline: Instant, attempt: u64, _work: super::shutdown_workers::WorkPermit, _admission: Option<Box<dyn Send>> }
 impl Drop for NativeStartReservation { fn drop(&mut self) { self.runtime.starting.store(false, Ordering::Release); } }
 impl SnipRuntime {
     /// Passive, generation-scoped focus hold. Release never shows or focuses a
@@ -103,7 +111,7 @@ impl SnipRuntime {
     }
     pub(crate) fn publication_attempts(&self) -> Option<usize> { self.edges.publication_attempts() }
     fn assemble(coordinator: Coordinator, registry: Arc<NativeRegistry>, bar: Caller, edges: Arc<dyn RuntimeEdges>) -> Self {
-        Self { coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None), hotkey_attempt: AtomicU64::new(0), hotkey_reported: AtomicU64::new(0), escape: Mutex::new(None) }
+        Self { workers: Default::default(), exit_admission: Mutex::new(None), coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None), hotkey_attempt: AtomicU64::new(0), hotkey_reported: AtomicU64::new(0), escape: Mutex::new(None) }
     }
     /// Called after shell window construction and before normal activation.
     pub fn install(app: AppHandle, top: WebviewWindow) -> Result<Arc<Self>, SnipError> {
@@ -142,12 +150,12 @@ impl SnipRuntime {
         });
         *runtime.escape.lock().map_err(|_| SnipError::Inactive)? = Some(super::escape::install(Arc::downgrade(&runtime))?);
         let weak = Arc::downgrade(&runtime);
-        std::thread::spawn(move || loop {
+        runtime.workers.spawn(move || loop {
             std::thread::sleep(Duration::from_millis(50));
             let Some(runtime) = weak.upgrade() else { break; };
             if runtime.stopped.load(Ordering::Acquire) { break; }
             runtime.coordinator.expire();
-        });
+        }).map_err(|_| SnipError::Inactive)?;
         Ok(runtime)
     }
     /// Native hotkey owner may call this from a worker without renderer mediation.
@@ -160,12 +168,14 @@ impl SnipRuntime {
     }
     /// Hotkey message thread calls BEFORE spawning a worker or emitting UI events.
     pub fn reserve_native_start(self: &Arc<Self>) -> Result<NativeStartReservation, SnipError> {
+        let work = self.workers.enter().map_err(|_| SnipError::Inactive)?;
+        let admission = self.admit_exit_work().map_err(|_| SnipError::Busy)?;
         if self.starting.load(Ordering::Acquire) { return Err(SnipError::Busy); }
         let attempt = self.hotkey_attempt.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1)).map_err(|_| SnipError::Inactive)? + 1;
         match self.reserve_intent_for(self.bar.clone(), true) {
             Ok((intent, deadline)) => {
                 self.edges.feedback(attempt, None);
-                Ok(NativeStartReservation { runtime: self.clone(), intent, deadline, attempt })
+                Ok(NativeStartReservation { runtime: self.clone(), intent, deadline, attempt, _work: work, _admission: admission })
             },
             Err(error) => { self.edges.feedback(attempt, None); self.hotkey_failure(attempt, error); Err(error) }
         }
@@ -183,6 +193,8 @@ impl SnipRuntime {
         result
     }
     fn start(&self, caller: Caller) -> Result<Token, SnipError> {
+        let _admission = self.admit_exit_work().map_err(|_| SnipError::Busy)?;
+        let _work = self.workers.enter().map_err(|_| SnipError::Inactive)?;
         let (intent, deadline) = self.reserve_intent(caller.clone())?;
         struct Pin<'a>(&'a AtomicBool); impl Drop for Pin<'_> { fn drop(&mut self) { self.0.store(false, Ordering::Release); } }
         let _pin = Pin(&self.starting);
@@ -276,6 +288,34 @@ impl SnipRuntime {
         }
     }
     pub fn shutdown(&self) { self.stopped.store(true, Ordering::Release); if let Ok(escape) = self.escape.lock() { if let Some(escape) = escape.as_ref() { escape.shutdown(); } } self.release(); self.registry.close_snips(); self.edges.shutdown(); }
+    pub fn install_exit_admission(&self, admission: Arc<dyn Fn() -> Result<Box<dyn Send>, String> + Send + Sync>) -> Result<(), String> {
+        *self.exit_admission.lock().map_err(|_| "Snipping admission unavailable")? = Some(admission); Ok(())
+    }
+    fn admit_exit_work(&self) -> Result<Option<Box<dyn Send>>, String> {
+        let admission = self.exit_admission.lock().map_err(|_| "Snipping admission unavailable")?.clone();
+        admission.map(|admit| admit()).transpose()
+    }
+    pub fn stop_and_drain(&self) -> Result<(), String> {
+        self.stopped.store(true, Ordering::Release);
+        self.release();
+        self.workers.close()?;
+        let escape = {
+            let escape = self.escape.try_lock().map_err(|_| "Escape ownership unavailable")?;
+            escape.as_ref().cloned()
+        };
+        let escape_result = escape.map(|escape| escape.stop_and_drain()).unwrap_or(Ok(()));
+        let workers = self.workers.drain();
+        // No retained image read, capture, picker or clipboard mutation can be
+        // released before its actual task completion reservation returned.
+        workers?;
+        self.coordinator.retire_for_shutdown().map_err(|_| "Snipping image ownership still busy")?;
+        let windows = self.registry.stop_and_drain_snips();
+        let edges = self.edges.stop_and_drain();
+        escape_result.and(windows).and(edges)?;
+        self.original.lock().map_err(|_| "Snipping origin ownership unavailable")?.take();
+        self.originals.lock().map_err(|_| "Snipping origin ownership unavailable")?.clear();
+        Ok(())
+    }
 }
 /// Test construction replaces only native edges and the six existing coordinator
 /// ports. All reservation, prepare/ack/release, token checks and shutdown code above
@@ -320,7 +360,10 @@ fn monitor(id: String) -> Result<String, SnipError> {
 }
 fn error(error: SnipError) -> String { match error { SnipError::Inactive=>"inactive",SnipError::Unauthorized=>"unauthorized",SnipError::Stale=>"stale",SnipError::Busy=>"busy",SnipError::InvalidSelection=>"invalid-selection",SnipError::TopologyChanged=>"topology-changed",SnipError::CaptureFailed=>"capture-failed",SnipError::ReadinessTimeout=>"readiness-timeout",SnipError::WindowFailed=>"window-failed",SnipError::ImageFailed=>"image-failed" }.into() }
 async fn worker<T: Send + 'static>(runtime: Arc<SnipRuntime>, window: WebviewWindow, action: impl FnOnce(&SnipRuntime, Caller) -> Result<T, SnipError> + Send + 'static) -> Result<T, String> {
+    let admission = runtime.admit_exit_work()?;
+    let work = runtime.workers.enter()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let (_admission, _work) = (admission, work);
         if runtime.stopped.load(Ordering::Acquire) { return Err(SnipError::Inactive); }
         let caller = runtime.registry.resolve(&window)?; action(&runtime, caller)
     }).await.map_err(|_| "inactive".to_string())?.map_err(error)

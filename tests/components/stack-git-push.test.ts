@@ -43,9 +43,11 @@ it.each(['Push', 'Commit & Push'])('%s works without browser URL, exactly once, 
   expect(mutations().at(-1)?.args).toEqual({ folderPath: child });
   if (action !== 'Push') expect(mutations()[0].args).toEqual({ request: { folderPath: child, message: 'explicit origin fixture', paths: [`${child}\\draft.txt`] } });
   expect(ledger.filter(({ command }) => command === 'get_stack_git_status').length).toBeGreaterThan(statusReads);
-  const browserLink = screen.queryByRole('button', { name: 'Open remote repository in browser', exact: true });
-  if (browserUrl) expect(browserLink).not.toBeNull();
-  else expect(browserLink).toBeNull();
+  await waitFor(() => {
+    const browserLink = screen.queryByRole('button', { name: 'Open remote repository in browser', exact: true });
+    if (browserUrl) expect(browserLink).not.toBeNull();
+    else expect(browserLink).toBeNull();
+  });
 });
 
 it.each(['Push', 'Commit & Push'])('%s suppresses repeated actions while commit/push is pending', async (action) => {

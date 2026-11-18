@@ -31,12 +31,12 @@ pub(crate) enum Event {
 }
 macro_rules! counters {
     ($($field:ident),+ $(,)?) => {
-        pub(crate) struct Diagnostics { $( $field: AtomicU64, )+ state: AtomicU64, stopped: AtomicBool }
+        pub(crate) struct Diagnostics { $( $field: AtomicU64, )+ state: AtomicU64, stopped: AtomicBool, workers: super::shutdown_workers::WorkerGroup }
         #[derive(Clone, Copy, Serialize)]
         pub(crate) struct Snapshot { schema: u64, process_id: u32, enabled: bool, $( $field: u64, )+ phase: u64, busy: bool, armed: bool, deferred: bool,
             callback_escape_down: u64, callback_escape_up: u64, callback_tls_missing: u64, callback_owner_missing: u64 }
         impl Diagnostics {
-            fn new() -> Self { CALLBACK_ACTIVE.fetch_add(1, Ordering::Relaxed); Self { $( $field: AtomicU64::new(0), )+ state: AtomicU64::new(0), stopped: AtomicBool::new(false) } }
+            fn new() -> Self { CALLBACK_ACTIVE.fetch_add(1, Ordering::Relaxed); Self { $( $field: AtomicU64::new(0), )+ state: AtomicU64::new(0), stopped: AtomicBool::new(false), workers: Default::default() } }
             /// Approximate cross-counter snapshot; flags share one atomic word.
             pub(crate) fn snapshot(&self) -> Snapshot {
                 let state = self.state.load(Ordering::Relaxed);
@@ -79,7 +79,7 @@ impl Diagnostics {
         if !regular_directory(directory) || !regular_file(&directory.join("snip-escape-diagnostics.enable")) { return None; }
         let output = directory.join(format!("snip-escape-diagnostics-{}.json", std::process::id()));
         let diagnostic = Arc::new(Self::new()); let weak = Arc::downgrade(&diagnostic);
-        std::thread::Builder::new().name("snip-diagnostic-writer".into()).spawn(move || {
+        diagnostic.workers.spawn(move || {
             // Never follow/overwrite an existing output or reparse target. Only
             // this writer owns this newly created per-process file handle.
             let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(output) else { return; };
@@ -101,6 +101,7 @@ impl Diagnostics {
     pub(crate) fn shutdown(&self) {
         if !self.stopped.swap(true, Ordering::AcqRel) { self.record(Event::Shutdown); }
     }
+    pub(crate) fn stop_and_drain(&self) -> Result<(), String> { self.shutdown(); self.workers.drain() }
 }
 impl Drop for Diagnostics { fn drop(&mut self) { self.shutdown(); CALLBACK_ACTIVE.fetch_sub(1, Ordering::Relaxed); } }
 fn non_reparse(metadata: &std::fs::Metadata) -> bool {

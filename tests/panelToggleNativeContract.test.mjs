@@ -17,7 +17,8 @@ test('Settings toggle is opt-in, reads native visibility before show, and reuses
   assert.match(settings, /#\[serde\(default\)\]\s+pub toggle: bool/);
   const show = between(settings, 'pub fn show_settings_panel(', '#[tauri::command]\npub fn hide_settings_panel');
   assert.match(show, /if request\.toggle && panel\.is_visible\(\).*?\{\s*return hide_settings_panel\(app_handle\);/s);
-  assert.ok(show.indexOf('return hide_settings_panel') < show.indexOf('.show()'));
+  const ordinary = show.slice(show.indexOf('if request.toggle'));
+  assert.ok(ordinary.indexOf('return hide_settings_panel') < ordinary.indexOf('.show()'));
   const hide = between(settings, 'pub fn hide_settings_panel(', 'pub(crate) fn install_capture_lifecycle');
   assert.ok(hide.indexOf('retire_settings_capture()') < hide.indexOf('.hide()'));
 });

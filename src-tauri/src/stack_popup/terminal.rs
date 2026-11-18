@@ -1,4 +1,7 @@
 use crate::settings::{self, TerminalProfile};
+#[cfg(all(test, windows))]
+#[path = "../../tests/fixtures/graceful_exit_terminal_probe.rs"]
+pub(crate) mod shutdown_test_probe;
 use crate::shell_windows;
 use crate::stack_popup::models::StackPopupRuntimeState;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -12,8 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
@@ -144,12 +147,24 @@ struct StackTerminalSize {
 
 pub(crate) struct StackTerminalRegistry {
     sessions: HashMap<String, StackTerminalSession>,
+    draining: HashMap<String, Arc<Mutex<TerminalDrain>>>,
+}
+
+// A timed-out worker remains owned here. Retry observes the SAME worker; only
+// a returned session may be retried by a new worker after the old one joined.
+struct TerminalDrain {
+    snapshot: StackTerminalSessionSnapshot,
+    target: String,
+    worker: Option<thread::JoinHandle<Result<StackTerminalSession, (StackTerminalSession, String)>>>,
+    retained: Option<StackTerminalSession>,
+    failed: bool,
 }
 
 impl Default for StackTerminalRegistry {
     fn default() -> Self {
         Self {
             sessions: HashMap::new(),
+            draining: HashMap::new(),
         }
     }
 }
@@ -240,6 +255,7 @@ impl StackTerminalRegistry {
                 profile: TerminalProfile::PowerShell,
                 cwd,
                 child: test_child(),
+                reader: None,
                 master: None,
                 writer: None,
                 input_buffer: String::new(),
@@ -311,6 +327,7 @@ struct StackTerminalSession {
     profile: TerminalProfile,
     cwd: PathBuf,
     child: Box<dyn PtyChild + Send>,
+    reader: Option<thread::JoinHandle<()>>,
     #[allow(dead_code)]
     master: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
@@ -341,6 +358,7 @@ pub(crate) async fn start_stack_terminal_session(
     caller_label: &str,
     request: StackTerminalStartRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
+    let admission = crate::graceful_exit::admit_mutation(app_handle)?;
     let cwd = PathBuf::from(super::paths::normalize_existing_dir(&request.folder_path)?);
     let shell_settings = settings::load_shell_settings_for_app(app_handle)?;
     let profile = request
@@ -349,19 +367,22 @@ pub(crate) async fn start_stack_terminal_session(
     let target_label =
         terminal_session_target_label(caller_label, request.target_label.as_deref())?;
     let app_handle_for_spawn = app_handle.clone();
-    let session = tauri::async_runtime::spawn_blocking(move || {
-        spawn_terminal_session(Some(app_handle_for_spawn), profile, cwd, target_label)
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        // The worker owns admission through registry publication, even if its
+        // awaiting renderer disappears while ConPTY is being constructed.
+        let _admission = admission;
+        let session = spawn_terminal_session(Some(app_handle_for_spawn.clone()), profile, cwd, target_label)?;
+        let snapshot = session.snapshot();
+        let state = app_handle_for_spawn.state::<Mutex<StackPopupRuntimeState>>();
+        // A poisoned lock must not drop a newly created live child.
+        let mut runtime = state.lock().unwrap_or_else(|poison| poison.into_inner());
+        runtime.terminal_sessions.insert(session);
+        Ok::<_, String>(snapshot)
     })
     .await
     .map_err(|error| format!("Failed to join terminal spawn task: {error}"))??;
-    let snapshot = session.snapshot();
-    let target_label = session.target_label.clone();
-    let mut runtime = state
-        .lock()
-        .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-    runtime.terminal_sessions.insert(session);
-    drop(runtime);
-    emit_cwd_update(app_handle, &target_label, &snapshot);
+    let _ = state;
+    emit_cwd_update(app_handle, caller_label, &snapshot);
     Ok(snapshot)
 }
 
@@ -371,6 +392,7 @@ pub(crate) async fn write_stack_terminal_session(
     caller_label: &str,
     request: StackTerminalWriteRequest,
 ) -> Result<StackTerminalSessionSnapshot, String> {
+    let admission = crate::graceful_exit::admit_mutation(app_handle)?;
     let (target_label, writer) = {
         let mut runtime = state
             .lock()
@@ -397,6 +419,7 @@ pub(crate) async fn write_stack_terminal_session(
     let input = request.input;
     let input_for_write = input.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         let mut writer = writer
             .lock()
             .map_err(|_| "Failed to lock terminal writer".to_string())?;
@@ -505,7 +528,8 @@ pub(crate) fn poll_stack_terminal_session(
     caller_label: &str,
     session_id: String,
 ) -> Result<StackTerminalPollResult, String> {
-    let (target_label, snapshot, returned_session_id, cwd, running, chunks) = {
+    reap_finished_terminal_drains(app_handle, state)?;
+    let (returned_session_id, cwd, running, chunks) = {
         let mut runtime = state
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
@@ -518,8 +542,6 @@ pub(crate) fn poll_stack_terminal_session(
         let mut chunks = drain_terminal_output(session);
         let running = refresh_session_running(session, &mut chunks);
         (
-            session.target_label.clone(),
-            session.snapshot(),
             session.id.clone(),
             stack_terminal_cwd_string(&session.cwd),
             running,
@@ -527,12 +549,9 @@ pub(crate) fn poll_stack_terminal_session(
         )
     };
     if !running {
-        let mut runtime = state
-            .lock()
-            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-        let _ = runtime.terminal_sessions.remove(&session_id);
-        drop(runtime);
-        emit_terminal_closed(app_handle, &target_label, &snapshot);
+        // Natural root exit does not establish PTY/reader completion. Retain a
+        // drain slot rather than dropping the session from a polling callback.
+        let _ = stage_terminal_drain(app_handle, state, &session_id, false)?;
     }
     Ok(StackTerminalPollResult {
         session_id: returned_session_id,
@@ -552,6 +571,11 @@ pub(crate) fn stop_stack_terminal_session(
         let mut runtime = state
             .lock()
             .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
+        if let Some(slot) = runtime.terminal_sessions.draining.get(&request.session_id) {
+            let target = slot.lock().map_err(|_| "Terminal drain unavailable")?.target.clone();
+            authorize_stack_terminal_session_target(caller_label, &target, crate::contracts::commands::STOP_STACK_TERMINAL)?;
+            target
+        } else {
         let session = runtime.terminal_sessions.session_mut(&request.session_id)?;
         authorize_stack_terminal_session_target(
             caller_label,
@@ -559,8 +583,9 @@ pub(crate) fn stop_stack_terminal_session(
             crate::contracts::commands::STOP_STACK_TERMINAL,
         )?;
         session.target_label.clone()
+        }
     };
-    let Some(mut session) = request_terminal_stop(state, &request.session_id)? else {
+    let Some(slot) = stage_terminal_drain(app_handle, state, &request.session_id, false)? else {
         let snapshot = StackTerminalSessionSnapshot {
             session_id: request.session_id,
             profile: TerminalProfile::WindowsTerminal,
@@ -578,11 +603,10 @@ pub(crate) fn stop_stack_terminal_session(
         emit_terminal_closed(app_handle, shell_windows::STACK_POPUP_LABEL, &snapshot);
         return Ok(snapshot);
     };
-    let _ = session.child.kill();
-    let _ = session.child.wait();
-    session.running = false;
-    let snapshot = session.snapshot();
-    emit_terminal_closed(app_handle, &target_label, &snapshot);
+    let snapshot = wait_terminal_drain(app_handle, &slot)?;
+    let mut runtime = state.lock().map_err(|_| "Terminal ownership unavailable")?;
+    runtime.terminal_sessions.draining.remove(&request.session_id);
+    let _ = target_label;
     Ok(snapshot)
 }
 
@@ -644,22 +668,147 @@ pub(crate) fn stop_terminal_sessions_for_target(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     target_label: &str,
 ) -> Result<(), String> {
-    let mut sessions = {
-        let mut runtime = state
-            .lock()
-            .map_err(|_| "Failed to lock stack popup runtime state".to_string())?;
-        runtime
-            .terminal_sessions
-            .request_stop_by_target(target_label)
+    let ids = {
+        let runtime = state.lock().map_err(|_| "Terminal ownership unavailable")?;
+        let registry = &runtime.terminal_sessions;
+        let mut ids = registry.sessions.values().filter(|session| session.target_label == target_label).map(|session| session.id.clone()).collect::<Vec<_>>();
+        for (id, slot) in &registry.draining {
+            if slot.lock().map_err(|_| "Terminal drain ownership unavailable")?.target == target_label { ids.push(id.clone()); }
+        }
+        ids
     };
-    for session in sessions.iter_mut() {
-        let _ = session.child.kill();
-        let _ = session.child.wait();
-        session.running = false;
-        let snapshot = session.snapshot();
-        emit_terminal_closed(app_handle, target_label, &snapshot);
+    let mut failed = false;
+    // Stage every session first, so one slow PTY never prevents the independent
+    // owned sessions from receiving their stop request.
+    let mut slots = Vec::new();
+    for id in ids {
+        match stage_terminal_drain(app_handle, state, &id, true) {
+            Ok(Some(slot)) => slots.push((id, slot)), Ok(None) => {}, Err(_) => failed = true,
+        }
     }
+    for (id, slot) in slots {
+        match wait_terminal_drain(app_handle, &slot) {
+            Ok(_) => { state.lock().map_err(|_| "Terminal ownership unavailable")?.terminal_sessions.draining.remove(&id); },
+            Err(_) => failed = true,
+        }
+    }
+    if failed { Err("Owned terminal cleanup is incomplete; retry retained sessions".into()) } else { Ok(()) }
+}
+
+fn stage_terminal_drain(app: &AppHandle, state: &State<'_, Mutex<StackPopupRuntimeState>>, id: &str, cleanup: bool) -> Result<Option<Arc<Mutex<TerminalDrain>>>, String> {
+    let mut runtime = state.lock().map_err(|_| "Terminal ownership unavailable")?;
+    let registry = &mut runtime.terminal_sessions;
+    if let Some(slot) = registry.draining.get(id) { return Ok(Some(slot.clone())); }
+    let Some(session) = registry.request_stop(id)? else { return Ok(None); };
+    let slot = Arc::new(Mutex::new(TerminalDrain { snapshot: session.snapshot(), target: session.target_label.clone(), worker: None, retained: Some(session), failed: false }));
+    registry.draining.insert(id.into(), slot.clone());
+    launch_terminal_drain(app, &slot, cleanup)?;
+    Ok(Some(slot))
+}
+
+pub(crate) fn reap_finished_terminal_drains(app: &AppHandle, state: &State<'_, Mutex<StackPopupRuntimeState>>) -> Result<(), String> {
+    let slots = state.lock().map_err(|_| "Terminal ownership unavailable")?.terminal_sessions.draining.iter().map(|(id, slot)| (id.clone(), slot.clone())).collect::<Vec<_>>();
+    for (id, slot) in slots {
+        let completed = {
+            let mut slot = slot.lock().map_err(|_| "Terminal drain unavailable")?;
+            if slot.worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+                match slot.worker.take().ok_or("Terminal worker unavailable")?.join() {
+                    Ok(Ok(session)) => { slot.snapshot = session.snapshot(); true },
+                    Ok(Err((session, _))) => { slot.retained = Some(session); false },
+                    Err(_) => { slot.failed = true; false },
+                }
+            } else { false }
+        };
+        if completed {
+            state.lock().map_err(|_| "Terminal ownership unavailable")?.terminal_sessions.draining.remove(&id);
+        }
+    }
+    let _ = app;
     Ok(())
+}
+
+fn launch_terminal_drain(app: &AppHandle, slot: &Arc<Mutex<TerminalDrain>>, cleanup: bool) -> Result<(), String> {
+    let mut slot = slot.lock().map_err(|_| "Terminal drain unavailable")?;
+    if slot.worker.is_some() { return Ok(()); }
+    let admission = match crate::graceful_exit::admit_mutation(app) {
+        Ok(admission) => Some(admission),
+        Err(error) => {
+            if !cleanup || !crate::graceful_exit::is_exit_accepted(app) { return Err(error); }
+            None
+        }
+    };
+    let Some(session) = slot.retained.take() else { return Ok(()); };
+    let app = app.clone();
+    slot.worker = Some(thread::spawn(move || {
+        // Admission follows the ACTUAL worker across caller timeout/cancellation.
+        // Only the committed native cleanup path may operate under the fence.
+        let _admission = admission;
+        let mut session = session;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drain_terminal_session(&mut session)))
+            .unwrap_or_else(|_| Err("Terminal drain worker panicked; ownership retained".into()));
+        match result {
+            Ok(()) => { session.running = false; emit_terminal_closed(&app, &session.target_label, &session.snapshot()); Ok(session) },
+            Err(error) => Err((session, error)),
+        }
+    }));
+    Ok(())
+}
+
+fn wait_terminal_drain(app: &AppHandle, slot: &Arc<Mutex<TerminalDrain>>) -> Result<StackTerminalSessionSnapshot, String> {
+    launch_terminal_drain(app, slot, true)?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        {
+            let mut slot = slot.lock().map_err(|_| "Terminal drain unavailable")?;
+            if slot.failed { return Err("Terminal worker failed; ownership retained".into()); }
+            if slot.worker.is_none() && slot.retained.is_none() && !slot.snapshot.running { return Ok(slot.snapshot.clone()); }
+            if slot.worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+                let worker = slot.worker.take().ok_or("Terminal worker unavailable")?;
+                match worker.join() {
+                    Ok(Ok(session)) => { slot.snapshot = session.snapshot(); return Ok(slot.snapshot.clone()); },
+                    Ok(Err((session, error))) => { slot.retained = Some(session); return Err(error); },
+                    Err(_) => { slot.failed = true; return Err("Terminal worker failed; ownership retained".into()); },
+                }
+            }
+        }
+        if Instant::now() >= deadline { return Err("Terminal worker still draining; retry retained worker".into()); }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn drain_terminal_session(session: &mut StackTerminalSession) -> Result<(), String> {
+    let kill = session.child.kill();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match session.child.try_wait() {
+            Ok(Some(_)) => break,
+            Err(_) => return Err("Terminal exit could not be observed; ownership retained".into()),
+            Ok(None) if Instant::now() >= deadline => return Err(if kill.is_err() { "Terminal termination failed; ownership retained" } else { "Terminal is still running; ownership retained" }.into()),
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    // An already-exited kill error is success ONLY after a successful wait.
+    session.child.wait().map_err(|_| "Terminal wait failed; ownership retained")?;
+    session.writer.take();
+    // ClosePseudoConsole and its last reader may block. This is the single
+    // retained drain worker, never the Tauri/UI thread or runtime mutex.
+    session.master.take();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while session.reader.as_ref().is_some_and(|reader| !reader.is_finished()) {
+        if Instant::now() >= deadline { return Err("Terminal output reader still draining; ownership retained".into()); }
+        thread::sleep(Duration::from_millis(10));
+    }
+    if let Some(reader) = session.reader.take() { reader.join().map_err(|_| "Terminal output reader failed")?; }
+    Ok(())
+}
+
+/// Native-only, no renderer-selected label/process. Covers both owned targets.
+pub(crate) fn stop_all_owned_terminal_sessions(app: &AppHandle) -> Result<crate::graceful_exit::DrainReceipt, String> {
+    let state = app.state::<Mutex<StackPopupRuntimeState>>();
+    let panel = stop_terminal_sessions_for_target(app, &state, shell_windows::TERMINAL_PANEL_LABEL);
+    let stack = stop_terminal_sessions_for_target(app, &state, shell_windows::STACK_POPUP_LABEL);
+    panel.and(stack)?;
+    Ok(crate::graceful_exit::DrainReceipt { finished: true })
 }
 
 pub(crate) fn get_stack_terminal_cwd(
@@ -742,23 +891,19 @@ fn spawn_terminal_session(
         apply_git_bash_shell_integration(&mut command);
     }
     command.cwd(&cwd);
+    // Obtain fallible PTY plumbing before creating a child: attachment failure
+    // must not orphan a live process.
+    let writer = pty_pair.master.take_writer().map_err(|_| "Failed to attach terminal input")?;
+    let reader = pty_pair.master.try_clone_reader().map_err(|_| "Failed to attach terminal output")?;
     let child = pty_pair.slave.spawn_command(command).map_err(|error| {
         format!(
             "Failed to start Stack Browser terminal profile {:?}: {error}",
             profile
         )
     })?;
-    let writer = pty_pair
-        .master
-        .take_writer()
-        .map_err(|error| format!("Failed to attach terminal input: {error}"))?;
-    let reader = pty_pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| format!("Failed to attach terminal output: {error}"))?;
     let (output_tx, output_rx) = mpsc::sync_channel(1024);
     let session_id = new_stack_terminal_session_id();
-    spawn_terminal_reader(
+    let reader = spawn_terminal_reader(
         reader,
         output_tx,
         StackTerminalOutputStream::Stdout,
@@ -771,6 +916,7 @@ fn spawn_terminal_session(
         profile,
         cwd,
         child,
+        reader: Some(reader),
         master: Some(Arc::new(Mutex::new(pty_pair.master))),
         writer: Some(Arc::new(Mutex::new(writer))),
         input_buffer: String::new(),
@@ -819,7 +965,7 @@ fn spawn_terminal_reader<R>(
     app_handle: Option<AppHandle>,
     session_id: String,
     target_label: String,
-) where
+) -> thread::JoinHandle<()> where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
@@ -882,7 +1028,7 @@ fn spawn_terminal_reader<R>(
                 sequence: chunk.sequence,
             });
         }
-    });
+    })
 }
 
 fn decode_terminal_output_chunk(pending: &mut Vec<u8>, bytes: &[u8]) -> String {

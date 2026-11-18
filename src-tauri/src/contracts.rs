@@ -43,6 +43,7 @@ pub mod surfaces {
 }
 
 pub mod commands {
+    pub const REQUEST_SHELL_EXIT: &str = "request_shell_exit";
     pub const GET_STANDARD_HOTKEY_STATUS: &str = "get_standard_hotkey_status";
     pub const SAVE_STANDARD_HOTKEYS: &str = "save_standard_hotkeys";
     pub const BEGIN_STANDARD_HOTKEY_CAPTURE: &str = "begin_standard_hotkey_capture";
@@ -255,6 +256,7 @@ pub mod commands {
 
     pub const ALL: &[&str] = &[
         LIST_PINNED_TASKBAR_APPS,
+        REQUEST_SHELL_EXIT,
         LAUNCH_PINNED_TASKBAR_APP,
         LIST_OPEN_TASK_WINDOWS,
         GET_TASKBAR_RUNTIME_DIAGNOSTICS,

@@ -5,7 +5,7 @@
   import StackConfirmDialog from './StackConfirmDialog.svelte';
   import ThemeColorField from './ThemeColorField.svelte';
   import {
-    getSavedThemeState, requestShellThemeSelection, shellThemeOptions, subscribeShellThemes
+    getSavedThemeState, requestShellThemeSelection, shellThemeOptions, subscribeShellThemes, installShellThemeSelectionAuthority
   } from '../lib/themes';
   import {
     createCustomTheme, getThemePaletteColorLayers, resetThemePaletteColorLayer,
@@ -32,6 +32,8 @@
   >(null);
   let draftOrigin: { element: HTMLElement; label: string | null; text: string } | null = null;
   let selectionAnswer: ((answer: boolean) => void) | null = null;
+  let selectionPromptDeferred = false;
+  let settleDeferredSelection: ((resume: boolean) => void) | null = null;
   const core = [
     ['--js-color-bg', 'Background'], ['--js-color-surface', 'Surface'],
     ['--js-color-surface-raised', 'Raised surface'], ['--js-color-text', 'Text'],
@@ -44,6 +46,7 @@
   const contrast = $derived(draft ? contrastWarnings(draft) : []);
 
   onMount(() => {
+    const retireSelectionAuthority = installShellThemeSelectionAuthority();
     const unsubscribe = subscribeShellThemes((state) => {
       saved = state;
       options = shellThemeOptions().map((theme) => ({ value: theme.id, label: theme.label }));
@@ -51,14 +54,17 @@
     const unsubscribePreview = subscribeThemePreview((state) => {
       if (state.error) error = state.error;
       if (!state.active && editor) {
+        settleDeferredSelection?.(false);
         editor = null;
         draft = null;
         invalidFields = [];
       }
     });
     return () => {
+      retireSelectionAuthority();
       unsubscribe();
       unsubscribePreview();
+      settleDeferredSelection?.(false);
       selectionAnswer?.(false);
       editor?.dispose();
     };
@@ -68,7 +74,29 @@
     return document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }
 
-  function selectionRequested(id: string): Promise<boolean> {
+  export function deferSelectionPrompt(): boolean {
+    if (confirmation) return false;
+    selectionPromptDeferred = true;
+    return true;
+  }
+
+  export function resumeSelectionPrompt() {
+    selectionPromptDeferred = false;
+    settleDeferredSelection?.(true);
+  }
+
+  async function selectionRequested(id: string, expiresAt?: number): Promise<boolean> {
+    if (selectionPromptDeferred) {
+      const resume = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => settleDeferredSelection?.(false), Math.max(0, (expiresAt ?? Date.now()) - Date.now()));
+        settleDeferredSelection = (allowed) => {
+          clearTimeout(timer);
+          settleDeferredSelection = null;
+          resolve(allowed);
+        };
+      });
+      if (!resume || !draft || (expiresAt !== undefined && Date.now() >= expiresAt)) return false;
+    }
     if (!draft) return Promise.resolve(true);
     if (confirmation) return Promise.resolve(false);
     return new Promise((resolve) => {

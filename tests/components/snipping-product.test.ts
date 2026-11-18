@@ -50,6 +50,7 @@ async function component(name: string) {
 }
 
 beforeEach(() => {
+  let exitRegistrations = 0;
   native.label = 'snip-overlay';
   context = { ...selecting };
   copyResult = { status: 'rejected', committed: false, durable: false, code: 'clipboard-busy' };
@@ -70,6 +71,9 @@ beforeEach(() => {
       case 'load_shell_settings': return defaultShellSettings();
       case 'get_standard_hotkey_status': return { revision: 1, bindings: [] };
       case 'get_speech_model_status': return { state: 'missing', source: null, error: null };
+      case 'get_shell_shutdown_status': return { attemptId: '', state: 'blocked', phase: 'running', canCancel: false, blockers: [], failedSteps: [], completedSteps: [] };
+      case 'register_shell_exit_participant': return { registrationId: (++exitRegistrations).toString(16).padStart(32, '0') };
+      case 'update_shell_exit_participant': case 'unregister_shell_exit_participant': return;
       case 'start_snip': return token();
       case 'get_snip_context': return { ...context };
       case 'get_snip_image': return imageResponse();

@@ -28,11 +28,12 @@ test('actual production registry churn removes obsolete ownership, preserves tar
   // drop-observable value double; every registry operation is verbatim source.
   const methods = ['fn insert(', 'fn request_stop(', 'fn session_mut(', 'fn remove(', 'fn list_by_target(', 'fn request_stop_by_target('].map(block).join('\n');
   const tombstoneCount = /stop_requested\s*:/.test(block('pub(crate) struct StackTerminalRegistry')) ? 'registry.stop_requested.len()' : '0usize';
-  const productionDeclarations = [block('pub(crate) struct StackTerminalRegistry'), block('impl Default for StackTerminalRegistry'), methods, block('pub(crate) fn validate_stack_terminal_session_id('), block('fn authorize_stack_terminal_session_target(')].join('\n');
+  const productionDeclarations = [block('pub(crate) struct StackTerminalRegistry'), block('struct TerminalDrain'), block('impl Default for StackTerminalRegistry'), methods, block('pub(crate) fn validate_stack_terminal_session_id('), block('fn authorize_stack_terminal_session_target(')].join('\n');
   t.diagnostic(`production_declarations_sha256=${createHash('sha256').update(productionDeclarations).digest('hex')}`);
   const fixture = `
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+use std::thread;
 const MAX_STACK_TERMINAL_SESSION_ID_LEN: usize = 48;
 const STACK_TERMINAL_SESSION_PREFIX: &str = "stack-term-";
 struct StackTerminalSession { id: String, target_label: String, drops: Arc<AtomicUsize> }
@@ -40,6 +41,7 @@ struct StackTerminalSessionSnapshot { created_at: u64 }
 impl StackTerminalSession { fn snapshot(&self) -> StackTerminalSessionSnapshot { StackTerminalSessionSnapshot { created_at: 0 } } }
 impl Drop for StackTerminalSession { fn drop(&mut self) { self.drops.fetch_add(1, Ordering::SeqCst); } }
 ${block('pub(crate) struct StackTerminalRegistry')}
+${block('struct TerminalDrain')}
 ${block('impl Default for StackTerminalRegistry')}
 impl StackTerminalRegistry { ${methods} }
 ${block('pub(crate) fn validate_stack_terminal_session_id(')}

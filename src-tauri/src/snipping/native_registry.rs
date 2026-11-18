@@ -1,6 +1,6 @@
 //! Concrete Tauri instance identities and bounded initialization gates.
 use super::coordinator::{Caller, Context, SnipError, Token, WindowRef};
-use std::{collections::HashMap, sync::{Arc, Condvar, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant}};
+use std::{collections::HashMap, sync::{Arc, Condvar, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant}};
 use tauri::{Manager, WebviewWindow};
 use windows::{core::w, Win32::{Foundation::{HANDLE, HWND}, UI::WindowsAndMessaging::{GetPropW, SetPropW}}};
 /// Native adapter output, never deserialized or accepted from IPC. Each read
@@ -19,13 +19,21 @@ pub struct Entry {
     changed: Condvar,
     retired_generation: Arc<AtomicU64>,
 }
-struct State { window: Option<WebviewWindow>, hwnd: isize, dead: bool, context: Option<Context> }
+struct State { window: Option<WebviewWindow>, retired_window: Option<WebviewWindow>, close_queued: bool, identity_failed: bool, hwnd: isize, dead: bool, context: Option<Context> }
 #[derive(Default)]
-pub struct NativeRegistry { entries: Mutex<HashMap<String, Arc<Entry>>>, next: Mutex<u64>, stopped: AtomicBool, origin_generation: Mutex<Option<Token>>, retired_generation: Arc<AtomicU64> }
+pub struct NativeRegistry { entries: Mutex<HashMap<String, Arc<Entry>>>, retired: Mutex<Vec<Arc<Entry>>>, next: Mutex<u64>, stopped: AtomicBool, ui_in_flight: Arc<AtomicUsize>, origin_generation: Mutex<Option<Token>>, retired_generation: Arc<AtomicU64> }
+pub struct ConstructionPermit(Arc<AtomicUsize>);
+impl Drop for ConstructionPermit { fn drop(&mut self) { self.0.fetch_sub(1, Ordering::AcqRel); } }
 pub fn same_epoch(window: &WebviewWindow, id: u64) -> bool {
     window.hwnd().ok().is_some_and(|hwnd| unsafe { GetPropW(HWND(hwnd.0), w!("JasonShell.Snip.Instance")) }.0 as usize as u64 == id)
 }
 impl NativeRegistry {
+    pub fn admit_construction_callback(&self) -> Result<ConstructionPermit, SnipError> {
+        let _entries = self.entries.lock().map_err(|_| SnipError::Inactive)?;
+        if self.stopped.load(Ordering::Acquire) { return Err(SnipError::Inactive); }
+        self.ui_in_flight.fetch_add(1, Ordering::AcqRel);
+        Ok(ConstructionPermit(self.ui_in_flight.clone()))
+    }
     pub fn retire_pending_generation(&self, token: &Token) -> Vec<(WebviewWindow, u64)> {
         let Some(generation) = token.generation.parse::<u64>().ok().filter(|generation| *generation > 0) else { return Vec::new(); };
         self.retired_generation.fetch_max(generation, Ordering::AcqRel);
@@ -33,7 +41,7 @@ impl NativeRegistry {
         entries.into_iter().filter_map(|entry| {
             let mut state = entry.state.lock().ok()?;
             if state.context.is_some() { return None; }
-            state.dead = true; let window = state.window.take(); entry.changed.notify_all();
+            state.dead = true; let window = state.window.take(); if window.is_some() { state.retired_window = window.clone(); } entry.changed.notify_all();
             drop(state);
             window.filter(|window| same_epoch(window, entry.reference.caller.window_id)).map(|window| (window, entry.reference.caller.window_id))
         }).collect()
@@ -85,14 +93,18 @@ impl NativeRegistry {
         let mut entries = self.entries.lock().map_err(|_| SnipError::WindowFailed)?;
         if self.stopped.load(Ordering::Acquire) { return Err(SnipError::Inactive); }
         if token.as_ref().is_some_and(|token| token.generation.parse::<u64>().ok().is_none_or(|generation| generation <= self.retired_generation.load(Ordering::Acquire))) { return Err(SnipError::Stale); }
-        entries.retain(|_, entry| entry.state.lock().map(|state| !state.dead).unwrap_or(false));
+        let mut retired = self.retired.lock().map_err(|_| SnipError::WindowFailed)?;
+        retired.retain(|entry| entry.state.lock().map(|state| state.retired_window.is_some() || state.window.is_some()).unwrap_or(true));
+        entries.retain(|_, entry| {
+            if entry.state.lock().map(|state| state.dead).unwrap_or(false) { retired.push(entry.clone()); false } else { true }
+        });
         if entries.len() >= 66 { return Err(SnipError::WindowFailed); }
         if entries.contains_key(&label) { return Err(SnipError::WindowFailed); }
         let mut next = self.next.lock().map_err(|_| SnipError::WindowFailed)?;
         *next = next.checked_add(1).ok_or(SnipError::WindowFailed)?;
         if usize::try_from(*next).is_err() { return Err(SnipError::WindowFailed); }
         let entry = Arc::new(Entry { reference: WindowRef { caller: Caller { label: label.clone(), window_id: *next }, monitor_id }, token, preview,
-            deadline: Instant::now() + Duration::from_secs(5), state: Mutex::new(State { window: None, hwnd: 0, dead: false, context: None }), changed: Condvar::new(), retired_generation: self.retired_generation.clone() });
+            deadline: Instant::now() + Duration::from_secs(5), state: Mutex::new(State { window: None, retired_window: None, close_queued: false, identity_failed: false, hwnd: 0, dead: false, context: None }), changed: Condvar::new(), retired_generation: self.retired_generation.clone() });
         entries.insert(label, entry.clone());
         Ok(entry)
     }
@@ -128,8 +140,67 @@ impl NativeRegistry {
             state = entry.changed.wait_timeout(state, remaining).map_err(|_| SnipError::WindowFailed)?.0;
         }
     }
+    /// Drain exact registered helper instances, including previously queued closes.
+    /// Ordinary Settings/Stack/bar entries are never destroyed by this operation.
+    pub fn stop_and_drain_snips(&self) -> Result<(), String> {
+        let mut entries = {
+            let entries = self.entries.lock().map_err(|_| "Snipping registry unavailable")?;
+            self.stopped.store(true, Ordering::Release);
+            entries.values().filter(|entry| entry.token.is_some()).cloned().collect::<Vec<_>>()
+        };
+        entries.extend(self.retired.lock().map_err(|_| "Snipping retirement ledger unavailable")?.iter().filter(|entry| entry.token.is_some()).cloned());
+        for entry in &entries {
+            entry.retire();
+            let window = {
+                let mut state = entry.state.lock().map_err(|_| "Snipping window ownership unavailable")?;
+                if state.close_queued { None } else {
+                    let window = state.retired_window.clone();
+                    state.close_queued = window.is_some(); window
+                }
+            };
+            if let Some(window) = window {
+                let app = window.app_handle().clone();
+                let closing = entry.clone(); let id = entry.reference.caller.window_id;
+                if app.run_on_main_thread(move || {
+                    let failed_construction = closing.state.lock().map(|state| state.identity_failed).unwrap_or(false);
+                    if failed_construction || same_epoch(&window, id) { let _ = window.destroy(); }
+                    if let Ok(mut state) = closing.state.lock() { state.close_queued = false; }
+                }).is_err() { entry.state.lock().map_err(|_| "Snipping close ledger unavailable")?.close_queued = false; return Err("Snipping close dispatch failed".into()); }
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let mut pending = self.ui_in_flight.load(Ordering::Acquire) != 0;
+            for entry in &entries {
+                let (window, hwnd, identity_failed) = { let state = entry.state.lock().map_err(|_| "Snipping window ownership unavailable")?; (state.retired_window.clone().or_else(|| state.window.clone()), state.hwnd, state.identity_failed) };
+                if let Some(window) = window {
+                    if hwnd == 0 { pending = true; continue; }
+                    // The original native epoch disappearing is a completion
+                    // proof; a replacement HWND must never be acted on.
+                    let live = unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(HWND(hwnd as *mut _))) }.as_bool();
+                    if live && (identity_failed || same_epoch(&window, entry.reference.caller.window_id)) { pending = true; }
+                    else { let mut state = entry.state.lock().map_err(|_| "Snipping close ledger unavailable")?; state.window = None; state.retired_window = None; }
+                }
+            }
+            if !pending { return Ok(()); }
+            if Instant::now() >= deadline { return Err("Snipping native windows still retiring; ownership retained".into()); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 impl Entry {
+    pub fn retain_failed_construction(self: &Arc<Self>, window: &WebviewWindow) {
+        let weak = Arc::downgrade(self);
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(entry) = weak.upgrade() { if let Ok(mut state) = entry.state.lock() { state.window = None; state.retired_window = None; } }
+            }
+        });
+        let hwnd = window.hwnd().ok().map(|hwnd| hwnd.0 as isize).unwrap_or(0);
+        let identified = hwnd != 0 && unsafe { SetPropW(HWND(hwnd as *mut _), w!("JasonShell.Snip.Instance"), Some(HANDLE(self.reference.caller.window_id as usize as *mut _))) }.is_ok();
+        let mut state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
+        state.dead = true; state.hwnd = hwnd; state.identity_failed = !identified; state.retired_window = Some(window.clone());
+    }
     pub fn admit_construction(&self) -> Result<(), SnipError> { self.admit_construction_at(Instant::now()) }
     pub(crate) fn admit_construction_at(&self, now: Instant) -> Result<(), SnipError> {
         if self.token.as_ref().is_some_and(|token| token.generation.parse::<u64>().ok().is_none_or(|generation| generation <= self.retired_generation.load(Ordering::Acquire))) { return Err(SnipError::Stale); }
@@ -147,7 +218,7 @@ impl Entry {
         // inherit this registry epoch, even before Tauri delivers Destroyed.
         unsafe { SetPropW(HWND(hwnd as *mut _), w!("JasonShell.Snip.Instance"), Some(HANDLE(self.reference.caller.window_id as usize as *mut _))) }.map_err(|_| SnipError::WindowFailed)?;
         let weak = Arc::downgrade(self);
-        window.on_window_event(move |event| { if matches!(event, tauri::WindowEvent::Destroyed) { if let Some(entry) = weak.upgrade() { entry.invalidate(); } } });
+        window.on_window_event(move |event| { if matches!(event, tauri::WindowEvent::Destroyed) { if let Some(entry) = weak.upgrade() { entry.invalidate(); if let Ok(mut state) = entry.state.lock() { state.window = None; state.retired_window = None; } } } });
         let mut state = self.state.lock().map_err(|_| SnipError::WindowFailed)?;
         if state.dead || state.window.is_some() || (self.token.is_some() && Instant::now() >= self.deadline) { return Err(SnipError::WindowFailed); }
         state.hwnd = hwnd; state.window = Some(window); self.changed.notify_all(); Ok(())
@@ -166,6 +237,7 @@ impl Entry {
         let mut state = self.state.lock().ok()?;
         state.dead = true; state.context = None;
         let window = state.window.take();
+        if window.is_some() { state.retired_window = window.clone(); }
         self.changed.notify_all();
         drop(state);
         window.filter(|window| same_epoch(window, self.reference.caller.window_id))

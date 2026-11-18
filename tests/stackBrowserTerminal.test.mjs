@@ -47,7 +47,9 @@ test('stack terminal IPC command names are stable and backend-registered', () =>
   assert.match(rustStackPopup, /pub async fn start_stack_terminal\(/);
   assert.match(rustStackPopup, /pub fn read_stack_terminal\(/);
   assert.match(rustStackPopup, /pub async fn write_stack_terminal\(/);
-  assert.match(rustStackPopup, /pub fn stop_stack_terminal\(/);
+  assert.match(rustStackPopup, /pub async fn stop_stack_terminal\(/);
+  const stop = rustStackPopup.match(/pub async fn stop_stack_terminal\([^]*?\n\}/)?.[0] ?? '';
+  assert.match(stop, /authorize_stack_command\([\s\S]*STOP_STACK_TERMINAL[\s\S]*admit_mutation\(&app_handle\)\?[\s\S]*spawn_blocking\(move \|\| \{\s*let _admission = admission;[\s\S]*terminal::stop_stack_terminal\(&app_handle, &state, &caller, StackTerminalStopRequest \{ session_id \}\)/);
   assert.match(rustMain, /stack_popup::start_stack_terminal/);
   assert.match(rustMain, /stack_popup::read_stack_terminal/);
   assert.match(rustMain, /stack_popup::write_stack_terminal/);
@@ -280,7 +282,24 @@ test('terminal auth precedes side effects in poll and stop, with no drain/remove
   assert.ok(pollBody.indexOf('authorize_stack_terminal_session_target') < pollBody.indexOf('drain_terminal_output'));
   assert.ok(pollBody.indexOf('authorize_stack_terminal_session_target') < pollBody.indexOf('refresh_session_running'));
   assert.match(stopBody, /authorize_stack_terminal_session_target\(\s*caller_label,\s*&session\.target_label,\s*crate::contracts::commands::STOP_STACK_TERMINAL,?\s*\)\?/);
-  assert.ok(stopBody.indexOf('authorize_stack_terminal_session_target') < stopBody.indexOf('request_terminal_stop'));
+  const stage = stopBody.indexOf('stage_terminal_drain(');
+  assert.ok(stage > stopBody.lastIndexOf('authorize_stack_terminal_session_target'),
+    'both active and already-draining sessions authorize before drain staging');
+  assert.match(stopBody, /authorize_stack_terminal_session_target\(caller_label, &target, crate::contracts::commands::STOP_STACK_TERMINAL\)\?/);
+  assert.match(stopBody, /wait_terminal_drain\(app_handle, &slot\)\?;[\s\S]*draining\.remove\(&request\.session_id\)/,
+    'do not remove the retained slot until actual drain succeeds');
+  const staging = rustTerminal.match(/fn stage_terminal_drain\([^]*?\n\}/)?.[0] ?? '';
+  assert.match(staging, /draining\.get\(id\)[\s\S]*request_stop\(id\)\?[\s\S]*retained: Some\(session\)[\s\S]*draining\.insert\(id\.into\(\), slot\.clone\(\)\);\s*launch_terminal_drain/);
+  const launch = rustTerminal.match(/fn launch_terminal_drain\([^]*?\n\}/)?.[0] ?? '';
+  assert.match(launch, /if slot\.worker\.is_some\(\) \{ return Ok\(\(\)\); \}/,
+    'retry cannot launch a second worker while the original remains owned');
+  assert.match(launch, /slot\.worker = Some\(thread::spawn\(move \|\| \{[\s\S]*let _admission = admission;[\s\S]*drain_terminal_session\(&mut session\)[\s\S]*Err\(error\) => Err\(\(session, error\)\)/,
+    'the registered worker retains admission and returns failed session ownership for retry');
+  const drain = rustTerminal.match(/fn drain_terminal_session\([^]*?\n\}/)?.[0] ?? '';
+  assert.match(drain, /child\.kill\(\)[\s\S]*child\.try_wait\(\)[\s\S]*child\.wait\(\)\.map_err[^\r\n]*\?;[\s\S]*reader\.join\(\)\.map_err[^\r\n]*\?;[\s\S]*Ok\(\(\)\)/);
+  const wait = rustTerminal.match(/fn wait_terminal_drain\([^]*?\n\}/)?.[0] ?? '';
+  assert.match(wait, /worker\.is_finished\(\)[\s\S]*worker\.join\(\)[\s\S]*Ok\(Err\(\(session, error\)\)\) => \{ slot\.retained = Some\(session\); return Err\(error\);/);
+  assert.match(wait, /if Instant::now\(\) >= deadline \{ return Err\("Terminal worker still draining; retry retained worker"\.into\(\)\); \}/);
 });
 
 test('phase 1 terminal PowerShell launch plan uses trusted path explicitly and has fallback coverage', () => {

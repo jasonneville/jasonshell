@@ -266,6 +266,7 @@ pub fn pin_stack_folder(
     app_handle: AppHandle,
     path: String,
 ) -> Result<Vec<PinnedStackFolder>, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     pins::pin_folder(&app_handle, &path)
 }
 
@@ -274,6 +275,7 @@ pub fn unpin_stack_folder(
     app_handle: AppHandle,
     path: String,
 ) -> Result<Vec<PinnedStackFolder>, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     pins::unpin_folder(&app_handle, &path)
 }
 
@@ -282,6 +284,7 @@ pub fn reorder_pinned_stack_folders(
     app_handle: AppHandle,
     ordered_paths: Vec<String>,
 ) -> Result<Vec<PinnedStackFolder>, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     pins::reorder_pinned_folders(&app_handle, &ordered_paths)
 }
 
@@ -379,6 +382,7 @@ pub fn resize_stack_popup(
     height: f64,
     persist: bool,
 ) -> Result<StackPopupLogicalSize, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     popup_window::resize_stack_popup_window(app_handle, width, height, persist)
 }
 
@@ -417,7 +421,8 @@ pub async fn read_stack_basic_text_file(
     )
     .map_err(CallerAuthError::into_string)?;
 
-    tauri::async_runtime::spawn_blocking(move || read_stack_basic_text_file_blocking(&path))
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    tauri::async_runtime::spawn_blocking(move || { let _admission = admission; read_stack_basic_text_file_blocking(&path) })
         .await
         .map_err(|_| "Text file read task failed".to_string())?
 }
@@ -482,7 +487,9 @@ pub async fn save_stack_basic_text_file(
     )
     .map_err(CallerAuthError::into_string)?;
 
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         save_stack_basic_text_file_blocking(&path, &content, &expected_content, &expected_identity)
     })
     .await
@@ -909,7 +916,8 @@ pub async fn get_stack_git_context(window: WebviewWindow, path: String) -> Resul
         command: crate::contracts::commands::GET_STACK_GIT_CONTEXT,
         callers: &[crate::shell_windows::STACK_POPUP_LABEL],
     }).map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_context_for_path_async(path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_context_for_path_async(path)).await
 }
 
 #[tauri::command]
@@ -918,7 +926,8 @@ pub async fn get_stack_git_summary(window: WebviewWindow, path: String) -> Resul
         command: crate::contracts::commands::GET_STACK_GIT_SUMMARY,
         callers: &[crate::shell_windows::STACK_POPUP_LABEL],
     }).map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_summary_for_path_async(path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_summary_for_path_async(path)).await
 }
 
 #[tauri::command]
@@ -927,7 +936,8 @@ pub async fn get_stack_git_metadata(window: WebviewWindow, path: String) -> Resu
         command: crate::contracts::commands::GET_STACK_GIT_METADATA,
         callers: &[crate::shell_windows::STACK_POPUP_LABEL],
     }).map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_metadata_for_path_async(path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_metadata_for_path_async(path)).await
 }
 
 #[tauri::command]
@@ -943,7 +953,8 @@ pub async fn get_stack_git_status(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_status_for_path_async(path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_status_for_path_async(path)).await
 }
 
 #[tauri::command]
@@ -1015,6 +1026,17 @@ fn open_stack_git_remote_url_native(_url: &str) -> Result<(), String> {
     Err("Opening git remote URLs is only supported on Windows".to_string())
 }
 
+/// The runtime-owned async worker retains BOTH admission and the delegated
+/// blocking worker's JoinHandle. Dropping an IPC future never cancels this task
+/// or releases the reservation while Git/filesystem effects are still running.
+async fn retain_stack_mutation<T, F>(admission: crate::graceful_exit::Admission, effect: F) -> Result<T, String>
+where T: Send + 'static, F: std::future::Future<Output = Result<T, String>> + Send + 'static {
+    tauri::async_runtime::spawn(async move {
+        let _admission = admission;
+        effect.await
+    }).await.map_err(|_| "Stack mutation worker completion unavailable".to_string())?
+}
+
 #[tauri::command]
 pub async fn stack_git_add_paths(
     window: WebviewWindow,
@@ -1028,7 +1050,8 @@ pub async fn stack_git_add_paths(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_add_paths_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_add_paths_async(request)).await
 }
 
 #[tauri::command]
@@ -1044,7 +1067,8 @@ pub async fn stack_git_ignore_path(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_ignore_path_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_ignore_path_async(request)).await
 }
 
 #[tauri::command]
@@ -1060,7 +1084,8 @@ pub async fn stack_git_unstage_paths(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_unstage_paths_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_unstage_paths_async(request)).await
 }
 
 #[tauri::command]
@@ -1076,7 +1101,8 @@ pub async fn stack_git_revert_paths(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_revert_paths_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_revert_paths_async(request)).await
 }
 
 #[tauri::command]
@@ -1092,7 +1118,8 @@ pub async fn stack_git_diff(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_diff_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_diff_async(request)).await
 }
 
 #[tauri::command]
@@ -1108,7 +1135,8 @@ pub async fn stack_git_stashes(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stashes_async(folder_path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stashes_async(folder_path)).await
 }
 
 #[tauri::command]
@@ -1124,7 +1152,8 @@ pub async fn stack_git_stash(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stash_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stash_async(request)).await
 }
 
 #[tauri::command]
@@ -1140,7 +1169,8 @@ pub async fn stack_git_stash_apply(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stash_apply_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stash_apply_async(request)).await
 }
 
 #[tauri::command]
@@ -1156,7 +1186,8 @@ pub async fn stack_git_stash_pop(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stash_pop_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stash_pop_async(request)).await
 }
 
 #[tauri::command]
@@ -1172,7 +1203,8 @@ pub async fn stack_git_stash_drop(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stash_drop_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stash_drop_async(request)).await
 }
 
 #[tauri::command]
@@ -1188,7 +1220,8 @@ pub async fn stack_git_commit(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_commit_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_commit_async(request)).await
 }
 
 #[tauri::command]
@@ -1204,7 +1237,8 @@ pub async fn stack_git_commit_files(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_commit_files_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_commit_files_async(request)).await
 }
 
 #[tauri::command]
@@ -1220,7 +1254,8 @@ pub async fn stack_git_commit_file_diff(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_commit_file_diff_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_commit_file_diff_async(request)).await
 }
 
 #[tauri::command]
@@ -1236,7 +1271,8 @@ pub async fn stack_git_stash_files(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stash_files_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stash_files_async(request)).await
 }
 
 #[tauri::command]
@@ -1252,7 +1288,8 @@ pub async fn stack_git_stash_file_diff(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_stash_file_diff_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_stash_file_diff_async(request)).await
 }
 
 #[tauri::command]
@@ -1268,7 +1305,8 @@ pub async fn stack_git_log(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_log_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_log_async(request)).await
 }
 
 #[tauri::command]
@@ -1284,7 +1322,8 @@ pub async fn stack_git_tree(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_tree_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_tree_async(request)).await
 }
 
 #[tauri::command]
@@ -1300,7 +1339,8 @@ pub async fn stack_git_branches(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_branches_async(path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_branches_async(path)).await
 }
 
 #[tauri::command]
@@ -1316,7 +1356,8 @@ pub async fn stack_git_fetch(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_fetch_async(folder_path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_fetch_async(folder_path)).await
 }
 
 #[tauri::command]
@@ -1332,7 +1373,8 @@ pub async fn stack_git_pull(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_pull_async(folder_path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_pull_async(folder_path)).await
 }
 
 #[tauri::command]
@@ -1348,7 +1390,8 @@ pub async fn stack_git_push(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_push_async(folder_path).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_push_async(folder_path)).await
 }
 
 #[tauri::command]
@@ -1364,7 +1407,8 @@ pub async fn stack_git_checkout_branch(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_checkout_branch_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_checkout_branch_async(request)).await
 }
 
 #[tauri::command]
@@ -1380,7 +1424,8 @@ pub async fn stack_git_create_branch(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_create_branch_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_create_branch_async(request)).await
 }
 
 #[tauri::command]
@@ -1396,7 +1441,8 @@ pub async fn stack_git_delete_branch(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    git_status::stack_git_delete_branch_async(request).await
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, git_status::stack_git_delete_branch_async(request)).await
 }
 
 #[tauri::command]
@@ -1548,6 +1594,7 @@ pub fn rename_stack_item(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     file_ops::rename_stack_item_path(path, new_name)
 }
 
@@ -1568,6 +1615,7 @@ pub fn copy_stack_items(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     clipboard::set_stack_clipboard(&state, models::ClipboardMode::Copy, paths)
 }
 
@@ -1587,6 +1635,7 @@ pub async fn start_stack_file_drag(
     )
     .map_err(CallerAuthError::into_string)?;
     let started = std::time::Instant::now();
+    let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
     let request_id = format!(
         "stack-drag-{}-{}",
         std::process::id(),
@@ -1644,6 +1693,7 @@ pub async fn start_stack_file_drag(
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let ui_app = app_handle.clone();
         let dispatch = app_handle.run_on_main_thread(move || {
+            let _admission = admission;
             let hold = popup_window::NativeDragHold::new(ui_app.clone());
             let result = match stack_popup_owner_hwnd(&ui_app) {
                 Ok(hwnd) => match set_stack_popup_topmost(hwnd, false) {
@@ -1706,6 +1756,7 @@ pub fn cut_stack_items(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     clipboard::set_stack_clipboard(&state, models::ClipboardMode::Cut, paths)
 }
 
@@ -1728,7 +1779,12 @@ pub async fn paste_stack_items(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    clipboard::paste_stack_clipboard_items_async(&app_handle, &state, destination, window, operation_id).await
+    let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+    let _ = state;
+    retain_stack_mutation(admission, async move {
+        let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+        clipboard::paste_stack_clipboard_items_async(&app_handle, &state, destination, window, operation_id).await
+    }).await
 }
 
 #[tauri::command]
@@ -1751,6 +1807,10 @@ pub async fn delete_stack_item(
     )
     .map_err(CallerAuthError::into_string)?;
     let mut progress = models::StackFileOperationProgress::new(operation_id, "delete", "planning", file_ops::now_ms());
+    let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+    let _ = state;
+    retain_stack_mutation(admission, async move {
+    let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
     progress.current_path = Some(path.clone());
     let report = |progress: &models::StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, progress); };
     report(&progress);
@@ -1764,6 +1824,7 @@ pub async fn delete_stack_item(
     }
     report(&progress);
     result
+    }).await
 }
 
 #[tauri::command]
@@ -1783,6 +1844,7 @@ pub fn new_stack_folder(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     file_ops::new_stack_folder_path(parent, name)
 }
 
@@ -1799,6 +1861,7 @@ pub fn new_stack_text_file(window: WebviewWindow, parent: String) -> Result<Stac
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     file_ops::new_stack_text_file_path(parent)
 }
 
@@ -1815,6 +1878,7 @@ pub fn open_stack_terminal_here(window: WebviewWindow, path: String) -> Result<(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     file_ops::open_terminal_here_path(path)
 }
 
@@ -1945,6 +2009,7 @@ pub fn resize_stack_terminal(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     terminal::resize_stack_terminal_session(
         &state,
         window.label(),
@@ -1959,7 +2024,7 @@ pub fn resize_stack_terminal(
 }
 
 #[tauri::command]
-pub fn stop_stack_terminal(
+pub async fn stop_stack_terminal(
     window: WebviewWindow,
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
@@ -1976,12 +2041,14 @@ pub fn stop_stack_terminal(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    terminal::stop_stack_terminal(
-        &app_handle,
-        &state,
-        window.label(),
-        StackTerminalStopRequest { session_id },
-    )
+    let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+    let _ = state;
+    let caller = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+        terminal::stop_stack_terminal(&app_handle, &state, &caller, StackTerminalStopRequest { session_id })
+    }).await.map_err(|_| "Terminal stop worker unavailable".to_string())?
 }
 
 #[tauri::command]
@@ -2022,6 +2089,7 @@ pub fn list_stack_terminals(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    terminal::reap_finished_terminal_drains(window.app_handle(), &state)?;
     terminal::list_stack_terminals(&state, window.label(), target_label)
 }
 
@@ -2043,6 +2111,7 @@ pub fn rename_stack_terminal(
         },
     )
     .map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     terminal::rename_stack_terminal(
         &state,
         window.label(),
@@ -2051,7 +2120,7 @@ pub fn rename_stack_terminal(
 }
 
 #[tauri::command]
-pub fn stop_terminal_panel_sessions(
+pub async fn stop_terminal_panel_sessions(
     window: WebviewWindow,
     app_handle: AppHandle,
     state: State<'_, Mutex<StackPopupRuntimeState>>,
@@ -2064,11 +2133,13 @@ pub fn stop_terminal_panel_sessions(
         },
     )
     .map_err(CallerAuthError::into_string)?;
-    terminal::stop_terminal_sessions_for_target(
-        &app_handle,
-        &state,
-        crate::shell_windows::TERMINAL_PANEL_LABEL,
-    )
+    let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+    let _ = state;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
+        let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+        terminal::stop_terminal_sessions_for_target(&app_handle, &state, crate::shell_windows::TERMINAL_PANEL_LABEL)
+    }).await.map_err(|_| "Terminal stop worker unavailable".to_string())?
 }
 
 #[tauri::command]
@@ -2177,6 +2248,8 @@ pub async fn extract_stack_archive(
     )
     .map_err(CallerAuthError::into_string)?;
     let mut progress = models::StackFileOperationProgress::new(operation_id, "extract", "planning", file_ops::now_ms());
+    let admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
+    retain_stack_mutation(admission, async move {
     progress.current_path = Some(archive_path.clone());
     let report = |progress: &models::StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, progress); };
     report(&progress);
@@ -2207,6 +2280,7 @@ pub async fn extract_stack_archive(
     }
     report(&progress);
     result
+    }).await
 }
 
 fn run_archive_extraction_plan(plan: ArchiveExtractionPlan) -> Result<(), String> {

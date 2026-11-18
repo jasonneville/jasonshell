@@ -84,7 +84,7 @@ fn identity(hwnd: HWND) -> Option<(u32, u32)> {
     let mut pid = 0; let thread = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     if pid == 0 || thread == 0 || pid == unsafe { GetCurrentProcessId() } { None } else { Some((pid, thread)) }
 }
-pub struct ForegroundObserver { shared: Arc<Mutex<Observed>>, stop: Arc<AtomicBool>, queries: mpsc::Sender<(u8, mpsc::SyncSender<Option<Intent>>)>, scoped_pid: Option<u32>, resolver: Arc<Mutex<Option<SurfaceResolver>>> }
+pub struct ForegroundObserver { shared: Arc<Mutex<Observed>>, stop: Arc<AtomicBool>, queries: mpsc::Sender<(u8, mpsc::SyncSender<Option<Intent>>)>, scoped_pid: Option<u32>, resolver: Arc<Mutex<Option<SurfaceResolver>>>, workers: super::shutdown_workers::WorkerGroup }
 impl ForegroundObserver {
     pub fn start() -> Result<Self, SnipError> {
         Self::start_filtered(None)
@@ -101,7 +101,8 @@ impl ForegroundObserver {
         let stop = Arc::new(AtomicBool::new(false)); let state = shared.clone(); let stopping = stop.clone();
         let (send, receive) = mpsc::sync_channel(1);
         let (queries, requests) = mpsc::channel::<(u8, mpsc::SyncSender<Option<Intent>>) >();
-        std::thread::spawn(move || {
+        let workers = super::shutdown_workers::WorkerGroup::default();
+        workers.spawn(move || {
             OBSERVER.with(|slot| *slot.borrow_mut() = Some((state.clone(), resolving.clone())));
             let foreground = unsafe { SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(event), scoped_pid.unwrap_or(0), 0, WINEVENT_OUTOFCONTEXT) };
             let lifecycle = unsafe { SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, None, Some(event), scoped_pid.unwrap_or(0), 0, WINEVENT_OUTOFCONTEXT) };
@@ -137,11 +138,13 @@ impl ForegroundObserver {
                 unsafe { let _ = MsgWaitForMultipleObjects(None, false, 25, QS_ALLINPUT); }
             }
             if let Ok(mut observed) = state.lock() { observed.healthy = false; observed.candidate = None; }
-            unsafe { let _ = UnhookWinEvent(foreground); let _ = UnhookWinEvent(lifecycle); }
+            for hook in [foreground, lifecycle] {
+                while !unsafe { UnhookWinEvent(hook) }.as_bool() { std::thread::sleep(Duration::from_millis(25)); }
+            }
             OBSERVER.with(|slot| *slot.borrow_mut() = None);
-        });
+        }).map_err(|_| SnipError::Inactive)?;
         if receive.recv_timeout(Duration::from_secs(2)).ok() != Some(true) { stop.store(true, Ordering::Release); return Err(SnipError::Inactive); }
-        Ok(Self { shared, stop, queries, scoped_pid, resolver })
+        Ok(Self { shared, stop, queries, scoped_pid, resolver, workers })
     }
     pub fn set_surface_resolver(&self, resolver: SurfaceResolver, bar_hwnd: isize) {
         if let Ok(mut state) = self.shared.lock() { state.bar_hwnd = bar_hwnd; }
@@ -199,6 +202,7 @@ impl ForegroundObserver {
         }
     }
     pub fn stop(&self) { self.stop.store(true, Ordering::Release); if let Ok(mut state) = self.shared.lock() { state.healthy = false; state.candidate = None; } }
+    pub fn stop_and_drain(&self) -> Result<(), String> { self.stop(); self.workers.drain() }
 }
 fn live_identity(intent: Intent, resolver: Option<&SurfaceResolver>) -> bool {
     let hwnd = HWND(intent.hwnd as *mut _);

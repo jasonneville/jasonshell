@@ -1,6 +1,7 @@
 import type { SpeechSessionNonce, SpeechStatusKind } from './events';
 
 export const IPC_COMMANDS = {
+  requestShellExit: 'request_shell_exit',
   getStandardHotkeyStatus: 'get_standard_hotkey_status',
   saveStandardHotkeys: 'save_standard_hotkeys',
   beginStandardHotkeyCapture: 'begin_standard_hotkey_capture',

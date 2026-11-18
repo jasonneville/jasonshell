@@ -529,6 +529,16 @@ impl Coordinator {
                 .chain(inner.previous.iter().map(|p| p.window.caller.window_id)).collect(),
             readiness_count: current.map_or(0, |c| c.ready.len()), save_pin: current.is_some_and(|c| c.phase == Phase::Saving), last_publication: inner.last_publication.clone() }
     }
+    pub fn retire_for_shutdown(&self) -> Result<(), SnipError> {
+        let (active, previous) = {
+            let mut inner = self.lock()?;
+            if inner.image_reservations != 0 || inner.active.as_ref().is_some_and(|current| current.busy) { return Err(SnipError::Busy); }
+            (inner.active.take(), inner.previous.take())
+        };
+        if let Some(current) = active { self.dispose(current); }
+        if let Some(previous) = previous { self.windows.retire_generation(&previous.token); self.windows.close(previous.window); }
+        Ok(())
+    }
 }
 impl Drop for Coordinator {
     fn drop(&mut self) {

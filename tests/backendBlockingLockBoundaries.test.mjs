@@ -97,13 +97,15 @@ test('appbar activation and cleanup native side effects happen outside runtime m
   assert.doesNotMatch(cleanup, /let\s+mut\s+state\s*=\s*state\.lock\(\)[\s\S]*restore_taskbar\(/);
 });
 
-test('appbar cleanup planning extracts guards but stop and join stay outside planner', () => {
+test('appbar cleanup signals both guards without joining before restoration', () => {
   const beginCleanup = extractFunction(appbar, 'begin_cleanup_plan');
   const takeHandles = extractFunction(appbar, 'take_runtime_guard_handles');
   const stopHandles = extractFunction(appbar, 'stop_runtime_guard_handles');
 
   assert.match(beginCleanup, /take_runtime_guard_handles\(&mut state\)/);
-  assert.match(beginCleanup, /drop\(state\);\s*stop_runtime_guard_handles\(handles\)/);
+  assert.match(beginCleanup, /handles\.fullscreen_stop[\s\S]*?stop\.store\(true, Ordering::Release\)/);
+  assert.match(beginCleanup, /handles\.taskbar_stop[\s\S]*?stop\.store\(true, Ordering::Release\)/);
+  assert.doesNotMatch(beginCleanup, /stop_runtime_guard_handles\(|\.join\(\)/);
   assert.doesNotMatch(beginCleanup, /stop_fullscreen_guard\(/);
   assert.doesNotMatch(beginCleanup, /stop_taskbar_guard\(/);
   assert.doesNotMatch(takeHandles, /\.store\(true, Ordering::Relaxed\)/);

@@ -25,7 +25,10 @@ test('merged production startup retains both hotkey lifecycle owners and passive
   const runtime = readFileSync(new URL('../src-tauri/src/snipping/runtime.rs', import.meta.url), 'utf8');
   const escape = readFileSync(new URL('../src-tauri/src/snipping/escape.rs', import.meta.url), 'utf8');
   assert.match(main, /windows_key_hook::install_loaded_windows_key_hook/);
-  assert.match(main, /windows_key_hook::uninstall_windows_key_hook/);
+  const exit = readFileSync(new URL('../src-tauri/src/graceful_exit.rs', import.meta.url), 'utf8');
+  assert.match(exit, /crate::windows_key_hook::stop_and_drain_hotkeys\(\)/);
+  assert.match(exit, /\.state::<std::sync::Arc<crate::snipping::runtime::SnipRuntime>>\(\)\s*\.stop_and_drain\(\)/);
+  assert.match(main, /RunEvent::ExitRequested \{ api, code, \.\. \} = event[\s\S]*?api\.prevent_exit\(\)/);
   assert.match(main, /SnipRuntime::install/);
   assert.match(runtime, /super::escape::install\(Arc::downgrade\(&runtime\)\)/);
   const callback = escape.slice(escape.indexOf('unsafe extern "system" fn keyboard('), escape.indexOf('pub(crate) fn install('));

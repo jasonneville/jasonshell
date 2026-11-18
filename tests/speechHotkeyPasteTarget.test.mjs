@@ -178,7 +178,10 @@ test('delayed Stop hotkey carries original nonce and cannot stop a newer recordi
     'reject stale Stop before transitioning current recording to stopping');
   assert.match(toggle, /stopSpeechCapture\(\{\s*nonce\s*\}\)/,
     'stop IPC must preserve the nonce validated against the event');
-  assert.match(body(runtime, 'fn stop_speech_capture('), /request\.nonce/);
+  const stop = body(runtime, 'fn stop_speech_capture(');
+  assert.match(stop, /admit_mutation\(&app\)\?[\s\S]*state\.workers\.enter\(\)\?[\s\S]*spawn_blocking\(move \|\|/);
+  assert.match(stop, /let \(_admission, _work\) = \(admission, work\);[\s\S]*stop_speech_capture_blocking\(app\.clone\(\), &state, request\)/);
+  assert.match(body(runtime, 'fn stop_speech_capture_blocking('), /\.stop\(request\.nonce, state\.now\(\)\)/);
 });
 
 test('failed hotkey emission cancels only its own reservation, never a replacement manual capture', () => {

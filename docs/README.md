@@ -12,6 +12,7 @@ Status: current index. Use it to choose what to read. Do not treat every file in
 ## Current references
 
 - `smoke-test-windows.md`: Windows smoke guidance. Use only when live smoke is approved.
+- Settings graceful-exit contract: [`README.md#settings-only-graceful-exit`](../README.md#settings-only-graceful-exit) and [`master_spec.md#settings-only-graceful-exit`](../master_spec.md#settings-only-graceful-exit); acceptance remains consent-gated and pending in [`smoke-test-windows.md#settings-graceful-exit-acceptance-pending--not-run`](smoke-test-windows.md#settings-graceful-exit-acceptance-pending--not-run).
 - `adding-svg-icons.md`: icon addition workflow.
 - `terminal-panel-prewarm-idle-policy.md`: terminal prewarm/idle policy.
 - `architecture/phase-9-multi-monitor-architecture.md`: planning reference for multi-monitor work. Current runtime remains primary-monitor unless source/tests show otherwise.
@@ -52,7 +53,8 @@ These are not current behavior. Read only when the task names the feature or iss
 
 ## Blocked or superseded docs
 
-No root index can safely mark every older plan as blocked or superseded without re-auditing source. When status is not explicit in the file or this index, treat it as unverified planning/history, not current truth.
+- `graceful-exit-implementation-contract.md`: superseded historical draft; use the current [`master_spec.md#settings-only-graceful-exit`](../master_spec.md#settings-only-graceful-exit) instead.
+- No root index can safely mark every older plan as blocked or superseded without re-auditing source. When status is not explicit in the file or this index, treat it as unverified planning/history, not current truth.
 
 ## Read by task type
 

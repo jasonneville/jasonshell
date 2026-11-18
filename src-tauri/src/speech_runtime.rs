@@ -91,6 +91,7 @@ struct Capture {
 }
 
 pub(crate) struct SpeechRuntimeState {
+    workers: Arc<crate::shutdown_workers::WorkerGroup>,
     inner: Mutex<RuntimeInner>,
     generation: AtomicU64,
     commit: Mutex<()>,
@@ -198,6 +199,7 @@ impl RuntimeInner {
 impl Default for SpeechRuntimeState {
     fn default() -> Self {
         Self {
+            workers: Arc::new(crate::shutdown_workers::WorkerGroup::default()),
             inner: Mutex::new(RuntimeInner {
                 controller: SpeechController::default(),
                 capture: None,
@@ -326,9 +328,12 @@ where
 
 #[tauri::command]
 pub(crate) fn copy_speech_history_transcript(
+    app: AppHandle,
     state: State<'_, SpeechRuntimeState>,
     request: CopySpeechHistoryTranscriptRequest,
 ) -> Result<(), String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app)?;
+    let _work = state.workers.enter()?;
     copy_retained_history_transcript(&state, request, |transcript| {
         crate::speech_clipboard::write_unicode_text(transcript)
     })
@@ -488,7 +493,9 @@ pub(crate) fn spawn_warm_model_async(app: AppHandle) {
         return;
     }
     drop(operation);
+    let Ok(work) = state.workers.enter() else { return; };
     tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
         let resolved = resolve_model_resource(&app);
         let source = resolved.as_ref().ok().map(|(_, source)| *source);
         let missing = resolved.is_err();
@@ -598,7 +605,10 @@ pub(crate) async fn import_speech_model(
     app: AppHandle,
 ) -> Result<ImportModelResponse, String> {
     require_model_settings(&window)?;
+    let admission = crate::graceful_exit::admit_mutation(&app)?;
+    let work = app.state::<SpeechRuntimeState>().workers.enter()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let (_admission, _work) = (admission, work);
         import_model_blocking(app, window, ModelImportKind::Archive)
     })
     .await
@@ -611,7 +621,10 @@ pub(crate) async fn import_speech_model_folder(
     app: AppHandle,
 ) -> Result<ImportModelResponse, String> {
     require_model_settings(&window)?;
+    let admission = crate::graceful_exit::admit_mutation(&app)?;
+    let work = app.state::<SpeechRuntimeState>().workers.enter()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let (_admission, _work) = (admission, work);
         import_model_blocking(app, window, ModelImportKind::Folder)
     })
     .await
@@ -753,9 +766,11 @@ where
 
 #[tauri::command]
 pub(crate) fn capture_speech_paste_target(
+    app: AppHandle,
     state: State<'_, SpeechRuntimeState>,
     capture: Option<bool>,
 ) -> Result<u64, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app)?;
     let reservation_id = {
         let mut inner = state.inner.lock().map_err(|_| GENERIC_ERROR.to_owned())?;
         if inner.capture.is_some() || inner.controller.status().status != SpeechStatusKind::Idle {
@@ -795,6 +810,7 @@ pub(crate) fn start_speech_capture(
     state: State<'_, SpeechRuntimeState>,
     request: StartSpeechCaptureRequest,
 ) -> Result<StartSpeechCaptureResponse, String> {
+    let _admission = crate::graceful_exit::admit_mutation(&app)?;
     let commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
     if state
         .model_operation
@@ -906,7 +922,9 @@ pub(crate) fn start_speech_capture(
     drop(inner);
     state.generation.store(nonce.0, Ordering::Release);
     let worker_app = app.clone();
+    let work = state.workers.enter()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _work = work;
         run_streaming_worker(worker_app, nonce, nonce.0, intake, receiver, model)
     });
     if let Err(error) = emit(&app, &event) {
@@ -934,9 +952,23 @@ pub(crate) fn start_speech_capture(
 }
 
 #[tauri::command]
-pub(crate) fn stop_speech_capture(
+pub(crate) async fn stop_speech_capture(
     app: AppHandle,
     state: State<'_, SpeechRuntimeState>,
+    request: StopSpeechCaptureRequest,
+) -> Result<crate::speech::SpeechStatusResponse, String> {
+    let admission = crate::graceful_exit::admit_mutation(&app)?;
+    let work = state.workers.enter()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_admission, _work) = (admission, work);
+        let state = app.state::<SpeechRuntimeState>();
+        stop_speech_capture_blocking(app.clone(), &state, request)
+    }).await.map_err(|_| "Speech stop worker unavailable".to_string())?
+}
+
+fn stop_speech_capture_blocking(
+    app: AppHandle,
+    state: &SpeechRuntimeState,
     request: StopSpeechCaptureRequest,
 ) -> Result<crate::speech::SpeechStatusResponse, String> {
     let _commit = state.commit.lock().map_err(|_| GENERIC_ERROR)?;
@@ -953,6 +985,11 @@ pub(crate) fn stop_speech_capture(
         };
         (event, capture)
     };
+    // Keep lifecycle publication serialized through the complete stop handoff.
+    // This runs on the retained blocking worker, with `inner` released. CPAL's
+    // callbacks never acquire `commit` (their tail access is try_lock), so the
+    // stream join cannot wait back on this gate. Releasing it here permits stale
+    // Transcribing publication after shutdown/new-generation terminal state.
     if let Err(error) = emit(&app, &event) {
         capture.intake.first_close(InputCloseReason::SafeFailure);
         drop(capture);
@@ -1437,8 +1474,9 @@ fn schedule_terminal_reset(app: AppHandle, nonce: SpeechSessionNonce) {
         .state::<SpeechRuntimeState>()
         .generation
         .load(Ordering::Acquire);
-    std::thread::spawn(move || {
-        std::thread::sleep(TERMINAL_RESET_DELAY);
+    let workers = app.state::<SpeechRuntimeState>().workers.clone();
+    let _ = workers.spawn(move || {
+        if !speech_delay(&app, TERMINAL_RESET_DELAY) { return; }
         let state = app.state::<SpeechRuntimeState>();
         if let Some(event) = reset_terminal_if_current(&state, nonce, generation) {
             let _commit = match state.commit.lock() {
@@ -1456,10 +1494,11 @@ fn schedule_terminal_reset(app: AppHandle, nonce: SpeechSessionNonce) {
 }
 
 fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated_at: Instant) {
-    std::thread::spawn(move || {
-        std::thread::sleep(
+    let workers = app.state::<SpeechRuntimeState>().workers.clone();
+    let _ = workers.spawn(move || {
+        if !speech_delay(&app,
             (activated_at + MAX_RECORDING_DURATION).saturating_duration_since(Instant::now()),
-        );
+        ) { return; }
         let state = app.state::<SpeechRuntimeState>();
         let _commit = match state.commit.lock() {
             Ok(value) => value,
@@ -1479,6 +1518,8 @@ fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated
         }) else {
             return;
         };
+        // As with explicit stop, retain the commit gate through tail closure
+        // and Transcribing emission; the audio callback cannot wait on this gate.
         drop(capture.stream);
         handoff_tail(&capture.intake, &capture.tail, &capture.health);
         capture.intake.first_close(InputCloseReason::RecordingCap);
@@ -1489,7 +1530,8 @@ fn schedule_recording_limit(app: AppHandle, nonce: SpeechSessionNonce, activated
 }
 
 fn schedule_capture_health(app: AppHandle, nonce: SpeechSessionNonce) {
-    std::thread::spawn(move || loop {
+    let workers = app.state::<SpeechRuntimeState>().workers.clone();
+    let _ = workers.spawn(move || loop {
         std::thread::sleep(Duration::from_millis(10));
         let state = app.state::<SpeechRuntimeState>();
         let _commit = match state.commit.lock() {
@@ -1539,7 +1581,8 @@ fn schedule_capture_health(app: AppHandle, nonce: SpeechSessionNonce) {
 /// Publishes the most recent scalar capture meter away from CPAL's real-time callback.
 /// This is intentionally rate-limited and guarded by the active session generation.
 fn schedule_voice_level_updates(app: AppHandle, nonce: SpeechSessionNonce) {
-    std::thread::spawn(move || loop {
+    let workers = app.state::<SpeechRuntimeState>().workers.clone();
+    let _ = workers.spawn(move || loop {
         std::thread::sleep(Duration::from_millis(50));
         let state = app.state::<SpeechRuntimeState>();
         if state.shutting_down.load(Ordering::Acquire)
@@ -1589,8 +1632,9 @@ fn schedule_transcription_limit(app: AppHandle, nonce: SpeechSessionNonce) {
             })
             .unwrap_or(Duration::ZERO)
     };
-    std::thread::spawn(move || {
-        std::thread::sleep(delay);
+    let workers = app.state::<SpeechRuntimeState>().workers.clone();
+    let _ = workers.spawn(move || {
+        if !speech_delay(&app, delay) { return; }
         let (event, generation) = {
             let state = app.state::<SpeechRuntimeState>();
             let _commit = match state.commit.lock() {
@@ -1634,6 +1678,56 @@ pub(crate) fn shutdown(state: &SpeechRuntimeState) {
     shutdown_after_commit(state);
 }
 
+fn speech_delay(app: &AppHandle, delay: Duration) -> bool {
+    let deadline = Instant::now() + delay;
+    loop {
+        if app.state::<SpeechRuntimeState>().shutting_down.load(Ordering::Acquire) { return false; }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return true; }
+        std::thread::sleep(remaining.min(Duration::from_millis(25)));
+    }
+}
+
+/// Real capture, inference/model tasks and native visibility workers all cross
+/// this barrier. A slow WASAPI/ONNX operation retains its original owned worker.
+pub(crate) fn stop_and_drain_speech(app: &AppHandle) -> Result<crate::graceful_exit::DrainReceipt, String> {
+    let state = app.state::<SpeechRuntimeState>();
+    state.shutting_down.store(true, Ordering::Release);
+    {
+        let mut focus = state.focus_admission.try_lock().map_err(|_| "Speech focus admission busy")?;
+        focus.closed = true;
+        if focus.in_flight != 0 { return Err("Speech focus work still draining".into()); }
+    }
+    let capture = {
+        let _delivery = state.delivery.try_lock().map_err(|_| "Speech delivery still draining")?;
+        let _commit = state.commit.try_lock().map_err(|_| "Speech lifecycle still draining")?;
+        let mut operation = state.model_operation.try_lock().map_err(|_| "Speech model work still draining")?;
+        operation.epoch = operation.epoch.checked_add(1).ok_or("Speech model epoch exhausted")?;
+        state.generation.fetch_add(1, Ordering::AcqRel);
+        let mut inner = state.inner.try_lock().map_err(|_| "Speech capture still draining")?;
+        inner.prepared = None; inner.paste_target = None;
+        inner.capture.take()
+    };
+    if let Some(capture) = capture {
+        capture.intake.first_close(InputCloseReason::Shutdown);
+        // Locked CPAL WASAPI Stream::drop signals and joins its audio thread.
+        // Execute that destructor on a retained worker, outside lifecycle locks.
+        state.workers.spawn(move || drop(capture))?;
+    }
+    state.workers.drain()?;
+    let model = {
+        let mut model = state.model_pool.try_lock().map_err(|_| "Speech model ownership unavailable")?;
+        std::mem::replace(&mut *model, WarmModelState::Failed)
+    };
+    drop(model);
+    state.history.try_lock().map_err(|_| "Speech history unavailable")?.clear();
+    if let Some(indicator) = app.get_webview_window(crate::shell_windows::SPEECH_INDICATOR_LABEL) {
+        indicator.hide().map_err(|_| "Speech indicator retirement failed")?;
+        if indicator.is_visible().map_err(|_| "Speech indicator state unavailable")? { return Err("Speech indicator is still visible".into()); }
+    }
+    Ok(crate::graceful_exit::DrainReceipt { finished: true })
+}
+
 #[cfg(test)]
 fn shutdown_with_hook<F>(state: &SpeechRuntimeState, after_commit_locked: F)
 where
@@ -1675,8 +1769,10 @@ fn emit(app: &AppHandle, event: &SpeechStatusEvent) -> Result<(), String> {
 /// Applies a current speech-status visibility decision outside the lifecycle commit gate.
 /// No captured speech data is read, emitted, or logged here.
 fn apply_indicator_visibility(app: AppHandle, event: SpeechStatusEvent) {
-    std::thread::spawn(move || {
+    let workers = app.state::<SpeechRuntimeState>().workers.clone();
+    let _ = workers.spawn(move || {
         let state = app.state::<SpeechRuntimeState>();
+        if state.shutting_down.load(Ordering::Acquire) { return; }
         // Every status plan passes through this gate. It keeps native actions ordered
         // while lifecycle transitions remain free to release `commit` before I/O.
         let Ok(_visibility_order) = state.visibility_order.lock() else {

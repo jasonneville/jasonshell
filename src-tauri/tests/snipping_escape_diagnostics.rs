@@ -2,6 +2,8 @@
 //! no global opt-in creation. Each test owns only its approved-temp subdirectory.
 //! API/event aliases may be aligned with owner implementation without weakening
 //! privacy, bounded storage, default-off or hot-path allocation assertions.
+#[path = "../src/shutdown_workers.rs"]
+mod shutdown_workers;
 #[path = "../src/snipping/diagnostics.rs"]
 mod diagnostics;
 use diagnostics::{Diagnostics,Event};

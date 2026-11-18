@@ -36,6 +36,10 @@ export function installPushFixture(options: { commitError?: string; pushError?: 
     if (path !== child) return null;
     return current();
   });
+  // Metadata and full workbench status describe the same fixture repository.
+  // Native mutation receipts add an async boundary; do not depend on observing
+  // the temporary full-status link before deferred metadata contradicts it.
+  overrides.set('get_stack_git_metadata', () => ({ repositoryRoot: child, gitDir: `${child}\\.git`, remoteRepositoryUrl: options.browserUrl ?? null, ahead: null, behind: null }));
   overrides.set('stack_git_commit', () => {
     if (options.commitError) throw new Error(options.commitError);
     committed = true;

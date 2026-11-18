@@ -42,10 +42,14 @@ async function importEditorAdapter() {
   let javascript = ts.transpileModule(adapter, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
   }).outputText;
-  const languageStub = `data:text/javascript,${encodeURIComponent("export async function installStackTextEditorLanguage() {}\nexport function stackTextEditorExtension() { return ''; }")}`;
-  const foldControlStub = `data:text/javascript,${encodeURIComponent('export function createStackFoldMarker() { return document.createElement("button"); }')}`;
-  javascript = javascript.replace("'./stackTextEditorLanguages'", JSON.stringify(languageStub));
-  javascript = javascript.replace("'./stackFoldControl'", JSON.stringify(foldControlStub));
+  // Data URLs have no relative base. Resolve the real helpers to compiled artifacts.
+  for (const [specifier, compiledPath] of [
+    ['./stackTextEditorLanguages', '../dist-tests/features/stack-browser/stackTextEditorLanguages.js'],
+    ['./stackFoldControl', '../dist-tests/features/stack-browser/stackFoldControl.js']
+  ]) {
+    assert.ok(javascript.includes(`'${specifier}'`), `adapter must import real helper ${specifier}`);
+    javascript = javascript.replace(`'${specifier}'`, JSON.stringify(new URL(compiledPath, import.meta.url).href));
+  }
   javascript = javascript.replace(/from '(@[^']+)'/g, (_match, specifier) => (
     `from ${JSON.stringify(import.meta.resolve(specifier))}`
   ));
@@ -246,10 +250,10 @@ test('confirmed conflict reload keeps the mounted draft until a disk read succee
   assert.match(editor, /\{#if saveConflict \|\| saveErrorMessage \|\| reloadErrorMessage\}[\s\S]*role="alert"[\s\S]*\{#if reloadErrorMessage\}<span>\{reloadErrorMessage\}<\/span>\{\/if\}/, 'reload failures remain visible while the conflict UI stays mounted');
 });
 
-test('each successful file load focuses editor at document and viewport start after paint', () => {
+test('each current successful file load focuses editor at start after paint only in the focused visible document', () => {
   assert.match(
     editor,
-    /initialContent = result\.content;[\s\S]*await tick\(\);[\s\S]*const mountedAdapter = createStackTextEditorAdapter\([\s\S]*editorAdapter = mountedAdapter;[\s\S]*await new Promise<void>\(\(resolve\) => window\.requestAnimationFrame\(\(\) => resolve\(\)\)\);\s*if \(disposed \|\| sequence !== requestSequence \|\| filePath !== path \|\| editorAdapter !== mountedAdapter\) return;\s*mountedAdapter\.focusAtStart\(\);/
+    /initialContent = result\.content;[\s\S]*await tick\(\);[\s\S]*const mountedAdapter = createStackTextEditorAdapter\([\s\S]*editorAdapter = mountedAdapter;[\s\S]*await new Promise<void>\(\(resolve\) => window\.requestAnimationFrame\(\(\) => resolve\(\)\)\);\s*if \(disposed \|\| sequence !== requestSequence \|\| filePath !== path \|\| editorAdapter !== mountedAdapter\) return;\s*if \(!document\.hidden && document\.hasFocus\(\)\) mountedAdapter\.focusAtStart\(\);/
   );
 });
 

@@ -35,6 +35,7 @@ const HSHELL_FLASH: i32 = 0x8006;
 const WM_TASKBAR_FLASH: u32 = WM_APP + 1;
 
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+static RETIRED: AtomicBool = AtomicBool::new(false);
 static SHELL_MSG_ID: AtomicU32 = AtomicU32::new(0);
 static CLASS_NAME_BUF: OnceLock<Vec<u16>> = OnceLock::new();
 static SHELLHOOK_NAME_BUF: OnceLock<Vec<u16>> = OnceLock::new();
@@ -70,6 +71,7 @@ pub enum NativeHooksHealth {
 }
 
 struct State {
+    drain_failed: bool,
     running: bool,
     stop: AtomicBool,
     worker: Option<JoinHandle<()>>,
@@ -86,6 +88,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            drain_failed: false,
             running: false,
             stop: AtomicBool::new(false),
             worker: None,
@@ -151,6 +154,7 @@ pub fn native_hooks_diagnostics_snapshot() -> super::diagnostics::NativeHooksDia
 }
 
 pub fn start_native_hooks() -> Result<(), String> {
+    if RETIRED.load(Ordering::Acquire) { return Err("Native hooks are retired".into()); }
     if !explorer_suppression_v2_enabled_from_env() && !taskbar_native_hooks_enabled_from_env() {
         return Ok(());
     }
@@ -158,6 +162,7 @@ pub fn start_native_hooks() -> Result<(), String> {
     let mut guard = state
         .lock()
         .map_err(|_| "native hooks state poisoned".to_string())?;
+    if RETIRED.load(Ordering::Acquire) { return Err("Native hooks are retired".into()); }
     if guard.running {
         return Ok(());
     }
@@ -546,16 +551,50 @@ fn coalesce_hook_wake_timeout(
 
 fn cleanup_worker(hwnd: HWND, hooks: Vec<HWINEVENTHOOK>, hinstance: HINSTANCE) {
     SHELL_MSG_ID.store(0, Ordering::SeqCst);
-    unsafe {
-        let _ = deregister_shell_hook_window(hwnd);
-        for hook in hooks {
-            let _ = UnhookWinEvent(hook);
-        }
-        let _ = DestroyWindow(hwnd);
-        let _ = UnregisterClassW(class_name(), Some(hinstance));
+    let _ = unsafe { deregister_shell_hook_window(hwnd) };
+    let mut hooks = hooks;
+    // These registrations belong to this native thread. Failed release remains
+    // on the SAME worker; the external bounded drain retains its JoinHandle.
+    while !hooks.is_empty() {
+        hooks.retain(|hook| !unsafe { UnhookWinEvent(*hook) }.as_bool());
+        if !hooks.is_empty() { thread::sleep(std::time::Duration::from_millis(25)); }
+    }
+    while unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)) }.as_bool() {
+        if unsafe { DestroyWindow(hwnd) }.is_ok() { break; }
+        thread::sleep(std::time::Duration::from_millis(25));
+    }
+    while unsafe { UnregisterClassW(class_name(), Some(hinstance)) }.is_err() {
+        thread::sleep(std::time::Duration::from_millis(25));
     }
     println!("{{\"kind\":\"nativeHookCleanup\"}}");
     let _ = io::stdout().flush();
+}
+
+pub fn stop_and_drain_native_hooks() -> Result<(), String> {
+    RETIRED.store(true, Ordering::Release);
+    let Some(state) = STATE.get() else { return Ok(()); };
+    let thread_id = {
+        let guard = state.lock().map_err(|_| "Native hook ownership unavailable")?;
+        guard.stop.store(true, Ordering::Release);
+        guard.worker_thread_id.load(Ordering::Acquire)
+    };
+    if thread_id != 0 { let _ = unsafe { PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) }; }
+    let deadline = Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        {
+            let mut guard = state.lock().map_err(|_| "Native hook ownership unavailable")?;
+            if guard.drain_failed { return Err("Native hook worker completion failed".into()); }
+            if guard.worker.as_ref().is_none_or(|worker| worker.is_finished()) {
+                if let Some(worker) = guard.worker.take() {
+                    if worker.join().is_err() { guard.drain_failed = true; return Err("Native hook worker completion failed".into()); }
+                }
+                guard.running = false; guard.hwnd = None; guard.sender = None;
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline { return Err("Native hooks still draining; retry retained worker".into()); }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {

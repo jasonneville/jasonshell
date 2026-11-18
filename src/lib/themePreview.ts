@@ -23,7 +23,7 @@ export interface ThemeEditor {
   cancel(): void;
   dispose(): void;
 }
-export interface ThemeEditorOptions { onSelectionRequest?: (id: string) => boolean | Promise<boolean> }
+export interface ThemeEditorOptions { onSelectionRequest?: (id: string, expiresAt?: number) => boolean | Promise<boolean> }
 
 let rendererId: string | null = null;
 function identity(): string { return rendererId ??= crypto.randomUUID(); }
@@ -169,7 +169,7 @@ async function handleSelection(id: string, expiresAt?: number): Promise<boolean>
   selectionPending = true;
   try {
     if (owner.options.onSelectionRequest) {
-      if (!await owner.options.onSelectionRequest(id)) return false;
+      if (!await owner.options.onSelectionRequest(id, expiresAt)) return false;
     } else if (owner.editor.isDirty()) throw new Error('Return to the theme editor to confirm this selection');
     // Confirmation may be asynchronous. Recheck ownership before committing.
     if (localEditor !== owner || active?.session !== owner.session.session) throw new Error('Theme editor changed; retry');
@@ -180,9 +180,9 @@ async function handleSelection(id: string, expiresAt?: number): Promise<boolean>
   } finally { selectionPending = false; }
 }
 
-export function requestPreviewSelection(id: string): Promise<boolean> {
+export function requestPreviewSelection(id: string, expiresAt = Date.now() + 30_000): Promise<boolean> {
   if (!active) { commitShellThemeSelection(id); return Promise.resolve(true); }
-  if (active.owner === identity()) return handleSelection(id);
+  if (active.owner === identity()) return handleSelection(id, expiresAt);
   if (!channel) return Promise.reject(new Error('Theme preview owner is unavailable; reopen the editor and retry'));
   const requestId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
@@ -192,7 +192,7 @@ export function requestPreviewSelection(id: string): Promise<boolean> {
       notify(); reject(new Error(error));
     }, 30_000);
     requests.set(requestId, { owner: active!.owner, session: active!.session, resolve, reject, timer });
-    send({ type: 'select', owner: active!.owner, session: active!.session, requestId, selectedId: id, expiresAt: Date.now() + 30_000 });
+    send({ type: 'select', owner: active!.owner, session: active!.session, requestId, selectedId: id, expiresAt });
   });
 }
 

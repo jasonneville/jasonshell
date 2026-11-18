@@ -26,15 +26,18 @@ struct NotificationState {
 }
 
 static NOTIFICATION_STATE: OnceLock<Mutex<NotificationState>> = OnceLock::new();
+static STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WORKERS: OnceLock<crate::shutdown_workers::WorkerGroup> = OnceLock::new();
 
 fn state() -> &'static Mutex<NotificationState> {
     NOTIFICATION_STATE.get_or_init(|| Mutex::new(NotificationState::default()))
 }
 
 pub(super) fn start_notification_tracking() {
+    if STOPPED.load(std::sync::atomic::Ordering::Acquire) { return; }
     super::diagnostics::initialize_package_identity_diagnostics();
     super::diagnostics::note_listener_start();
-    thread::spawn(|| {
+    let _ = WORKERS.get_or_init(Default::default).spawn(|| {
         let Ok(listener) = UserNotificationListener::Current() else {
             super::diagnostics::note_listener_status(super::ToastListenerStatus::Unavailable);
             return;
@@ -57,6 +60,7 @@ pub(super) fn start_notification_tracking() {
         super::diagnostics::note_listener_status(super::ToastListenerStatus::Allowed);
 
         loop {
+            if STOPPED.load(std::sync::atomic::Ordering::Acquire) { return; }
             let Ok(notifications) = listener
                 .GetNotificationsAsync(NotificationKinds::Toast)
                 .and_then(|operation| operation.get())
@@ -81,6 +85,11 @@ pub(super) fn start_notification_tracking() {
             thread::sleep(NOTIFICATION_POLL_INTERVAL);
         }
     });
+}
+
+pub(super) fn stop_and_drain() -> Result<(), String> {
+    STOPPED.store(true, std::sync::atomic::Ordering::Release);
+    WORKERS.get_or_init(Default::default).drain()
 }
 
 pub(super) fn notification_count_for_process_path(

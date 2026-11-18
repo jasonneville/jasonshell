@@ -359,3 +359,23 @@
   border-color: var(--js-color-accent-border);
   color: var(--js-color-text-strong);
 }
+.settings-exit {
+  --js-color-text: #f1f5ff;
+  --js-color-text-strong: #ffffff;
+  --js-color-text-muted: #b9c7dc;
+  --js-color-surface-raised: #202c3d;
+  --js-color-border: #58677e;
+  --js-color-accent: #b5d0ff;
+  --js-color-accent-border: #9dbdf2;
+  --js-bg-control: #27364b;
+  --js-color-error: #702d3b;
+  --js-color-error-border: #ffb5bf;
+  --js-focus-ring: 0 0 0 2px #b5d0ff;
+  color: #f1f5ff;
+}
+.settings-section.settings-exit {
+  background: #182231;
+  border: 1px solid #58677e;
+  border-radius: var(--js-radius-md);
+  padding: .65rem;
+}

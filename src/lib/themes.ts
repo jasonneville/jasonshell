@@ -1,4 +1,5 @@
 import { loadSavedThemeState, writeSavedThemeState, type SavedThemeState, SAVED_THEMES_STORAGE_KEY } from './themePersistence.js';
+import { installThemeSelectionAuthority, requestThemeSelectionThroughAuthority } from './themeSelectionAuthority.js';
 import { THEME_PALETTE_TOKENS, resolveThemePaletteColor, validateCustomTheme, type CustomTheme } from './themePalette.js';
 import { installThemePreviewSync, previewSelectionGuard, requestPreviewSelection, currentPreviewTheme, reportThemeSyncError } from './themePreview.js';
 
@@ -234,9 +235,16 @@ export function applyThemeToElement(value: string | CustomTheme, element: ThemeD
 }
 
 export async function requestShellThemeSelection(id: string): Promise<boolean> {
-  if (previewSelectionGuard()) return requestPreviewSelection(id);
-  commitShellThemeSelection(id);
-  return true;
+  return requestThemeSelectionThroughAuthority(id);
+}
+/** Only the mounted Settings theme editor installs canonical selection authority. */
+export function installShellThemeSelectionAuthority(): () => void {
+  return installThemeSelectionAuthority(crypto.randomUUID().replaceAll('-', ''), async (id, expiresAt) => {
+    if (Date.now() >= expiresAt) throw new Error('Theme selection request expired; retry');
+    if (previewSelectionGuard()) return requestPreviewSelection(id, expiresAt);
+    commitShellThemeSelection(id);
+    return true;
+  });
 }
 export function commitShellThemeSelection(id: string): void {
   applyShellTheme(id);

@@ -65,6 +65,7 @@ pub fn get_process_manager_context(window: WebviewWindow) -> Result<ProcessManag
 #[tauri::command]
 pub fn set_process_manager_tab(window: WebviewWindow, open_generation: u64, tab_revision: u64, tab: ProcessManagerTab) -> Result<ProcessManagerContext, String> {
     authorize_process_manager(&window)?;
+    let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
     let visible = window.is_visible().unwrap_or(false); let focused = window.is_focused().unwrap_or(false);
     let runtime = window.state::<SystemInfoRuntime>();
     let context = {

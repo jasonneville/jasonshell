@@ -50,6 +50,7 @@ impl Drop for OwnedHandle {
 pub(super) struct ProductionWatch {
     stop_event: Arc<OwnedHandle>,
     worker: Option<JoinHandle<()>>,
+    worker_failed: bool,
     #[cfg(test)]
     targets: Vec<PathBuf>,
 }
@@ -101,6 +102,7 @@ impl ProductionWatch {
         let mut watch = Self {
             stop_event,
             worker: Some(worker),
+            worker_failed: false,
             #[cfg(test)]
             targets: paths,
         };
@@ -129,6 +131,17 @@ impl ProductionWatch {
                 eprintln!("folder watch worker panicked during cleanup");
             }
         }
+    }
+    pub(super) fn stop_and_drain(&mut self) -> Result<(), String> {
+        unsafe { SetEvent(self.stop_event.raw()) }.map_err(|_| "Folder watch cancellation failed")?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while self.worker.as_ref().is_some_and(|worker| !worker.is_finished()) {
+            if Instant::now() >= deadline { return Err("Folder watch still draining; native worker retained".into()); }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if let Some(worker) = self.worker.take() { if worker.join().is_err() { self.worker_failed = true; } }
+        if self.worker_failed { return Err("Folder watch worker completion failed".into()); }
+        Ok(())
     }
     #[cfg(test)]
     pub(super) fn targets(&self) -> Vec<PathBuf> {

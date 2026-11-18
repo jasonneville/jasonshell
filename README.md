@@ -153,6 +153,16 @@ While editing, core colors and **Advanced colors & tints** preview across the sh
 
 Saved themes use the canonical `jasonshell.themes.v1` collection. Legacy `jasonshell.theme` IDs remain a compatibility mirror/read path. The collection supports up to 100 custom themes and 512 KiB of serialized storage; names are limited to 1–80 characters. Unsupported future schema data is preserved read-only, and concurrent collection/theme revisions are rejected rather than silently overwritten. There is no terminal palette editor or theme import/export surface.
 
+When a mounted Control Plane requests a canonical theme selection change, the bounded request/reply path is owned by the already-registered Settings/theme participant. That owner is the only authority that persists the canonical selection; unavailable or replaced Settings authority fails closed, and a foreign document never writes a fallback selection.
+
+### Settings-only graceful exit
+
+**Exit JasonShell** is initiated only from Settings and opens a cancel-first confirmation warning that unsaved work will be lost. Opening the confirmation, Escape, and Cancel are benign: they neither save nor discard edits, hide Settings, start cleanup, nor admit final exit. Confirm sends the path-free `request_shell_exit` once and displays **Exiting JasonShell**; after acceptance, no renderer reply is required. Duplicate requests do not reset the native deadline. Existing save and editing flows remain available; this feature does not add a draft handshake or recovery screen.
+
+After acceptance, the native JasonShell process exits within three seconds. This hard exit is independent of Tauri and cleanup completion. JasonShell-owned Quick Command job trees are verified when possible; verification may fail without blocking exit, and the kernel kill-on-close fallback is not a verified-drained result. AppBar and Explorer work is best effort and early, and never blocks exit. Only preaccept rejection is reported in the UI; there is no postaccept status, recovery screen, retry, or retained/reportable failure state. This is JasonShell exit, not an OS shutdown or whole-PC restart operation; no OS power action is performed. Live Windows/AppBar acceptance remains consent-gated and is not claimed here.
+
+Quick Command launch requires Windows job assignment at process creation, available on Windows 10 and later. If Windows cannot assign the job atomically, JasonShell refuses the launch rather than starting an untracked process.
+
 ### Top bar
 
 - hosts shell controls and search entry

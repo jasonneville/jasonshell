@@ -1,4 +1,7 @@
 //! Short-lock cache and native-owned independent lane scheduling.
+#[cfg(all(test, windows))]
+#[path = "../../tests/fixtures/graceful_exit_system_probe.rs"]
+mod shutdown_test_probe;
 use super::system_info::*;
 use std::{
     sync::{
@@ -14,6 +17,10 @@ pub struct SystemInfoRuntime {
     pub inner: Arc<Mutex<RuntimeInner>>,
     started: AtomicBool,
     pub origin: Instant,
+    stop: Arc<AtomicBool>,
+    scheduler: Mutex<Option<std::thread::JoinHandle<()>>>,
+    workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    worker_failed: Arc<AtomicBool>,
 }
 impl Default for SystemInfoRuntime {
     fn default() -> Self {
@@ -26,6 +33,10 @@ impl Default for SystemInfoRuntime {
             })),
             started: AtomicBool::new(false),
             origin: Instant::now(),
+            stop: Arc::new(AtomicBool::new(false)),
+            scheduler: Mutex::new(None),
+            workers: Arc::new(Mutex::new(Vec::new())),
+            worker_failed: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -37,18 +48,35 @@ pub fn now() -> u64 {
 }
 impl SystemInfoRuntime {
     pub fn start(&self, app: &AppHandle) {
+        if self.stop.load(Ordering::Acquire) { return; }
+        let Ok(mut scheduler) = self.scheduler.lock() else { return; };
+        // Serialize the last admission check with drain's scheduler inspection.
+        if self.stop.load(Ordering::Acquire) { return; }
         if self.started.swap(true, Ordering::AcqRel) {
             return;
         }
         let app = app.clone();
         let origin = self.origin;
         let inner = self.inner.clone();
-        std::thread::spawn(move || {
+        let stop = self.stop.clone();
+        let workers = self.workers.clone();
+        let worker_failed = self.worker_failed.clone();
+        *scheduler = Some(std::thread::spawn(move || {
             let live_collector = Arc::new(Mutex::new(
                 super::windows_telemetry::LiveCollector::default(),
             ));
             loop {
                 std::thread::sleep(Duration::from_millis(50));
+                if stop.load(Ordering::Acquire) { break; }
+                {
+                    let mut workers = workers.lock().unwrap_or_else(|poison| poison.into_inner());
+                    let mut index = 0;
+                    while index < workers.len() {
+                        if workers[index].is_finished() {
+                            if workers.swap_remove(index).join().is_err() { worker_failed.store(true, Ordering::Release); }
+                        } else { index += 1; }
+                    }
+                }
                 let Some(window) = app.get_webview_window("process-manager") else {
                     break;
                 };
@@ -56,6 +84,9 @@ impl SystemInfoRuntime {
                 let focused = window.is_focused().unwrap_or(false);
                 let ticks = origin.elapsed().as_millis().min(u64::MAX as u128) as u64;
                 let mut tokens = Vec::with_capacity(3);
+                // Shared native admission excludes new collection/probe work
+                // atomically with the shutdown freeze. Existing work retains
+                // its slot through actual worker completion.
                 if let Ok(mut state) = inner.lock() {
                     let context = state.coordinator.context();
                     if context.visible && (!visible || !focused) {
@@ -88,7 +119,12 @@ impl SystemInfoRuntime {
                     let inner = inner.clone();
                     let collector = live_collector.clone();
                     let app = app.clone();
-                    std::thread::spawn(move || {
+                    let Ok(admission) = crate::graceful_exit::admit_mutation(&app) else {
+                        if let Ok(mut state) = inner.lock() { state.suspend(); }
+                        continue;
+                    };
+                    let worker = std::thread::spawn(move || {
+                        let _admission = admission;
                         let result = match token.lane {
                             Lane::Live => collector.lock().ok().map(|mut collector| {
                                 super::windows_telemetry::Collected::Live(
@@ -148,8 +184,48 @@ impl SystemInfoRuntime {
                             }
                         }
                     });
+                    // A poisoned ownership mutex is recoverable for retention,
+                    // not permission to drop a still-running JoinHandle.
+                    workers.lock().unwrap_or_else(|poison| poison.into_inner()).push(worker);
                 }
             }
-        });
+        }));
+    }
+
+    /// Stops only JasonShell telemetry/helper workers, never selected process rows.
+    /// Timeouts retain every unfinished handle; retry joins the same workers.
+    pub fn stop_and_drain(&self) -> Result<crate::graceful_exit::DrainReceipt, String> {
+        self.stop.store(true, Ordering::Release);
+        {
+            let mut state = self.inner.lock().map_err(|_| "System Info state unavailable")?;
+            state.suspend();
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let scheduler_done = {
+                let mut scheduler = self.scheduler.lock().map_err(|_| "System Info scheduler unavailable")?;
+                if scheduler.as_ref().is_some_and(|worker| worker.is_finished()) {
+                    if scheduler.take().ok_or("System Info scheduler unavailable")?.join().is_err() {
+                        self.worker_failed.store(true, Ordering::Release);
+                    }
+                }
+                scheduler.is_none()
+            };
+            if scheduler_done {
+                let mut workers = self.workers.lock().map_err(|_| "System Info workers unavailable")?;
+                let mut index = 0;
+                while index < workers.len() {
+                    if workers[index].is_finished() {
+                        if workers.swap_remove(index).join().is_err() { self.worker_failed.store(true, Ordering::Release); }
+                    } else { index += 1; }
+                }
+                if workers.is_empty() {
+                    if self.worker_failed.load(Ordering::Acquire) { return Err("System Info worker completion could not be verified".into()); }
+                    return Ok(crate::graceful_exit::DrainReceipt { finished: true });
+                }
+            }
+            if Instant::now() >= deadline { return Err("System Info helpers still draining; retry retained workers".into()); }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }

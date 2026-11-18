@@ -11,6 +11,8 @@ mod contracts;
 mod control_plane;
 mod dev_tools;
 mod diagnostics;
+mod graceful_exit;
+mod shutdown_workers;
 mod launchers;
 mod layout;
 mod process_manager;
@@ -117,12 +119,15 @@ fn main() {
         }
     }
 
+    let isolated_text_probe = cfg!(all(debug_assertions, feature = "text-document-feasibility"))
+        && std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some();
     let builder = tauri::Builder::default()
         // No raw DeviceEvent consumers: unregister Tao raw input so the global
         // Escape hook also receives keys while our own WebView has focus.
         .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
         .manage(shell_runtime_state())
+        .manage(graceful_exit::ExitCoordinator::default())
         .manage(task_preview_state())
         .manage(search_panel_state())
         .manage(stack_popup_state())
@@ -131,6 +136,7 @@ fn main() {
         .manage(speech_runtime::SpeechRuntimeState::default())
         .manage(process_manager::SystemInfoRuntime::default())
         .invoke_handler(tauri::generate_handler![
+            graceful_exit::request_shell_exit,
             snipping::runtime::start_snip,
             snipping::runtime::get_snip_context,
             snipping::runtime::get_snip_image,
@@ -354,6 +360,13 @@ fn main() {
             taskbar_menu::handle_taskbar_menu_event(app_handle, event);
         })
         .on_window_event(|window, event| {
+            if window.label() == shell_windows::SETTINGS_PANEL_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = settings_panel::hide_settings_panel(window.app_handle().clone());
+                    return;
+                }
+            }
             // Retire delayed dismissals on every focus transition, including refocus.
             static SETTINGS_BLUR_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             static PROCESS_MANAGER_BLUR_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -603,22 +616,16 @@ fn main() {
             if matches!(
                 window.label(),
                 shell_windows::TOP_BAR_LABEL | shell_windows::BOTTOM_BAR_LABEL
-            ) && matches!(
-                event,
-                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
             ) {
-                #[cfg(target_os = "windows")]
-                if let Err(error) = appbar::cleanup_shell_surfaces(&window.app_handle()) {
-                    eprintln!("cleanup failed during window close: {error}");
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
                 }
-
-                window.app_handle().exit(0);
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             speech_runtime::spawn_warm_model_async(app.handle().clone());
             #[cfg(all(target_os = "windows", debug_assertions, any(test, feature = "text-document-feasibility")))]
-            if std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some() {
+            if isolated_text_probe {
                 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
                 WebviewWindowBuilder::new(
@@ -643,6 +650,10 @@ fn main() {
             let windows = shell_windows::create_shell_windows(app)?;
             let snip_runtime = snipping::runtime::SnipRuntime::install(app.handle().clone(), windows.top.clone())
                 .map_err(|_| "snipping native initialization failed")?;
+            let admission_app = app.handle().clone();
+            snip_runtime.install_exit_admission(std::sync::Arc::new(move || {
+                graceful_exit::admit_mutation(&admission_app).map(|admission| Box::new(admission) as Box<dyn Send>)
+            }))?;
             app.manage(snip_runtime);
             settings_panel::install_capture_lifecycle(app.handle())?;
             let (shell_settings, missing_snipping) = settings::load_hotkey_startup_settings(app.handle())?;
@@ -674,31 +685,13 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build JasonShell prototype");
 
-    app.run(|app_handle, event| {
-        #[cfg(target_os = "windows")]
-        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
-            stack_popup::folder_watch::shutdown(app_handle);
-            if let Some(runtime) = app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>() { runtime.shutdown(); }
-            if let Some(state) = app_handle.try_state::<speech_runtime::SpeechRuntimeState>() {
-                speech_runtime::shutdown(&state);
+    app.run(move |_, event| {
+        if let RunEvent::ExitRequested { api, code, .. } = event {
+            if isolated_text_probe && code == Some(0) {
+                return;
             }
-
-            windows_key_hook::uninstall_windows_key_hook();
-            if let Some(state) =
-                app_handle.try_state::<Mutex<stack_popup::StackPopupRuntimeState>>()
-            {
-                if let Err(error) = stack_popup::terminal::stop_terminal_sessions_for_target(
-                    app_handle,
-                    &state,
-                    shell_windows::TERMINAL_PANEL_LABEL,
-                ) {
-                    eprintln!("terminal cleanup failed: {error}");
-                }
-            }
-            if let Err(error) = appbar::cleanup_shell_surfaces(app_handle) {
-                eprintln!("cleanup failed: {error}");
-            }
-            task_windows::stop_taskbar_hooks();
+            // Incidental close requests never authorize native exit.
+            api.prevent_exit();
         }
     });
 }

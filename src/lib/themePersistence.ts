@@ -1,4 +1,5 @@
 import { defaultShellThemeId, normalizeShellThemeId, SHELL_THEME_STORAGE_KEY, type ThemeStorageLike } from './themes.js';
+import { assertThemePersistenceAuthority } from './themeSelectionAuthority.js';
 import { validateCustomTheme, type CustomTheme } from './themePalette.js';
 
 export const SAVED_THEMES_STORAGE_KEY = 'jasonshell.themes.v1';
@@ -55,6 +56,7 @@ export function loadSavedThemeState(storage: ThemeStorageLike | null = themeStor
 
 /** One canonical setItem publishes collection and selection together. */
 export function writeSavedThemeState(state: SavedThemeState, expectedRevision: string, storage: ThemeStorageLike | null = themeStorage()): SavedThemeState {
+  if (storage && storage === themeStorage()) assertThemePersistenceAuthority();
   if (!storage) throw new Error('Theme storage is unavailable');
   const current = loadSavedThemeState(storage);
   if (current.readOnly) throw new Error(current.error ?? 'Theme storage is unavailable');

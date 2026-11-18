@@ -85,7 +85,11 @@ impl NativeWindowPort {
         let app = self.app.clone(); let rect = monitor.rect; let scale = monitor.scale;
         let data_directory = self.data_directory.clone();
         let owned = entry.clone();
+        let construction = self.registry.admit_construction_callback()?;
         let result = self.dispatch(move || {
+            // Survives dispatch timeout: the queued UI constructor, not its
+            // expired caller, owns this receipt until all construction returns.
+            let _construction = construction;
             owned.admit_construction()?;
             let _dpi = super::windows::PhysicalDpi::enter().map_err(|_| SnipError::WindowFailed)?;
             let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
@@ -124,7 +128,7 @@ impl NativeWindowPort {
                 owned.window()?;
                 Ok(owned.reference.clone())
             })();
-            if prepare.is_err() { owned.invalidate(); let _ = window.destroy(); }
+            if prepare.is_err() { owned.retain_failed_construction(&window); owned.invalidate(); let _ = window.destroy(); }
             prepare
         });
         if result.is_err() {
@@ -205,6 +209,13 @@ impl NativeClipboardPort {
     pub fn shutdown(&self) {
         self.stopped.store(true, Ordering::Release);
         if let Ok(mut owner) = self.owner.try_lock() { let _ = owner.0.shutdown(); }
+    }
+    pub fn stop_and_drain(&self) -> Result<(), String> {
+        self.stopped.store(true, Ordering::Release);
+        let mut owner = self.owner.try_lock().map_err(|_| "Clipboard publication still draining")?;
+        let report = owner.0.shutdown();
+        if !report.exited || !report.writer_drained { return Err("Clipboard helper still draining; ownership retained".into()); }
+        Ok(())
     }
     pub(crate) fn publication_attempts(&self) -> usize { self.attempts.load(Ordering::Acquire) }
 }

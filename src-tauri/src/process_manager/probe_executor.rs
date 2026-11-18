@@ -39,15 +39,29 @@ fn kill_and_reap(child: &mut std::process::Child, observe: &mut impl FnMut(Probe
     let _ = child.kill();
     observe(ProbeEvent::BeforeWait(child.id()));
     loop {
-        match child.wait() {
-            Ok(_) => break,
-            Err(_) => {
-                let _ = child.kill();
-                std::thread::sleep(Duration::from_millis(10));
-            }
+        // A failed kill must not strand the only owner inside blocking wait.
+        // Keep retrying the original handle and wait only after observed exit.
+        if matches!(child.try_wait(), Ok(Some(_))) && child.wait().is_ok() {
+            break;
         }
+        let _kill = child.kill();
+        std::thread::sleep(Duration::from_millis(10));
     }
     observe(ProbeEvent::Reaped(child.id()));
+}
+
+// No deadline releases a live owned job. This runs inside the retained probe
+// worker; its caller's bounded drain reports incomplete while this retains it.
+fn drain_job(job: &Job) {
+    loop {
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let queried = unsafe { QueryInformationJobObject(Some(job.0), JobObjectBasicAccountingInformation,
+            (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(), std::mem::size_of_val(&info) as u32, None) };
+        if queried.is_ok() && info.ActiveProcesses == 0 { return; }
+        // A failed call retains ownership and retries, never targets a PID.
+        let _termination = unsafe { TerminateJobObject(job.0, 1) };
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -97,7 +111,7 @@ pub fn execute_command_observed(
         .creation_flags(0x08000000)
         .spawn()
         .map_err(|_| ProbeError::Spawn)?;
-    let _job = match bind_job(&child) {
+    let job = match bind_job(&child) {
         Ok(job) => job,
         Err(error) => {
             kill_and_reap(&mut child, &mut observe);
@@ -159,6 +173,7 @@ pub fn execute_command_observed(
             }
         }
         if let Some(status) = exited {
+            drain_job(&job);
             return if status {
                 Ok(output)
             } else {
@@ -168,7 +183,10 @@ pub fn execute_command_observed(
         match child.try_wait() {
             Ok(Some(status)) => {
                 observe(ProbeEvent::BeforeWait(child.id()));
-                let _ = child.wait();
+                if child.wait().is_err() {
+                    failure = Some(ProbeError::Io);
+                    break;
+                }
                 observe(ProbeEvent::Reaped(child.id()));
                 exited = Some(status.success());
             }
@@ -181,5 +199,6 @@ pub fn execute_command_observed(
     }
     // Never report completion or free a probe slot before wait succeeds.
     kill_and_reap(&mut child, &mut observe);
+    drain_job(&job);
     Err(failure.unwrap_or(ProbeError::Io))
 }

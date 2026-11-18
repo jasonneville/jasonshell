@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCustomTheme, setThemePaletteColor } from '../dist-tests/lib/themePalette.js';
 import { applyShellTheme, getSavedThemeState } from '../dist-tests/lib/themes.js';
+import { installThemeSelectionAuthority } from '../dist-tests/lib/themeSelectionAuthority.js';
 import {
   THEME_PREVIEW_CHANNEL, createThemeEditor, currentPreviewTheme,
   getThemePreviewStatus, installThemePreviewSync, queryThemePreviewPresence,
@@ -32,7 +33,13 @@ function environment(t) {
   }
   for (const [key, value] of Object.entries({ window, document, BroadcastChannel: Channel })) Object.defineProperty(globalThis, key, { configurable: true, value });
   const cleanup = installThemePreviewSync();
+  // These legacy editor tests run in the Settings authority document. Keep
+  // actual canonical persistence; only native registration/transport is fixture.
+  const retireAuthority = installThemeSelectionAuthority('a'.repeat(32), async () => {
+    throw new Error('Unexpected foreign selection in local preview fixture');
+  });
   t.after(() => {
+    retireAuthority();
     cleanup();
     for (const [key, descriptor] of Object.entries(old)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];

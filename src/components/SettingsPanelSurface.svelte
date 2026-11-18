@@ -1,9 +1,11 @@
 <script lang="ts">
   // @ts-ignore: CSS side-effect import handled by bundler
   import './SettingsPanelSurface.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
+  import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { IPC_COMMANDS } from '../ipc/commands';
   import { IPC_EVENTS } from '../ipc/events';
   import {
     HOTKEY_ACTION_NAMES, HOTKEY_ACTIONS, hotkeyDraftError, isCanonicalHotkey,
@@ -17,6 +19,7 @@
   import MeltSelect from './melt/MeltSelect.svelte';
   import MeltToggle from './melt/MeltToggle.svelte';
   import ThemeEditor from './ThemeEditor.svelte';
+  import StackConfirmDialog from './StackConfirmDialog.svelte';
   import { getSpeechModelStatus, importSpeechModel, importSpeechModelFolder, type SpeechModelStatus } from '../lib/speech';
   import {
     formatShellDate,
@@ -563,7 +566,46 @@
     }
   }
 
+  let exitConfirmation = false;
+  let exiting = false;
+  let exitError = '';
+  let exitOrigin: HTMLElement | null = null;
+
+  function openExitConfirmation(event: MouseEvent) {
+    if (exiting || exitConfirmation) return;
+    if (themeEditor && !themeEditor.deferSelectionPrompt()) return;
+    exitOrigin = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    exitError = '';
+    exitConfirmation = true;
+  }
+
+  async function restoreExitFocus() {
+    await tick();
+    if (exitConfirmation || exiting) return;
+    exitOrigin?.focus();
+    themeEditor?.resumeSelectionPrompt();
+  }
+
+  function cancelExitConfirmation() {
+    exitConfirmation = false;
+    void restoreExitFocus();
+  }
+
+  async function confirmExit() {
+    if (!exitConfirmation || exiting) return;
+    exiting = true;
+    exitConfirmation = false;
+    try {
+      await invoke<void>(IPC_COMMANDS.requestShellExit);
+    } catch {
+      exiting = false;
+      exitError = 'Could not request JasonShell exit.';
+      await restoreExitFocus();
+    }
+  }
+
   function closePanel() {
+    if (exitConfirmation || exiting) return;
     stopCapture();
     void hideSettingsPanel().catch((error) => {
       console.error('Failed to hide settings panel', error);
@@ -576,12 +618,34 @@
   on:keydown={(event) => {
     if (event.key === 'Escape') {
       if (event.defaultPrevented) return;
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
+      if (exitConfirmation) {
+        event.preventDefault();
+        cancelExitConfirmation();
+        return;
+      }
+      if (exiting) {
+        event.preventDefault();
+        return;
+      }
+      if (document.querySelector('[aria-modal="true"]')) return;
       event.preventDefault();
       closePanel();
     }
   }}
 />
-<svelte:document on:visibilitychange={() => { if (document.hidden) stopCapture(); }} />
+<svelte:document
+  on:visibilitychange={() => { if (document.hidden) stopCapture(); }}
+  on:keydown|capture={(event) => {
+    if (event.key === 'Escape' && event.repeat) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }}
+/>
 
 <main class="settings-panel" aria-labelledby="settings-panel-title">
   <header class="settings-panel-header">
@@ -822,4 +886,25 @@
     <MeltActionButton onClick={resetPresentation}>Reset</MeltActionButton>
     <MeltActionButton onClick={closePanel}>Done</MeltActionButton>
   </footer>
+  <section class="settings-section settings-exit" aria-labelledby="jasonshell-exit-heading">
+    <h2 id="jasonshell-exit-heading">JasonShell</h2>
+    <p class="settings-help">Exit JasonShell without turning off this PC.</p>
+    <MeltActionButton disabled={exiting} onClick={openExitConfirmation}>Exit JasonShell</MeltActionButton>
+    {#if exiting}<p role="status">Exiting JasonShell…</p>{/if}
+    {#if exitError}<p class="settings-error" role="alert">{exitError}</p>{/if}
+  </section>
+  {#if exitConfirmation}
+    <div class="settings-exit">
+      <StackConfirmDialog
+        title="Exit JasonShell?"
+        message="Unsaved work will be lost. JasonShell-owned jobs and terminal sessions will stop. Other applications stay open."
+        confirmLabel="Confirm exit"
+        initialFocus="cancel"
+        dismissOnBackdrop={false}
+        returnFocus={exitOrigin}
+        onCancel={cancelExitConfirmation}
+        onConfirm={() => void confirmExit()}
+      />
+    </div>
+  {/if}
 </main>

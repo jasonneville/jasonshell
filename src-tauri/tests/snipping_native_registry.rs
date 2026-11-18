@@ -1,6 +1,7 @@
 //! REAL native registry and composition boundary functions; no Tauri app, HWND,
 //! observer/hook, compositor child, native clipboard or desktop capture is created.
 #![cfg(windows)]
+#[path = "../src/shutdown_workers.rs"] mod shutdown_workers;
 #[path = "../src/snipping/geometry.rs"] mod geometry;
 #[path = "../src/snipping/session.rs"] mod session;
 #[path = "../src/snipping/clipboard.rs"] mod clipboard;

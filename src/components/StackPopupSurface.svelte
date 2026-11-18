@@ -1627,6 +1627,10 @@
   }
 
   async function requestEditorExit(action: () => void | Promise<void>) {
+    if (textEditor?.hasPendingFileOperation?.()) {
+      errorMessage = 'Wait for the editor operation to finish before closing.';
+      return;
+    }
     const request = beginBasicTextEditorExit(pendingEditorExit, Boolean(editorPath), editorDirty, action, dismissEditor);
     pendingEditorExit = request.state;
     if (request.completion) {

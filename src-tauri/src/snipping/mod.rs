@@ -1,6 +1,8 @@
 //! Opt-in snipping primitives. Intentionally not registered in normal shell startup.
 pub mod geometry;
 pub mod session;
+#[path = "../shutdown_workers.rs"]
+pub(crate) mod shutdown_workers;
 pub mod save;
 #[cfg(windows)]
 pub mod coordinator;

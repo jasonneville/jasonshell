@@ -125,7 +125,14 @@ impl ProcessOwner {
         self.terminate(); outcome
     }
     pub fn shutdown(&mut self) -> ShutdownReport {
-        if self.stopped { self.reclaim_writer(); return ShutdownReport { outcome: self.last_outcome(), forced: self.forced_termination, exited: self.child.try_wait().ok().flatten().is_some(), writer_drained: self.writer.is_none() }; }
+        if self.stopped {
+            self.reclaim_writer();
+            let mut exited = self.child.try_wait().ok().flatten().is_some();
+            if !exited || self.writer.is_some() || !self.job_empty() { exited = self.terminate(); }
+            if exited { exited = self.child.wait().is_ok(); }
+            if exited && self.job_empty() { self.job.take(); } else { exited = false; }
+            return ShutdownReport { outcome: self.last_outcome(), forced: self.forced_termination, exited, writer_drained: self.writer.is_none() };
+        }
         let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let mut forced = self.send(header(4, 0, 0, 0, 0, 0), None).is_err();
         if !forced {
@@ -141,7 +148,11 @@ impl ProcessOwner {
             std::thread::sleep(Duration::from_millis(5));
         }
         if self.child.try_wait().ok().flatten().is_none() { forced = true; }
-        let exited = if forced { self.terminate() } else { self.stopped = true; self.reclaim_writer(); self.job.take(); true };
+        let exited = if forced { self.terminate() } else {
+            self.stopped = true; self.reclaim_writer();
+            let exited = self.child.wait().is_ok() && self.job_empty();
+            if exited { self.job.take(); } exited
+        };
         ShutdownReport { outcome: self.last_outcome(), forced, exited, writer_drained: self.writer.is_none() }
     }
     fn last_outcome(&self) -> Outcome {
@@ -154,6 +165,13 @@ impl ProcessOwner {
             (None, _) => Outcome::Unknown,
         }
     }
+    fn job_empty(&self) -> bool {
+        self.job.as_ref().map(|job| {
+            use windows::Win32::System::JobObjects::{QueryInformationJobObject, JobObjectBasicAccountingInformation, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION};
+            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            unsafe { QueryInformationJobObject(Some(job.0), JobObjectBasicAccountingInformation, (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(), std::mem::size_of_val(&info) as u32, None) }.is_ok() && info.ActiveProcesses == 0
+        }).unwrap_or(true)
+    }
     fn terminate(&mut self) -> bool {
         // Retained Child/Job handles only; never OpenProcess or lookup by PID.
         self.stopped = true;
@@ -162,13 +180,17 @@ impl ProcessOwner {
             // Cancel only our pipe writer. It owns no COM state or clipboard data.
             unsafe { let _ = CancelSynchronousIo(writer.as_raw_handle()); }
         }
-        self.job.take(); // KILL_ON_JOB_CLOSE covers private helper even if kill fails.
-        let _ = self.child.kill();
+        // Retain the actual job on failure; retry must still have termination
+        // authority even when the root exited but owned work remains.
+        if let Some(job) = &self.job { let _termination = unsafe { windows::Win32::System::JobObjects::TerminateJobObject(job.0, 1) }; }
+        let _kill = self.child.kill();
         self.stdin.take();
         let deadline = Instant::now() + EXIT_TIMEOUT;
         loop {
             self.reclaim_writer();
-            if self.child.try_wait().ok().flatten().is_some() && self.writer.is_none() { return true; }
+            if self.child.try_wait().ok().flatten().is_some() && self.writer.is_none() && self.child.wait().is_ok() && self.job_empty() {
+                self.job.take(); return true;
+            }
             if Instant::now() >= deadline { return false; }
             std::thread::sleep(Duration::from_millis(5));
         }

@@ -54,7 +54,9 @@ test('taskbar snapshot worker keeps watchdog cadence and prioritizes native refr
   assert.match(windowsSource, /const TASKBAR_REFRESH_MANUAL_COALESCE: Duration = Duration::from_millis\(120\);/);
   assert.match(windowsSource, /const TASKBAR_SNAPSHOT_MAX_AGE: Duration = Duration::from_millis\(1_120\);/);
   assert.doesNotMatch(windowsSource, /refresh_taskbar_snapshot_now\(Some\(&app\)\);\s*loop \{/);
-  assert.match(windowsSource, /thread::spawn\(move \|\| \{/);
+  assert.match(windowsSource, /SNAPSHOT_WORKERS\.get_or_init\(Default::default\)\.spawn\(move \|\| \{/);
+  assert.match(windowsSource, /fn ensure_taskbar_snapshot_worker_started\([\s\S]*?if SNAPSHOTS_STOPPED\.load\(Ordering::Acquire\) \{ return; \}/);
+  assert.match(windowsSource, /fn stop_and_drain_snapshots\(\)[^{]*\{\s*SNAPSHOTS_STOPPED\.store\(true, Ordering::Release\);\s*SNAPSHOT_WORKERS\.get_or_init\(Default::default\)\.drain\(\)/);
   assert.match(windowsSource, /mpsc::sync_channel::<TaskbarRefreshRequest>\(8\)/);
   assert.match(windowsSource, /let mut last_refresh_at = Instant::now\(\);/);
   assert.match(windowsSource, /let next_refresh_at = last_refresh_at \+ TASKBAR_SNAPSHOT_REFRESH_CADENCE;/);

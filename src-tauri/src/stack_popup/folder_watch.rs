@@ -127,6 +127,9 @@ struct Registry {
 pub(crate) struct FolderWatchRuntime {
     registry: Mutex<Registry>,
     changed: Condvar,
+    #[cfg(windows)]
+    retired_watches: Mutex<Vec<Arc<Mutex<ProductionWatch>>>>,
+    retirement_workers: crate::shutdown_workers::WorkerGroup,
 }
 
 #[cfg(windows)]
@@ -382,7 +385,9 @@ pub(crate) async fn start(window: WebviewWindow, path: String) -> Result<StackFo
         // Admit before spawning: at most one pending start/blocking wait exists,
         // including rapid show/hide and concurrent renderer requests.
         let admission = runtime.admit()?;
+        let shell_admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
         tauri::async_runtime::spawn_blocking(move || {
+            let _shell_admission = shell_admission;
             runtime.start_reserved(&window, &path, admission)
         })
         .await
@@ -401,12 +406,15 @@ pub(crate) async fn stop(window: WebviewWindow, watch_id: String) -> Result<(), 
         let runtime = window.state::<Arc<FolderWatchRuntime>>().inner().clone();
         let watch = runtime.take_retired(Some(&watch_id), false);
         if let Some(watch) = watch {
+            queue_retirement(runtime.clone(), watch)?;
             tauri::async_runtime::spawn_blocking(move || {
-                drop(watch);
-                runtime.finish_retirement();
-            })
-            .await
-            .map_err(|error| format!("Failed to join folder watch stop: {error}"))?;
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    if !runtime.registry.lock().map_err(|_| "Folder watch registry unavailable")?.retiring { return Ok(()); }
+                    if std::time::Instant::now() >= deadline { return Err("Folder watch retirement incomplete; ownership retained".to_string()); }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }).await.map_err(|_| "Folder watch stop receipt unavailable".to_string())??;
         }
         Ok(())
     }
@@ -423,10 +431,7 @@ pub(crate) fn retire(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<Arc<FolderWatchRuntime>>() {
         let runtime = state.inner().clone();
         if let Some(watch) = runtime.take_retired(None, false) {
-            tauri::async_runtime::spawn_blocking(move || {
-                drop(watch);
-                runtime.finish_retirement();
-            });
+            let _ = queue_retirement(runtime, watch);
         }
     }
 }
@@ -438,12 +443,41 @@ pub(crate) fn shutdown(app: &tauri::AppHandle) {
         if let Some(watch) = runtime.take_retired(None, true) {
             // Exit must wake admission waits immediately, not synchronously join
             // a potentially slow driver cancellation on the UI/exit thread.
-            tauri::async_runtime::spawn_blocking(move || {
-                drop(watch);
-                runtime.finish_retirement();
-            });
+            let _ = queue_retirement(runtime, watch);
         }
     }
+}
+
+#[cfg(windows)]
+fn queue_retirement(runtime: Arc<FolderWatchRuntime>, watch: ProductionWatch) -> Result<(), String> {
+    let slot = Arc::new(Mutex::new(watch));
+    runtime.retired_watches.lock().unwrap_or_else(|poison| poison.into_inner()).push(slot.clone());
+    let workers = &runtime.retirement_workers;
+    let retiring = runtime.clone();
+    workers.spawn(move || {
+        let complete = slot.lock().map(|mut watch| watch.stop_and_drain().is_ok()).unwrap_or(false);
+        if complete {
+            if let Ok(mut watches) = retiring.retired_watches.lock() { watches.retain(|watch| !Arc::ptr_eq(watch, &slot)); }
+            retiring.finish_retirement();
+        }
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn stop_and_drain(app: &tauri::AppHandle) -> Result<crate::graceful_exit::DrainReceipt, String> {
+    let runtime = app.state::<Arc<FolderWatchRuntime>>().inner().clone();
+    if let Some(watch) = runtime.take_retired(None, true) { queue_retirement(runtime.clone(), watch)?; }
+    let workers = runtime.retirement_workers.drain();
+    let watches = runtime.retired_watches.lock().map_err(|_| "Folder watch retirement ledger unavailable")?.clone();
+    for slot in watches {
+        slot.try_lock().map_err(|_| "Folder watch still retiring")?.stop_and_drain()?;
+        runtime.retired_watches.lock().map_err(|_| "Folder watch retirement ledger unavailable")?.retain(|watch| !Arc::ptr_eq(watch, &slot));
+        runtime.finish_retirement();
+    }
+    workers?;
+    let registry = runtime.registry.lock().map_err(|_| "Folder watch registry unavailable")?;
+    if registry.starting || registry.retiring || registry.active.is_some() { return Err("Folder watch admission or retirement remains outstanding".into()); }
+    Ok(crate::graceful_exit::DrainReceipt { finished: true })
 }
 
 #[cfg(all(test, windows))]

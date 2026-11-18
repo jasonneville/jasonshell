@@ -120,6 +120,16 @@ pub(crate) fn stop_taskbar_hooks() {
     native_hooks::stop_native_hooks();
 }
 
+#[cfg(windows)]
+pub(crate) fn stop_and_drain_task_tracking() -> Result<crate::graceful_exit::DrainReceipt, String> {
+    // Independent lanes are all attempted, even when another lane is overdue.
+    let hooks = native_hooks::stop_and_drain_native_hooks();
+    let snapshots = windows::stop_and_drain_snapshots();
+    let notifications = notifications::stop_and_drain();
+    hooks.and(snapshots).and(notifications)?;
+    Ok(crate::graceful_exit::DrainReceipt { finished: true })
+}
+
 #[tauri::command]
 pub fn request_taskbar_windows_refresh() {
     #[cfg(target_os = "windows")]

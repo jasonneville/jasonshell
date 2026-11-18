@@ -16,6 +16,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'devTools.test.mjs',
     'frontendUiPolicy.test.mjs',
     'globalCloseGlyphUniformity.test.mjs',
+    'gracefulExitRouting.test.mjs', // Source/capability/paired targeting contract only; not native runtime certification.
     'meltMigrationWiring.test.mjs',
     'overlayDismissalWiring.test.mjs',
     'snippingDeviceEventFilterContract.test.mjs', // Native input-filter/lifecycle wiring, not real OS delivery evidence.

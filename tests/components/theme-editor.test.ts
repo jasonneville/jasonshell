@@ -6,10 +6,14 @@ import { publishSavedThemeState } from '../../src/lib/themes';
 import { persistCustomTheme } from '../../src/lib/themePersistence';
 import { tauriMocks } from './setup';
 
+vi.mock('@tauri-apps/api/webviewWindow',()=>({getCurrentWebviewWindow:()=>({label:'settings-panel',listen:tauriMocks().listen})}));
+vi.mock('@tauri-apps/api/window',()=>({getCurrentWindow:()=>({label:'settings-panel',listen:tauriMocks().listen})}));
+
 // Exercise production Settings/editor modules, not a mocked theme store or editor.
 // Multi-document appearance/transport is owned by the browser fixture.
 const key = 'jasonshell.themes.v1';
 beforeEach(() => {
+  let registrations=0;
   localStorage.clear();
   document.documentElement.removeAttribute('data-theme');
   document.documentElement.removeAttribute('style');
@@ -22,6 +26,9 @@ beforeEach(() => {
     if (command === 'load_shell_settings') return Promise.resolve(defaultShellSettings());
     if (command === 'get_standard_hotkey_status') return Promise.resolve({ revision: 1, bindings: [] });
     if (command === 'get_speech_model_status') return Promise.resolve({ state: 'missing', source: null, error: null });
+    if (command === 'get_shell_shutdown_status') return Promise.resolve({attemptId:'',state:'blocked',phase:'running',canCancel:false,blockers:[],failedSteps:[],completedSteps:[]});
+    if (command === 'register_shell_exit_participant') return Promise.resolve({registrationId:(++registrations).toString(16).padStart(32,'0')});
+    if (command === 'update_shell_exit_participant' || command === 'unregister_shell_exit_participant') return Promise.resolve();
     if (command === 'hide_settings_panel') return Promise.resolve();
     throw new Error(`Unexpected theme-editor IPC: ${command}`);
   });

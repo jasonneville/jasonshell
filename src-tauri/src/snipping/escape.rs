@@ -10,12 +10,13 @@ pub(crate) struct EventRouter {
     mailbox: AtomicU64,
     diagnostics: Option<Arc<Diagnostics>>,
     cleanup: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    workers: super::shutdown_workers::WorkerGroup,
 }
 pub(crate) struct PendingEscape { owner: Weak<EventRouter>, generation: u64 }
 impl EventRouter {
     pub(crate) fn new(runtime: Weak<SnipRuntime>, cleanup: impl FnOnce() + Send + 'static) -> Arc<Self> {
         let diagnostics = runtime.upgrade().and_then(|runtime| runtime.coordinator.diagnostics());
-        Arc::new(Self { runtime, diagnostics, stopped: AtomicBool::new(false), pressed: AtomicBool::new(false), mailbox: AtomicU64::new(0), cleanup: Mutex::new(Some(Box::new(cleanup))) })
+        Arc::new(Self { runtime, diagnostics, stopped: AtomicBool::new(false), pressed: AtomicBool::new(false), mailbox: AtomicU64::new(0), cleanup: Mutex::new(Some(Box::new(cleanup))), workers: Default::default() })
     }
     fn diagnostic(&self, event: DiagnosticEvent) { if let Some(diagnostics) = &self.diagnostics { diagnostics.record(event); } }
     pub(crate) fn route(self: &Arc<Self>, message: u32, key: u32) -> Option<PendingEscape> {
@@ -50,6 +51,12 @@ impl EventRouter {
         if self.stopped.swap(true, Ordering::AcqRel) { return; }
         if let Ok(mut cleanup) = self.cleanup.lock() { if let Some(cleanup) = cleanup.take() { cleanup(); } }
         if let Some(diagnostics) = &self.diagnostics { diagnostics.shutdown(); }
+    }
+    pub(crate) fn stop_and_drain(&self) -> Result<(), String> {
+        self.shutdown();
+        let workers = self.workers.drain();
+        let diagnostics = self.diagnostics.as_ref().map(|diagnostics| diagnostics.stop_and_drain()).unwrap_or(Ok(()));
+        workers.and(diagnostics)
     }
 }
 impl Drop for EventRouter { fn drop(&mut self) { self.shutdown(); } }
@@ -104,7 +111,7 @@ pub(crate) fn install(runtime: Weak<SnipRuntime>) -> Result<Arc<EventRouter>, Sn
     let (ready, registered) = mpsc::sync_channel(1);
     let hook_stop = stop.clone();
     let hook_diagnostics = router.diagnostics.clone();
-    std::thread::Builder::new().name("snip-escape-hook".into()).spawn(move || {
+    router.workers.spawn(move || {
         LISTENER.with(|slot| *slot.borrow_mut() = Some((weak, send)));
         let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), None, 0) };
         let Ok(hook) = hook else { if let Some(d) = &hook_diagnostics { d.record(DiagnosticEvent::HookInstallFailed); } let _ = ready.send(false); LISTENER.with(|slot| *slot.borrow_mut() = None); return; };
@@ -118,13 +125,13 @@ pub(crate) fn install(runtime: Weak<SnipRuntime>) -> Result<Arc<EventRouter>, Sn
             }
             unsafe { let _ = MsgWaitForMultipleObjects(None, false, 25, QS_ALLINPUT); }
         }
-        unsafe { let _ = UnhookWindowsHookEx(hook); }
+        while unsafe { UnhookWindowsHookEx(hook) }.is_err() { std::thread::sleep(Duration::from_millis(25)); }
         if let Some(d) = &hook_diagnostics { d.record(DiagnosticEvent::HookExit); }
         LISTENER.with(|slot| *slot.borrow_mut() = None);
     }).map_err(|_| SnipError::Inactive)?;
     if registered.recv_timeout(Duration::from_secs(2)).ok() != Some(true) { router.shutdown(); return Err(SnipError::Inactive); }
     let worker_diagnostics = router.diagnostics.clone();
-    if std::thread::Builder::new().name("snip-escape-delivery".into()).spawn(move || {
+    if router.workers.spawn(move || {
         while !stop.load(Ordering::Acquire) {
             match receive.recv_timeout(Duration::from_millis(25)) {
                 Ok(()) => {

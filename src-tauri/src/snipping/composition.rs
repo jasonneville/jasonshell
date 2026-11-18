@@ -5,6 +5,20 @@ use windows::Win32::{Foundation::{CloseHandle, HANDLE}, System::JobObjects::*};
 struct Job(HANDLE);
 impl Drop for Job { fn drop(&mut self) { unsafe { let _ = CloseHandle(self.0); } } }
 pub fn helper() -> bool { unsafe { windows::Win32::Graphics::Dwm::DwmFlush() }.is_ok() }
+fn reap_owned(child: &mut std::process::Child, job: Option<&Job>) {
+    loop {
+        if let Some(job) = job { let _termination = unsafe { TerminateJobObject(job.0, 1) }; }
+        let _kill = child.kill();
+        if matches!(child.try_wait(), Ok(Some(_))) && child.wait().is_ok() {
+            let empty = job.map(|job| {
+                let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+                unsafe { QueryInformationJobObject(Some(job.0), JobObjectBasicAccountingInformation, (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(), std::mem::size_of_val(&info) as u32, None) }.is_ok() && info.ActiveProcesses == 0
+            }).unwrap_or(true);
+            if empty { return; }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
 pub fn flush(deadline: Instant) -> Result<(), SnipError> {
     if Instant::now() >= deadline { return Err(SnipError::ReadinessTimeout); }
     let executable = std::env::current_exe().map_err(|_| SnipError::CaptureFailed)?;
@@ -19,14 +33,17 @@ pub fn flush(deadline: Instant) -> Result<(), SnipError> {
         }
         Ok::<_, SnipError>(job)
     })();
-    let _job = match job { Ok(job) => job, Err(error) => { let _ = child.kill(); return Err(error); } };
+    let job = match job { Ok(job) => job, Err(error) => { reap_owned(&mut child, None); return Err(error); } };
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return if status.success() { Ok(()) } else { Err(SnipError::CaptureFailed) },
-            Err(_) => { let _ = child.kill(); return Err(SnipError::CaptureFailed); },
+            Ok(Some(status)) => {
+                if child.wait().is_err() { reap_owned(&mut child, Some(&job)); return Err(SnipError::CaptureFailed); }
+                return if status.success() { Ok(()) } else { Err(SnipError::CaptureFailed) };
+            },
+            Err(_) => { reap_owned(&mut child, Some(&job)); return Err(SnipError::CaptureFailed); },
             _ => {}
         }
-        if Instant::now() >= deadline { let _ = child.kill(); return Err(SnipError::ReadinessTimeout); }
+        if Instant::now() >= deadline { reap_owned(&mut child, Some(&job)); return Err(SnipError::ReadinessTimeout); }
         std::thread::sleep(Duration::from_millis(2));
     }
 }

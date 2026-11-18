@@ -589,6 +589,10 @@ pub(crate) fn authorize_settings_instance(window: &tauri::WebviewWindow, app: &A
 
 #[cfg(windows)]
 static HOTKEY_THREAD: OnceLock<Mutex<Option<HotkeyThread>>> = OnceLock::new();
+#[cfg(windows)]
+static EXIT_RETIRED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(windows)]
+static EXIT_DRAIN_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 // Separate short-held wake handle: UI lifecycle callbacks never contend with a
 // command holding HOTKEY_THREAD while it waits for the owning native thread.
 #[cfg(windows)]
@@ -817,6 +821,7 @@ use tauri::Manager;
 #[cfg(windows)]
 #[rustfmt::skip]
 fn dispatch_hotkey(app_handle: &AppHandle, id: i32, registry: &ActiveBindings) {
+    let Ok(_admission) = crate::graceful_exit::admit_mutation(app_handle) else { return; };
     let Some(index) = HOTKEY_IDS
         .iter()
         .position(|registered_id| *registered_id == id)
@@ -996,18 +1001,22 @@ fn run_hotkey_thread(
     let _ = unsafe { KillTimer(None, timer) };
     dispatch.retire();
     if drain_timer != 0 { unsafe { let _ = KillTimer(None, drain_timer); } }
-    if let Err(error) = unsafe { UnhookWindowsHookEx(hook) } {
-        eprintln!("failed to unhook Search keyboard hook: {error}");
-    }
+    while unsafe { UnhookWindowsHookEx(hook) }.is_err() { thread::sleep(std::time::Duration::from_millis(25)); }
     SEARCH_HOOK.with(|slot| *slot.borrow_mut() = None);
     for (index, binding) in state.current.iter().enumerate() {
         if binding.is_some() {
-            unregister_binding(index);
+            loop {
+                match unsafe { UnregisterHotKey(None, HOTKEY_IDS[index]) } {
+                    Ok(()) => break,
+                    Err(error) if error.code() == windows::core::HRESULT::from_win32(windows::Win32::Foundation::ERROR_HOTKEY_NOT_REGISTERED.0) => break,
+                    Err(_) => thread::sleep(std::time::Duration::from_millis(25)),
+                }
+            }
         }
     }
     // Retired queued work cannot be admitted; a pre-retirement permit may
     // finish before this thread is reaped and another install can begin.
-    let _ = dispatch_worker.join();
+    if dispatch_worker.join().is_err() { EXIT_DRAIN_FAILED.store(true, std::sync::atomic::Ordering::Release); }
 }
 
 #[cfg(windows)]
@@ -1072,6 +1081,7 @@ pub fn install_windows_key_hook(
 }
 #[cfg(windows)]
 pub(crate) fn install_loaded_windows_key_hook(app_handle: AppHandle, hotkeys: StandardHotkeySettings, missing: MissingHotkeys) -> Result<(), String> {
+    if EXIT_RETIRED.load(std::sync::atomic::Ordering::Acquire) { return Err("Hotkeys are retired for shutdown".into()); }
     let registry = StandardHotkeyRegistry::from_migration(&hotkeys, missing)?;
     let mut guard = hotkey_access()?;
     reap_finished_thread(&mut guard)?;
@@ -1236,6 +1246,20 @@ pub fn uninstall_windows_key_hook() {
         }
         Err(error) => eprintln!("cannot stop hotkey message thread: {error}"),
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn stop_and_drain_hotkeys() -> Result<crate::graceful_exit::DrainReceipt, String> {
+    EXIT_RETIRED.store(true, std::sync::atomic::Ordering::Release);
+    retire_settings_capture();
+    let mut guard = hotkey_access()?;
+    if let Some(wake) = LIFECYCLE_WAKE.get() { *wake.lock().map_err(|_| "Hotkey lifecycle ownership unavailable")? = None; }
+    if let Err(error) = stop_hotkey_thread(&mut guard) {
+        if guard.is_none() { EXIT_DRAIN_FAILED.store(true, std::sync::atomic::Ordering::Release); }
+        return Err(error);
+    }
+    if EXIT_DRAIN_FAILED.load(std::sync::atomic::Ordering::Acquire) { return Err("Hotkey worker completion failed".into()); }
+    Ok(crate::graceful_exit::DrainReceipt { finished: true })
 }
 
 #[cfg(not(windows))]
