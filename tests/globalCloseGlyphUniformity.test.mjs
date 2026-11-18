@@ -26,8 +26,6 @@ test('global close glyphs use shared close icon and search icon is official', ()
     [processManager, 'process-manager-close-button', 'Close process manager', '×'],
     [commandPanel, 'command-panel-close-button', 'Close quick commands', '×'],
     [settingsPanel, 'settings-panel-header', 'Close settings', 'x'],
-    [trayPanel, 'tray-close-button', 'Close notification area icons', '×'],
-    [calendarPanel, 'calendar-close', 'Close calendar', '×'],
     [stackGitPanel, 'stack-git-icon-button', 'Close git panel', '✕']
   ]) {
     assert.match(source, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
@@ -37,6 +35,19 @@ test('global close glyphs use shared close icon and search icon is official', ()
     assert.doesNotMatch(source, new RegExp(`class="${className}"[\\s\\S]*>${glyph}<`));
     assert.doesNotMatch(source, new RegExp(`ariaLabel="${ariaLabel}"[\\s\\S]*>${glyph}<|aria-label="${ariaLabel}"[\\s\\S]*>${glyph}<`));
   }
+
+  const anchoredClose = readFileSync(new URL('../src/components/AnchoredPanelCloseButton.svelte', import.meta.url), 'utf8');
+  for (const [source, label, handler] of [
+    [trayPanel, 'Close notification area icons', '() => void closeTrayPanel()'],
+    [calendarPanel, 'Close calendar', '() => void hideCalendarPanel()'],
+    [readFileSync(new URL('../src/components/AudioPanelSurface.svelte', import.meta.url), 'utf8'), 'Close sound controls', 'closeAudioPanel'],
+    [readFileSync(new URL('../src/components/SpeechHistoryPanelSurface.svelte', import.meta.url), 'utf8'), 'Close speech history', 'closePanel']
+  ]) {
+    assert.match(source, /import AnchoredPanelCloseButton from '\.\/AnchoredPanelCloseButton\.svelte'/);
+    assert.ok(source.includes(`<AnchoredPanelCloseButton label="${label}" onClick={${handler}} />`), label);
+  }
+  assert.match(anchoredClose, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
+  assert.match(anchoredClose, /<MeltActionButton class="anchored-panel-close" ariaLabel=\{label\} tooltip=\{label\} \{onClick\}>\s*<MaterialSymbolIcon name="close" \/>\s*<\/MeltActionButton>/);
 
   assert.match(terminalPanel, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(terminalPanel, /class="terminal-tab-close"/);

@@ -1,0 +1,73 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { connectPage, press } from '../custom-themes/cdp.mjs';
+
+const [base = 'http://127.0.0.1:5199', output = 'test-results/ui-audit-quick-launch'] = process.argv.slice(2);
+const rows = [];
+await mkdir(output, { recursive: true });
+for (const [theme, width] of [['dark', 360], ['light', 360], ['translucent', 320]]) {
+  const page = await connectPage('http://127.0.0.1:9295', 'about:blank');
+  try {
+    await page.send('Emulation.setDeviceMetricsOverride', { width, height: 360, deviceScaleFactor: 1, mobile: false });
+    await page.send('Page.navigate', { url: `${base}/tests/browser/ui-audit/index.html?surface=quick-launch-panel&theme=${theme}` });
+    await page.send('Page.bringToFront');
+    await page.wait('window.audit');
+    const empty = await page.evaluate(`Boolean(document.querySelector('.quick-launch-empty'))`);
+    await page.evaluate(`window.audit.emit('quick-launch-panel:open', { nonce: 'fixture-open', rows: ['Alpha','Beta'].map(name => ({ name, shortcutPath: 'C:/fixture/' + name + '.lnk' })) })`);
+    await page.wait(`document.activeElement.getAttribute('role') === 'option'`);
+    await press(page, 'ArrowDown');
+    await page.wait(`document.activeElement.textContent.includes('Beta') && document.activeElement.getAttribute('aria-selected') === 'true'`);
+    for (const type of ['keyDown', 'keyUp']) await page.send('Input.dispatchKeyEvent', { type, key: 'ContextMenu', code: 'ContextMenu', windowsVirtualKeyCode: 93 });
+    const menu = `document.querySelector('[role=menu][aria-label="Beta actions"]')`;
+    await page.wait(menu);
+    await page.evaluate(`(async () => { await Promise.allSettled(${menu}.getAnimations().map(animation => animation.finished)); })()`);
+    const beforeTab = await page.evaluate('document.activeElement.getAttribute("role")');
+    await press(page, 'Tab');
+    const measure = await page.evaluate(`(() => {
+      const describe = node => { const r = node.getBoundingClientRect(), c = getComputedStyle(node); return { bounds: [r.left,r.top,r.right,r.bottom], text: node.textContent.trim(), focused: node === document.activeElement, focusVisible: node.matches(':focus-visible'), background: c.backgroundColor, color: c.color, border: c.border, radius: c.borderRadius, padding: c.padding, font: c.font, shadow: c.boxShadow, outline: c.outline }; };
+      return { menu: describe(${menu}), action: describe(${menu}.querySelector('button')) };
+    })()`);
+    const { data } = await page.send('Page.captureScreenshot', { format: 'png' });
+    await writeFile(`${output}/${theme}-${width}.png`, Buffer.from(data, 'base64'));
+    await page.evaluate('window.audit.calls.length = 0');
+    const escapeKey = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 };
+    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...escapeKey });
+    const escape = await page.evaluate(`({ calls: window.audit.calls.slice(), menuOpen: Boolean(${menu}), restored: document.activeElement.matches('[role=option][aria-selected=true]') && document.activeElement.textContent.includes('Beta') })`);
+    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...escapeKey, autoRepeat: true });
+    const repeat = await page.evaluate('window.audit.calls.slice()');
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...escapeKey });
+    await press(page, 'Escape');
+    const deliberate = await page.evaluate('window.audit.calls.slice()');
+    await page.evaluate(`window.audit.calls.length = 0`);
+    for (const type of ['keyDown', 'keyUp']) await page.send('Input.dispatchKeyEvent', { type, key: 'ContextMenu', code: 'ContextMenu', windowsVirtualKeyCode: 93 });
+    await page.wait(menu);
+    const header = await page.evaluate(`(() => { const r = document.querySelector('.quick-launch-panel-header').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, ...header });
+    const clickAway = await page.evaluate(`({ menuOpen: Boolean(${menu}), calls: window.audit.calls.slice() })`);
+    const opened = nonce => page.evaluate(`window.audit.emit('quick-launch-panel:open', { nonce: ${JSON.stringify(nonce)}, rows: ['Alpha','Beta'].map(name => ({ name, shortcutPath: 'C:/fixture/' + name + '.lnk' })) })`);
+    const closed = nonce => page.evaluate(`window.audit.emit('quick-launch-panel:closed', { nonce: ${JSON.stringify(nonce)} })`);
+    await closed('fixture-open');
+    await page.wait(`document.querySelector('.quick-launch-empty')`);
+    const clearedOnClose = await page.evaluate(`!${menu}`);
+    await opened('fixture-new');
+    await page.wait(`document.activeElement.matches('[role=option][aria-selected=true]') && document.activeElement.textContent.includes('Alpha')`);
+    const clearedOnReopen = await page.evaluate(`!${menu}`);
+    await press(page, 'Escape');
+    const freshEscape = await page.evaluate('window.audit.calls.slice()');
+    await page.evaluate('window.audit.calls.length = 0');
+    await press(page, 'ArrowDown');
+    for (const type of ['keyDown', 'keyUp']) await page.send('Input.dispatchKeyEvent', { type, key: 'ContextMenu', code: 'ContextMenu', windowsVirtualKeyCode: 93 });
+    await page.wait(menu);
+    await closed('fixture-open');
+    const stalePreserved = await page.evaluate(`Boolean(${menu}) && document.querySelector('[role=option][aria-selected=true]').textContent.includes('Beta')`);
+    await page.evaluate(`document.querySelector('[role=option][aria-selected=true]').focus()`);
+    await page.evaluate(`(() => { const origin = document.activeElement; const action = ${menu}.querySelector('button'); action.focus(); origin.remove(); })()`);
+    await press(page, 'Escape');
+    const detached = await page.evaluate(`({ menuOpen: Boolean(${menu}), hides: window.audit.calls.slice(), connectedFocus: document.activeElement.isConnected })`);
+    const fits = [measure.menu, measure.action].every(({ bounds: [l,t,r,b] }) => l >= 0 && t >= 0 && r <= width && b <= 360);
+    rows.push({ theme, width, empty, beforeTab, ...measure, fits, escape, repeat, deliberate, clickAway, detached, lifecycle: { clearedOnClose, clearedOnReopen, freshEscape, stalePreserved }, missing: await page.evaluate('window.audit.missing()') });
+  } finally { await page.close(); }
+}
+await writeFile(`${output}/report.json`, JSON.stringify(rows, null, 2));
+const failures = rows.filter(row => !row.empty || !row.fits || !row.action.focused || !row.action.focusVisible || row.missing.length || row.escape.menuOpen || !row.escape.restored || row.escape.calls.length || row.repeat.length || JSON.stringify(row.deliberate) !== '["hide_quick_launch_panel"]' || !row.clickAway.menuOpen || row.clickAway.calls.length || row.detached.menuOpen || row.detached.hides.length || !row.detached.connectedFocus || !row.lifecycle.clearedOnClose || !row.lifecycle.clearedOnReopen || JSON.stringify(row.lifecycle.freshEscape) !== '["hide_quick_launch_panel"]' || !row.lifecycle.stalePreserved);
+console.log(`${rows.length} populated Quick Launch states; ${failures.length} failures`);
+if (failures.length) process.exitCode = 1;

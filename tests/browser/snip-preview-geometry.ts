@@ -82,14 +82,25 @@ if (!params.has('pane')) {
     const pane = { width: innerWidth, height: innerHeight };
     const frame = rect(target.querySelector('.preview-frame')!);
     const names = ['Copy', 'Save', 'Dismiss', 'Close screen snip'];
-    const buttons = names.map(name => ({ name, ...rect(button(name)), svg: !!button(name).querySelector('svg') }));
+    const dismissIcon = button('Dismiss').querySelector<HTMLImageElement>('img[aria-hidden="true"][alt=""]');
+    if (dismissIcon) await until(() => dismissIcon.complete);
+    const buttons = names.map(name => {
+      const control = button(name);
+      const svg = control.querySelector('svg[aria-hidden="true"]');
+      const glyph = svg?.querySelector('path[d]:not([d=""])') ? svg
+        : name === 'Dismiss' && dismissIcon && dismissIcon.naturalWidth > 0 ? dismissIcon : null;
+      const glyphBounds = glyph && rect(glyph);
+      return { name: control.getAttribute('aria-label'), ...rect(control),
+        glyph: glyph?.localName ?? null, glyphVisible: !!glyph && !!glyphBounds && glyphBounds.width > 0 && glyphBounds.height > 0 && getComputedStyle(glyph).visibility === 'visible' };
+    });
     const status = rect(target.querySelector('.preview-status')!);
-    const inside = buttons.every(b => b.x >= 0 && b.y >= 0 && b.right <= pane.width && b.bottom <= pane.height && b.width > 0 && b.height > 0 && b.svg);
+    const inside = buttons.every(b => b.x >= 0 && b.y >= 0 && b.right <= pane.width && b.bottom <= pane.height && b.width >= 32 && b.height >= 32);
+    const glyphsPresent = buttons.every(b => b.glyphVisible);
     const belowImage = buttons.slice(0, 3).every(b => b.y >= frame.bottom);
     const rightAligned = Math.abs(buttons[2].right - buttons[3].right) < 1;
     const noOverflow = document.documentElement.scrollWidth <= pane.width && document.documentElement.scrollHeight <= pane.height;
     const wrapped = params.get('error') !== '1' || status.height > 20;
-    parent.postMessage({ kind: 'snip-geometry', case: `${pane.width}x${pane.height}-${params.get('error') === '1' ? 'wrapped-error-stress' : 'normal'}`, pass: inside && belowImage && rightAligned && noOverflow && wrapped, inside, belowImage, rightAligned, noOverflow, wrapped, pane, frame, status, buttons }, location.origin);
+    parent.postMessage({ kind: 'snip-geometry', case: `${pane.width}x${pane.height}-${params.get('error') === '1' ? 'wrapped-error-stress' : 'normal'}`, pass: inside && glyphsPresent && belowImage && rightAligned && noOverflow && wrapped, inside, glyphsPresent, belowImage, rightAligned, noOverflow, wrapped, pane, frame, status, buttons }, location.origin);
   } catch (error) {
     target.append(document.createTextNode(`Fixture failed: ${String(error)}`));
     const image = target.querySelector('img');

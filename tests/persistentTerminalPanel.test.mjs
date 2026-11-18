@@ -343,13 +343,15 @@ test('terminal recursive split panes keep a source-contract tree and pane focus 
 });
 
 test('terminal tabs are horizontal rectangular tabs', () => {
-  assert.match(terminalPanelCss, /\.terminal-panel-header \{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) max-content;/);
-  assert.doesNotMatch(terminalPanelCss, /\.terminal-panel-header \{[\s\S]{0,260}flex-wrap:\s*wrap/);
+  assert.match(terminalPanelCss, /\.terminal-panel-header \{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\) max-content;/);
+  assert.doesNotMatch(terminalPanelCss, /\.terminal-panel-header \{[^}]*flex-wrap:\s*wrap\b/);
   assert.doesNotMatch(terminalPanel, /class="terminal-panel-title"/);
   assert.doesNotMatch(terminalPanelCss, /\.terminal-panel-header div \{/);
   assert.doesNotMatch(terminalPanelCss, /\.terminal-panel-title \{/);
-  assert.match(terminalPanelCss, /\.terminal-session-tabs \{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*row;[\s\S]*flex-wrap:\s*nowrap;[\s\S]*justify-self:\s*stretch;[\s\S]*overflow-x:\s*auto;[\s\S]*width:\s*100%;/);
-  assert.match(terminalPanelCss, /\.terminal-toolbar \{[\s\S]*flex-wrap:\s*nowrap;/);
+  assert.match(terminalPanelCss, /\.terminal-session-tabs \{[^}]*display:\s*flex;[^}]*flex-direction:\s*row;[^}]*flex-wrap:\s*nowrap;[^}]*justify-self:\s*stretch;[^}]*overflow-x:\s*auto;[^}]*width:\s*100%;/);
+  assert.doesNotMatch(terminalPanelCss, /\.terminal-session-tabs \{[^}]*flex-wrap:\s*wrap\b/);
+  assert.match(terminalPanelCss, /\.terminal-toolbar \{[^}]*flex-wrap:\s*nowrap;/);
+  assert.match(terminalPanelCss, /@media \(max-width: 400px\) \{\s*\.terminal-panel-header \{[^}]*\}\s*\.terminal-toolbar \{[^}]*flex-wrap:\s*wrap;/);
   assert.match(terminalPanelCss, /\.terminal-tab-shell \{[\s\S]*border-radius:\s*0;/);
   assert.doesNotMatch(terminalPanelCss, /\.terminal-tab-shell \{[\s\S]{0,260}border-radius:\s*999px/);
 });

@@ -14,6 +14,7 @@
     type AudioRefreshReason,
     type AudioState
   } from '../lib/audio';
+  import AnchoredPanelCloseButton from './AnchoredPanelCloseButton.svelte';
   import MeltActionButton from './melt/MeltActionButton.svelte';
 
   const AUDIO_REFRESH_DEBOUNCE_MS = 150;
@@ -229,7 +230,7 @@
     <strong>Sound</strong>
     <div class="sound-panel-actions">
       <MeltActionButton class="sound-refresh" ariaLabel="Refresh sound devices" onClick={() => void refreshAudioState()}>Refresh</MeltActionButton>
-      <MeltActionButton class="sound-refresh" ariaLabel="Close sound controls" onClick={closeAudioPanel}>Close</MeltActionButton>
+      <AnchoredPanelCloseButton label="Close sound controls" onClick={closeAudioPanel} />
     </div>
   </div>
   {#if audioError}
@@ -323,6 +324,7 @@
   }
 
   .sound-panel-actions {
+    align-items: center;
     display: inline-flex;
     gap: 0.35rem;
   }
@@ -389,13 +391,22 @@
     border-top: 1px solid var(--js-color-border-soft);
     display: grid;
     gap: 0.45rem;
+    grid-template-columns: minmax(0, 1fr);
     max-height: 14rem;
     overflow: auto;
+    padding-inline: 6px;
+    padding-bottom: 6px;
     padding-top: 0.55rem;
   }
 
   .app-volume span {
+    overflow-wrap: anywhere;
     text-transform: none;
+  }
+
+  .app-volume input[type='range'] {
+    margin: 0;
+    min-width: 0;
   }
 
   .sound-status {

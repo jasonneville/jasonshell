@@ -7,6 +7,7 @@
   import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
   import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import TerminalSearchCloseButton from './TerminalSearchCloseButton.svelte';
   import ContextMenu from './ContextMenu.svelte';
   import ContextMenuItem from './ContextMenuItem.svelte';
   import {
@@ -153,6 +154,8 @@
   let contextMenu: { x: number; y: number } | null = null;
   let actionMenuOpen = false;
   let recentMenuOpen = false;
+  let actionMenuTrigger: HTMLButtonElement;
+  let recentMenuTrigger: HTMLButtonElement;
   let searchOpen = false;
   let searchQuery = '';
   let quickSelectOpen = false;
@@ -1894,6 +1897,16 @@
     }
   }
 
+  function handleToolbarMenuEscape(event: KeyboardEvent, menu: 'actions' | 'recent') {
+    if (event.key !== 'Escape' || (menu === 'actions' ? !actionMenuOpen : !recentMenuOpen)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const trigger = menu === 'actions' ? actionMenuTrigger : recentMenuTrigger;
+    if (menu === 'actions') actionMenuOpen = false;
+    else recentMenuOpen = false;
+    if (trigger?.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
+  }
+
   function openSearch() {
     searchOpen = true;
     void tick().then(() => document.querySelector<HTMLInputElement>('.terminal-search-input')?.focus());
@@ -2564,12 +2577,12 @@
       <button type="button" title="Split pane down" aria-label="Split terminal pane down" on:click={() => void runTerminalAction('splitHorizontal')}>Split down</button>
       <button type="button" title="Rename session" aria-label="Rename terminal session" disabled={!actionEnabled('renameSession')} on:click={() => void runTerminalAction('renameSession')}>Rename</button>
       <button type="button" title="Quick Select" aria-label="Open terminal Quick Select" on:click={toggleQuickSelect}>QS</button>
-      <button type="button" title="Recent commands" aria-label="Open recent terminal commands" on:click={() => { recentMenuOpen = !recentMenuOpen; actionMenuOpen = false; }}>⌘</button>
+       <button bind:this={recentMenuTrigger} type="button" title="Recent commands" aria-label="Open recent terminal commands" on:keydown={(event) => handleToolbarMenuEscape(event, 'recent')} on:click={() => { recentMenuOpen = !recentMenuOpen; actionMenuOpen = false; }}>⌘</button>
       <button type="button" title="Reveal cwd in Files" aria-label="Reveal current terminal directory in Files" disabled={!actionEnabled('openCwdInFiles')} on:click={() => void runTerminalAction('openCwdInFiles')}>Files</button>
       <button type="button" title="Open external terminal here" aria-label="Open external terminal here" disabled={!actionEnabled('openExternalTerminalHere')} on:click={() => void runTerminalAction('openExternalTerminalHere')}>Ext</button>
-      <button type="button" title="Terminal menu" aria-label="Open terminal actions menu" on:click={() => { actionMenuOpen = !actionMenuOpen; recentMenuOpen = false; }}>⋯</button>
+       <button bind:this={actionMenuTrigger} type="button" title="Terminal menu" aria-label="Open terminal actions menu" on:keydown={(event) => handleToolbarMenuEscape(event, 'actions')} on:click={() => { actionMenuOpen = !actionMenuOpen; recentMenuOpen = false; }}>⋯</button>
       {#if actionMenuOpen}
-        <div class="terminal-toolbar-menu" role="menu" tabindex="-1" on:pointerdown|stopPropagation>
+         <div class="terminal-toolbar-menu" role="menu" tabindex="-1" on:keydown={(event) => handleToolbarMenuEscape(event, 'actions')} on:pointerdown|stopPropagation>
           {#each toolbarActions as action}
             <button type="button" role="menuitem" class:danger={action.destructive} disabled={!actionEnabled(action.id)} on:click={() => void runTerminalAction(action.id)}>{action.label}</button>
           {/each}
@@ -2578,7 +2591,7 @@
         </div>
       {/if}
       {#if recentMenuOpen}
-        <div class="terminal-toolbar-menu terminal-recent-menu" role="menu" tabindex="-1" on:pointerdown|stopPropagation>
+         <div class="terminal-toolbar-menu terminal-recent-menu" role="menu" tabindex="-1" on:keydown={(event) => handleToolbarMenuEscape(event, 'recent')} on:pointerdown|stopPropagation>
           <strong>Recent commands</strong>
           {#each visibleRecentCommands as recent}
             <button type="button" role="menuitem" on:click={() => void rerunSelectedCommand(recent.commandText)}>{recent.commandText}</button>
@@ -2606,7 +2619,7 @@
         <input class="terminal-search-input" bind:value={searchQuery} placeholder="Search" aria-label="Search terminal" />
         <button type="submit" aria-label="Find next terminal search match">Next</button>
         <button type="button" aria-label="Find previous terminal search match" on:click={searchPrevious}>Prev</button>
-        <button type="button" aria-label="Close terminal search" on:click={closeSearch}>Esc</button>
+        <TerminalSearchCloseButton onClose={closeSearch} />
       </form>
     {/if}
     {#if quickSelectOpen}

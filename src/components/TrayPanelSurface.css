@@ -20,9 +20,9 @@
   display: flex;
   flex: 0 0 auto;
   gap: 0.45rem;
-  justify-content: space-between;
+  justify-content: flex-end;
   min-width: 0;
-  padding-bottom: 0.35rem;
+  padding-block: 0.175rem;
 }
 
 .tray-header-copy {
@@ -46,28 +46,6 @@
   line-height: 1.05;
 }
 
-.tray-close-button {
-  align-items: center;
-  background: var(--js-color-surface-overlay);
-  border: 1px solid var(--js-color-border-soft);
-  border-radius: 0.4rem;
-  color: var(--js-color-text);
-  cursor: pointer;
-  display: inline-flex;
-  flex: 0 0 auto;
-  font: inherit;
-  font-size: 0.86rem;
-  height: 1.55rem;
-  justify-content: center;
-  padding: 0;
-  width: 1.55rem;
-}
-
-.tray-close-button:hover {
-  background: var(--js-color-control-hover);
-}
-
-.tray-close-button:focus-visible,
 .tray-icon-button:focus-visible {
   box-shadow: var(--js-focus-ring);
   outline: 0;
@@ -86,7 +64,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding-right: 0.1rem;
+  padding: 4px;
 }
 
 .tray-grid {
@@ -120,7 +98,8 @@
   border-color: var(--js-color-border-soft);
 }
 
-.tray-icon-button:disabled {
+.tray-icon-button:disabled,
+.tray-icon-button[aria-disabled='true'] {
   opacity: 0.65;
 }
 

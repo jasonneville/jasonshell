@@ -24,6 +24,7 @@ These docs capture evidence at a point in time. Use them for leads, then confirm
 
 - `current-state-technical-audit-2026-08-28.md`
 - `dependency-usage-audit-2026-08-30.md`
+- [UI consistency matrix](ui-consistency-matrix.md): 20 shipped surfaces, nested ownership, and renderer/native evidence boundaries.
 - `performance-memory-lab.md`: living memory-first experiment ledger; isolated measurements are not native release acceptance.
 - `stack-text-editor-*-evidence.md`
 

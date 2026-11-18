@@ -10,6 +10,7 @@
   import { WebglAddon } from '@xterm/addon-webgl';
   import { Terminal } from '@xterm/xterm';
   import { onMount, tick } from 'svelte';
+  import TerminalSearchCloseButton from './TerminalSearchCloseButton.svelte';
   import {
     pollStackTerminal,
     resizeStackTerminal,
@@ -678,7 +679,7 @@
       <input bind:this={searchInput} bind:value={searchDraft} aria-label="Search terminal scrollback" />
       <button type="submit">Next</button>
       <button type="button" on:click={() => runSearch(true)}>Prev</button>
-      <button type="button" on:click={closeSearch}>Close</button>
+      <TerminalSearchCloseButton onClose={closeSearch} />
     </form>
   {/if}
   <div class="stack-terminal-output" role="log" bind:this={host} on:contextmenu={openTerminalContextMenu}></div>

@@ -156,6 +156,17 @@
   position: relative;
 }
 
+@media (max-width: 400px) {
+  .terminal-panel-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .terminal-toolbar {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+}
+
 .terminal-toolbar button,
 .terminal-search button,
 .terminal-quick-fixes button,

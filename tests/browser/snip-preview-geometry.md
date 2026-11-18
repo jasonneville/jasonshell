@@ -10,16 +10,18 @@ fallback. The embedded panel left `decode()` pending despite `complete=true`
 and `naturalWidth=126`, so the fixture deliberately disables that API rather
 than fabricating decode success. This does not validate native WebView2 decode.
 
-Each PASS requires every SVG button within its viewport, footer actions below
-the image, footer/header right edges aligned, no document overflow, and actual
-multiline status in stress cases. Stress text is fixture-injected after a real
+Each PASS requires all four named buttons to fit within the viewport at 32 × 32
+CSS px or larger, footer actions below the image, aligned footer/header right
+edges, no document overflow, and multiline status in stress cases. A separate
+glyph check accepts decorative inline SVG paths or Dismiss's loaded decorative
+image, which is backed by a Material SVG asset. Stress text is fixture-injected after a real
 mocked rejected Copy result; it is not claimed as a shipped native message.
 Expand **Raw measured rectangles** for numerical evidence. No Tauri process,
 native capture, clipboard publication, or Windows shell mutation occurs.
 
-Observed: all four cases passed in the visible OpenChamber browser panel.
-At 320×264, Copy rectangle is (206.4,225.6,32,32), bottom 257.6.
-At 280×220, Copy rectangle is (166.4,181.6,32,32), bottom 213.6.
-Wrapped status is 28.65px tall; image frame shrinks and button bounds remain
+Observed: all four cases passed in an isolated Chromium tab. In normal and
+wrapped states, Dismiss measured 32 × 32 CSS px. Its right/bottom edges were
+313.41/257.41 at 320×264 and 273.41/213.41 at 280×220.
+Wrapped status measured 28.66 CSS px tall; image frame shrinks and button bounds remain
 unchanged. Component journey/guard coverage lives in
 `tests/components/snipping-product.test.ts`.

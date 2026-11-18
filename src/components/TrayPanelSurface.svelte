@@ -1,7 +1,7 @@
 <script lang="ts">
   import './TrayPanelSurface.css';
   import { onMount } from 'svelte';
-  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import AnchoredPanelCloseButton from './AnchoredPanelCloseButton.svelte';
   import {
     hideTrayPanel,
     invokeTrayPanelIcon,
@@ -16,46 +16,55 @@
   let loadError = '';
   let invokeError = '';
   let activeIconId: string | null = null;
+  let keyboardRelayIconId: string | null = null;
   let isInvokingTrayIcon = false;
   let disposed = false;
+  let openGeneration = 0;
+  let latestRead = 0;
 
-  async function loadTrayIcons() {
+  async function loadTrayIcons(keepGrid = false) {
     if (disposed) return;
-    loading = true;
+    const generation = openGeneration;
+    const read = ++latestRead;
+    const isCurrent = () => !disposed && generation === openGeneration && read === latestRead;
+    loading = !keepGrid;
     loadError = '';
     try {
       const nextIcons = await listTrayPanelIcons();
-      if (disposed) return;
+      if (!isCurrent()) return;
       icons = nextIcons;
     } catch (error) {
-      if (disposed) return;
+      if (!isCurrent()) return;
       loadError = 'Notification area is unavailable';
       console.error('Failed to load tray icons', error);
     } finally {
-      if (disposed) return;
-      loading = false;
+      if (isCurrent()) loading = false;
     }
   }
 
-  async function triggerTrayIcon(icon: SystemTrayIconSnapshot, button: 'left' | 'right') {
+  async function triggerTrayIcon(icon: SystemTrayIconSnapshot, button: 'left' | 'right', fromFocusedKeyboard = false) {
     if (disposed) return;
     if (isInvokingTrayIcon) {
       return;
     }
     isInvokingTrayIcon = true;
     activeIconId = icon.id;
+    keyboardRelayIconId = fromFocusedKeyboard ? icon.id : null;
+    const generation = openGeneration;
     invokeError = '';
     try {
       await invokeTrayPanelIcon(icon.id, button);
-      if (disposed) return;
-      await loadTrayIcons();
+      if (disposed || generation !== openGeneration) return;
+      // Keep keyed rows mounted during keyboard refresh; never reclaim DOM or native focus.
+      await loadTrayIcons(fromFocusedKeyboard);
     } catch (error) {
-      if (disposed) return;
+      if (disposed || generation !== openGeneration) return;
       invokeError = 'Tray icon action failed. Notification area remains open.';
       console.error(`Failed to invoke tray icon ${icon.id}`, error);
     } finally {
       if (disposed) return;
       activeIconId = null;
+      keyboardRelayIconId = null;
       isInvokingTrayIcon = false;
     }
   }
@@ -65,11 +74,19 @@
     void triggerTrayIcon(icon, 'right');
   }
 
+  async function closeTrayPanel() {
+    const generation = openGeneration;
+    await hideTrayPanel();
+    if (disposed || generation !== openGeneration) return;
+    openGeneration += 1;
+    keyboardRelayIconId = null;
+  }
+
   function handleTrayPanelKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      void hideTrayPanel();
+      void closeTrayPanel();
     }
   }
 
@@ -77,7 +94,7 @@
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault();
       event.stopPropagation();
-      void triggerTrayIcon(icon, 'right');
+      void triggerTrayIcon(icon, 'right', event.currentTarget === document.activeElement);
     }
   }
 
@@ -98,6 +115,9 @@
 
     registerAsyncUnlistener(listen(TRAY_PANEL_OPEN_EVENT, () => {
       if (disposed) return;
+      openGeneration += 1;
+      keyboardRelayIconId = null;
+      invokeError = '';
       void loadTrayIcons();
     }));
 
@@ -118,9 +138,7 @@
 
 <div class="tray-panel" id="tray-panel" role="dialog" tabindex="-1" aria-label="Notification area icons">
   <header class="tray-header">
-    <button type="button" class="tray-close-button" aria-label="Close notification area icons" on:click={() => void hideTrayPanel()}>
-      <MaterialSymbolIcon name="close" />
-    </button>
+    <AnchoredPanelCloseButton label="Close notification area icons" onClick={() => void closeTrayPanel()} />
   </header>
   <div class="tray-main">
     {#if invokeError}
@@ -142,7 +160,8 @@
                 class="tray-icon-button"
                 aria-label={icon.label}
                 title={icon.label}
-                disabled={Boolean(activeIconId)}
+                 disabled={Boolean(activeIconId) && keyboardRelayIconId !== icon.id}
+                 aria-disabled={keyboardRelayIconId === icon.id ? true : undefined}
                 on:click={() => void triggerTrayIcon(icon, 'left')}
                 on:contextmenu={(event) => handleTrayContextMenu(event, icon)}
                 on:keydown={(event) => handleTrayIconKeydown(event, icon)}
