@@ -47,7 +47,7 @@ test('tray panel contracts and wrappers use constant-backed IPC/event names', ()
   assert.match(contractsSource, /HIDE_TRAY_PANEL/);
   assert.match(contractsSource, /TRAY_PANEL_CLOSED/);
   assert.match(trayPanelWrapper, /invoke\(IPC_COMMANDS\.showTrayPanel/);
-  assert.match(trayPanelWrapper, /invoke\(IPC_COMMANDS\.hideTrayPanel/);
+  assert.match(trayPanelWrapper, /export function hideTrayPanel\(\): Promise<void> \{\s*return invoke\(IPC_COMMANDS\.hideTrayPanel\);\s*\}/);
   assert.match(trayPanelWrapper, /listSystemTrayIcons\(\)/);
   assert.match(trayPanelWrapper, /invokeSystemTrayIcon\(/);
   assert.doesNotMatch(trayPanelWrapper, /invoke\('show_tray_panel'/);
@@ -70,8 +70,8 @@ test('top bar exposes tray button left of sound and keeps popup state mutually e
 
 test('tray panel surface renders icon-only grid with loading, error, and empty states', () => {
   assert.match(trayPanelSource, /id="tray-panel" role="dialog"/);
-  assert.match(trayPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
-  assert.match(trayPanelSource, /<MaterialSymbolIcon name="close" \/>/);
+  assert.match(trayPanelSource, /import AnchoredPanelCloseButton from '\.\/AnchoredPanelCloseButton\.svelte'/);
+  assert.match(trayPanelSource, /<header class="tray-header">\s*<AnchoredPanelCloseButton[^\n]*\/>\s*<\/header>/);
   assert.match(trayPanelSource, /class="tray-content"[\s\S]*class="tray-grid"/);
   assert.match(trayPanelSource, /Loading notification icons[\s\S]*No notification icons are currently available[\s\S]*class="tray-content"/);
   assert.match(trayPanelSource, /class="tray-grid"/);
@@ -95,16 +95,22 @@ test('tray panel supports keyboard secondary action and Escape close', () => {
   assert.match(trayPanelSource, /event\.shiftKey\s*&&\s*event\.key === 'F10'/);
   assert.match(keydownFns + trayPanelSource, /triggerTrayIcon\(icon, 'right'\)/);
   assert.match(keydownFns + trayPanelSource, /event\.preventDefault\(\)/);
-  assert.match(keydownFns + trayPanelSource, /event\.key === 'Escape'[\s\S]*hideTrayPanel\(\)/);
+  assert.match(keydownFns, /function handleTrayPanelKeydown\(event: KeyboardEvent\) \{\s*if \(event\.key === 'Escape'\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*void closeTrayPanel\(\);\s*\}/);
   assert.match(trayPanelSource, /<svelte:window\s+on:keydown=\{handleTrayPanelKeydown\}\s*\/>/);
   assert.match(trayPanelSource, /on:click=\{\(\) => void triggerTrayIcon\(icon, 'left'\)\}/);
   assert.match(trayPanelSource, /on:contextmenu=\{\(event\) => handleTrayContextMenu\(event, icon\)\}/);
 });
 
 test('tray panel exposes visible close control', () => {
-  assert.match(trayPanelSource, /aria-label="Close notification area icons"|aria-label=\{['"]Close notification area icons['"]\}/);
-  assert.match(trayPanelSource, /<button[\s\S]*type="button"[\s\S]*aria-label="Close notification area icons"|<button[\s\S]*aria-label="Close notification area icons"[\s\S]*type="button"/);
-  assert.match(trayPanelSource, /on:click=\{\(\) => void hideTrayPanel\(\)\}|on:click=\{(?:\(\) => )?\w*hide\w*\}/);
+  const anchoredCloseSource = readFileSync(new URL('../src/components/AnchoredPanelCloseButton.svelte', import.meta.url), 'utf8');
+  const meltButtonSource = readFileSync(new URL('../src/components/melt/MeltActionButton.svelte', import.meta.url), 'utf8');
+  assert.match(trayPanelSource, /<header class="tray-header">\s*<AnchoredPanelCloseButton label="Close notification area icons" onClick=\{\(\) => void closeTrayPanel\(\)\} \/>\s*<\/header>/);
+  const closeBody = trayPanelSource.match(/^  async function closeTrayPanel\(\) \{([\s\S]*?)^  \}/m)?.[1] ?? '';
+  assert.match(closeBody, /^    await hideTrayPanel\(\);\s*$/m);
+  assert.match(anchoredCloseSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
+  assert.match(anchoredCloseSource, /<MeltActionButton class="anchored-panel-close" ariaLabel=\{label\} tooltip=\{label\} \{onClick\}>\s*<MaterialSymbolIcon name="close" \/>\s*<\/MeltActionButton>/);
+  assert.match(meltButtonSource, /export let type: [^\n]+ = 'button';/);
+  assert.match(meltButtonSource, /<button\b[^>]*\btype=\{type\}[^>]*\baria-label=\{ariaLabel\}[^>]*\bon:click=\{onClick\}/);
 });
 
 test('tray panel Rust placement anchors to right edge and clamps within top bar bounds', () => {

@@ -93,7 +93,7 @@ test('quick launch opens admin context menu from keyboard menu keys', () => {
   assert.match(keydownFn, /openQuickLaunchMenu\(/);
   assert.match(keydownFn, /quickLaunchNonce/);
   assert.match(keydownFn, /sortedLaunchers\[focusedIndex\]/);
-  assert.match(menuOpenFn, /contextLauncher = \{ launcher, x, y \}/);
+  assert.match(menuOpenFn, /contextLauncher = \{ launcher, origin, x, y \}/);
   assert.match(quickLaunchPanelSource, /runQuickLaunchPanelAsAdmin\(\{ nonce: quickLaunchNonce, shortcutPath: menu\.launcher\.shortcutPath \}\)/);
   assert.doesNotMatch(keydownFn, /ContextMenu[\s\S]*chooseLauncher|F10[\s\S]*chooseLauncher/);
 });

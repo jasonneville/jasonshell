@@ -657,7 +657,14 @@
   function dismissContextMenuOnEscape(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     if (cancelActivePointerReorder()) { event.preventDefault(); return; }
-    if (contextEntry) { event.preventDefault(); contextEntry = null; }
+    if (contextEntry) {
+      event.preventDefault();
+      const id = contextEntry.id;
+      contextEntry = null;
+      if (!entries.some((entry) => entry.id === id)) return;
+      const owner = commandListElement?.querySelector<HTMLButtonElement>(`[data-command-id="${CSS.escape(id)}"] .command-select`);
+      if (owner?.isConnected && !owner.disabled) owner.focus({ preventScroll: true });
+    }
   }
   function getSelectionWithinShell(shell: HTMLElement): Selection | null { const selection = window.getSelection(); if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null; const range = selection.getRangeAt(0); if (!shell.contains(range.commonAncestorContainer)) return null; const anchor = selection.anchorNode; const focus = selection.focusNode; if (!anchor || !focus) return null; const anchorShell = (anchor instanceof Element ? anchor : anchor.parentElement)?.closest('.command-transcript-shell'); const focusShell = (focus instanceof Element ? focus : focus.parentElement)?.closest('.command-transcript-shell'); return anchorShell === shell && focusShell === shell ? selection : null; }
   function clampTranscriptFontSize(value: number): number { return Math.min(QUICK_COMMAND_TRANSCRIPT_MAX_FONT_SIZE_PX, Math.max(QUICK_COMMAND_TRANSCRIPT_MIN_FONT_SIZE_PX, Math.round(value))); }

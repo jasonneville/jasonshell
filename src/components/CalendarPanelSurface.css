@@ -33,7 +33,6 @@
   font-weight: 650;
 }
 
-.calendar-close,
 .calendar-nav-button {
   align-items: center;
   background: var(--js-color-surface-sunken);
@@ -47,7 +46,6 @@
   width: 1.7rem;
 }
 
-.calendar-close:hover,
 .calendar-nav-button:hover {
   background: var(--js-color-control-hover);
 }

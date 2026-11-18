@@ -15,6 +15,7 @@
   let request: ContextMenuOverlayRequest | null = null;
   let menuElement: HTMLDivElement | null = null;
   const MENU_INSET = 8;
+  const FOCUS_GUTTER = 4;
   let placement: { x: number; y: number; maxHeight?: number } = { x: MENU_INSET, y: MENU_INSET };
   let positioned = false;
 
@@ -23,9 +24,21 @@
   }
 
   function focusMenuItem(index: number) {
+    const menu = menuElement;
     const items = enabledMenuItems();
-    if (items.length === 0) return;
-    items[(index + items.length) % items.length]?.focus();
+    if (!menu || items.length === 0) return;
+    const item = items[(index + items.length) % items.length];
+    item.focus({ preventScroll: true });
+    if (menu.scrollHeight <= menu.clientHeight) return;
+
+    // offsetTop is relative to the positioned menu, unaffected by its opening animation.
+    const top = item.offsetTop - FOCUS_GUTTER;
+    const bottom = item.offsetTop + item.offsetHeight + FOCUS_GUTTER;
+    if (top < menu.scrollTop) {
+      menu.scrollTop = top;
+    } else if (bottom > menu.scrollTop + menu.clientHeight) {
+      menu.scrollTop = bottom - menu.clientHeight;
+    }
   }
 
   async function positionMenu() {
@@ -161,6 +174,11 @@
     position: fixed;
     width: 100%;
   }
-  .context-menu-overlay-backdrop :global(.context-menu-overlay) { visibility: hidden; }
+  .context-menu-overlay-backdrop :global(.context-menu-overlay) {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 4px;
+    visibility: hidden;
+  }
   .context-menu-overlay-backdrop.positioned :global(.context-menu-overlay) { visibility: visible; }
 </style>

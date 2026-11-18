@@ -1,7 +1,7 @@
 <script lang="ts">
   import './CalendarPanelSurface.css';
   import { onMount } from 'svelte';
-  import MaterialSymbolIcon from './icons/MaterialSymbolIcon.svelte';
+  import AnchoredPanelCloseButton from './AnchoredPanelCloseButton.svelte';
   import {
     addCalendarMonths,
     calendarMonthModel,
@@ -79,7 +79,7 @@
       <strong>{panelTime}</strong>
       <span>{selectedLongDate}</span>
     </div>
-    <MeltActionButton class="calendar-close" ariaLabel="Close calendar" tooltip="Close calendar" onClick={() => void hideCalendarPanel()}><MaterialSymbolIcon name="close" /></MeltActionButton>
+    <AnchoredPanelCloseButton label="Close calendar" onClick={() => void hideCalendarPanel()} />
   </header>
 
   <div class="calendar-nav" aria-label="Calendar navigation">

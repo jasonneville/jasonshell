@@ -18,7 +18,7 @@
   let quickLaunchNonce: string | null = null;
   let quickLaunchSelectionInFlight = false;
   let suppressNextRowClick = false;
-  let contextLauncher: { launcher: PinnedTaskbarLauncher; x: number; y: number } | null = null;
+  let contextLauncher: { launcher: PinnedTaskbarLauncher; origin: HTMLButtonElement; x: number; y: number } | null = null;
 
   $: sortedLaunchers = [...launchers].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -62,8 +62,8 @@
   function handlePanelPointerDown(_event: PointerEvent) {
   }
 
-  function openQuickLaunchMenu(launcher: PinnedTaskbarLauncher, x: number, y: number) {
-    contextLauncher = { launcher, x, y };
+  function openQuickLaunchMenu(launcher: PinnedTaskbarLauncher, origin: HTMLButtonElement, x: number, y: number) {
+    contextLauncher = { launcher, origin, x, y };
   }
 
   async function runContextLauncherAsAdmin() {
@@ -86,6 +86,16 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (event.repeat) return;
+      if (contextLauncher) {
+        event.stopPropagation();
+        const { origin } = contextLauncher;
+        contextLauncher = null;
+        if (origin.isConnected && !origin.disabled && launcherButtons.includes(origin)) {
+          origin.focus({ preventScroll: true });
+        }
+        return;
+      }
       void hideQuickLaunchPanel();
       return;
     }
@@ -100,6 +110,7 @@
       const rect = button.getBoundingClientRect();
       openQuickLaunchMenu(
         sortedLaunchers[focusedIndex],
+        button,
         Math.round(rect.left + rect.width / 2),
         Math.round(rect.top + rect.height / 2)
       );
@@ -132,6 +143,7 @@
     };
     window.addEventListener('blur', blurHandler);
     const unlistenOpen = listen<{ nonce: string; rows: PinnedTaskbarLauncher[] }>(QUICK_LAUNCH_OPEN_EVENT, async (event) => {
+      contextLauncher = null;
       quickLaunchNonce = event.payload.nonce;
       applyLaunchers([...event.payload.rows].sort((a, b) => a.name.localeCompare(b.name)));
       await tick();
@@ -141,6 +153,7 @@
       if (event.payload.nonce !== null && event.payload.nonce !== quickLaunchNonce) {
         return;
       }
+      contextLauncher = null;
       focusedIndex = 0;
       launchers = [];
       quickLaunchNonce = null;
@@ -187,7 +200,7 @@
             }}
             on:contextmenu|preventDefault={(event) => {
               event.stopPropagation();
-              openQuickLaunchMenu(launcher, event.clientX, event.clientY);
+               openQuickLaunchMenu(launcher, event.currentTarget, event.clientX, event.clientY);
             }}
             on:focus={() => (focusedIndex = index)}
           >

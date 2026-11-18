@@ -107,8 +107,11 @@ test('settings and control-plane surfaces consume Melt-backed controls without c
   assert.match(settingsPanelSource, /<MeltActionButton onClick=\{closePanel\}>Done<\/MeltActionButton>/);
   assert.match(settingsPanelSource, /dateFormatOptions/);
   assert.match(settingsPanelSource, /showSettingsPanel|hideSettingsPanel/);
-  assert.match(calendarPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
-  assert.match(calendarPanelSource, /<MeltActionButton class="calendar-close" ariaLabel="Close calendar" tooltip="Close calendar" onClick=\{\(\) => void hideCalendarPanel\(\)\}><MaterialSymbolIcon name="close" \/><\/MeltActionButton>/);
+  const anchoredCloseSource = readFileSync(new URL('../src/components/AnchoredPanelCloseButton.svelte', import.meta.url), 'utf8');
+  assert.match(calendarPanelSource, /import AnchoredPanelCloseButton from '\.\/AnchoredPanelCloseButton\.svelte'/);
+  assert.match(calendarPanelSource, /<AnchoredPanelCloseButton label="Close calendar" onClick=\{\(\) => void hideCalendarPanel\(\)\} \/>/);
+  assert.match(anchoredCloseSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
+  assert.match(anchoredCloseSource, /<MeltActionButton class="anchored-panel-close" ariaLabel=\{label\} tooltip=\{label\} \{onClick\}>\s*<MaterialSymbolIcon name="close" \/>\s*<\/MeltActionButton>/);
   assert.match(stackGitPanelSource, /import MaterialSymbolIcon from '\.\/icons\/MaterialSymbolIcon\.svelte'/);
   assert.match(stackGitPanelSource, /<button type="button" class="stack-git-icon-button" aria-label="Close git panel" title="Close" on:click=\{closePanel\}><MaterialSymbolIcon name="close" \/><\/button>/);
   assert.match(controlPlaneSource, /import \{ Tabs \} from 'melt\/builders'/);

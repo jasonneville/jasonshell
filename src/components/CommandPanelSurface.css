@@ -9,7 +9,7 @@
   gap: var(--js-space-2);
   height: 100%;
   min-height: 0;
-  min-width: 26rem;
+  min-width: min(26rem, 100%);
   padding: var(--js-space-3);
   position: relative;
 }
@@ -78,7 +78,8 @@
 }
 
 .command-panel-layout { display: grid; flex: 1 1 auto; grid-template-columns: minmax(8rem, var(--command-list-width)) 0.5rem minmax(0, 1fr); min-height: 0; }
-.command-pane-header { align-items: flex-end; display: flex; gap: var(--js-space-2); justify-content: space-between; }
+.command-pane-header { align-items: flex-end; display: flex; flex-wrap: wrap; gap: var(--js-space-2); justify-content: space-between; }
+.command-pane-header h2 { overflow-wrap: anywhere; }
 .command-pane-header p,
 .command-history-meta span,
 .command-history-notice,
@@ -87,7 +88,7 @@
 .command-input-meta p { color: var(--js-color-text-muted); }
 .command-pane-header p,
 .command-input-meta p { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 0.15rem; text-transform: uppercase; }
-.command-pane-tabs { display: inline-flex; gap: 0.25rem; }
+.command-pane-tabs { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; max-width: 100%; }
 .command-pane-tab { background: transparent; border: 1px solid var(--js-color-border-soft); color: var(--js-color-text-muted); font-size: 0.66rem; letter-spacing: 0.04em; padding: 0.28rem 0.55rem; text-transform: uppercase; }
 .command-pane-tab.active { background: var(--js-color-surface-sunken); border-color: var(--js-color-accent-border); color: var(--js-color-text); }
 .command-pane-tab:focus-visible { box-shadow: var(--js-focus-ring); outline: 0; }

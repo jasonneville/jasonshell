@@ -129,7 +129,9 @@ test('overlay keyboard navigation supports arrows and boundaries, skips disabled
     assert.match(keyHandler, new RegExp(key), `${key} must navigate menu items`);
   }
   assert.match(overlay, /(?:button:not\(:disabled\)|:not\(\[disabled\]\)|!\w+\.disabled)/, 'navigation excludes disabled items');
-  assert.match(overlay, /\.focus\(\)/, 'keyboard navigation moves real DOM focus');
+  const focusHelper = overlay.match(/function focusMenuItem\(index: number\) \{[\s\S]*?^  \}/m)?.[0] ?? '';
+  assert.match(keyHandler, /\bfocusMenuItem\(/, 'keyboard navigation uses the menu focus helper');
+  assert.match(focusHelper, /\bitem\.focus\(\{\s*preventScroll:\s*true\s*\}\)/, 'focuses the menu item without scrolling its ancestors');
   assert.match(keyHandler, /Escape[\s\S]*dismiss\(/, 'Escape dismisses menu');
   const top = read('src/components/TopBar.svelte');
   const bottom = read('src/components/BottomBar.svelte');

@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import type { SpeechHistoryEntry } from '../ipc/events';
+  import AnchoredPanelCloseButton from './AnchoredPanelCloseButton.svelte';
   import {
     copySpeechHistoryTranscript,
     getSpeechHistory,
@@ -127,11 +128,11 @@
 
 <div bind:this={dialogElement} class="speech-history-panel" role="dialog" tabindex="-1" aria-labelledby="speech-history-heading">
   <header class="speech-history-header">
-    <div>
+    <div class="speech-history-heading-copy">
       <span class="speech-history-kicker">Local session</span>
       <h1 id="speech-history-heading">Speech history</h1>
     </div>
-    <button type="button" class="speech-history-close" aria-label="Close speech history" on:click={closePanel}>×</button>
+    <AnchoredPanelCloseButton label="Close speech history" onClick={closePanel} />
   </header>
 
   <div class="speech-history-content">
