@@ -419,6 +419,63 @@ it('preview loading disables Copy/Save but permits token-bound header Close with
   expect(view.queryByRole('img', { name: 'Snip preview' })).toBeNull();
 });
 
+it.each(['event', 'lookup'])('hidden preview from %s renders the original pending image after automatic Copy without retry', async delivery => {
+  const { region, view: overlayView } = await overlay();
+  const publication = deferred<void>();
+  const lookup = deferred<Context>();
+  const invoke = tauriMocks().invoke.getMockImplementation()!;
+  let attempts = 0;
+  tauriMocks().invoke.mockImplementation((name, args) => {
+    if (name === 'complete_snip') {
+      attempts++;
+      return publication.promise.then(() => ({ ...token(), completed: true }));
+    }
+    if (name === 'get_snip_context' && delivery === 'event') return lookup.promise;
+    return invoke(name, args);
+  });
+  await selectReverse(region);
+  overlayView.unmount();
+  native.label = 'snip-preview-7'; context = { ...preview };
+  imageResponse = () => publication.promise.then(() => png);
+  const view = render(await component('SnipPreviewSurface'));
+  try {
+    await waitFor(() => expect(calls('get_snip_context')).toHaveLength(2));
+    if (delivery === 'event') handlers.get('snip:context')!({ payload: preview });
+    await waitFor(() => expect(calls('get_snip_image')).toHaveLength(2));
+    expect(calls('get_snip_image')[1][1]).toEqual({ ...token(), monitorId: 'm0' });
+    expect(view.queryByRole('alert')).toBeNull();
+    expect(view.queryByRole('img', { name: 'Snip preview' })).toBeNull();
+    publication.resolve(undefined);
+    await view.findByRole('img', { name: 'Snip preview' });
+    expect(view.queryByRole('alert')).toBeNull();
+    expect(calls('get_snip_image')).toHaveLength(2); // one overlay, one preview
+    expect(attempts).toBe(1);
+    expect(calls('copy_snip')).toHaveLength(0);
+  } finally {
+    view.unmount(); lookup.resolve(preview); publication.resolve(undefined);
+  }
+});
+
+it.each(['image-failed', 'readiness-timeout'])('preview exposes genuine %s without requesting a retry', async code => {
+  native.label = 'snip-preview-7'; context = { ...preview };
+  imageResponse = () => Promise.reject({ code });
+  const view = render(await component('SnipPreviewSurface'));
+  expect((await view.findByRole('alert')).textContent).toBe('Could not load screenshot.');
+  expect(calls('get_snip_image')).toHaveLength(1);
+  expect(calls('copy_snip')).toHaveLength(0);
+});
+
+it('preview reports a decode rejection after binary IPC succeeds without enabling Copy or Save', async () => {
+  native.label = 'snip-preview-7'; context = { ...preview };
+  vi.mocked(HTMLImageElement.prototype.decode).mockRejectedValueOnce(new DOMException('Invalid image', 'EncodingError'));
+  const view = render(await component('SnipPreviewSurface'));
+  expect((await view.findByRole('alert')).textContent).toBe('Could not load screenshot.');
+  expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  expect(view.queryByRole('img', { name: 'Snip preview' })).toBeNull();
+  for (const name of ['Copy', 'Save']) expect((view.getByRole('button', { name, exact: true }) as HTMLButtonElement).disabled).toBe(true);
+  expect(calls('get_snip_image')).toHaveLength(1);
+});
+
 it.each(['copy_snip', 'dismiss_snip'])('pending %s disables all action controls including header Close', async command => {
   const view = await mountPreview(); const pending = deferred<unknown>();
   const invoke = tauriMocks().invoke.getMockImplementation()!;

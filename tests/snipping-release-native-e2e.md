@@ -55,13 +55,29 @@ consumer-paste proof. The earlier instrumented 1061 ms observation is from a
 different build and is not a controlled speed comparison. Work-area restoration
 was not independently measured.
 
-## Remaining repository limits
+### Intermittent preview follow-up (pending separate consent)
 
-Normal component coverage (52) and codec coverage (11 passed, 1 ignored) remain
-bounded evidence, not a full-repository green result. Coordinator/clipboard
-targets compile, but ordinary integration execution remains blocked before test
-entry by `0xc0000139` from the missing Common Controls v6 resource; that source
-cause is unresolved. Standard-SDK temporary copies covered the coordinator
+Use a fresh release build from the fix checkout; the harness launches
+`src-tauri/target/release/jason-shell.exe` relative to that checkout. Use the
+`SingleDisplay` procedure above as the geometry and lifecycle baseline. The
+script checks DIB metadata only; add a controlled manual
+pass on the same build for content. Show a synthetic image at 1:1 physical pixel
+scale with distinct color blocks and an asymmetric marker. Snip a known rectangle
+whose size and expected content are recorded in advance. Check the actual
+top-right thumbnail for the expected crop, orientation, and marker (not just
+window visibility). Without clicking **Copy**, paste into a separate image
+consumer and compare its dimensions and pixels against the expected crop. Repeat
+with a visibly different crop to rule out a stale thumbnail or clipboard image.
+Report unavailable thumbnails and paste mismatches independently. Use only
+synthetic content; this pass changes the live clipboard and requires consent.
+
+## Limits of the recorded release evidence
+
+Normal component coverage (52) and codec coverage (11 passed, 1 ignored) were
+bounded evidence, not a full-repository green result. For that run, the
+coordinator/clipboard targets compiled, but ordinary integration execution was
+blocked before test entry by `0xc0000139` from the missing Common Controls v6
+resource. Standard-SDK temporary copies covered the coordinator
 suite (43, including all 10 image cases) and clipboard/native suites (21 + 13
 native ignored), with original/copy text byte-identical; copies were deleted.
 The strict `LegacyDual` two-monitor profile is excluded from this evidence.

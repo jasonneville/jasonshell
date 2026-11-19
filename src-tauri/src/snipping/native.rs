@@ -186,6 +186,7 @@ impl WindowPort for NativeWindowPort {
         }
     }
     fn still_same(&self, reference: &WindowRef) -> bool { self.registry.entry(reference).and_then(|e| e.window()).is_ok() }
+    fn still_same_for_image(&self, reference: &WindowRef) -> bool { self.registry.image_window_is_live(reference) }
 }
 pub fn context_json(context: &Context) -> serde_json::Value {
     serde_json::json!({"generation":context.token.generation,"captureId":context.token.capture_id,"phase":match context.phase { Phase::Preparing=>"preparing",Phase::Selecting=>"selecting",Phase::Preview=>"preview",Phase::Saving=>"saving" },"monitorId":context.monitor_id,"width":context.width,"height":context.height,"scaleFactor":context.scale_factor,"originX":context.origin_x,"originY":context.origin_y})

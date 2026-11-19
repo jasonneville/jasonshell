@@ -1,6 +1,6 @@
 //! Concrete Tauri instance identities and bounded initialization gates.
 use super::coordinator::{Caller, Context, SnipError, Token, WindowRef};
-use std::{collections::HashMap, sync::{Arc, Condvar, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant}};
+use std::{collections::HashMap, sync::{Arc, Condvar, Mutex, OnceLock, mpsc, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant}};
 use tauri::{Manager, WebviewWindow};
 use windows::{core::w, Win32::{Foundation::{HANDLE, HWND}, UI::WindowsAndMessaging::{GetPropW, SetPropW}}};
 /// Native adapter output, never deserialized or accepted from IPC. Each read
@@ -10,6 +10,8 @@ pub(crate) struct FocusRegistration {
     pub hwnd: isize, pub pid: u32, pub thread: u32, pub instance: u64, pub token: Option<Token>,
 }
 
+type PreviewRetired = Arc<dyn Fn(&Caller) + Send + Sync>;
+
 pub struct Entry {
     pub reference: WindowRef,
     pub token: Option<Token>,
@@ -18,14 +20,21 @@ pub struct Entry {
     state: Mutex<State>,
     changed: Condvar,
     retired_generation: Arc<AtomicU64>,
+    preview_retired: Option<PreviewRetired>,
 }
 struct State { window: Option<WebviewWindow>, hwnd: isize, dead: bool, context: Option<Context> }
 #[derive(Default)]
-pub struct NativeRegistry { entries: Mutex<HashMap<String, Arc<Entry>>>, next: Mutex<u64>, stopped: AtomicBool, origin_generation: Mutex<Option<Token>>, retired_generation: Arc<AtomicU64> }
+pub struct NativeRegistry { entries: Mutex<HashMap<String, Arc<Entry>>>, next: Mutex<u64>, stopped: AtomicBool, origin_generation: Mutex<Option<Token>>, retired_generation: Arc<AtomicU64>, preview_retired: OnceLock<PreviewRetired> }
 pub fn same_epoch(window: &WebviewWindow, id: u64) -> bool {
-    window.hwnd().ok().is_some_and(|hwnd| unsafe { GetPropW(HWND(hwnd.0), w!("JasonShell.Snip.Instance")) }.0 as usize as u64 == id)
+    window.hwnd().ok().is_some_and(|hwnd| hwnd_has_epoch(hwnd.0 as isize, id))
+}
+fn hwnd_has_epoch(hwnd: isize, id: u64) -> bool {
+    hwnd != 0 && id != 0 && unsafe { GetPropW(HWND(hwnd as *mut _), w!("JasonShell.Snip.Instance")) }.0 as usize as u64 == id
 }
 impl NativeRegistry {
+    pub(crate) fn on_preview_retired(&self, callback: impl Fn(&Caller) + Send + Sync + 'static) {
+        let _ = self.preview_retired.set(Arc::new(callback));
+    }
     pub fn retire_pending_generation(&self, token: &Token) -> Vec<(WebviewWindow, u64)> {
         let Some(generation) = token.generation.parse::<u64>().ok().filter(|generation| *generation > 0) else { return Vec::new(); };
         self.retired_generation.fetch_max(generation, Ordering::AcqRel);
@@ -33,8 +42,10 @@ impl NativeRegistry {
         entries.into_iter().filter_map(|entry| {
             let mut state = entry.state.lock().ok()?;
             if state.context.is_some() { return None; }
+            let was_live = !state.dead;
             state.dead = true; let window = state.window.take(); entry.changed.notify_all();
             drop(state);
+            if was_live { entry.notify_preview_retired(); }
             window.filter(|window| same_epoch(window, entry.reference.caller.window_id)).map(|window| (window, entry.reference.caller.window_id))
         }).collect()
     }
@@ -92,7 +103,8 @@ impl NativeRegistry {
         *next = next.checked_add(1).ok_or(SnipError::WindowFailed)?;
         if usize::try_from(*next).is_err() { return Err(SnipError::WindowFailed); }
         let entry = Arc::new(Entry { reference: WindowRef { caller: Caller { label: label.clone(), window_id: *next }, monitor_id }, token, preview,
-            deadline: Instant::now() + Duration::from_secs(5), state: Mutex::new(State { window: None, hwnd: 0, dead: false, context: None }), changed: Condvar::new(), retired_generation: self.retired_generation.clone() });
+            deadline: Instant::now() + Duration::from_secs(5), state: Mutex::new(State { window: None, hwnd: 0, dead: false, context: None }), changed: Condvar::new(), retired_generation: self.retired_generation.clone(),
+            preview_retired: if preview { self.preview_retired.get().cloned() } else { None } });
         entries.insert(label, entry.clone());
         Ok(entry)
     }
@@ -105,6 +117,9 @@ impl NativeRegistry {
     /// Only injected native windows may be resolved; no renderer IDs are accepted.
     pub fn resolve(&self, window: &WebviewWindow) -> Result<Caller, SnipError> {
         let entry = self.entries.lock().map_err(|_| SnipError::WindowFailed)?.get(window.label()).cloned().ok_or(SnipError::Unauthorized)?;
+        Self::resolve_entry(window, &entry)
+    }
+    fn resolve_entry(window: &WebviewWindow, entry: &Entry) -> Result<Caller, SnipError> {
         let hwnd = window.hwnd().map_err(|_| SnipError::Unauthorized)?.0 as isize;
         let mut state = entry.state.lock().map_err(|_| SnipError::WindowFailed)?;
         while state.window.is_none() && !state.dead {
@@ -116,6 +131,33 @@ impl NativeRegistry {
         drop(state);
         entry.window()?;
         Ok(entry.reference.caller.clone())
+    }
+    pub(crate) fn resolve_image(&self, window: &WebviewWindow) -> Result<Caller, SnipError> {
+        let entry = self.entries.lock().map_err(|_| SnipError::WindowFailed)?.get(window.label()).cloned().ok_or(SnipError::Unauthorized)?;
+        if !entry.preview { return Self::resolve_entry(window, &entry); }
+        // Label selects a candidate only. Query the *injected* instance on the
+        // UI thread (inline HWND getter) with a bounded worker-side receive.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (send, receive) = mpsc::sync_channel(1);
+        let injected = window.clone();
+        window.run_on_main_thread(move || {
+            if Instant::now() < deadline {
+                let hwnd = injected.hwnd().map(|hwnd| hwnd.0 as isize).map_err(|_| SnipError::Unauthorized);
+                let _ = send.try_send(hwnd);
+            }
+        }).map_err(|_| SnipError::WindowFailed)?;
+        let result = receive.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+        let hwnd = match result {
+            _ if Instant::now() >= deadline => return Err(SnipError::ReadinessTimeout),
+            Ok(hwnd) => hwnd?,
+            Err(mpsc::RecvTimeoutError::Timeout) => return Err(SnipError::ReadinessTimeout),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(SnipError::WindowFailed),
+        };
+        entry.verify_bound_hwnd(Some(hwnd))?;
+        Ok(entry.reference.caller.clone())
+    }
+    pub(crate) fn image_window_is_live(&self, reference: &WindowRef) -> bool {
+        self.entry(reference).is_ok_and(|entry| if entry.preview { entry.verify_bound_hwnd(None).is_ok() } else { entry.window().is_ok() })
     }
     pub fn context(&self, caller: Caller) -> Result<Context, SnipError> {
         let entry = self.entry(&WindowRef { caller, monitor_id: None })?;
@@ -164,10 +206,12 @@ impl Entry {
     }
     pub fn retire(&self) -> Option<WebviewWindow> {
         let mut state = self.state.lock().ok()?;
+        let was_live = !state.dead;
         state.dead = true; state.context = None;
         let window = state.window.take();
         self.changed.notify_all();
         drop(state);
+        if was_live { self.notify_preview_retired(); }
         window.filter(|window| same_epoch(window, self.reference.caller.window_id))
     }
     pub fn commit(&self, context: &Context) -> Result<(), SnipError> {
@@ -177,5 +221,26 @@ impl Entry {
         if state.dead || Instant::now() >= self.deadline { return Err(SnipError::ReadinessTimeout); }
         state.context = Some(context.clone()); self.changed.notify_all(); Ok(())
     }
-    pub fn invalidate(&self) { if let Ok(mut state) = self.state.lock() { state.dead = true; state.context = None; self.changed.notify_all(); } }
+    pub fn invalidate(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            let was_live = !state.dead;
+            state.dead = true; state.context = None; self.changed.notify_all();
+            drop(state);
+            if was_live { self.notify_preview_retired(); }
+        }
+    }
+    // After resolving the concrete injected caller, use the registered HWND from
+    // bind(). Its property disappears on destruction; a recycled HWND cannot
+    // inherit the epoch. No Tauri/UI dispatch on preview image revalidation.
+    fn verify_bound_hwnd(&self, injected_hwnd: Option<isize>) -> Result<(), SnipError> {
+        let state = self.state.lock().map_err(|_| SnipError::WindowFailed)?;
+        if state.dead || state.window.is_none() || injected_hwnd.is_some_and(|hwnd| hwnd != state.hwnd)
+            || !hwnd_has_epoch(state.hwnd, self.reference.caller.window_id) { return Err(SnipError::Unauthorized); }
+        Ok(())
+    }
+    // All callers publish death and release registry/entry locks before calling
+    // into the coordinator's wait predicate.
+    fn notify_preview_retired(&self) {
+        if let Some(notify) = &self.preview_retired { notify(&self.reference.caller); }
+    }
 }
