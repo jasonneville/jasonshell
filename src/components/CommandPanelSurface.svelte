@@ -39,7 +39,9 @@
     type QuickCommandRunUpdatedEvent
   } from '../lib/quickCommands';
   import { IPC_EVENTS } from '../ipc/events.js';
+  import { SHELL_SURFACES } from '../ipc/surfaces';
   import { hideCommandPanel, pickQuickCommandArtifactLocation } from '../lib/commandPanel';
+  import { takeQuickCommandNotificationTarget, type QuickCommandRunTarget } from '../lib/quickCommandNotification';
 
   type CommandEditorModel = { id: string | null; label: string; mode: QuickCommandMode; targetPath: string; cwd: string; artifactLocation: string; argsText: string; commandsText: string };
   type CommandPanelTab = 'configuration' | 'previousRuns';
@@ -76,6 +78,7 @@
   let allHistory: QuickCommandRunHistoryEntry[] = [];
   let historyLoading = false;
   let historyRequestId = 0;
+  let notificationVisibilityRevision = 0;
   let contextEntry: QuickCommandEntry | null = null;
   let deleteConfirmation: QuickCommandEntry | null = null;
   let deleteConfirmationBusy = false;
@@ -161,7 +164,8 @@
   function focusCommandEntry(id: string | null) { if (!id) return; void tick().then(() => { if (disposed) return; commandListElement?.querySelector<HTMLButtonElement>(`[data-command-id="${CSS.escape(id)}"] .command-select`)?.focus(); }); }
 
   function startNewEntry() { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = blankEditor(); }
-  function startEditEntry(entry: QuickCommandEntry) { cancelReorderForAction(); formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: entry.id, label: entry.label, mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', artifactLocation: entry.artifactLocation ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; }
+  function editorForEntry(entry: QuickCommandEntry): CommandEditorModel { return { id: entry.id, label: entry.label, mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', artifactLocation: entry.artifactLocation ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; }
+  function startEditEntry(entry: QuickCommandEntry) { cancelReorderForAction(); formErrors = []; panelError = ''; activeTab = 'configuration'; editor = editorForEntry(entry); }
   function duplicateEntry(entry: QuickCommandEntry) { cancelReorderForAction(); if (structuralMutationBusy()) return; formErrors = []; panelError = ''; activeTab = 'configuration'; editor = { id: null, label: nextDuplicateQuickCommandLabel(entry.label, entries.map((current) => current.label)), mode: entry.mode, targetPath: entry.targetPath, cwd: entry.cwd ?? '', artifactLocation: entry.artifactLocation ?? '', argsText: formatQuickCommandArgsTextarea(entry.args), commandsText: formatQuickCommandCommandsTextarea(entry.commands) }; contextEntry = null; }
 
   function applyAcceptedSettings(values: SettingsSnapshot) {
@@ -561,18 +565,70 @@
       const allRuns = await listQuickCommandHistory();
       if (disposed) return;
       if (requestId !== historyRequestId || editor.id !== selectedId) return;
-      allHistory = mergeQuickCommandRunHistoryEntries(allHistory, allRuns);
-      history = selectedId ? allHistory.filter((run) => run.commandId === selectedId) : [];
-      activeRunIds = new Set(allHistory.filter((run) => run.running).map((run) => run.runId));
-      activeCommandIds = new Set(allHistory.filter((run) => run.running).map((run) => run.commandId));
-      stoppingRunIds = new Set([...stoppingRunIds].filter(id => activeRunIds.has(id)));
-      pruneLiveHistoryUpdateTimes();
-      const nextExpandedIds = new Set([...expandedRunIds].filter(id => allHistory.some(run => historyRunKey(run) === id)));
-      for (const run of allHistory) if (run.commandId === selectedId && run.running) nextExpandedIds.add(historyRunKey(run));
-      expandedRunIds = nextExpandedIds;
-      updatePendingInputFromHistory();
-      scheduleTranscriptTail();
+      applyHistorySnapshot(mergeQuickCommandRunHistoryEntries(allHistory, allRuns));
     } catch (error) { if (disposed) return; if (requestId !== historyRequestId || editor.id !== selectedId) return; panelError = error instanceof Error ? error.message : String(error); } finally { if (!disposed && requestId === historyRequestId && editor.id === selectedId) historyLoading = false; }
+  }
+
+  function applyHistorySnapshot(snapshot: QuickCommandRunHistoryEntry[]) {
+    allHistory = snapshot;
+    history = editor.id ? allHistory.filter((run) => run.commandId === editor.id) : [];
+    activeRunIds = new Set(allHistory.filter((run) => run.running).map((run) => run.runId));
+    activeCommandIds = new Set(allHistory.filter((run) => run.running).map((run) => run.commandId));
+    stoppingRunIds = new Set([...stoppingRunIds].filter(id => activeRunIds.has(id)));
+    pruneLiveHistoryUpdateTimes();
+    const nextExpandedIds = new Set([...expandedRunIds].filter(id => allHistory.some(run => historyRunKey(run) === id)));
+    for (const run of history) if (run.running) nextExpandedIds.add(historyRunKey(run));
+    expandedRunIds = nextExpandedIds;
+    updatePendingInputFromHistory();
+    scheduleTranscriptTail();
+  }
+
+  function notificationNavigationBlocked() {
+    const saved = entries.find((entry) => entry.id === editor.id);
+    const baseline = saved ? editorForEntry(saved) : blankEditor();
+    const dirty = (Object.keys(baseline) as Array<keyof CommandEditorModel>).some((key) => editor[key] !== baseline[key]);
+    return dirty || saving || structuralMutationBusy() || artifactPickerBusy || Boolean(deleteConfirmation || runningId || stoppingId || pointerDrag)
+      || resizePointerId !== null || pendingInputBusy || pendingInputDraft !== '';
+  }
+
+  async function openNotificationTarget(target: QuickCommandRunTarget, isCurrent: () => boolean) {
+    const initialEditor = editor;
+    const initialTab = activeTab;
+    const matchesTarget = (run: QuickCommandRunHistoryEntry) => run.commandId === target.commandId && run.runId === target.runId;
+    const preserveEdit = () => { panelError = 'Finish or cancel the current edit, then find the notified run in Previous runs.'; };
+    if (notificationNavigationBlocked()) { preserveEdit(); return; }
+
+    let allRuns: QuickCommandRunHistoryEntry[];
+    let historyRevision: number;
+    do {
+      historyRevision = historyRequestId;
+      allRuns = await listQuickCommandHistory();
+      if (!isCurrent()) return;
+      if (editor !== initialEditor || activeTab !== initialTab || notificationNavigationBlocked()) { preserveEdit(); return; }
+      // Start a fresh authoritative read if another refresh was issued after ours.
+    } while (historyRevision !== historyRequestId);
+    const entry = entries.find((item) => item.id === target.commandId);
+    const run = allRuns.find((item) => !item.running && matchesTarget(item));
+    const snapshot = mergeQuickCommandRunHistoryEntries(allHistory, allRuns);
+    if (!entry || !run || !snapshot.some(matchesTarget)) {
+      panelError = 'The notified run is no longer available.';
+      return;
+    }
+
+    startEditEntry(entry);
+    contextEntry = null;
+    activeTab = 'previousRuns';
+    ++historyRequestId;
+    historyLoading = false;
+    applyHistorySnapshot(snapshot);
+    const otherCompleted = new Set(history.filter((item) => !item.running && !matchesTarget(item)).map(historyRunKey));
+    expandedRunIds = new Set([...expandedRunIds].filter((key) => !otherCompleted.has(key)).concat(historyRunKey(run)));
+    await tick();
+    if (!isCurrent() || editor.id !== target.commandId || activeTab !== 'previousRuns') return;
+    const rowIndex = history.findIndex(matchesTarget);
+    if (rowIndex !== -1) {
+      panelElement.querySelectorAll<HTMLElement>('.command-history-run')[rowIndex]?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' });
+    }
   }
 
   async function stopEntry(id: string) {
@@ -606,7 +662,8 @@
     });
   }
   function cancelListResize(event: PointerEvent) { if (resizePointerId === event.pointerId) { listWidth = resizeStartWidth; resizePointerId = null; } }
-  function closePanel() { void hideCommandPanel().catch((error) => console.error('Failed to hide command panel', error)); }
+  function closePanel() { ++notificationVisibilityRevision; void hideCommandPanel().catch((error) => console.error('Failed to hide command panel', error)); }
+  function handleVisibilityChange() { if (document.hidden) ++notificationVisibilityRevision; }
   function selectCommand(entry: QuickCommandEntry) {
     const preservePreviousRuns = activeTab === 'previousRuns';
     startEditEntry(entry);
@@ -916,18 +973,48 @@
       });
     }
 
-    void refreshEntries();
+    const entriesReady = refreshEntries();
     void refreshHistory();
+    let targetWake = 0;
+    let targetProcessing = false;
+    async function pullNotificationTarget() {
+      ++targetWake;
+      if (disposed || targetProcessing) return;
+      targetProcessing = true;
+      let wake: number;
+      do {
+        wake = targetWake;
+        const visibilityRevision = notificationVisibilityRevision;
+        const isCurrent = () => !disposed && visibilityRevision === notificationVisibilityRevision;
+        try {
+          const target = await takeQuickCommandNotificationTarget();
+          if (target) {
+            await entriesReady;
+            if (isCurrent()) await openNotificationTarget(target, isCurrent);
+          }
+        } catch {
+          if (isCurrent()) panelError = 'Could not open the notified run. Find it in Previous runs.';
+        }
+      } while (!disposed && wake !== targetWake);
+      targetProcessing = false;
+    }
+    const targetListener = listen(IPC_EVENTS.commandPanelNotificationTarget, () => void pullNotificationTarget(), {
+      target: { kind: 'WebviewWindow', label: SHELL_SURFACES.commandPanel }
+    });
+    registerAsyncUnlistener(targetListener);
+    // The first read runs after registration so an earlier wake cannot be lost.
+    void targetListener.then(() => pullNotificationTarget(), () => pullNotificationTarget());
     registerAsyncUnlistener(listen(IPC_EVENTS.quickCommandRunUpdated, (event: { payload: unknown }) => {
       if (disposed) return;
       handleQuickCommandRunUpdated(event.payload as QuickCommandRunUpdatedEvent);
     }));
-    historyPollTimer = window.setInterval(() => { if (shouldPollHistory()) void refreshHistory(); }, 1100);
+    historyPollTimer = window.setInterval(() => { if (!targetProcessing && shouldPollHistory()) void refreshHistory(); }, 1100);
     return () => { disposed = true; stopCommandAutoScroll(); pointerDrag = null; if (historyPollTimer !== null) window.clearInterval(historyPollTimer); if (historyUpdateFrame !== null) window.cancelAnimationFrame(historyUpdateFrame); if (transcriptTailFrame !== null) window.cancelAnimationFrame(transcriptTailFrame); historyUpdateQueued = false; transcriptTailPending = false; while (unlisteners.length) { try { unlisteners.pop()?.(); } catch (error) { console.error('Failed to dispose command panel listener', error); } } };
   });
 </script>
 
 <svelte:window on:click={dismissContextMenu} on:keydown={dismissContextMenuOnEscape} />
+<svelte:document on:visibilitychange={handleVisibilityChange} />
 
 <div bind:this={panelElement} class="command-panel" id="command-panel" role="dialog" tabindex="-1" aria-labelledby="command-panel-title" style={`--command-list-width: ${listWidth}px; --quick-command-transcript-font-size: ${transcriptFontSize}px`} on:scroll|capture={handleTranscriptScroll} on:wheel|capture={markTranscriptScrollIntent} on:pointerdown|capture={markTranscriptScrollIntent} on:keydown|capture={markTranscriptScrollIntent} on:pointerup|capture={endTranscriptPointerScroll} on:pointercancel|capture={endTranscriptPointerScroll} on:pointermove={resizeList} on:pointerup={stopListResize} on:pointercancel={cancelListResize}>
   <header class="command-panel-header"><h1 id="command-panel-title">Quick Commands</h1><MeltActionButton class="command-panel-close-button" ariaLabel="Close quick commands" onClick={closePanel}><MaterialSymbolIcon name="close" /></MeltActionButton></header>

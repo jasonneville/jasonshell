@@ -26,6 +26,7 @@ export const surfaceComponentLoaders: Record<LoadableShellSurface, SurfaceCompon
   'tray-panel': () => import('../components/TrayPanelSurface.svelte'),
   'terminal-panel': () => import('../components/TerminalPanelSurface.svelte'),
   'command-panel': () => import('../components/CommandPanelSurface.svelte'),
+  'quick-command-notification': () => import('../components/QuickCommandNotificationSurface.svelte'),
   'audio-panel': () => import('../components/AudioPanelSurface.svelte'),
   'speech-history-panel': () => import('../components/SpeechHistoryPanelSurface.svelte'),
   'calendar-panel': () => import('../components/CalendarPanelSurface.svelte'),

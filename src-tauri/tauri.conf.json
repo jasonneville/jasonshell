@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "bundle": {
-    "resources": []
+    "resources": ["resources/quick-command-complete.wav"]
   },
   "app": {
     "security": {

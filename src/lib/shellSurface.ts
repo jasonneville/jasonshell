@@ -12,6 +12,7 @@ export type ShellSurface =
   | 'tray-panel'
   | 'terminal-panel'
   | 'command-panel'
+  | 'quick-command-notification'
   | 'audio-panel'
   | 'speech-history-panel'
   | 'calendar-panel'
@@ -81,6 +82,7 @@ export const shellSurfaceMetadata: Record<ShellSurface, SurfaceMeta> = {
     subtitle: 'Quick command launcher and editor',
     title: 'JasonShell Commands'
   },
+  'quick-command-notification': { title: 'Quick Commands', subtitle: 'Command completion notification' },
   'audio-panel': {
     subtitle: 'Quick audio controls',
     title: 'JasonShell Sound'
@@ -129,6 +131,7 @@ export function resolveSurfaceFromLabel(label: string | undefined): ShellSurface
     || label === 'tray-panel'
     || label === 'terminal-panel'
     || label === 'command-panel'
+    || label === 'quick-command-notification'
     || label === 'audio-panel'
     || label === 'speech-history-panel'
     || label === 'calendar-panel'

@@ -107,6 +107,18 @@ Prereqs: Windows desktop session, working default microphone, packaged JasonShel
 - Invalid entries (for example secret-like args, non-absolute script path modes, empty label/target) show inline validation errors inside the popup.
 - `command-panel` closes on focus loss and top-bar `aria-expanded` state clears.
 
+### Quick Commands completion banners (native acceptance pending)
+
+Run only after explicit live-shell and process-launch consent. Use an approved local command with a short delay and harmless output; prepare distinguishable output on two runs of the same saved command. Record the Windows version, monitor scaling, foreground app, and observed results.
+
+- Hide Quick Commands and return to another app before completion. Confirm a success or failure banner appears slightly below the primary top bar, plays one short chime, and leaves the foreground app focused. Check that it is absent from the taskbar and Alt+Tab.
+- Dismiss with **×**; verify the panel stays closed and the foreground app stays focused. Repeat without clicking and verify the banner disappears after six seconds. A run completed while Quick Commands is visible, a manually stopped run, or a launch error must not show a banner.
+- If five distinct runs can finish within one banner's lifetime, confirm the first stays visible and the next three shown are runs 3, 4, and 5. Verify run 2 remains in history even though its banner was dropped. Check that banner text contains only the saved label and outcome, not command arguments or output.
+- With two retained runs of the same command, click the older run's banner. Confirm Quick Commands opens at its usual anchor, takes focus, switches to **Previous Runs**, and expands and scrolls to the older run's output, not the newer output. Confirm waiting banners clear when the panel opens.
+- Open and close Quick Commands using the normal launcher and **Alt+Q**. Both should still toggle; the banner's **Open** action should only show the panel. Confirm the normal top-bar popup mutual exclusion still applies.
+- Repeat at 100% and at another scaling level if available, including a display or DPI change during a banner. Confirm the card stays within the primary work area and both buttons remain clickable. Where exit is explicitly approved, verify shutdown does not show a new banner or leave an overlay behind.
+- Mocked browser tests cannot establish HWND focus, placement, Windows pointer delivery, Alt+Tab behavior, or audible playback. Record untested configurations as pending.
+
 ## Stack Browser
 
 - Clicking a pinned folder opens `stack-popup` anchored below the pin.

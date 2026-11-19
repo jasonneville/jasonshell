@@ -1,7 +1,95 @@
 import { fireEvent, render, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { expect, it, vi } from 'vitest';
 import CommandPanelSurface from '../../src/components/CommandPanelSurface.svelte';
 import { tauriMocks } from './setup';
+
+function notificationTargetFixture(runId?: string) {
+  const tauri = tauriMocks();
+  const runs = ['recent', 'older'].map((id, index) => ({
+    commandId: 'build', runId: id, startedAtEpochMs: 3000 - 2000 * index,
+    finishedAtEpochMs: 3500 - 2000 * index, processId: 10 + index,
+    exitCode: 0, running: false, stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false,
+    transcript: [{ kind: 'stdout', body: `${id} output sentinel`, requestId: null, prompt: null,
+      secret: false, redacted: false, sequence: 1, atEpochMs: 3200 - 2000 * index, pending: false }],
+  }));
+  let target = runId ? { commandId: 'build', runId } : null;
+  const listeners = new Map<string, (event: { payload: unknown }) => void>();
+  tauri.listen.mockImplementation(async (name, callback) => { listeners.set(name, callback); return vi.fn(); });
+  let nextHistory: Promise<typeof runs> | null = null;
+  tauri.invoke.mockImplementation(async (command: string) => {
+    if (command === 'load_shell_settings') return { quickCommands: {
+      entries: [{ id: 'build', label: 'Build', mode: 'direct', targetPath: 'fixture.exe', args: [], commands: [], cwd: null, artifactLocation: null }],
+      history: [], orderVersion: 1, listWidth: 180,
+    } };
+    if (command === 'list_quick_command_history') {
+      const response = nextHistory ?? runs;
+      nextHistory = null;
+      return response;
+    }
+    if (command === 'take_quick_command_notification_target') {
+      const next = target;
+      target = null;
+      return next;
+    }
+    return null;
+  });
+  const view = render(CommandPanelSurface);
+  return Object.assign(view, {
+    wake(runId: string) { target = { commandId: 'build', runId }; listeners.get('command-panel:notification-target')!({ payload: null }); },
+    deferHistory() {
+      let resolve!: (rows: typeof runs) => void;
+      nextHistory = new Promise(done => { resolve = done; });
+      return (retain = true) => resolve(retain ? runs : []);
+    },
+    historyCalls: () => tauri.invoke.mock.calls.filter(([cmd]) => cmd === 'list_quick_command_history').length,
+  });
+}
+
+it('opens the exact older run from a notification target retained before panel mount', async () => {
+  const view = notificationTargetFixture('older');
+  await view.findByRole('button', { name: 'Edit Build' });
+  await waitFor(() => {
+    expect(view.queryByText('older output sentinel')?.closest('details')?.open).toBe(true);
+  });
+  expect(view.getByText('recent output sentinel').closest('details')?.open).toBe(false);
+});
+
+it('explains evicted notification output without expanding another retained run', async () => {
+  const view = notificationTargetFixture('evicted');
+  await view.findByRole('button', { name: 'Edit Build' });
+  await waitFor(() => expect(view.queryByRole('alert')?.textContent).toMatch(/unavailable|no longer available/i));
+  expect(view.container.querySelector('details[open]')).toBeNull();
+});
+
+it('does not navigate when the panel hides during a deferred notification history read', async () => {
+  const view = notificationTargetFixture();
+  await view.findByRole('button', { name: 'Edit Build' });
+  const count = view.historyCalls();
+  const release = view.deferHistory();
+  view.wake('older');
+  await waitFor(() => expect(view.historyCalls()).toBe(count + 1));
+  const visibility = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  try {
+    document.dispatchEvent(new Event('visibilitychange'));
+    release();
+    // Cross a task boundary so the deferred IPC and DOM update have settled.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(view.queryByText('older output sentinel')).toBeNull();
+  } finally { visibility.mockRestore(); }
+});
+
+it('preserves a dirty command label when a retained notification target arrives', async () => {
+  const view = notificationTargetFixture();
+  await fireEvent.click(await view.findByRole('button', { name: 'Edit Build' }));
+  const label = view.getByLabelText('Label') as HTMLInputElement;
+  await fireEvent.input(label, { target: { value: 'Unsaved build' } });
+  view.wake('older');
+  await waitFor(() => expect(view.queryByRole('alert')?.textContent ?? '').toMatch(/edit/i));
+  await tick();
+  expect(label.value).toBe('Unsaved build');
+  expect(view.queryByText('older output sentinel')).toBeNull();
+});
 
 it('disposes late listener registration exactly once after unmount', async () => {
   const tauri = tauriMocks();

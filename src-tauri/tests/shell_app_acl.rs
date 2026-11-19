@@ -7,6 +7,12 @@ const LEGACY_SURFACES:&[&str]=&["top-bar","bottom-bar","quick-launch-panel","tas
     "terminal-panel","command-panel","audio-panel","calendar-panel","speech-history-panel","speech-indicator","context-menu-overlay"];
 const SNIP:&[&str]=&["start_snip","get_snip_context","get_snip_image","snip_ready","snip_begin_selection",
     "complete_snip","cancel_snip","copy_snip","save_snip","dismiss_snip","snip_bar_ready"];
+const NOTIFICATION_SURFACE: &str = "quick-command-notification";
+const NOTIFICATION_ROUTES: &[(&str, &str)] = &[
+    ("get_quick_command_notification", NOTIFICATION_SURFACE),
+    ("act_on_quick_command_notification", NOTIFICATION_SURFACE),
+    ("take_quick_command_notification_target", "command-panel"),
+];
 fn read(relative:&str)->String {fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)).unwrap()}
 fn authority()->(RuntimeAuthority,bool) {
     // SAME generated inputs and SAME Resolved/RuntimeAuthority used by Tauri's
@@ -85,10 +91,33 @@ fn every_registered_legacy_command_has_explicit_existing_surface_acl_coverage() 
     let (authority,enabled)=authority();assert!(enabled);
     let registered=registered_commands();assert!(registered.len()>100,"coverage inventory unexpectedly shrank");
     for command in SNIP {assert!(registered.contains(*command));}
-    let missing:Vec<_>=registered.iter().filter(|cmd|!SNIP.contains(&cmd.as_str()))
+    let missing:Vec<_>=registered.iter().filter(|cmd|!SNIP.contains(&cmd.as_str()) && !NOTIFICATION_ROUTES.iter().any(|(route, _)| *route == cmd.as_str()))
         .filter(|cmd|!LEGACY_SURFACES.iter().any(|surface|allowed(&authority,cmd,surface))).cloned().collect();
     assert!(missing.is_empty(),"registered legacy commands have NO resolved existing-surface grant (handler inventory {}, missing {}):\n{}",
         registered.len(),missing.len(),missing.join(", "));
+}
+#[test]
+fn quick_command_notification_acl_resolves_only_for_intended_local_surfaces() {
+    let (authority, enabled) = authority();
+    assert!(enabled);
+    for command in ["plugin:event|listen", "plugin:event|unlisten"] {
+        assert!(allowed(&authority, command, "top-bar"), "positive resolver control: {command}");
+        assert!(!allowed(&authority, command, NOTIFICATION_SURFACE), "overlay must use its private channel, not {command}");
+    }
+    let registered = registered_commands();
+    let remote = Origin::Remote { url: "https://not-authorized.invalid/".parse().unwrap() };
+    for &(command, owner) in NOTIFICATION_ROUTES {
+        assert!(allowed(&authority, command, owner), "missing ACL grant: {owner} -> {command}");
+        assert!(registered.contains(command), "unregistered notification handler: {command}");
+        for surface in LEGACY_SURFACES.iter().copied().chain([NOTIFICATION_SURFACE, "unknown", "snip-overlay-7-m0", "snip-preview-7"]) {
+            assert_eq!(allowed(&authority, command, surface), surface == owner, "{surface} -> {command}");
+            assert!(authority.resolve_access(command, surface, surface, &remote).is_none());
+        }
+    }
+    for command in registered {
+        let permit = NOTIFICATION_ROUTES.iter().any(|&(route, owner)| route == command && owner == NOTIFICATION_SURFACE);
+        assert_eq!(allowed(&authority, &command, NOTIFICATION_SURFACE), permit, "unexpected overlay ACL: {command}");
+    }
 }
 #[test]
 fn actual_resolver_preserves_snip_surface_partition_and_remote_denial() {

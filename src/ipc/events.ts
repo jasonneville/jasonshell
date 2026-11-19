@@ -22,6 +22,8 @@ export const IPC_EVENTS = {
   terminalPanelOpen: 'terminal-panel:open',
   terminalPanelClosed: 'terminal-panel:closed',
   commandPanelClosed: 'command-panel:closed',
+  commandPanelNotificationTarget: 'command-panel:notification-target',
+  quickCommandNotificationOpenPanel: 'quick-command-notification:open-panel',
   calendarPanelOpen: 'calendar-panel:open',
   calendarPanelClosed: 'calendar-panel:closed',
   searchPanelUpdate: 'search-panel:update',

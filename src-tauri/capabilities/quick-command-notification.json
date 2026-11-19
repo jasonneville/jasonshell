@@ -1,0 +1,9 @@
+{
+  "identifier": "quick-command-notification",
+  "description": "Completion banner presentation and banner-local actions only.",
+  "windows": ["quick-command-notification"],
+  "permissions": [
+    "allow-get-quick-command-notification",
+    "allow-act-on-quick-command-notification"
+  ]
+}

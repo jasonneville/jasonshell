@@ -222,6 +222,8 @@ Quick Command launch requires Windows job assignment at process creation, availa
 - live transcript
 - run history
 - direct command replay
+- runs that finish and save history while Quick Commands is hidden show a top-right banner with a short chime. Click it to open that exact run in **Previous Runs**, or dismiss with **×**. Banners expire after six seconds; stopped runs and launch errors do not notify.
+- The banner’s top-left × dismisses it; the ring counts down to auto-dismiss. The bundled **Confirmation Trill** can be replaced by swapping `src-tauri/resources/quick-command-complete.wav` for a short PCM WAV and rebuilding. Live Windows focus, DPI placement, and playback validation remain consent-gated.
 
 ### Search
 

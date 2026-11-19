@@ -25,6 +25,8 @@ pub const SETTINGS_PANEL_LABEL: &str = "settings-panel";
 pub const TRAY_PANEL_LABEL: &str = "tray-panel";
 pub const TERMINAL_PANEL_LABEL: &str = "terminal-panel";
 pub const COMMAND_PANEL_LABEL: &str = "command-panel";
+#[cfg(any(windows, test))]
+pub const QUICK_COMMAND_NOTIFICATION_LABEL: &str = crate::contracts::surfaces::QUICK_COMMAND_NOTIFICATION;
 pub const AUDIO_PANEL_LABEL: &str = "audio-panel";
 pub const SPEECH_HISTORY_PANEL_LABEL: &str = "speech-history-panel";
 pub const CALENDAR_PANEL_LABEL: &str = "calendar-panel";
@@ -45,6 +47,7 @@ pub const ALL_LABELS: &[&str] = &[
     TRAY_PANEL_LABEL,
     TERMINAL_PANEL_LABEL,
     COMMAND_PANEL_LABEL,
+    QUICK_COMMAND_NOTIFICATION_LABEL,
     AUDIO_PANEL_LABEL,
     SPEECH_HISTORY_PANEL_LABEL,
     CALENDAR_PANEL_LABEL,
@@ -77,6 +80,13 @@ pub const TERMINAL_PANEL_WIDTH_LOGICAL: f64 = 860.0;
 pub const TERMINAL_PANEL_HEIGHT_LOGICAL: f64 = 520.0;
 pub const COMMAND_PANEL_WIDTH_LOGICAL: f64 = 460.0;
 pub const COMMAND_PANEL_HEIGHT_LOGICAL: f64 = 420.0;
+#[cfg(windows)]
+pub(crate) const QUICK_COMMAND_NOTIFICATION_WIDTH: f64 = 327.0;
+#[cfg(windows)]
+pub(crate) const QUICK_COMMAND_NOTIFICATION_HEIGHT: f64 = 57.0;
+/// Transparent top/left space for the renderer's corner badge.
+#[cfg(windows)]
+pub(crate) const QUICK_COMMAND_NOTIFICATION_INSET: f64 = 7.0;
 pub const AUDIO_PANEL_WIDTH_LOGICAL: f64 = 320.0;
 pub const AUDIO_PANEL_HEIGHT_LOGICAL: f64 = 430.0;
 pub const SPEECH_HISTORY_PANEL_WIDTH_LOGICAL: f64 = 360.0;
@@ -586,6 +596,36 @@ fn build_command_panel_window(app: &App) -> AppResult<WebviewWindow> {
     .build()?)
 }
 
+#[cfg(windows)]
+pub(crate) fn build_quick_command_notification_window(app: &AppHandle) -> AppResult<WebviewWindow> {
+    let window = WebviewWindowBuilder::new(app, QUICK_COMMAND_NOTIFICATION_LABEL, WebviewUrl::App("index.html".into()))
+        .title("Quick Command completion")
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                crate::quick_command_notification::renderer_navigating(window.app_handle());
+            }
+        })
+        .visible(false)
+        .focused(false)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .transparent(true)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .devtools(false)
+        .initialization_script(DISABLE_NATIVE_CONTEXT_MENU_SCRIPT)
+        .inner_size(QUICK_COMMAND_NOTIFICATION_WIDTH, QUICK_COMMAND_NOTIFICATION_HEIGHT)
+        .build()?;
+    if let Err(error) = apply_nonactivating_indicator_style(&window) {
+        let _ = window.destroy();
+        return Err(error);
+    }
+    Ok(window)
+}
+
 pub fn to_physical_height(logical_height: f64, scale_factor: f64) -> i32 {
     (logical_height * scale_factor).round() as i32
 }
@@ -599,10 +639,21 @@ fn apply_no_alt_tab_shell_style(window: &WebviewWindow) -> AppResult<()> {
 #[cfg(windows)]
 fn apply_nonactivating_indicator_style(window: &WebviewWindow) -> AppResult<()> {
     let hwnd = hwnd_from_tauri_window(window)?;
-    let current_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 };
+    // SAFETY: HWND is owned by the supplied window.
+    let current_style = unsafe {
+        SetLastError(WIN32_ERROR(0));
+        let value = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        if value == 0 && GetLastError() != ERROR_SUCCESS {
+            return Err("failed to read nonactivating window style".into());
+        }
+        value
+    };
     let desired_style = (current_style | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) & !WS_EX_APPWINDOW.0;
     unsafe {
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired_style as isize);
+        SetLastError(WIN32_ERROR(0));
+        if SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired_style as isize) == 0 && GetLastError() != ERROR_SUCCESS {
+            return Err("failed to apply nonactivating window style".into());
+        }
         SetWindowPos(
             hwnd,
             None,

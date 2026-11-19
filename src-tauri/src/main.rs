@@ -17,6 +17,9 @@ mod launchers;
 mod layout;
 mod process_manager;
 mod providers;
+#[cfg(windows)]
+mod quick_command_notification;
+mod quick_command_notification_queue;
 mod quick_commands;
 mod quick_launch_panel;
 mod search;
@@ -128,6 +131,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(shell_runtime_state())
         .manage(graceful_exit::ExitCoordinator::default())
+        .manage(quick_command_notification::Runtime::default())
         .manage(task_preview_state())
         .manage(search_panel_state())
         .manage(stack_popup_state())
@@ -210,6 +214,9 @@ fn main() {
             command_panel::hide_command_panel,
             command_panel::save_command_panel_size,
             command_panel::pick_quick_command_artifact_location,
+            quick_command_notification::get_quick_command_notification,
+            quick_command_notification::act_on_quick_command_notification,
+            quick_command_notification::take_quick_command_notification_target,
             audio_panel::show_audio_panel,
             audio_panel::hide_audio_panel,
             speech_history_panel::show_speech_history_panel,
@@ -555,6 +562,12 @@ fn main() {
                 }
             }
 
+            if matches!(event, WindowEvent::Destroyed)
+                && matches!(window.label(), shell_windows::COMMAND_PANEL_LABEL | shell_windows::QUICK_COMMAND_NOTIFICATION_LABEL)
+            {
+                quick_command_notification::retire_window(window.app_handle(), window.label());
+            }
+
             if window.label() == shell_windows::COMMAND_PANEL_LABEL
                 && matches!(event, WindowEvent::Focused(false))
             {
@@ -568,37 +581,35 @@ fn main() {
                         std::thread::sleep(Duration::from_millis(150));
                     })
                     .await;
-                    if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
-                        return;
-                    }
-                    if command_panel::command_panel_focus_loss_held() {
-                        return;
-                    }
-                    let Some(panel) =
-                        app_handle.get_webview_window(shell_windows::COMMAND_PANEL_LABEL)
-                    else {
-                        return;
-                    };
-                    if !panel.is_visible().ok().unwrap_or(false)
-                        || panel.is_focused().ok().unwrap_or(false)
-                        || panel.is_maximized().ok().unwrap_or(false)
-                        || panel.is_minimized().ok().unwrap_or(false)
-                    {
-                        return;
-                    }
-                    if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce) {
-                        return;
-                    }
-                    if app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
-                        .is_some_and(|runtime| panel.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize))) {
-                        return;
-                    }
-                    let _ = app_handle.emit_to(
-                        shell_windows::TOP_BAR_LABEL,
-                        command_panel::COMMAND_PANEL_CLOSED_EVENT,
-                        (),
-                    );
-                    let _ = panel.hide();
+                    let _ = app_handle.clone().run_on_main_thread(move || {
+                        if !command_panel::command_panel_focus_loss_nonce_is_current(focus_loss_nonce)
+                            || command_panel::command_panel_focus_loss_held()
+                        {
+                            return;
+                        }
+                        let Some(panel) =
+                            app_handle.get_webview_window(shell_windows::COMMAND_PANEL_LABEL)
+                        else {
+                            return;
+                        };
+                        if !panel.is_visible().unwrap_or(false)
+                            || panel.is_focused().unwrap_or(false)
+                            || panel.is_maximized().unwrap_or(false)
+                            || panel.is_minimized().unwrap_or(false)
+                            || app_handle.try_state::<std::sync::Arc<snipping::runtime::SnipRuntime>>()
+                                .is_some_and(|runtime| panel.hwnd().ok().is_some_and(|hwnd| runtime.holds_focus_loss(hwnd.0 as isize)))
+                        {
+                            return;
+                        }
+                        if panel.hide().is_ok() {
+                            quick_command_notification::panel_hidden_clear_target(&app_handle);
+                            let _ = app_handle.emit_to(
+                                shell_windows::TOP_BAR_LABEL,
+                                command_panel::COMMAND_PANEL_CLOSED_EVENT,
+                                (),
+                            );
+                        }
+                    });
                 });
                 return;
             }
@@ -648,6 +659,7 @@ fn main() {
                 return Ok(());
             }
             let windows = shell_windows::create_shell_windows(app)?;
+            quick_command_notification::install(app.handle());
             let snip_runtime = snipping::runtime::SnipRuntime::install(app.handle().clone(), windows.top.clone())
                 .map_err(|_| "snipping native initialization failed")?;
             let admission_app = app.handle().clone();

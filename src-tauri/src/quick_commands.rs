@@ -406,18 +406,20 @@ pub fn run_quick_command(
     let run_id = new_run_id();
     let command_id = request.id.clone();
     let app_for_exit = app_handle.clone();
-    let process_id = spawn_quick_command(
+    let process_id = spawn_quick_command_with_completion(
         app_handle.clone(),
         &plan,
         command_id.clone(),
         run_id.clone(),
+        Some(entry.label),
         move |history| {
-            let _ = settings::update_shell_settings_for_app(&app_for_exit, |settings| {
+            let saved_id = history.run_id.clone();
+            settings::update_shell_settings_for_app(&app_for_exit, |settings| {
                 settings.quick_commands.history = append_quick_command_history_bounded(
                     std::mem::take(&mut settings.quick_commands.history),
                     history,
                 );
-            });
+            }).is_ok_and(|settings| settings.quick_commands.history.iter().any(|run| run.run_id == saved_id))
         },
     )?;
     emit_run_snapshot(
@@ -800,13 +802,28 @@ fn build_command_block_script(commands: &[String]) -> String {
         + &commands.join("\r\n")
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 pub(crate) fn spawn_quick_command(
     app_handle: AppHandle,
     plan: &QuickCommandSpawnPlan,
     command_id: String,
     run_id: String,
     on_exit: impl FnOnce(settings::QuickCommandRunHistoryEntry) + Send + 'static,
+) -> Result<u32, String> {
+    spawn_quick_command_with_completion(app_handle, plan, command_id, run_id, None, move |history| {
+        on_exit(history);
+        false
+    })
+}
+
+#[cfg(windows)]
+fn spawn_quick_command_with_completion(
+    app_handle: AppHandle,
+    plan: &QuickCommandSpawnPlan,
+    command_id: String,
+    run_id: String,
+    notification_label: Option<String>,
+    on_exit: impl FnOnce(settings::QuickCommandRunHistoryEntry) -> bool + Send + 'static,
 ) -> Result<u32, String> {
     let job_handle = Arc::new(create_quick_command_job()?);
     let owned = Arc::new(OwnedQuickRun {
@@ -988,11 +1005,24 @@ pub(crate) fn spawn_quick_command(
             };
             (history, payload)
         };
+        let notification = notification_label.and_then(|label| {
+            let sample = crate::quick_command_notification::sample_completion(
+                &app_handle, exit_code, exit_payload.kind == "stopped",
+            )?;
+            let target = crate::quick_command_notification_queue::RunTarget {
+                command_id: history.command_id.clone(),
+                run_id: history.run_id.clone(),
+            };
+            Some((sample, target, label))
+        });
         emit_run_snapshot(&app_handle, &exit_payload);
-        on_exit(history);
+        let saved = on_exit(history);
         // UI/history state may retire now. OWNED_RUNS independently retains
         // the original job and this worker until verified native reaping.
         runs().lock().map_err(|_| "Command history unavailable")?.remove(&run_id);
+        if let Some((sample, target, label)) = notification {
+            crate::quick_command_notification::complete(&app_handle, sample, target, label, saved);
+        }
         Ok(())
     });
     let result = match worker {
@@ -1010,9 +1040,10 @@ pub(crate) fn spawn_quick_command(
 }
 
 #[cfg(not(windows))]
-pub(crate) fn spawn_quick_command(
+fn spawn_quick_command_with_completion(
     _app: AppHandle, _plan: &QuickCommandSpawnPlan, _command_id: String, _run_id: String,
-    _on_exit: impl FnOnce(settings::QuickCommandRunHistoryEntry) + Send + 'static,
+    _notification_label: Option<String>,
+    _on_exit: impl FnOnce(settings::QuickCommandRunHistoryEntry) -> bool + Send + 'static,
 ) -> Result<u32, String> {
     Err("Quick Commands require Windows job containment".into())
 }

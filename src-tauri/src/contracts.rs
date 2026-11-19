@@ -14,6 +14,7 @@ pub mod surfaces {
     pub const TRAY_PANEL: &str = "tray-panel";
     pub const TERMINAL_PANEL: &str = "terminal-panel";
     pub const COMMAND_PANEL: &str = "command-panel";
+    pub const QUICK_COMMAND_NOTIFICATION: &str = "quick-command-notification";
     pub const AUDIO_PANEL: &str = "audio-panel";
     pub const SPEECH_HISTORY_PANEL: &str = "speech-history-panel";
     pub const CALENDAR_PANEL: &str = "calendar-panel";
@@ -34,6 +35,7 @@ pub mod surfaces {
         TRAY_PANEL,
         TERMINAL_PANEL,
         COMMAND_PANEL,
+        QUICK_COMMAND_NOTIFICATION,
         AUDIO_PANEL,
         SPEECH_HISTORY_PANEL,
         CALENDAR_PANEL,
@@ -112,6 +114,9 @@ pub mod commands {
     pub const SHOW_TERMINAL_PANEL: &str = "show_terminal_panel";
     pub const HIDE_TERMINAL_PANEL: &str = "hide_terminal_panel";
     pub const SHOW_COMMAND_PANEL: &str = "show_command_panel";
+    pub const GET_QUICK_COMMAND_NOTIFICATION: &str = "get_quick_command_notification";
+    pub const ACT_ON_QUICK_COMMAND_NOTIFICATION: &str = "act_on_quick_command_notification";
+    pub const TAKE_QUICK_COMMAND_NOTIFICATION_TARGET: &str = "take_quick_command_notification_target";
     pub const HIDE_COMMAND_PANEL: &str = "hide_command_panel";
     pub const SHOW_AUDIO_PANEL: &str = "show_audio_panel";
     pub const HIDE_AUDIO_PANEL: &str = "hide_audio_panel";
@@ -306,6 +311,9 @@ pub mod commands {
         SHOW_TERMINAL_PANEL,
         HIDE_TERMINAL_PANEL,
         SHOW_COMMAND_PANEL,
+        GET_QUICK_COMMAND_NOTIFICATION,
+        ACT_ON_QUICK_COMMAND_NOTIFICATION,
+        TAKE_QUICK_COMMAND_NOTIFICATION_TARGET,
         HIDE_COMMAND_PANEL,
         SHOW_AUDIO_PANEL,
         HIDE_AUDIO_PANEL,
@@ -451,6 +459,8 @@ pub mod commands {
 
 pub mod events {
     pub const QUICK_COMMANDS_TOGGLE: &str = "quick-commands:toggle";
+    pub const QUICK_COMMAND_NOTIFICATION_OPEN_PANEL: &str = "quick-command-notification:open-panel";
+    pub const COMMAND_PANEL_NOTIFICATION_TARGET: &str = "command-panel:notification-target";
     pub const PROCESS_MANAGER_OPEN_REQUESTED: &str = "process-manager:open-requested";
     pub const SETTINGS_OPEN_REQUESTED: &str = "settings:open-requested";
     pub const STANDARD_HOTKEYS_CAPTURE: &str = "standard-hotkeys:capture";
@@ -518,6 +528,8 @@ pub mod events {
     pub const ALL: &[&str] = &[
         AUDIO_PANEL_OPEN,
         QUICK_COMMANDS_TOGGLE,
+        QUICK_COMMAND_NOTIFICATION_OPEN_PANEL,
+        COMMAND_PANEL_NOTIFICATION_TARGET,
         SNIP_CONTEXT,
         SNIP_ARMED,
         SNIP_PREPARE_BAR,
@@ -604,6 +616,7 @@ mod tests {
                 "tray-panel",
                 "terminal-panel",
                 "command-panel",
+                "quick-command-notification",
                 "audio-panel",
                 "speech-history-panel",
                 "calendar-panel",
@@ -743,6 +756,8 @@ mod tests {
             &[
                 "audio-panel:open",
                 "quick-commands:toggle",
+                "quick-command-notification:open-panel",
+                "command-panel:notification-target",
                 "snip:context",
                 "snip:armed",
                 "snip:prepare_bar",

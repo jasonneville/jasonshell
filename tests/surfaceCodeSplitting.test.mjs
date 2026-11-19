@@ -25,6 +25,7 @@ const expectedSurfaceImports = {
   'tray-panel': '../components/TrayPanelSurface.svelte',
   'terminal-panel': '../components/TerminalPanelSurface.svelte',
   'command-panel': '../components/CommandPanelSurface.svelte',
+  'quick-command-notification': '../components/QuickCommandNotificationSurface.svelte',
   'audio-panel': '../components/AudioPanelSurface.svelte',
   'calendar-panel': '../components/CalendarPanelSurface.svelte'
 };

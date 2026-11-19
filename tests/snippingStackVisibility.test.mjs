@@ -45,15 +45,18 @@ function fixture({ visible = false, cachedOpen = false, latest = true, reject = 
   const script = `
     let stackBrowserOpen = ${cachedOpen}, snipStartPending = false, snipPreparing = null;
     let snipStartError = '', snipBarMounted = true;
+    let soundCommandTransition = Promise.resolve(), disposed = false;
     let commandOpen = false, terminalOpen = false, audioOpen = false, trayOpen = false, searchOpen = false;
     let commandControl, terminalControl, soundControl, trayControl, searchControl;
     const isPinnedFolderPointerTarget = () => ${kind === 'pin'};
     const closeCommandPanel = async () => {}, closeTerminalPanel = closeCommandPanel,
       closeAudioPanel = closeCommandPanel, closeTrayPanel = closeCommandPanel, closePanel = closeCommandPanel;
     ${adapters}
+    ${productionFunction('queueSoundCommandTransition')}
     ${productionFunction('handleTopBarPointerDown')}
     ${productionFunction('requestSnip')}
-    return { pointer: () => handleTopBarPointerDown({ target }), start: requestSnip, toggle: toggleStackPopup,
+    return { pointer: async () => { handleTopBarPointerDown({ target }); await soundCommandTransition; },
+      start: requestSnip, toggle: toggleStackPopup,
       error: () => snipStartError };
   `;
   const js = ts.transpileModule(script, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -73,7 +76,7 @@ for (const scenario of [
 ]) {
   test(`snip pointerdown never reopens Stack: ${scenario.name}`, async () => {
     const { state, handlers } = fixture(scenario);
-    handlers.pointer();
+    await handlers.pointer();
     await handlers.start();
     assert.equal(state.visible, false, 'closed Stack must stay hidden before capture');
     assert.deepEqual(state.captured, [false]);
@@ -83,7 +86,7 @@ for (const scenario of [
 
 test('intentionally open Stack stays visible and capturable, without dirty-close request', async () => {
   const { state, handlers } = fixture({ visible: true, cachedOpen: true });
-  handlers.pointer();
+  await handlers.pointer();
   await handlers.start();
   assert.deepEqual(state.captured, [true]);
   assert.equal(state.closeRequests, 0, 'snip must not enqueue a later guarded close');
@@ -92,11 +95,11 @@ test('intentionally open Stack stays visible and capturable, without dirty-close
 
 test('failed snip and retry do not mutate Stack or retain stale start feedback', async () => {
   const { state, handlers } = fixture({ cachedOpen: true, reject: true });
-  handlers.pointer();
+  await handlers.pointer();
   await handlers.start();
   assert.match(handlers.error(), /Try again/);
   state.reject = false;
-  handlers.pointer();
+  await handlers.pointer();
   await handlers.start();
   assert.equal(handlers.error(), '');
   assert.deepEqual(state.captured, [false]);
@@ -105,23 +108,23 @@ test('failed snip and retry do not mutate Stack or retain stale start feedback',
 
 test('repeated snips preserve deliberately open Stack', async () => {
   const { state, handlers } = fixture({ visible: true, cachedOpen: true });
-  for (let i = 0; i < 3; i++) { handlers.pointer(); await handlers.start(); }
+  for (let i = 0; i < 3; i++) { await handlers.pointer(); await handlers.start(); }
   assert.deepEqual(state.captured, [true, true, true]);
   assert.equal(state.closeRequests, 0);
 });
 
-test('ordinary outside dismissal executes production closeOnly adapter against stale hidden Stack', () => {
+test('ordinary outside dismissal executes production closeOnly adapter against stale hidden Stack', async () => {
   const { state, handlers } = fixture({ cachedOpen: true, kind: 'ordinary' });
-  handlers.pointer();
+  await handlers.pointer();
   assert.deepEqual(state.ipc, [{ command: 'toggle_stack_popup', args: { closeOnly: true } }]);
   assert.equal(state.visible, false);
   assert.equal(state.toggles, 0);
   assert.equal(state.closeRequests, 0);
 });
 
-test('ordinary outside dismissal retains visible dirty guard until it accepts closure', () => {
+test('ordinary outside dismissal retains visible dirty guard until it accepts closure', async () => {
   const { state, handlers } = fixture({ visible: true, cachedOpen: true, kind: 'ordinary' });
-  handlers.pointer();
+  await handlers.pointer();
   assert.equal(state.closeRequests, 1);
   assert.equal(state.visible, true, 'native close request is not an immediate hide');
   assert.equal(state.toggles, 0);
@@ -129,9 +132,9 @@ test('ordinary outside dismissal retains visible dirty guard until it accepts cl
 });
 
 for (const kind of ['pin', 'stack']) {
-  test(`${kind} pointerdown retains its dedicated switch/toggle path`, () => {
+  test(`${kind} pointerdown retains its dedicated switch/toggle path`, async () => {
     const { state, handlers } = fixture({ visible: true, cachedOpen: true, kind });
-    handlers.pointer();
+    await handlers.pointer();
     assert.deepEqual(state.ipc, []);
     assert.equal(state.visible, true);
   });

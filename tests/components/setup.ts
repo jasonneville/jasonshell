@@ -9,7 +9,7 @@ const tauri = vi.hoisted(() => ({
 export function tauriMocks() { return tauri; }
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: tauri.listen, emitTo: tauri.emitTo, emit: vi.fn() }));
-vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke, Channel: class { onmessage = (_: unknown) => {}; } }));
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ listen: tauri.listen, label: 'test-window' }) }));
 
 // jsdom has no layout observer or media-query evaluator. Surface tests that

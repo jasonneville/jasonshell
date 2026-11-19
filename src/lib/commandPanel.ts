@@ -4,6 +4,7 @@ import { IPC_COMMANDS } from '../ipc/commands.js';
 export interface ShowCommandPanelRequest {
   anchorLeft: number;
   anchorWidth: number;
+  notificationId?: string;
 }
 
 export const COMMAND_PANEL_CLOSED_EVENT = 'command-panel:closed';

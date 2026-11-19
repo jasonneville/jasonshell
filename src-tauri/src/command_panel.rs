@@ -29,13 +29,41 @@ impl Drop for FocusHoldGuard {
 pub struct ShowCommandPanelRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
+    pub notification_id: Option<String>,
 }
 
 #[tauri::command]
 pub fn show_command_panel(
+    window: WebviewWindow,
     app_handle: AppHandle,
     request: ShowCommandPanelRequest,
 ) -> Result<(), String> {
+    #[cfg(windows)]
+    let target = request.notification_id.as_deref()
+        .map(|id| crate::quick_command_notification::claim_open(&window, id)).transpose()?;
+    #[cfg(not(windows))]
+    let _ = window;
+    let panel = match show_command_panel_window(&app_handle, &request) {
+        Ok(panel) => panel,
+        Err(error) => {
+            #[cfg(windows)]
+            if target.is_some() {
+                crate::quick_command_notification::panel_show_failed(&app_handle);
+            }
+            return Err(error);
+        }
+    };
+    let focus = panel.set_focus();
+    #[cfg(windows)]
+    crate::quick_command_notification::panel_shown(
+        &app_handle,
+        &panel,
+        if focus.is_ok() { target } else { None },
+    );
+    focus.map_err(|error| format!("Failed to focus the command panel: {error}"))
+}
+
+fn show_command_panel_window(app_handle: &AppHandle, request: &ShowCommandPanelRequest) -> Result<WebviewWindow, String> {
     invalidate_command_panel_focus_loss_nonce();
     let panel = app_handle
         .get_webview_window(COMMAND_PANEL_LABEL)
@@ -57,7 +85,7 @@ pub fn show_command_panel(
         .ok_or_else(|| "Primary monitor is unavailable".to_string())?;
     let work_area = monitor.work_area();
     let scale_factor = monitor.scale_factor();
-    let shell_settings = settings::load_shell_settings_for_app(&app_handle)?;
+    let shell_settings = settings::load_shell_settings_for_app(app_handle)?;
     let saved_width = shell_settings.ui.command_panel_width_logical;
     let saved_height = shell_settings.ui.command_panel_height_logical;
     let desired_width = ((saved_width * scale_factor).round() as i32).max(1);
@@ -90,9 +118,7 @@ pub fn show_command_panel(
     panel
         .show()
         .map_err(|error| format!("Failed to show the command panel: {error}"))?;
-    panel
-        .set_focus()
-        .map_err(|error| format!("Failed to focus the command panel: {error}"))
+    Ok(panel)
 }
 
 pub fn save_command_panel_size_for_app(
@@ -142,6 +168,8 @@ pub fn hide_command_panel(app_handle: AppHandle) -> Result<(), String> {
     panel
         .hide()
         .map_err(|error| format!("Failed to hide the command panel: {error}"))?;
+    #[cfg(windows)]
+    crate::quick_command_notification::panel_hidden_clear_target(&app_handle);
     app_handle
         .emit_to(TOP_BAR_LABEL, COMMAND_PANEL_CLOSED_EVENT, ())
         .map_err(|error| format!("Failed to publish command panel closed event: {error}"))

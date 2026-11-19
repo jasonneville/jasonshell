@@ -130,6 +130,7 @@ fn cleanup_native_resources(app: AppHandle, deadline: Instant) {
     // Quick Commands has its own process-handle oracle and runs independently
     // of the other owners (and of the AppBar lane).
     for cleanup in [
+        crate::quick_command_notification::shutdown,
         |_: &AppHandle| {
             let _ = crate::windows_key_hook::stop_and_drain_hotkeys();
         },
@@ -154,7 +155,7 @@ fn cleanup_native_resources(app: AppHandle, deadline: Instant) {
         },
         |app: &AppHandle| stop_terminal(app, crate::shell_windows::TERMINAL_PANEL_LABEL),
         |app: &AppHandle| stop_terminal(app, crate::shell_windows::STACK_POPUP_LABEL),
-    ] as [fn(&AppHandle); 8]
+    ] as [fn(&AppHandle); 9]
     {
         let app = app.clone();
         let _ = thread::Builder::new().spawn(move || cleanup(&app));

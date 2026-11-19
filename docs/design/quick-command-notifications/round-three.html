@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quick Commands · Round three</title>
+  <style>
+    :root { font: 16px/1.5 system-ui, sans-serif; background: #f4f4ec; color: #162326; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body, h1, h2, h3, p { margin: 0; }
+    main { width: min(100% - 32px, 1136px); margin: auto; padding-block: clamp(24px, 6vw, 68px); }
+    h1 { margin-block: 10px; font-size: clamp(2.3rem, 7vw, 5.1rem); line-height: 1; letter-spacing: -.065em; }
+    h2 { font-size: 1.65rem; letter-spacing: -.035em; }
+    h3 { font-size: 1.08rem; }
+    a { color: #24554e; text-underline-offset: .18em; }
+    .intro, .caption p { color: #455654; }
+    .intro { max-width: 63ch; }
+    .kicker, .tag, .bar { font: 700 .7rem/1.5 ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .kicker, .tag { color: #3e6156; }
+    .nav, .modes { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+    .nav { margin-top: 12px; }
+    section { margin-top: 26px; padding-top: 14px; border-top: 1px solid #bac7b9; }
+    .controls { display: flex; justify-content: space-between; align-items: end; gap: 10px; flex-wrap: wrap; }
+    .modes { margin: 0; padding: 4px 12px 8px; border: 1px solid #a8b9ad; border-radius: 7px; }
+    .modes legend { padding-inline: 4px; font-size: .8rem; }
+    .modes label { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; }
+    input { margin: 0; accent-color: #24554e; }
+    .grid { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 14px; }
+    .concept { min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #c3cdc1; border-radius: 10px; background: #fbfbf5; }
+    .caption { padding: 10px 14px; }
+    .caption .tag { margin-right: 8px; }
+    .caption p { margin-top: 3px; font-size: .84rem; }
+    .desktop { margin-top: auto; min-height: 150px; color: #eef4f8; background: repeating-linear-gradient(135deg, transparent 0 22px, #9dc6b610 23px 24px), radial-gradient(ellipse at 10% 115%, #427d73 0%, #223d45 44%, #151d2d 90%); }
+    .bar { display: flex; justify-content: space-between; gap: 6px; padding: 6px 11px; background: #131b25; border-bottom: 1px solid #687482; color: #cbd9e2; }
+    .stage { display: grid; justify-items: end; gap: 6px; padding: 9px; }
+    .toast { --signal: #bacbda; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; width: min(100%, 320px); height: 54px; padding: 4px; border: 1px solid #505c6c; border-radius: 6px; background: #232b37; box-shadow: inset 0 1px #ffffff19, 0 7px 18px #080c1580; }
+    .toast[data-state="failure"] { --signal: #ffaaa6; }
+    button { font: inherit; cursor: pointer; }
+    .toast button, .replay { border: 0; border-radius: 4px; background: transparent; color: inherit; }
+    .toast button:hover, .replay:hover { background: #ffffff22; }
+    :focus-visible { outline: 3px solid #af5009; outline-offset: 3px; }
+    .desktop :focus-visible { outline-color: #ffc67f; outline-offset: -2px; }
+    .dismiss { width: 36px; height: 36px; font-size: 1.24rem; line-height: 1; }
+    .hit { display: flex; align-self: stretch; align-items: center; gap: 7px; min-width: 0; padding: 5px 8px; text-align: left; white-space: nowrap; }
+    .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .86rem; line-height: 1.25; }
+    .outcome, .affordance { flex: none; font-size: .72rem; }
+    .outcome { color: var(--signal); }
+    .affordance { color: #cbd6e1; }
+    .verdict .outcome { border: 1px solid var(--signal); padding: 2px 5px; border-radius: 10px; font-weight: 700; }
+    .tail .outcome { margin-left: auto; border-left: 1px solid #647487; padding-left: 7px; }
+    .result-first .outcome { font-weight: 750; }
+    .result-first .affordance { margin-left: auto; text-decoration: underline; text-underline-offset: 2px; }
+    .sectioned .toast, .action-first .toast { grid-template-columns: minmax(0, 1fr) auto auto; }
+    .summary { display: flex; align-items: center; min-width: 0; padding-left: 5px; gap: 6px; white-space: nowrap; }
+    .sectioned .action { height: 36px; padding: 0 6px; border-inline: 1px solid #647487; border-radius: 0; font-size: .75rem; font-weight: 700; }
+    .action-first .toast { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .action-first .action { height: 36px; padding: 0 6px; background: #d3e4eb; color: #1a2833; font-size: .74rem; font-weight: 700; }
+    .action-first .action:hover { background: #f0f8fb; }
+    .icon-pair .mark { flex: none; width: 18px; text-align: center; color: var(--signal); border: 1px solid; border-radius: 50%; font: 700 .72rem/16px system-ui, sans-serif; }
+    .icon-pair .affordance, .verdict .affordance { margin-left: auto; }
+    .arrow .affordance, .tail .affordance { font-size: 1rem; }
+    .arrow .outcome { margin-left: auto; }
+    /* Keep the previous One-Line Strip's layout and wrapping as a control. */
+    .anchor .toast { height: auto; min-height: 52px; }
+    .anchor .hit { white-space: normal; }
+    .anchor-copy { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0; }
+    .anchor .label { overflow: visible; overflow-wrap: anywhere; }
+    .anchor .affordance { text-decoration: underline; text-underline-offset: 2px; }
+    .replay { min-height: 36px; padding-inline: 10px; border: 1px solid #adc4cc; font-size: .8rem; }
+    .feedback { font-size: .76rem; text-align: end; }
+    .tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 244px), 1fr)); gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+    .tracks li { min-width: 0; border: 1px solid #c3cdc1; border-radius: 8px; background: #fbfbf5; padding: 9px; }
+    .track-title { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 5px; font-weight: 700; }
+    audio { display: block; width: 100%; height: 42px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="kicker">JasonShell / design preview / round 03</p>
+      <h1>Seven takes on one line</h1>
+      <p class="intro">Same command, nearly the same height. Compare what you notice first: the result, the command, or the path to its output. This is a local preview; it never runs a command or shows its arguments or output.</p>
+      <nav class="nav" aria-label="Gallery navigation"><a href="round-two.html">Round two</a><a href="#audition">Jump to chime audition ↓</a></nav>
+    </header>
+    <section aria-labelledby="visual-heading">
+      <div class="controls">
+        <div><p class="kicker">Visual / 01 anchor + 07 new</p><h2 id="visual-heading">Compact strips</h2></div>
+        <fieldset class="modes" hidden>
+          <legend>Preview outcome for all banners</legend>
+          <label><input type="radio" name="status" value="success" checked>Success</label>
+          <label><input type="radio" name="status" value="failure">Nonzero exit</label>
+        </fieldset>
+      </div>
+      <noscript><p>Enable JavaScript to show the banners. Audio controls below work without it.</p></noscript>
+      <div class="grid"></div>
+    </section>
+    <section id="audition" aria-labelledby="audio-heading">
+      <p class="kicker">Sound / 06 new</p><h2 id="audio-heading">Chime audition</h2>
+      <p class="intro">Play manually. Sounds are independent of banner design and outcome.</p>
+      <ul class="tracks">
+        <li><div class="track-title">12 · Mail Ping <a class="tag" aria-label="Mail Ping WAV" href="audio/12-mail-ping.wav">WAV</a></div><audio controls preload="none" aria-label="Mail Ping" src="audio/12-mail-ping.wav"></audio></li>
+        <li><div class="track-title">13 · System Chord <a class="tag" aria-label="System Chord WAV" href="audio/13-system-chord.wav">WAV</a></div><audio controls preload="none" aria-label="System Chord" src="audio/13-system-chord.wav"></audio></li>
+        <li><div class="track-title">14 · Paper Pop <a class="tag" aria-label="Paper Pop WAV" href="audio/14-paper-pop.wav">WAV</a></div><audio controls preload="none" aria-label="Paper Pop" src="audio/14-paper-pop.wav"></audio></li>
+        <li><div class="track-title">15 · Digital Sweep <a class="tag" aria-label="Digital Sweep WAV" href="audio/15-digital-sweep.wav">WAV</a></div><audio controls preload="none" aria-label="Digital Sweep" src="audio/15-digital-sweep.wav"></audio></li>
+        <li><div class="track-title">16 · Desk Ding <a class="tag" aria-label="Desk Ding WAV" href="audio/16-desk-ding.wav">WAV</a></div><audio controls preload="none" aria-label="Desk Ding" src="audio/16-desk-ding.wav"></audio></li>
+        <li><div class="track-title">17 · Confirmation Trill <a class="tag" aria-label="Confirmation Trill WAV" href="audio/17-confirmation-trill.wav">WAV</a></div><audio controls preload="none" aria-label="Confirmation Trill" src="audio/17-confirmation-trill.wav"></audio></li>
+      </ul>
+    </section>
+  </main>
+  <template id="concept-template">
+    <article class="concept">
+      <header class="caption"><h3><span class="tag"></span><span class="name"></span></h3><p></p></header>
+      <div class="desktop">
+        <div class="bar" aria-hidden="true"><span>JasonShell</span><span>›_ &nbsp; ◇ &nbsp; 10:42</span></div>
+        <div class="stage">
+          <div class="toast"><button class="dismiss" type="button" aria-label="Dismiss notification">×</button></div>
+          <button class="replay" type="button" hidden>Show banner again</button>
+          <p class="feedback" role="status"></p>
+        </div>
+      </div>
+    </article>
+  </template>
+  <script>
+    const commandLabel = 'Build release';
+    const concepts = [
+      ['anchor', 'One-Line Strip', 'Round-two anchor: command, result, then inline action. Can wrap when space runs out.', ['label', 'outcome', 'link']],
+      ['result-first', 'Result First', 'Read the verdict before the command; especially useful for scanning failures.', ['outcome', 'label', 'link']],
+      ['tail', 'Trailing Verdict', 'Command on the left, verdict aligned before the arrow on the right. Predictable scan position, less explicit action.', ['label', 'outcome', 'arrow']],
+      ['verdict', 'Verdict Chip', 'A labeled chip separates the result from the name without relying on color. Takes more horizontal room.', ['label', 'outcome', 'short']],
+      ['sectioned', 'Output Segment', 'The Output button has a visible boundary and independent hit target. Less room for the label.', ['label', 'outcome']],
+      ['arrow', 'Linked Label', 'The arrow sits next to the command, making the label read like a link. The result stays separate at the far edge.', ['label', 'arrow', 'outcome']],
+      ['icon-pair', 'Status Pair', 'A check or exclamation reinforces the written verdict. A quick visual cue, at the cost of label space.', ['mark', 'outcome', 'label', 'short']],
+      ['action-first', 'Action at Left', 'The output button is the first item and stays away from ×. The command and verdict read second.', ['label', 'outcome']]
+    ];
+
+    function textPart(tag, className, text = '') {
+      const part = document.createElement(tag);
+      part.className = className;
+      part.textContent = text;
+      return part;
+    }
+
+    const gallery = document.querySelector('.grid');
+    const template = document.querySelector('#concept-template');
+    const modes = document.querySelector('.modes');
+    const previews = concepts.map(([id, name, description, order], index) => {
+      const article = template.content.firstElementChild.cloneNode(true);
+      article.id = id;
+      article.classList.add(id);
+      article.querySelector('.caption .tag').textContent = index ? `0${index}` : 'Anchor';
+      article.querySelector('.name').textContent = name;
+      article.querySelector('.caption p').textContent = description;
+
+      const toast = article.querySelector('.toast');
+      const close = article.querySelector('.dismiss');
+      const replay = article.querySelector('.replay');
+      const feedback = article.querySelector('.feedback');
+      const parts = {
+        label: textPart('strong', 'label', commandLabel),
+        outcome: textPart('span', 'outcome'),
+        link: textPart('span', 'affordance', 'View output'),
+        short: textPart('span', 'affordance', 'Output ↗'),
+        arrow: textPart('span', 'affordance', '↗'),
+        mark: textPart('span', 'mark')
+      };
+      parts.label.title = commandLabel;
+      parts.mark.setAttribute('aria-hidden', 'true');
+      const split = id === 'sectioned' || id === 'action-first';
+      const open = textPart('button', split ? 'action' : 'hit', split ? 'Output' : '');
+      open.type = 'button';
+      open.title = 'View output';
+      const content = order.map(key => parts[key]);
+      if (split) {
+        const summary = textPart('div', 'summary');
+        summary.append(...content);
+        if (id === 'action-first') toast.prepend(open, summary);
+        else toast.prepend(summary, open);
+      } else if (id === 'anchor') {
+        const line = textPart('span', 'anchor-copy');
+        line.append(...content);
+        open.append(line);
+        toast.prepend(open);
+      } else {
+        open.append(...content);
+        toast.prepend(open);
+      }
+
+      open.addEventListener('click', () => { feedback.textContent = 'Preview only: opens this run in Previous Runs.'; });
+      close.addEventListener('click', () => {
+        toast.hidden = true;
+        replay.hidden = false;
+        replay.focus();
+        feedback.textContent = 'Banner dismissed.';
+      });
+      replay.addEventListener('click', () => {
+        toast.hidden = false;
+        replay.hidden = true;
+        open.focus();
+        feedback.textContent = '';
+      });
+      gallery.append(article);
+      return { toast, open, replay, feedback, outcome: parts.outcome, mark: parts.mark };
+    });
+
+    function updateOutcome() {
+      const status = modes.querySelector('input:checked').value;
+      const succeeded = status === 'success';
+      const label = succeeded ? 'Succeeded' : 'Failed';
+      for (const { toast, open, replay, feedback, outcome, mark } of previews) {
+        toast.dataset.state = status;
+        outcome.textContent = label;
+        mark.textContent = succeeded ? '✓' : '!';
+        open.setAttribute('aria-label', `View output for ${commandLabel} — ${label}`);
+        toast.hidden = false;
+        replay.hidden = true;
+        feedback.textContent = '';
+      }
+    }
+
+    modes.addEventListener('change', updateOutcome);
+    updateOutcome();
+    modes.hidden = false;
+  </script>
+</body>
+</html>

@@ -338,6 +338,9 @@
   let trayOpen = false;
   let terminalOpen = false;
   let commandOpen = false;
+  let commandPanelOpenRevision = 0;
+  let soundCommandTransition = Promise.resolve();
+  let disposed = false;
   let calendarOpen = false;
   let terminalCompletionPending = false;
   let stackBrowserOpen = false;
@@ -870,14 +873,14 @@
         });
       }
     }
-    if (commandOpen && (!target || !commandControl?.contains(target))) {
-      void closeCommandPanel();
-    }
+    const dismissCommand = !target || !commandControl?.contains(target);
+    const dismissSound = !target || !soundControl?.contains(target);
+    void queueSoundCommandTransition(async () => {
+      if (dismissCommand && commandOpen) await closeCommandPanel();
+      if (dismissSound && audioOpen) await closeAudioPanel();
+    });
     if (terminalOpen && (!target || !terminalControl?.contains(target))) {
       void closeTerminalPanel();
-    }
-    if (audioOpen && (!target || !soundControl?.contains(target))) {
-      void closeAudioPanel();
     }
     if (trayOpen && (!target || !trayControl?.contains(target))) {
       void closeTrayPanel();
@@ -941,6 +944,7 @@
   }
 
   async function closeCommandPanel() {
+    ++commandPanelOpenRevision;
     commandOpen = false;
     await hideCommandPanel().catch((error) => {
       console.error('Failed to hide command panel', error);
@@ -968,7 +972,18 @@
     });
   }
 
-  async function toggleSoundPanel(target: EventTarget | null) {
+  function queueSoundCommandTransition(transition: () => Promise<void>): Promise<void> {
+    soundCommandTransition = soundCommandTransition.then(async () => {
+      if (!disposed) await transition();
+    }).catch((error) => console.error('Could not change Sound or Quick Commands panel', error));
+    return soundCommandTransition;
+  }
+
+  function toggleSoundPanel(target: EventTarget | null): Promise<void> {
+    return queueSoundCommandTransition(() => toggleSoundPanelNow(target));
+  }
+
+  async function toggleSoundPanelNow(target: EventTarget | null) {
     if (audioOpen) {
       await closeAudioPanel();
       return;
@@ -1023,27 +1038,39 @@
     });
   }
 
-  async function toggleCommandPanel(target: EventTarget | null) {
+  function toggleCommandPanel(target: EventTarget | null): Promise<void> {
+    return queueSoundCommandTransition(() => toggleCommandPanelNow(target));
+  }
+
+  async function toggleCommandPanelNow(target: EventTarget | null) {
     if (commandOpen) {
       await closeCommandPanel();
       return;
     }
+    await openCommandPanel(target);
+  }
+
+  async function openCommandPanel(target: EventTarget | null, notificationId?: string) {
     const button = target instanceof HTMLElement ? target : null;
     const rect = button?.getBoundingClientRect();
     if (!rect) {
       return;
     }
+    const revision = ++commandPanelOpenRevision;
     await closePanel();
     await closeAudioPanel();
     await closeTrayPanel();
     await closeTerminalPanel();
     await closeCalendarPanel();
+    if (disposed || revision !== commandPanelOpenRevision) return;
+    const wasOpen = commandOpen;
     commandOpen = true;
     await showCommandPanel({
       anchorLeft: rect.left,
-      anchorWidth: rect.width
+      anchorWidth: rect.width,
+      ...(notificationId === undefined ? {} : { notificationId })
     }).catch((error) => {
-      commandOpen = false;
+      if (!disposed && revision === commandPanelOpenRevision) commandOpen = wasOpen;
       console.error('Failed to show command panel', error);
     });
   }
@@ -1926,7 +1953,7 @@
   onMount(() => {
     snipBarMounted = true;
     const unlisteners: Array<() => void> = [];
-    let disposed = false;
+    disposed = false;
     railScrollButtonsDisposed = false;
     try {
       topBarControlOrder = normalizeTopBarControlOrder(
@@ -1962,6 +1989,11 @@
     }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen(IPC_EVENTS.quickCommandsToggle, () => {
       if (!disposed) void toggleCommandPanel(document.querySelector('.command-button'));
+    }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
+    registerAsyncUnlistener(listen<{ id: string }>(IPC_EVENTS.quickCommandNotificationOpenPanel, ({ payload }) => {
+      if (!disposed && typeof payload?.id === 'string' && payload.id) {
+        void queueSoundCommandTransition(() => openCommandPanel(document.querySelector('.command-button'), payload.id));
+      }
     }, { target: { kind: 'WebviewWindow', label: getCurrentWebviewWindow().label } }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipPrepareBar, (event) => { void prepareSnipBar(event.payload); }));
     registerAsyncUnlistener(listen<unknown>(IPC_EVENTS.snipReleaseBar, (event) => { releaseSnipBar(event.payload); }));
@@ -2090,6 +2122,7 @@
       terminalOpen = false;
     }));
     registerAsyncUnlistener(listen(COMMAND_PANEL_CLOSED_EVENT, () => {
+      ++commandPanelOpenRevision;
       commandOpen = false;
     }));
     registerAsyncUnlistener(getCurrentWindow().onDragDropEvent((event) => {
