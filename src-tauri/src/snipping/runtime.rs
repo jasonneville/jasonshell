@@ -110,7 +110,11 @@ impl SnipRuntime {
         held && !self.stopped.load(Ordering::Acquire) && self.edges.foreground() == foreground
     }
     pub(crate) fn publication_attempts(&self) -> Option<usize> { self.edges.publication_attempts() }
-    fn assemble(coordinator: Coordinator, registry: Arc<NativeRegistry>, bar: Caller, edges: Arc<dyn RuntimeEdges>) -> Self {
+    fn assemble(owner: &std::sync::Weak<Self>, coordinator: Coordinator, registry: Arc<NativeRegistry>, bar: Caller, edges: Arc<dyn RuntimeEdges>) -> Self {
+        let owner = owner.clone();
+        registry.on_preview_retired(move |caller| {
+            if let Some(runtime) = owner.upgrade() { runtime.coordinator.preview_retired(caller); }
+        });
         Self { workers: Default::default(), exit_admission: Mutex::new(None), coordinator, registry, bar, edges, original: Mutex::new(None), originals: Mutex::new(BTreeMap::new()), pending: Mutex::new(None), changed: Condvar::new(), starting: AtomicBool::new(false), stopped: AtomicBool::new(false), preparation_deadline: Mutex::new(None), hotkey_attempt: AtomicU64::new(0), hotkey_reported: AtomicU64::new(0), escape: Mutex::new(None) }
     }
     /// Called after shell window construction and before normal activation.
@@ -146,7 +150,7 @@ impl SnipRuntime {
             })).with_data_directory(data_directory));
             let capture = capture_factory(Arc::new(move |deadline| prepare.upgrade().ok_or(SnipError::Inactive)?.prepare(deadline)),
                 Arc::new(move || { if let Some(runtime) = release.upgrade() { runtime.release(); } }));
-            Self::assemble(Coordinator::new(capture, windows, clipboard.clone(), picker, Arc::new(NativePublisherPort), Arc::new(NativeClock)), registry, bar, edges)
+            Self::assemble(weak, Coordinator::new(capture, windows, clipboard.clone(), picker, Arc::new(NativePublisherPort), Arc::new(NativeClock)), registry, bar, edges)
         });
         *runtime.escape.lock().map_err(|_| SnipError::Inactive)? = Some(super::escape::install(Arc::downgrade(&runtime))?);
         let weak = Arc::downgrade(&runtime);
@@ -287,7 +291,12 @@ impl SnipRuntime {
             }
         }
     }
-    pub fn shutdown(&self) { self.stopped.store(true, Ordering::Release); if let Ok(escape) = self.escape.lock() { if let Some(escape) = escape.as_ref() { escape.shutdown(); } } self.release(); self.registry.close_snips(); self.edges.shutdown(); }
+    pub fn shutdown(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.coordinator.stop_images();
+        if let Ok(escape) = self.escape.lock() { if let Some(escape) = escape.as_ref() { escape.shutdown(); } }
+        self.release(); self.registry.close_snips(); self.edges.shutdown();
+    }
     pub fn install_exit_admission(&self, admission: Arc<dyn Fn() -> Result<Box<dyn Send>, String> + Send + Sync>) -> Result<(), String> {
         *self.exit_admission.lock().map_err(|_| "Snipping admission unavailable")? = Some(admission); Ok(())
     }
@@ -297,6 +306,7 @@ impl SnipRuntime {
     }
     pub fn stop_and_drain(&self) -> Result<(), String> {
         self.stopped.store(true, Ordering::Release);
+        self.coordinator.stop_images();
         self.release();
         self.workers.close()?;
         let escape = {
@@ -337,7 +347,7 @@ pub(crate) mod verification {
             let prepare = weak.clone(); let release = weak.clone();
             let capture = (ports.capture)(Arc::new(move |deadline| prepare.upgrade().ok_or(SnipError::Inactive)?.prepare(deadline)),
                 Arc::new(move || { if let Some(runtime) = release.upgrade() { runtime.release(); } }));
-            SnipRuntime::assemble(Coordinator::new(capture, ports.windows, ports.clipboard, ports.picker, ports.publisher, ports.clock), registry, bar, edges)
+            SnipRuntime::assemble(weak, Coordinator::new(capture, ports.windows, ports.clipboard, ports.picker, ports.publisher, ports.clock), registry, bar, edges)
         })
     }
     pub(crate) fn start(runtime: &SnipRuntime, caller: Caller) -> Result<Token, SnipError> { runtime.start(caller) }
@@ -360,12 +370,15 @@ fn monitor(id: String) -> Result<String, SnipError> {
 }
 fn error(error: SnipError) -> String { match error { SnipError::Inactive=>"inactive",SnipError::Unauthorized=>"unauthorized",SnipError::Stale=>"stale",SnipError::Busy=>"busy",SnipError::InvalidSelection=>"invalid-selection",SnipError::TopologyChanged=>"topology-changed",SnipError::CaptureFailed=>"capture-failed",SnipError::ReadinessTimeout=>"readiness-timeout",SnipError::WindowFailed=>"window-failed",SnipError::ImageFailed=>"image-failed" }.into() }
 async fn worker<T: Send + 'static>(runtime: Arc<SnipRuntime>, window: WebviewWindow, action: impl FnOnce(&SnipRuntime, Caller) -> Result<T, SnipError> + Send + 'static) -> Result<T, String> {
+    worker_with_resolver(runtime, window, NativeRegistry::resolve, action).await
+}
+async fn worker_with_resolver<T: Send + 'static>(runtime: Arc<SnipRuntime>, window: WebviewWindow, resolve: fn(&NativeRegistry, &WebviewWindow) -> Result<Caller, SnipError>, action: impl FnOnce(&SnipRuntime, Caller) -> Result<T, SnipError> + Send + 'static) -> Result<T, String> {
     let admission = runtime.admit_exit_work()?;
     let work = runtime.workers.enter()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (_admission, _work) = (admission, work);
         if runtime.stopped.load(Ordering::Acquire) { return Err(SnipError::Inactive); }
-        let caller = runtime.registry.resolve(&window)?; action(&runtime, caller)
+        let caller = resolve(&runtime.registry, &window)?; action(&runtime, caller)
     }).await.map_err(|_| "inactive".to_string())?.map_err(error)
 }
 #[tauri::command]
@@ -374,7 +387,10 @@ pub async fn start_snip(window: WebviewWindow, state: State<'_, Arc<SnipRuntime>
 pub async fn get_snip_context(window: WebviewWindow, state: State<'_, Arc<SnipRuntime>>) -> Result<Value, String> { worker(state.inner().clone(), window, |runtime, caller| { runtime.registry.context(caller.clone())?; runtime.coordinator.context(caller).map(|context| context_json(&context)) }).await }
 #[tauri::command]
 pub async fn get_snip_image(window: WebviewWindow, state: State<'_, Arc<SnipRuntime>>, generation: String, capture_id: String, monitor_id: String) -> Result<tauri::ipc::Response, String> {
-    worker(state.inner().clone(), window, move |runtime, caller| { runtime.registry.context(caller.clone())?; runtime.coordinator.image(caller, token(generation,capture_id)?, monitor(monitor_id)?).map(tauri::ipc::Response::new) }).await
+    worker_with_resolver(state.inner().clone(), window, NativeRegistry::resolve_image, move |runtime, caller| {
+        runtime.registry.context(caller.clone())?;
+        runtime.coordinator.image(caller, token(generation,capture_id)?, monitor(monitor_id)?).map(tauri::ipc::Response::new)
+    }).await
 }
 #[tauri::command]
 pub async fn snip_bar_ready(window: WebviewWindow, state: State<'_, Arc<SnipRuntime>>, generation: String, capture_id: String) -> Result<Value, String> { worker(state.inner().clone(), window, move |runtime, caller| runtime.ack(caller, token(generation,capture_id)?)).await }

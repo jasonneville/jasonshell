@@ -4,7 +4,7 @@ include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/snipping_image_con
 use super::{geometry::{self, CroppedImage, LogicalRect, PhysicalRect, MAX_FROZEN_BYTES, MAX_STAGING_BYTES}, save::SaveError};
 pub use super::session::Caller;
 pub use super::clipboard_process::Outcome as ClipboardOutcome;
-use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, MutexGuard, OnceLock, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant}};
+use std::{path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant}};
 use super::diagnostics::{Diagnostics, Event as DiagnosticEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +40,8 @@ pub trait WindowPort: Send + Sync {
     fn hide(&self, window: &WindowRef) -> Result<(), SnipError>;
     fn close(&self, window: WindowRef);
     fn still_same(&self, window: &WindowRef) -> bool;
+    /// Preview image checks must not depend on an unbounded UI dispatcher wait.
+    fn still_same_for_image(&self, window: &WindowRef) -> bool { self.still_same(window) }
 }
 pub trait ClipboardPort: Send + Sync { fn publish(&self, crop: &CroppedImage, retained_bytes: usize) -> ClipboardOutcome; }
 pub trait PickerPort: Send + Sync { fn pick_png(&self) -> Result<Option<PathBuf>, SaveCode>; }
@@ -55,13 +57,22 @@ pub struct Snapshot {
 #[derive(Clone, Debug)]
 pub struct Publication { pub token: Token, pub outcome: ClipboardOutcome }
 
-struct Preview { token: Token, window: WindowRef, crop: Arc<CroppedImage>, monitor: MonitorSnapshot, topology: Vec<MonitorSnapshot> }
+// Context is already committed when this wait matters. Allow the 2s clipboard
+// operation and 5s show dispatch, with 1s for staging and cleanup overhead.
+const PREVIEW_IMAGE_WAIT: Duration = Duration::from_secs(8);
+#[cfg(test)]
+thread_local! {
+    static PREVIEW_WAIT_OBSERVER: std::cell::RefCell<Option<std::sync::mpsc::Sender<()>>> = const { std::cell::RefCell::new(None) };
+}
+#[derive(PartialEq, Eq)]
+enum PreviewReadiness { Pending, Ready, Retired }
+struct Preview { token: Token, window: WindowRef, crop: Arc<CroppedImage>, monitor: MonitorSnapshot, topology: Vec<MonitorSnapshot>, readiness: PreviewReadiness }
 struct Current {
     token: Token, phase: Phase, deadline: Instant, frames: Vec<Arc<Frame>>, windows: Vec<WindowRef>,
     ready: Vec<String>, armed: bool, selected: Option<String>, preview: Option<Preview>, busy: bool, escape_after_arming: bool,
 }
 #[derive(Default)]
-struct Inner { next: u64, active: Option<Current>, previous: Option<Preview>, last_publication: Option<Publication>, image_reservations: usize }
+struct Inner { next: u64, active: Option<Current>, previous: Option<Preview>, last_publication: Option<Publication>, image_reservations: usize, images_stopped: bool }
 enum ImageSource { Frame(Arc<Frame>), Crop(Arc<CroppedImage>) }
 /// Independent read ownership survives cancellation, without pinning mutation busy.
 /// Charge both the borrowed source and PNG output, conservatively even when the
@@ -77,11 +88,11 @@ pub struct Coordinator {
     diagnostics: OnceLock<Arc<Diagnostics>>,
     selecting_generation: AtomicU64,
     capture: Arc<dyn CapturePort>, windows: Arc<dyn WindowPort>, clipboard: Arc<dyn ClipboardPort>,
-    picker: Arc<dyn PickerPort>, publisher: Arc<dyn PublisherPort>, clock: Arc<dyn ClockPort>, inner: Mutex<Inner>,
+    picker: Arc<dyn PickerPort>, publisher: Arc<dyn PublisherPort>, clock: Arc<dyn ClockPort>, inner: Mutex<Inner>, preview_changed: Condvar,
 }
 impl Coordinator {
     pub fn new(capture: Arc<dyn CapturePort>, windows: Arc<dyn WindowPort>, clipboard: Arc<dyn ClipboardPort>, picker: Arc<dyn PickerPort>, publisher: Arc<dyn PublisherPort>, clock: Arc<dyn ClockPort>) -> Self {
-        Self { diagnostics: OnceLock::new(), selecting_generation: AtomicU64::new(0), capture, windows, clipboard, picker, publisher, clock, inner: Mutex::new(Inner::default()) }
+        Self { diagnostics: OnceLock::new(), selecting_generation: AtomicU64::new(0), capture, windows, clipboard, picker, publisher, clock, inner: Mutex::new(Inner::default()), preview_changed: Condvar::new() }
     }
     pub(crate) fn set_diagnostics(&self, diagnostics: Arc<Diagnostics>) { let _ = self.diagnostics.set(diagnostics); }
     pub(crate) fn diagnostics(&self) -> Option<Arc<Diagnostics>> { self.diagnostics.get().cloned() }
@@ -169,15 +180,27 @@ impl Coordinator {
         Ok(context_for(&current.token, Phase::Selecting, &frame.monitor, frame.monitor.rect.dimensions().map_err(|_| SnipError::ImageFailed)?))
     }
     pub fn image(&self, caller: Caller, token: Token, monitor_id: String) -> Result<Vec<u8>, SnipError> {
-        self.live(&caller)?;
-        self.expire();
+        self.image_with_preview_wait(caller, token, monitor_id, PREVIEW_IMAGE_WAIT)
+    }
+    #[cfg(test)]
+    pub(crate) fn observe_next_preview_wait(sender: std::sync::mpsc::Sender<()>) {
+        PREVIEW_WAIT_OBSERVER.with(|observer| *observer.borrow_mut() = Some(sender));
+    }
+    // The explicit interval lets coordinator fixtures exercise timeout without a
+    // production override or depending on the capture clock advancing.
+    fn image_with_preview_wait(&self, caller: Caller, token: Token, monitor_id: String, wait: Duration) -> Result<Vec<u8>, SnipError> {
+        self.live_for_image(&caller)?;
+        // Expiry can run native rollback effects. Only an owning overlay image
+        // should drive them, never a preview read for a replaced generation.
+        self.expire_matching(Some((&caller, &token)));
         let (read, output_limit) = {
-            let mut inner = self.lock()?;
+            let mut inner = self.wait_for_image(&caller, &token, &monitor_id, wait)?;
             let retained = retained_bytes(&inner);
             let current = active_mut(&mut inner, &token)?;
             if current.busy { return Err(SnipError::Busy); }
             let source = if let Some(preview) = &current.preview {
                 if preview.window.caller != caller || preview.monitor.id != monitor_id { return Err(SnipError::Unauthorized); }
+                if preview.readiness != PreviewReadiness::Ready { return Err(SnipError::Unauthorized); }
                 ImageSource::Crop(preview.crop.clone())
             } else {
                 authorize_overlay(current, &caller, &monitor_id)?;
@@ -203,15 +226,79 @@ impl Coordinator {
                 .and_then(|(width, height)| super::clipboard::png_rgba_transport(width, height, &frame.rgba, codec_retained).map_err(|_| SnipError::ImageFailed)),
             ImageSource::Crop(crop) => super::clipboard::png_rgba_transport(crop.width, crop.height, &crop.pixels, codec_retained).map_err(|_| SnipError::ImageFailed),
         };
-        self.expire();
+        if matches!(read.source, Some(ImageSource::Frame(_))) { self.expire_matching(Some((&caller, &token))); }
         {
             let mut inner = self.lock()?;
+            if inner.images_stopped { return Err(SnipError::Inactive); }
             let current = active_mut(&mut inner, &token)?;
             if (current.phase == Phase::Preparing || (current.phase == Phase::Selecting && !current.armed))
                 && self.clock.now() >= current.deadline { return Err(SnipError::ReadinessTimeout); }
         }
-        self.live(&caller)?;
+        self.live_for_image(&caller)?;
         encoded
+    }
+    fn live_for_image(&self, caller: &Caller) -> Result<(), SnipError> {
+        if caller.window_id == 0 || !self.windows.still_same_for_image(&WindowRef { caller: caller.clone(), monitor_id: None }) { return Err(SnipError::Unauthorized); }
+        Ok(())
+    }
+    fn wait_for_image(&self, caller: &Caller, token: &Token, monitor: &str, wait: Duration) -> Result<MutexGuard<'_, Inner>, SnipError> {
+        let mut inner = self.lock()?;
+        let mut deadline = None;
+        let mut checked_ready = false;
+        loop {
+            if inner.images_stopped { return Err(SnipError::Inactive); }
+            let current = active_mut(&mut inner, token)?;
+            let Some(preview) = current.preview.as_ref() else {
+                return if deadline.is_none() { Ok(inner) } else { Err(SnipError::Stale) };
+            };
+            if preview.readiness == PreviewReadiness::Pending {
+                if &preview.window.caller != caller {
+                    // A bound overlay still gets Busy during completion, but
+                    // neither it nor an invalid binding can enter this wait.
+                    authorize_overlay(current, caller, monitor)?;
+                    return Err(SnipError::Busy);
+                }
+                if preview.monitor.id != monitor { return Err(SnipError::Unauthorized); }
+            } else if deadline.is_none() {
+                return Ok(inner);
+            }
+            // A waiting request must still name the same preview after wake.
+            if &preview.window.caller != caller || preview.monitor.id != monitor || preview.readiness == PreviewReadiness::Retired {
+                return Err(SnipError::Unauthorized);
+            }
+            let deadline = *deadline.get_or_insert_with(|| Instant::now() + wait);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { return Err(SnipError::ReadinessTimeout); }
+            if preview.readiness == PreviewReadiness::Ready {
+                if checked_ready { return Ok(inner); }
+                // Terminal state and deadline were checked before leaving the
+                // lock. Revalidate both again after the concrete-instance check.
+                drop(inner);
+                self.live_for_image(caller)?;
+                checked_ready = true;
+                inner = self.lock()?;
+                continue;
+            }
+            #[cfg(test)]
+            PREVIEW_WAIT_OBSERVER.with(|observer| {
+                if let Some(sender) = observer.borrow_mut().take() { let _ = sender.send(()); }
+            });
+            inner = self.preview_changed.wait_timeout(inner, remaining).map_err(|_| SnipError::Inactive)?.0;
+        }
+    }
+    pub(crate) fn preview_retired(&self, caller: &Caller) {
+        if let Ok(mut inner) = self.lock() {
+            if let Some(preview) = inner.active.as_mut().and_then(|current| current.preview.as_mut()).filter(|preview| &preview.window.caller == caller) {
+                preview.readiness = PreviewReadiness::Retired;
+                self.preview_changed.notify_all();
+            }
+        }
+    }
+    pub(crate) fn stop_images(&self) {
+        if let Ok(mut inner) = self.lock() {
+            inner.images_stopped = true;
+            self.preview_changed.notify_all();
+        }
     }
     pub fn ready(&self, caller: Caller, token: Token, monitor_id: String) -> Result<bool, SnipError> {
         self.live(&caller)?;
@@ -300,7 +387,7 @@ impl Coordinator {
                 let mut inner = self.lock()?;
                 match active_mut(&mut inner, &token) {
                     Ok(current) => {
-                        current.preview = Some(Preview { token: token.clone(), window: window.clone(), crop: crop.clone(), monitor: frame.monitor.clone(), topology: topology.clone() });
+                        current.preview = Some(Preview { token: token.clone(), window: window.clone(), crop: crop.clone(), monitor: frame.monitor.clone(), topology: topology.clone(), readiness: PreviewReadiness::Pending });
                         true
                     }, Err(_) => false,
                 }
@@ -333,8 +420,20 @@ impl Coordinator {
             if let Some(old) = old { self.windows.close(old.window); }
             Ok(true)
         })();
-        self.unpin(&token);
-        if result.is_err() { self.rollback(&token); }
+        if result.is_ok() {
+            if let Ok(mut inner) = self.lock() { if let Ok(current) = active_mut(&mut inner, &token) {
+                current.busy = false;
+                if let Some(preview) = current.preview.as_mut().filter(|preview| preview.readiness == PreviewReadiness::Pending) {
+                    preview.readiness = PreviewReadiness::Ready;
+                    self.preview_changed.notify_all();
+                }
+                self.diagnostic_state(Some(current));
+            } }
+        } else {
+            // Remove the failed generation while still pinned. No interval in
+            // which a reader could observe an unpinned, unshown crop.
+            self.rollback_completion(&token);
+        }
         result
     }
     pub fn cancel(&self, caller: Caller, token: Token) -> Result<bool, SnipError> {
@@ -441,11 +540,21 @@ impl Coordinator {
         if self.clock.now() >= current.deadline { return Err(SnipError::ReadinessTimeout); }
         Ok(())
     }
-    pub fn expire(&self) {
+    pub fn expire(&self) { self.expire_matching(None); }
+    fn expire_matching(&self, overlay: Option<(&Caller, &Token)>) {
         let now = self.clock.now();
-        let token = self.lock().ok().and_then(|inner| inner.active.as_ref()
-            .filter(|current| !current.busy && (current.phase == Phase::Preparing || (current.phase == Phase::Selecting && !current.armed)) && now >= current.deadline)
-            .map(|current| current.token.clone()));
+        let token = self.lock().ok().and_then(|mut inner| {
+            let current = match overlay {
+                Some((caller, expected)) => {
+                    let current = active_mut(&mut inner, expected).ok()?;
+                    if !current.windows.iter().any(|window| &window.caller == caller) { return None; }
+                    current
+                }
+                None => inner.active.as_mut()?,
+            };
+            (!current.busy && (current.phase == Phase::Preparing || (current.phase == Phase::Selecting && !current.armed)) && now >= current.deadline)
+                .then(|| current.token.clone())
+        });
         if let Some(token) = token { self.rollback(&token); }
     }
     /// Native-only cancellation: phase/token admission and removal share one lock.
@@ -483,6 +592,15 @@ impl Coordinator {
         inner.active.as_ref().filter(|current| current.phase == Phase::Selecting
             && current.token.generation.parse::<u64>().ok() == Some(generation)).map(|current| current.token.clone())
     }
+    fn rollback_completion(&self, token: &Token) {
+        let removed = {
+            let Ok(mut inner) = self.lock() else { return; };
+            let Ok(current) = active_mut(&mut inner, token) else { return; };
+            if current.phase != Phase::Selecting || !current.busy || !current.armed { return; }
+            self.extract_rollback(&mut inner)
+        };
+        self.finish_rollback(removed);
+    }
     fn rollback(&self, token: &Token) { self.rollback_matching(token, false, false); }
     fn rollback_matching(&self, token: &Token, selecting_only: bool, finishing_arming: bool) -> bool {
         let removed = {
@@ -507,6 +625,7 @@ impl Coordinator {
                 frames: Vec::new(), windows: Vec::new(), ready: Vec::new(), armed: false, selected: None, preview: Some(previous), busy: false, escape_after_arming: false });
         }
         self.diagnostic_state(inner.active.as_ref());
+        self.preview_changed.notify_all();
         (removed, restore_window)
     }
     /// Native retirement/close/show effects run only after releasing state lock.
