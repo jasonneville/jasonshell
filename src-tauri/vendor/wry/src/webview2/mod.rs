@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 mod drag_drop;
+#[cfg(feature = "drag-drop")]
+pub use drag_drop::observe_local_file_drop;
 mod util;
 
 use std::{

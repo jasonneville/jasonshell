@@ -396,6 +396,8 @@ pub use wkwebview::{PrintMargin, PrintOptions, WryWebView};
 pub(crate) mod webview2;
 #[cfg(target_os = "windows")]
 pub use self::webview2::ScrollBarStyle;
+#[cfg(all(target_os = "windows", feature = "drag-drop"))]
+pub use self::webview2::observe_local_file_drop;
 #[cfg(target_os = "windows")]
 use self::webview2::*;
 #[cfg(target_os = "windows")]

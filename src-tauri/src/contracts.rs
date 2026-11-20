@@ -203,6 +203,8 @@ pub mod commands {
     pub const RENAME_STACK_ITEM: &str = "rename_stack_item";
     pub const COPY_STACK_ITEMS: &str = "copy_stack_items";
     pub const START_STACK_FILE_DRAG: &str = "start_stack_file_drag";
+    pub const COMMIT_STACK_LOCAL_DROP: &str = "commit_stack_local_drop";
+    pub const PREPARE_STACK_LOCAL_DROP: &str = "prepare_stack_local_drop";
     pub const CUT_STACK_ITEMS: &str = "cut_stack_items";
     pub const PASTE_STACK_ITEMS: &str = "paste_stack_items";
     pub const DELETE_STACK_ITEM: &str = "delete_stack_item";
@@ -397,6 +399,8 @@ pub mod commands {
         RENAME_STACK_ITEM,
         COPY_STACK_ITEMS,
         START_STACK_FILE_DRAG,
+        COMMIT_STACK_LOCAL_DROP,
+        PREPARE_STACK_LOCAL_DROP,
         CUT_STACK_ITEMS,
         PASTE_STACK_ITEMS,
         DELETE_STACK_ITEM,

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prepare-stack-local-drop"
+description = "Enables the prepare_stack_local_drop command without any pre-configured scope."
+commands.allow = ["prepare_stack_local_drop"]
+
+[[permission]]
+identifier = "deny-prepare-stack-local-drop"
+description = "Denies the prepare_stack_local_drop command without any pre-configured scope."
+commands.deny = ["prepare_stack_local_drop"]

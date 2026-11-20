@@ -127,14 +127,16 @@ pub(crate) fn start_native_file_drag(
         return NativeDragResult::new("cancelled", "none", Some("gesture-expired"), None);
     }
     // SAFETY: owner HWND belongs to popup on the UI thread; OLE and PIDLs stay alive through drag.
-    match unsafe {
+    // Suppress a return to this popup without granting any local move authority.
+    let (result, _) = wry::observe_local_file_drop(hwnd, &data_object, || unsafe {
         SHDoDragDrop(
             Some(hwnd),
             &data_object,
             None::<&IDropSource>,
             DROPEFFECT_COPY,
         )
-    } {
+    });
+    match result {
         Ok(effect) if effect == DROPEFFECT_COPY => {
             NativeDragResult::new("copied", "copy", None, None)
         }

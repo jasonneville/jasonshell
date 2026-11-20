@@ -7,16 +7,16 @@
 use crate::DragDropEvent;
 
 use std::{
-  cell::UnsafeCell,
+  cell::{Cell, RefCell},
   ffi::OsString,
   os::{raw::c_void, windows::ffi::OsStringExt},
   path::PathBuf,
   ptr,
-  rc::Rc,
+  rc::{Rc, Weak},
 };
 
 use windows::{
-  core::{implement, BOOL},
+  core::{implement, Interface, IUnknown, BOOL},
   Win32::{
     Foundation::{DRAGDROP_E_INVALIDHWND, HWND, LPARAM, POINT, POINTL},
     Graphics::Gdi::ScreenToClient,
@@ -30,10 +30,69 @@ use windows::{
     },
     UI::{
       Shell::{DragFinish, DragQueryFileW, HDROP},
-      WindowsAndMessaging::EnumChildWindows,
+      WindowsAndMessaging::{EnumChildWindows, IsChild},
     },
   },
 };
+
+struct LocalDropObservation {
+  owner: HWND,
+  source: IUnknown,
+  position: Cell<Option<(i32, i32)>>,
+}
+
+thread_local! {
+  static LOCAL_DROP: RefCell<Option<Rc<LocalDropObservation>>> = const { RefCell::new(None) };
+}
+
+/// Observe a drop from this exact COM object into an owner descendant during a synchronous
+/// drag on the current STA. Matching drops are not published as ordinary webview drops.
+pub fn observe_local_file_drop<T>(owner: HWND, data: &IDataObject, drag: impl FnOnce() -> T) -> (T, Option<(i32, i32)>) {
+  let Ok(source) = data.cast::<IUnknown>() else { return (drag(), None) };
+  let scope = Rc::new(LocalDropObservation { owner, source, position: Cell::new(None) });
+  if !LOCAL_DROP.with(|slot| {
+    let mut slot = slot.borrow_mut();
+    if slot.is_some() { return false; }
+    *slot = Some(scope.clone());
+    true
+  }) {
+    return (drag(), None);
+  }
+  struct Reset;
+  impl Drop for Reset {
+    fn drop(&mut self) {
+      LOCAL_DROP.with(|slot| { slot.take(); });
+    }
+  }
+  let reset = Reset;
+  let result = drag();
+  drop(reset);
+  (result, scope.position.get())
+}
+
+fn matching_local_drag(hwnd: HWND, data: &IDataObject) -> Option<Rc<LocalDropObservation>> {
+  // No thread-local borrow is held across COM QueryInterface or other foreign code.
+  let scope = LOCAL_DROP.with(|slot| slot.borrow().clone())?;
+  if !unsafe { IsChild(scope.owner, hwnd) }.as_bool() { return None; }
+  let source = data.cast::<IUnknown>().ok()?;
+  (source.as_raw() == scope.source.as_raw() && scope.is_current(hwnd)).then_some(scope)
+}
+
+impl LocalDropObservation {
+  fn is_current(&self, hwnd: HWND) -> bool {
+    LOCAL_DROP.with(|slot| slot.borrow().as_deref().is_some_and(|scope| ptr::eq(scope, self)))
+      && unsafe { IsChild(self.owner, hwnd) }.as_bool()
+  }
+
+  fn capture(&self, hwnd: HWND, pt: &POINTL) -> bool {
+    let mut point = POINT { x: pt.x, y: pt.y };
+    if self.position.get().is_some() || !unsafe { ScreenToClient(hwnd, &mut point) }.as_bool() {
+      return false;
+    }
+    self.position.set(Some((point.x, point.y)));
+    true
+  }
+}
 
 #[derive(Default)]
 pub(crate) struct DragDropController {
@@ -80,8 +139,20 @@ impl DragDropController {
 pub struct DragDropTarget {
   hwnd: HWND,
   listener: Rc<dyn Fn(DragDropEvent) -> bool>,
-  cursor_effect: UnsafeCell<DROPEFFECT>,
-  enter_is_valid: UnsafeCell<bool>, /* If the currently hovered item is not valid there must not be any `HoveredFileCancelled` emitted */
+  hover: RefCell<DragHover>,
+}
+
+enum DragHover {
+  None,
+  External,
+  Local(Weak<LocalDropObservation>),
+}
+
+// OLE supplies the source's allowed effects; return only the effect we select.
+fn take_copy_permission(effect: &mut DROPEFFECT) -> bool {
+  let allowed = effect.0 & DROPEFFECT_COPY.0 != 0;
+  *effect = DROPEFFECT_NONE;
+  allowed
 }
 
 impl DragDropTarget {
@@ -89,8 +160,7 @@ impl DragDropTarget {
     Self {
       hwnd,
       listener,
-      cursor_effect: DROPEFFECT_NONE.into(),
-      enter_is_valid: false.into(),
+      hover: RefCell::new(DragHover::None),
     }
   }
 
@@ -109,10 +179,7 @@ impl DragDropTarget {
       tymed: TYMED_HGLOBAL.0 as u32,
     };
 
-    match data_obj
-      .as_ref()
-      .expect("Received null IDataObject")
-      .GetData(&drop_format)
+    match data_obj.as_ref()?.GetData(&drop_format)
     {
       Ok(medium) => {
         let hdrop = HDROP(medium.u.hGlobal.0 as _);
@@ -163,37 +230,31 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
+    self.hover.replace(DragHover::None);
+    let Some(effect) = (unsafe { pdwEffect.as_mut() }) else { return Ok(()) };
+    let copy_allowed = take_copy_permission(effect);
+    if let Some(scope) = pDataObj.as_ref().and_then(|data| matching_local_drag(self.hwnd, data)) {
+      if copy_allowed && scope.position.get().is_none() {
+        *effect = DROPEFFECT_COPY;
+      }
+      self.hover.replace(DragHover::Local(Rc::downgrade(&scope)));
+      return Ok(());
+    }
+    if !copy_allowed { return Ok(()); }
     let mut pt = POINT { x: pt.x, y: pt.y };
     let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
 
     let mut paths = Vec::new();
     let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
 
-    let enter_is_valid = hdrop.is_some();
-
-    if !enter_is_valid {
-      return Ok(());
-    };
-
-    unsafe {
-      *self.enter_is_valid.get() = enter_is_valid;
-    }
+    if hdrop.is_none() { return Ok(()); }
+    self.hover.replace(DragHover::External);
+    *effect = DROPEFFECT_COPY;
 
     (self.listener)(DragDropEvent::Enter {
       paths,
       position: (pt.x as _, pt.y as _),
     });
-
-    let cursor_effect = if enter_is_valid {
-      DROPEFFECT_COPY
-    } else {
-      DROPEFFECT_NONE
-    };
-
-    unsafe {
-      *pdwEffect = cursor_effect;
-      *self.cursor_effect.get() = cursor_effect;
-    }
 
     Ok(())
   }
@@ -204,7 +265,20 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pt: &POINTL,
     pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
-    if unsafe { *self.enter_is_valid.get() } {
+    let Some(effect) = (unsafe { pdwEffect.as_mut() }) else { return Ok(()) };
+    if !take_copy_permission(effect) { return Ok(()); }
+    let external = match &*self.hover.borrow() {
+      DragHover::Local(scope) => {
+        if scope.upgrade().is_some_and(|scope| scope.is_current(self.hwnd) && scope.position.get().is_none()) {
+          *effect = DROPEFFECT_COPY;
+        }
+        false
+      }
+      DragHover::External => true,
+      DragHover::None => false,
+    };
+    if external {
+      *effect = DROPEFFECT_COPY;
       let mut pt = POINT { x: pt.x, y: pt.y };
       let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
       (self.listener)(DragDropEvent::Over {
@@ -212,12 +286,11 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
       });
     }
 
-    unsafe { *pdwEffect = *self.cursor_effect.get() };
     Ok(())
   }
 
   fn DragLeave(&self) -> windows::core::Result<()> {
-    if unsafe { *self.enter_is_valid.get() } {
+    if matches!(self.hover.replace(DragHover::None), DragHover::External) {
       (self.listener)(DragDropEvent::Leave);
     }
     Ok(())
@@ -228,21 +301,33 @@ impl IDropTarget_Impl for DragDropTarget_Impl {
     pDataObj: windows_core::Ref<'_, IDataObject>,
     _grfKeyState: MODIFIERKEYS_FLAGS,
     pt: &POINTL,
-    _pdwEffect: *mut DROPEFFECT,
+    pdwEffect: *mut DROPEFFECT,
   ) -> windows::core::Result<()> {
-    if unsafe { *self.enter_is_valid.get() } {
+    let hover = self.hover.replace(DragHover::None);
+    let Some(effect) = (unsafe { pdwEffect.as_mut() }) else { return Ok(()) };
+    if !take_copy_permission(effect) { return Ok(()); }
+    if let Some(scope) = pDataObj.as_ref().and_then(|data| matching_local_drag(self.hwnd, data)) {
+      // Recheck COM identity; a local transfer never enters the generic path.
+      if matches!(hover, DragHover::Local(entered) if entered.ptr_eq(&Rc::downgrade(&scope)))
+        && scope.capture(self.hwnd, pt)
+      {
+        *effect = DROPEFFECT_COPY;
+      }
+      return Ok(());
+    }
+    if matches!(hover, DragHover::External) {
       let mut pt = POINT { x: pt.x, y: pt.y };
       let _ = unsafe { ScreenToClient(self.hwnd, &mut pt) };
 
       let mut paths = Vec::new();
       let hdrop = unsafe { DragDropTarget::iterate_filenames(pDataObj, |path| paths.push(path)) };
-      (self.listener)(DragDropEvent::Drop {
-        paths,
-        position: (pt.x as _, pt.y as _),
-      });
-
       if let Some(hdrop) = hdrop {
         unsafe { DragFinish(hdrop) };
+        *effect = DROPEFFECT_COPY;
+        (self.listener)(DragDropEvent::Drop {
+          paths,
+          position: (pt.x as _, pt.y as _),
+        });
       }
     }
 

@@ -45,6 +45,8 @@
     pinStackFolder,
     pasteStackItems,
     startStackFileDrag,
+    prepareStackLocalDrop,
+    commitStackLocalDrop,
     renameStackItem,
     resolveStackItemIcons,
     resizeStackPopup,
@@ -68,7 +70,7 @@
   import { loadShellSettings } from '../lib/settings';
   import { normalizeStackTerminalProfile } from '../lib/stackPopup';
   import { folderPathsFromTransfer, normalizeDroppedPath } from '../lib/folderDrag';
-  import { beginStackRowDrag, moveStackRowDrag, releaseStackRowDrag, type StackRowDragIntent } from '../features/stack-browser/nativeDragIntent';
+  import { beginStackRowDrag, moveStackRowDrag, type StackRowDragIntent } from '../features/stack-browser/nativeDragIntent';
   import {
     applyStackEntryIconUpdates,
     applyStackFolderListing,
@@ -130,6 +132,7 @@
   } from '../features/stack-browser/basicTextEditorExit';
 
   const STACK_PATHS_DRAG_TYPE = 'application/x-jasonshell-stack-paths';
+  const STACK_DROP_DELIVERY_GRACE_MS = 500;
   const STACK_POPUP_MIN_WIDTH = 560;
   const STACK_POPUP_MIN_HEIGHT = 280;
   const STACK_ICON_RESOLVE_BATCH_SIZE = 24;
@@ -148,6 +151,14 @@
   };
 
   type StackBrowserViewMode = 'files' | 'terminal';
+  type LocalDragSession = {
+    paths: string[];
+    folderPath: string;
+    loadSequence: number;
+    visibilityEpoch: number;
+    grid: HTMLDivElement;
+    prepared: Promise<{ requestId: string } | { error: unknown }>;
+  };
   let stackState = defaultStackPopupViewState;
   let loadingPath: string | null = null;
   let errorMessage = '';
@@ -172,10 +183,14 @@
   let editorInput: HTMLInputElement | null = null;
   let typeToSelectBuffer = '';
   let typeToSelectTimer: number | null = null;
-  let lastHtmlDropAt = 0;
+  let lastHtmlDrop: { at: number; key: string } | null = null;
   let rowDragIntent: StackRowDragIntent = null;
   let rowDragPath: string | null = null;
-  let nativeDragPending = false;
+  let rowDragCapture: HTMLElement | null = null;
+  let localDrag: LocalDragSession | null = null;
+  let pendingLocalDrop: LocalDragSession | null = null;
+  let outboundDragging = false;
+  let localDropTargetPath: string | null = null;
   let suppressRowClick = false;
   let detailsGrid: HTMLDivElement | null = null;
   let detailsBody: HTMLDivElement | null = null;
@@ -295,6 +310,10 @@
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
   $: virtualEntries = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
   $: marqueeRect = marqueeSelection ? stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current) : null;
+  $: if (loadingPath || !folderWatchVisible || stackBrowserViewMode !== 'files' || editorPath || gitStatusPopupOpen ||
+      rowMenu || backgroundMenu || deleteConfirmation || pendingEditorExit || createFolderDraft !== null || renameDraft !== null) {
+    cancelRowDrag();
+  }
   $: if (currentPath !== pathDraftBase && (!pathInputFocused || pathDraft === pathDraftBase)) {
     pathDraft = currentPath;
     pathDraftBase = currentPath;
@@ -337,9 +356,7 @@
       else unlisteners.push(unlisten);
     });
     void getCurrentWindow().onDragDropEvent((event: { payload: DragDropEvent }) => {
-      if (event.payload.type === 'drop' && currentPath && Date.now() - lastHtmlDropAt > 500) {
-        void pasteDroppedPaths(event.payload.paths, currentPath, false);
-      }
+      if (event.payload.type === 'drop') handleNativeDrop(event.payload);
     }).then((unlisten: () => void) => {
       if (disposed) {
         unlisten();
@@ -350,6 +367,7 @@
 
     return () => {
       disposed = true;
+      cancelRowDrag();
       gitDisposed = true;
       gitRepositoryGeneration += 1;
       gitContextSequence += 1;
@@ -439,6 +457,7 @@
   }
 
   function suspendFolderWatch() {
+    cancelRowDrag();
     if (folderWatchVisible) {
       gitRefreshRevision += 1;
       gitSummaryRequested = false;
@@ -2368,11 +2387,6 @@
   }
 
   function selectEntryFromMouse(event: MouseEvent, entry: StackEntry) {
-    if (suppressRowClick) {
-      suppressRowClick = false;
-      event.preventDefault();
-      return;
-    }
     if (hasRetainedRows) {
       return;
     }
@@ -2692,45 +2706,190 @@
   }
 
   function selectedDragPaths(entry: StackEntry) {
-    return stackState.selectedPaths.includes(entry.path) ? selectedPaths : [entry.path];
+    return stackState.selectedPaths.includes(entry.path) ? [...selectedStackPaths(stackState)] : [entry.path];
   }
 
   function beginRowDrag(event: PointerEvent, entry: StackEntry) {
-    if (hasRetainedRows || nativeDragPending) return;
-    // A fresh press is a real new gesture, not the click synthesized after the prior drag.
-    suppressRowClick = false;
+    if (!event.isPrimary || event.button !== 0 || rowDragIntent) return;
+    if (!canDropLocally() || pendingLocalDrop || outboundDragging) return;
     rowDragIntent = beginStackRowDrag({ pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY });
     rowDragPath = rowDragIntent ? entry.path : null;
-    if (rowDragIntent) (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
 
-  function endRowDrag(event: PointerEvent) {
-    rowDragIntent = releaseStackRowDrag(rowDragIntent, event.pointerId);
-    if (!rowDragIntent) rowDragPath = null;
+  function resetDragClickOnPress(event: PointerEvent) {
+    if (!event.isPrimary || event.button !== 0) return;
+    if (rowDragIntent?.pointerId === event.pointerId) clearRowDrag();
+    // Only a fresh pointer press unlatches suppression; keyboard clicks are independent.
+    suppressRowClick = false;
   }
 
-  function moveRowDrag(event: PointerEvent, entry: StackEntry) {
-    if (nativeDragPending || rowDragPath !== entry.path || !moveStackRowDrag(rowDragIntent, {
-      pointerId: event.pointerId, buttons: event.buttons, x: event.clientX, y: event.clientY
-    }).startNativeDrag) return;
+  function clearRowDrag() {
+    const pointerId = rowDragIntent?.pointerId;
+    const capture = rowDragCapture;
     rowDragIntent = null;
     rowDragPath = null;
-    const target = event.currentTarget as HTMLElement;
-    if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
+    rowDragCapture = null;
+    localDrag = null;
+    localDropTargetPath = null;
+    if (pointerId !== undefined && capture?.hasPointerCapture(pointerId)) capture.releasePointerCapture(pointerId);
+  }
+
+  function cancelRowDrag() {
+    clearRowDrag();
+    pendingLocalDrop = null;
+  }
+
+  function cancelRowDragOnEscape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || (!rowDragIntent && !pendingLocalDrop)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    cancelRowDrag();
+  }
+
+  function suppressTrailingDragClick(event: MouseEvent) {
+    if (!suppressRowClick || event.detail === 0) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  function cancelRowPointer(event: PointerEvent) {
+    if (rowDragIntent?.pointerId !== event.pointerId) return;
+    if (event.type === 'lostpointercapture' && event.target !== rowDragCapture) return;
+    clearRowDrag();
+  }
+
+  function canDropLocally(session?: LocalDragSession) {
+    return !disposed && folderWatchVisible && !document.hidden && !loadingPath && !hasRetainedRows &&
+      !!stackState.currentPath && stackState.entriesPath === stackState.currentPath &&
+      stackBrowserViewMode === 'files' && !editorPath && !gitStatusPopupOpen && !rowMenu && !backgroundMenu &&
+      !deleteConfirmation && !pendingEditorExit && createFolderDraft === null && renameDraft === null &&
+      (!activeOperation || activeOperation.phase === 'completed' || activeOperation.phase === 'failed') &&
+      (!session || (session.grid === detailsGrid && session.grid.isConnected &&
+        session.folderPath === stackState.currentPath && session.loadSequence === folderLoadSequence));
+  }
+
+  function startLocalDrag(event: PointerEvent) {
+    const grid = detailsGrid;
+    const entry = stackState.entries.find((item) => item.path === rowDragPath);
+    if (!grid || !entry || !canDropLocally()) return null;
     const paths = selectedDragPaths(entry);
     if (!stackState.selectedPaths.includes(entry.path)) stackState = selectStackEntry(stackState, entry.path);
     suppressRowClick = true;
-    nativeDragPending = true;
-    void startStackFileDrag(paths).then((outcome) => {
+    // Capture only after threshold, on the stable grid rather than the virtual source row.
+    grid.setPointerCapture(event.pointerId);
+    rowDragCapture = grid;
+    return {
+      paths, grid, folderPath: stackState.currentPath,
+      loadSequence: folderLoadSequence, visibilityEpoch: folderWatchEpoch,
+      prepared: Promise.resolve().then(() => prepareStackLocalDrop(paths)).then(
+        (requestId) => ({ requestId }), (error: unknown) => ({ error })
+      )
+    };
+  }
+
+  function moveRowDrag(event: PointerEvent) {
+    if (rowDragIntent?.pointerId !== event.pointerId) return;
+    if (!(event.buttons & 1) || (localDrag && !rowDragCapture?.hasPointerCapture(event.pointerId))) {
+      clearRowDrag();
+      return;
+    }
+    if (!localDrag && moveStackRowDrag(rowDragIntent, {
+      pointerId: event.pointerId, buttons: event.buttons, x: event.clientX, y: event.clientY
+    }).startNativeDrag) localDrag = startLocalDrag(event);
+    const session = localDrag;
+    if (!session) return;
+    if (!canDropLocally(session)) {
+      clearRowDrag();
+    } else if (event.clientX < 0 || event.clientY < 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) {
+      clearRowDrag();
+      void handOffOutboundDrag(session);
+    } else {
+      localDropTargetPath = localDropTarget(session, event.clientX, event.clientY)?.path ?? null;
+    }
+  }
+
+  async function handOffOutboundDrag(session: LocalDragSession) {
+    outboundDragging = true;
+    try {
+      const outcome = await startStackFileDrag(session.paths);
       if (outcome.status === 'failed' || outcome.status === 'unsupported') {
-        errorMessage = outcome.message || `Native file drag unavailable (${outcome.stage ?? 'unknown'})`;
+        if (canDropLocally(session)) errorMessage = outcome.message || `Native file drag unavailable (${outcome.stage ?? 'unknown'})`;
       }
-    }).catch((error) => {
-      errorMessage = operationErrorMessage(error, 'Native file drag unavailable');
-    }).finally(() => {
-      nativeDragPending = false;
-      window.setTimeout(() => { suppressRowClick = false; }, 500);
-    });
+    } catch (error) {
+      if (canDropLocally(session)) errorMessage = operationErrorMessage(error, 'Native file drag unavailable');
+    } finally {
+      outboundDragging = false;
+    }
+  }
+
+  function endRowDrag(event: PointerEvent) {
+    if (rowDragIntent?.pointerId !== event.pointerId) return;
+    const session = localDrag;
+    const { clientX, clientY } = event;
+    const target = session && event.button === 0 && !(event.buttons & 1) && rowDragCapture?.hasPointerCapture(event.pointerId)
+      ? localDropTarget(session, clientX, clientY) : null;
+    clearRowDrag();
+    if (session && target) {
+      pendingLocalDrop = session;
+      errorMessage = '';
+      void finishLocalDrop(session, target, clientX, clientY);
+    }
+  }
+
+  async function finishLocalDrop(session: LocalDragSession, target: StackEntry, x: number, y: number) {
+    const prepared = await session.prepared;
+    if (pendingLocalDrop !== session) return;
+    pendingLocalDrop = null;
+    const liveTarget = localDropTarget(session, x, y);
+    if (!liveTarget || liveTarget.path !== target.path || liveTarget.id !== target.id) return;
+    if ('error' in prepared) {
+      errorMessage = operationErrorMessage(prepared.error, 'Move unavailable');
+      return;
+    }
+    await moveLocalDrop(session, prepared.requestId, liveTarget.path);
+  }
+
+  function stackDropPathKey(path: string) {
+    return path.replace(/\//g, '\\').replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '')
+      .replace(/\\+$/, '').toLowerCase();
+  }
+
+  function localDropTarget(session: LocalDragSession, x: number, y: number) {
+    if (!canDropLocally(session)) return null;
+    const row = document.elementFromPoint(x, y)?.closest<HTMLButtonElement>('button[role="row"][data-stack-entry-path]');
+    if (!row || row.disabled || row.parentElement !== detailsBody || !session.grid.contains(row)) return null;
+    const destination = stackState.entries.find((entry) => entry.path === row.dataset.stackEntryPath);
+    if (!destination || destination.entryType !== 'Folder' || destination.isSymlink || destination.isReparsePoint ||
+        destination.path === session.folderPath || session.paths.includes(destination.path) ||
+        stackState.selectedPaths.includes(destination.path)) return null;
+    return destination;
+  }
+
+  function handleNativeDrop({ paths }: Extract<DragDropEvent, { type: 'drop' }>) {
+    if (disposed || !paths.length) return;
+    const keys = paths.map(stackDropPathKey);
+    if (lastHtmlDrop?.key === JSON.stringify(keys.sort()) && performance.now() - lastHtmlDrop.at <= STACK_DROP_DELIVERY_GRACE_MS) return;
+    void pasteDroppedPaths(paths, stackState.currentPath, false);
+  }
+
+  async function moveLocalDrop(session: LocalDragSession, requestId: string, destination: string) {
+    const operationId = beginFileOperation('paste', 'moving');
+    const refreshGit = captureGitInvalidation();
+    try {
+      const result = await commitStackLocalDrop(requestId, destination);
+      if (disposed) return;
+      if (result.moved) {
+        refreshGit();
+        await refreshExternalFolderRows(session.folderPath, session.loadSequence, session.visibilityEpoch);
+      }
+      if (disposed || activeOperation?.operationId !== operationId) return;
+      errorMessage = pasteFailureSummary(result.failures);
+      finishFileOperation(operationId, errorMessage || undefined);
+    } catch (error) {
+      if (disposed || activeOperation?.operationId !== operationId) return;
+      errorMessage = operationErrorMessage(error, 'Move unavailable');
+      failFileOperation(operationId, errorMessage);
+    }
   }
 
   function pathsFromDrop(event: DragEvent) {
@@ -2765,33 +2924,39 @@
   async function handleDrop(event: DragEvent, destinationPath: string) {
     event.preventDefault();
     event.stopPropagation();
-    lastHtmlDropAt = Date.now();
-    closeMenus();
     const paths = pathsFromDrop(event);
+    const keys = paths.map(stackDropPathKey);
+    if (!keys.length) return;
+    lastHtmlDrop = { at: performance.now(), key: JSON.stringify(keys.sort()) };
+    closeMenus();
     await pasteDroppedPaths(paths, destinationPath, event.shiftKey);
   }
 
   async function pasteDroppedPaths(paths: string[], destinationPath: string, move: boolean) {
-    if (!paths.length || !destinationPath) {
-      return;
-    }
+    if (!paths.length || !destinationPath) return;
+    const folder = stackState.currentPath;
+    const sequence = folderLoadSequence;
+    const epoch = folderWatchEpoch;
     const operationId = beginFileOperation('paste', move ? 'moving' : 'copying');
     const refreshGit = captureGitInvalidation();
     try {
       await copyStackItems(paths, move);
       const listing = await invokePaste(destinationPath, operationId, refreshGit);
-      if (destinationPath === currentPath) {
-        stackState = applyStackFolderListing(stackState, currentPath, listing);
-      } else {
-        await loadFolder(currentPath);
+      if (disposed) return;
+      if (destinationPath === folder && folder === stackState.currentPath && sequence === folderLoadSequence && epoch === folderWatchEpoch) {
+        stackState = applyStackFolderListing(stackState, folder, listing);
+      } else if (destinationPath !== folder) {
+        await refreshExternalFolderRows(folder, sequence, epoch);
       }
+      if (disposed || activeOperation?.operationId !== operationId) return;
       errorMessage = pasteFailureSummary(listing.pasteFailures);
       finishFileOperation(operationId, errorMessage || undefined);
     } catch (error) {
+      if (disposed || activeOperation?.operationId !== operationId) return;
       console.error('Failed to drop stack items', error);
       errorMessage = operationErrorMessage(error, 'Drop unavailable');
       failFileOperation(operationId, errorMessage);
-      await loadFolder(currentPath);
+      await refreshExternalFolderRows(folder, sequence, epoch);
     }
   }
 
@@ -3029,20 +3194,39 @@
   }
 </script>
 
+<style>
+  button.local-drop-target {
+    background: var(--js-color-selected);
+    outline: 2px solid var(--js-color-accent-border);
+    outline-offset: -2px;
+    cursor: move;
+  }
+</style>
+
 <svelte:window
+  on:keydown|capture={cancelRowDragOnEscape}
   on:keydown={handleKeydown}
+  on:click|capture={suppressTrailingDragClick}
+  on:dblclick|capture={suppressTrailingDragClick}
+  on:pointerdown|capture={resetDragClickOnPress}
   on:click={closeMenus}
   on:pointerdown|capture={handleMouseNavigation}
   on:mousedown|capture={suppressMouseNavigationCompatibility}
   on:auxclick|capture={suppressMouseNavigationCompatibility}
   on:pointermove={handleResizePointerMove}
   on:pointermove={handleMarqueePointerMove}
+  on:pointermove={moveRowDrag}
   on:pointerup={endResize}
   on:pointerup={endMarqueeSelection}
+  on:pointerup={endRowDrag}
   on:pointercancel={endResize}
   on:pointercancel={endMarqueeSelection}
+  on:pointercancel={cancelRowPointer}
+  on:lostpointercapture={cancelRowPointer}
   on:resize={() => { updateDetailsViewport(); void positionOpenMenus(); }}
 />
+
+<svelte:document on:visibilitychange={() => { if (document.hidden) cancelRowDrag(); }} />
 
 <section
   bind:this={stackPopupSurface}
@@ -3282,6 +3466,7 @@
           {@const gitEntryStatus = stackGitStatusForEntry(entry, gitStatus, gitStatusPath, currentPath, gitRepositoryContext?.canonicalPath)}
           <button
             class:selected={stackState.selectedPaths.includes(entry.path)}
+            class:local-drop-target={localDropTargetPath === entry.path}
             class:subdued={entry.isHidden || entry.isSystem}
             class:readonly={entry.isReadonly}
             class:linked={entry.isSymlink || entry.isReparsePoint}
@@ -3303,9 +3488,6 @@
             on:dblclick={() => void activateEntry(entry)}
             on:contextmenu={(event) => handleRowContextMenu(event, entry)}
             on:pointerdown={(event) => beginRowDrag(event, entry)}
-            on:pointermove={(event) => moveRowDrag(event, entry)}
-            on:pointerup={endRowDrag}
-            on:pointercancel={endRowDrag}
             on:dragover={(event) => handleDropOver(event, entry)}
             on:drop={(event) => entry.entryType === 'Folder' && void handleDrop(event, entry.path)}
           >

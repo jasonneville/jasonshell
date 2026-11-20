@@ -18,7 +18,7 @@ test('outbound rows do not give HTML DataTransfer ownership of native file drag'
   assert.doesNotMatch(surface, /function handleRowDragStart\(/);
 });
 
-test('native drag start remains behind held-primary pointer threshold (pure state contract)', async () => {
+test('row drag activation remains behind held-primary pointer threshold (pure state contract)', async () => {
   // State transitions only: live OLE ownership and OS button state need native/manual evidence.
   const { beginStackRowDrag, moveStackRowDrag, releaseStackRowDrag } = await import('../src/features/stack-browser/nativeDragIntent.ts');
   const down = beginStackRowDrag({ pointerId: 4, button: 0, buttons: 1, x: 10, y: 10 });
@@ -30,6 +30,12 @@ test('native drag start remains behind held-primary pointer threshold (pure stat
   assert.equal(moveStackRowDrag(down, { pointerId: 5, buttons: 1, x: 22, y: 10 }).startNativeDrag, false);
   const secondary = beginStackRowDrag({ pointerId: 4, button: 2, buttons: 2, x: 10, y: 10 });
   assert.equal(moveStackRowDrag(secondary, { pointerId: 4, buttons: 2, x: 22, y: 10 }).startNativeDrag, false);
+});
+
+test('local prepare IPC sends source paths; commit IPC sends receipt and destination only', () => {
+  assert.match(commands, /prepareStackLocalDrop:\s*'prepare_stack_local_drop'/);
+  assert.match(api, /invoke(?:<[^\n]+>)?\(IPC_COMMANDS\.prepareStackLocalDrop, \{ paths \}\)/);
+  assert.match(api, /invoke\(IPC_COMMANDS\.commitStackLocalDrop, \{ requestId, destination \}\)/);
 });
 
 test('typed outbound IPC outcome carries bounded diagnostics, not source paths', () => {
@@ -71,7 +77,7 @@ test('same-parent Shell object receives absolute parent and borrowed child-relat
 
 test('active drag suppresses popup hiding and focus loss; RAII cleanup clears flag without stealing focus', () => {
   const command = handler.slice(handler.indexOf('pub async fn start_stack_file_drag'), handler.indexOf('#[tauri::command]', handler.indexOf('pub async fn start_stack_file_drag')));
-  assert.match(command, /if guard\.native_drag_active \{/);
+  assert.match(command, /if guard\.native_drag_active \|\| guard\.local_drop_hiding \{/);
   assert.match(command, /guard\.native_drag_active = true/);
   assert.match(command, /let hold = popup_window::NativeDragHold::new/);
   assert.match(command, /drop\(hold\)/);
