@@ -6,6 +6,8 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:default"
+    "core:window:default",
+    "allow-commit-stack-local-drop",
+    "allow-prepare-stack-local-drop"
   ]
 }

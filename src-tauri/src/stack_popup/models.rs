@@ -10,6 +10,12 @@ pub struct StackPopupRuntimeState {
     pub(crate) topmost_restore_suppression_expires_at_ms: Option<u64>,
     pub(crate) restore_focus_after_hold: bool,
     pub(crate) native_drag_active: bool,
+    #[cfg(windows)]
+    pub(super) native_drop: Option<super::local_drop::Receipt>,
+    #[cfg(windows)]
+    pub(super) local_drop_generation: u64,
+    #[cfg(windows)]
+    pub(super) local_drop_hiding: bool,
     pub(crate) terminal_sessions: super::terminal::StackTerminalRegistry,
 }
 
@@ -504,6 +510,12 @@ pub struct StackNativeDragOutcome {
     pub mechanism: String,
     pub stage: Option<&'static str>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StackLocalDropResult {
+    pub moved: usize,
+    pub failures: Vec<StackPasteFailure>,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -1,0 +1,11 @@
+[package]
+name = "stack-local-drop-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "fixture.rs"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "=0.61.3", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_IO"] }

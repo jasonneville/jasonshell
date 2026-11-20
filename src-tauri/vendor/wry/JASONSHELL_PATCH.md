@@ -29,14 +29,18 @@ cases reentering the still-registered callback during controller release.
 - Behavioral deviations from the supplied official upstream patch: none. This
   backports only the teardown arm to 0.54.4; it adds no broad null guards, changes
   no other callback arms, and does not upgrade Wry/Tauri/runtime versions.
-- The only modified upstream file is `src/webview2/mod.rs`; this provenance file
-  is a repository addition. Original licenses and copyright notices are intact.
+- This teardown backport modifies `src/webview2/mod.rs`. Original licenses and
+  copyright notices are intact.
 
 The application uses `tauri-runtime-wry 2.10.1`, whose Wry requirement is
 `^0.54.0`; Wry 0.56.1 is outside that range. This local patch avoids a broad
-Tauri/runtime upgrade and adds no application dependency or permission.
+Tauri/runtime upgrade.
 
 The observed native crash address reaches a shared COM-call wrapper; matching
 binary/PDB evidence supports this teardown defect but does not independently
 establish the crash-time caller/register values. Safe regression evidence does
 not replace consent-gated native capture/cancel/reentry E2E.
+
+## JasonShell local file-drop observer
+
+`src/lib.rs`, `src/webview2/mod.rs`, and `src/webview2/drag_drop.rs` expose a Windows-only scoped observer for the existing OLE drop target. A target descended from the owner HWND can negotiate COPY for the exact canonical COM identity registered for the synchronous native drag on that STA, without requiring `CF_HDROP`. Drop repeats the identity check and requires both a source-allowed COPY effect and valid physical child-client coordinates before recording one point. Local drops do not emit generic file-drop events. External file drops still require `CF_HDROP` and negotiate only source-allowed COPY; outbound OLE remains copy-only. This observer authenticates the native OLE boundary; it is not a claim that the Chromium local-pointer fixture proves COM identity, WebView2 delivery, or filesystem behavior. End-to-end same-STA delivery still needs consent-gated Windows acceptance.

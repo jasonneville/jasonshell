@@ -2138,6 +2138,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "windows",
  "windows-core",
+ "wry",
  "zip",
 ]
 

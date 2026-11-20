@@ -171,6 +171,8 @@ export const IPC_COMMANDS = {
   renameStackItem: 'rename_stack_item',
   copyStackItems: 'copy_stack_items',
   startStackFileDrag: 'start_stack_file_drag',
+  commitStackLocalDrop: 'commit_stack_local_drop',
+  prepareStackLocalDrop: 'prepare_stack_local_drop',
   cutStackItems: 'cut_stack_items',
   pasteStackItems: 'paste_stack_items',
   deleteStackItem: 'delete_stack_item',

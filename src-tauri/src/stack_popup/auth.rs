@@ -187,6 +187,14 @@ pub(crate) const STACK_GUARDED_COMMANDS: &[StackCommandAuth] = &[
         callers: &[contracts::surfaces::STACK_POPUP],
     },
     StackCommandAuth::AllowedCallers {
+        command: contracts::commands::COMMIT_STACK_LOCAL_DROP,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
+        command: contracts::commands::PREPARE_STACK_LOCAL_DROP,
+        callers: &[contracts::surfaces::STACK_POPUP],
+    },
+    StackCommandAuth::AllowedCallers {
         command: contracts::commands::CUT_STACK_ITEMS,
         callers: &[contracts::surfaces::STACK_POPUP],
     },

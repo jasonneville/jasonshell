@@ -66,11 +66,12 @@ test('background context menu is available off rows and keeps selection actions'
   assert.match(stackPopupApi, /openStackTerminalHere\(path: string\): Promise<void>/);
 });
 
-test('stack browser starts outbound native drag via row pointer handlers, not HTML dragstart', () => {
+test('stack browser starts drag via row press and window pointer motion, not HTML dragstart', () => {
   const row = surface.slice(surface.indexOf('{#each virtualEntries.rows'));
   const rowButton = row.slice(row.indexOf('<button'), row.indexOf('on:drop=', row.indexOf('<button')));
   assert.match(rowButton, /on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}/);
-  assert.match(rowButton, /on:pointermove=\{\(event\) => moveRowDrag\(event, entry\)\}/);
+  const windowTag = surface.match(/<svelte:window\b[\s\S]*?\/>/)[0];
+  assert.match(windowTag, /on:pointermove=\{moveRowDrag\}/);
   assert.doesNotMatch(rowButton, /on:dragstart=|\bdraggable=/);
   assert.match(stackPopupApi, /invoke<StackNativeDragOutcome>\(IPC_COMMANDS\.startStackFileDrag, \{ paths \}\)/);
 });

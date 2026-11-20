@@ -130,18 +130,28 @@ pub(crate) fn hide_stack_popup_window(app_handle: AppHandle) -> Result<(), Strin
         if guard.native_drag_active {
             return Ok(());
         }
+        #[cfg(windows)]
+        {
+            if guard.local_drop_hiding { return Ok(()); }
+            guard.local_drop_hiding = true;
+            guard.local_drop_generation = guard.local_drop_generation.wrapping_add(1);
+            guard.native_drop = None;
+        }
         guard.focus_loss_hold_count = 0;
         guard.focus_loss_suppression_expires_at_ms = None;
         guard.topmost_restore_suppression_expires_at_ms = None;
         guard.restore_focus_after_hold = false;
     }
 
-    let popup = app_handle
-        .get_webview_window(STACK_POPUP_LABEL)
-        .ok_or_else(|| "Stack popup window is unavailable".to_string())?;
-    popup
-        .hide()
-        .map_err(|error| format!("Failed to hide the stack popup: {error}"))?;
+    let hidden = app_handle.get_webview_window(STACK_POPUP_LABEL)
+        .ok_or_else(|| "Stack popup window is unavailable".to_string())
+        .and_then(|popup| {
+            popup.hide().map_err(|error| format!("Failed to hide the stack popup: {error}"))?;
+            Ok(popup)
+        });
+    #[cfg(windows)]
+    { state.lock().map_err(|_| "Stack popup state unavailable")?.local_drop_hiding = false; }
+    let popup = hidden?;
     super::folder_watch::retire(&app_handle);
     // Deliver authoritative retirement to the mounted popup even when hide and
     // reopen happen too quickly for focus/document visibility observation.

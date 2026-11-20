@@ -5,6 +5,8 @@ pub(crate) mod folder_watch;
 mod git_status;
 mod icons;
 mod items;
+#[cfg(windows)]
+mod local_drop;
 mod models;
 mod native_drag;
 mod open_with;
@@ -49,7 +51,7 @@ pub use models::{
     StackGitStashFileDiffRequest, StackGitStashFiles, StackGitStashFilesRequest,
     StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
     StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragOutcome,
-    StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
+    StackLocalDropResult, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
 };
 
 const STACK_BASIC_TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
@@ -1678,9 +1680,13 @@ pub async fn start_stack_file_drag(
     }
     #[cfg(target_os = "windows")]
     {
+        let owner = stack_popup_owner_hwnd(&app_handle)?.0 as isize;
+        if window.hwnd().ok().map(|hwnd| hwnd.0 as isize) != Some(owner) {
+            return Err("Stack popup drag owner unavailable".into());
+        }
         {
             let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
-            if guard.native_drag_active {
+            if guard.native_drag_active || guard.local_drop_hiding {
                 return Ok(outcome(native_drag::NativeDragResult::new(
                     "cancelled",
                     "none",
@@ -1689,6 +1695,8 @@ pub async fn start_stack_file_drag(
                 )));
             }
             guard.native_drag_active = true;
+            guard.local_drop_generation = guard.local_drop_generation.wrapping_add(1);
+            guard.native_drop = None;
         }
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let ui_app = app_handle.clone();
@@ -1696,7 +1704,7 @@ pub async fn start_stack_file_drag(
             let _admission = admission;
             let hold = popup_window::NativeDragHold::new(ui_app.clone());
             let result = match stack_popup_owner_hwnd(&ui_app) {
-                Ok(hwnd) => match set_stack_popup_topmost(hwnd, false) {
+                Ok(hwnd) if hwnd.0 as isize == owner => match set_stack_popup_topmost(hwnd, false) {
                     Ok(()) => native_drag::start_native_file_drag(&paths, hwnd),
                     Err(_) => native_drag::NativeDragResult::new(
                         "failed",
@@ -1705,7 +1713,7 @@ pub async fn start_stack_file_drag(
                         Some("Failed to lower Stack popup during drag".into()),
                     ),
                 },
-                Err(_) => native_drag::NativeDragResult::new(
+                _ => native_drag::NativeDragResult::new(
                     "failed",
                     "none",
                     Some("owner-hwnd"),
@@ -1736,6 +1744,106 @@ pub async fn start_stack_file_drag(
                 Some("Native drag result unavailable".into()),
             ))),
         }
+    }
+}
+
+#[tauri::command]
+pub async fn prepare_stack_local_drop(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    paths: Vec<String>,
+) -> Result<PreparedStackLocalDrop, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::PREPARE_STACK_LOCAL_DROP,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    #[cfg(windows)]
+    {
+        let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+        let generation = {
+            let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
+            if guard.native_drag_active || guard.local_drop_hiding {
+                return Err("Stack popup is not available for this move".into());
+            }
+            guard.local_drop_generation = guard.local_drop_generation.wrapping_add(1);
+            guard.native_drop = None;
+            guard.local_drop_generation
+        };
+        let owner = visible_local_drop_owner(&app_handle, &window)?;
+        if paths.is_empty() || paths.len() > local_drop::MAX_LOCAL_ITEMS ||
+            paths.iter().any(|path| path.len() > 131_068 || path.contains('\0')) {
+            return Err("Invalid local move selection".into());
+        }
+        let (sources, _admission) = tauri::async_runtime::spawn_blocking(move || {
+            (local_drop::Sources::snapshot_listed_paths(&paths), admission)
+        }).await.map_err(|_| "Local move preparation unavailable")?;
+        let sources = sources.ok_or("Local move requires distinct, non-linked items from the same folder")?;
+        if visible_local_drop_owner(&app_handle, &window)? != owner {
+            return Err("Stack popup changed during move preparation".into());
+        }
+        let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
+        if guard.local_drop_generation != generation || guard.local_drop_hiding || guard.native_drag_active {
+            return Err("Local move preparation superseded".into());
+        }
+        let request_id = format!("stack-local-{}-{generation}", std::process::id());
+        guard.native_drop = Some(local_drop::Receipt::new(request_id.clone(), owner, sources));
+        Ok(PreparedStackLocalDrop { request_id })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app_handle, state, paths);
+        Err("Local drops require Windows".into())
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedStackLocalDrop {
+    request_id: String,
+}
+
+#[cfg(windows)]
+fn visible_local_drop_owner(app: &AppHandle, window: &WebviewWindow) -> Result<isize, String> {
+    let owner = stack_popup_owner_hwnd(app)?.0 as isize;
+    if window.hwnd().ok().map(|hwnd| hwnd.0 as isize) != Some(owner) || !window.is_visible().unwrap_or(false) {
+        return Err("Stack popup is not available for this move".into());
+    }
+    Ok(owner)
+}
+
+#[tauri::command]
+pub async fn commit_stack_local_drop(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    request_id: String,
+    destination: String,
+) -> Result<StackLocalDropResult, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::COMMIT_STACK_LOCAL_DROP,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    #[cfg(windows)]
+    {
+        let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+        let owner = visible_local_drop_owner(&app_handle, &window)?;
+        let receipt = {
+            let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
+            if guard.native_drag_active || guard.local_drop_hiding || !guard.native_drop.as_ref().is_some_and(|receipt| receipt.matches(&request_id, owner)) {
+                return Err("Local drop receipt unavailable".into());
+            }
+            guard.native_drop.take().ok_or("Local drop receipt unavailable")?
+        };
+        return tauri::async_runtime::spawn_blocking(move || {
+            let _admission = admission;
+            receipt.commit(Path::new(&destination))
+        }).await.map_err(|_| "Local drop worker unavailable".to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app_handle, state, request_id, destination);
+        Err("Local drops require Windows".into())
     }
 }
 

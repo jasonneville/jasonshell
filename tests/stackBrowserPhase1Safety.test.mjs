@@ -8,6 +8,32 @@ const stackPopupSource = readFileSync(new URL('../src-tauri/src/stack_popup.rs',
 const stackPopupAuthSource = readFileSync(new URL('../src-tauri/src/stack_popup/auth.rs', import.meta.url), 'utf8');
 const stackPopupWrapperSource = readFileSync(new URL('../src/lib/stackPopup.ts', import.meta.url), 'utf8');
 
+test('local drop preparation is registered and restricted to the Stack popup', () => {
+  const capability = JSON.parse(readFileSync(new URL('../src-tauri/capabilities/stack-popup.json', import.meta.url), 'utf8'));
+  assert.deepEqual(capability.windows, ['stack-popup']);
+  assert.ok(capability.permissions.includes('allow-prepare-stack-local-drop'));
+  assert.match(mainSource, /stack_popup::prepare_stack_local_drop\b/);
+  assert.match(stackPopupAuthSource, /command:\s*contracts::commands::PREPARE_STACK_LOCAL_DROP,\s*callers:\s*&\[contracts::surfaces::STACK_POPUP\]/);
+  const handler = stackPopupSource.match(/pub async fn prepare_stack_local_drop\([\s\S]*?(?=\n#\[tauri::command\])/)[0];
+  assert.match(handler, /authorize_stack_command\(&window,[\s\S]*?callers:\s*&\[crate::shell_windows::STACK_POPUP_LABEL\][\s\S]*?Sources::snapshot/);
+});
+
+test('local drop commit is registered, Stack-popup-only, and consumes an owner-bound receipt', () => {
+  const capabilityRoot = new URL('../src-tauri/capabilities/', import.meta.url);
+  const capability = JSON.parse(readFileSync(new URL('stack-popup.json', capabilityRoot), 'utf8'));
+  assert.deepEqual(capability.windows, ['stack-popup']);
+  assert.ok(capability.permissions.includes('allow-commit-stack-local-drop'));
+  assert.match(mainSource, /stack_popup::commit_stack_local_drop\b/);
+  assert.match(stackPopupWrapperSource, /invoke\(IPC_COMMANDS\.commitStackLocalDrop, \{ requestId, destination \}\)/);
+  assert.match(stackPopupAuthSource, /command:\s*contracts::commands::COMMIT_STACK_LOCAL_DROP,\s*callers:\s*&\[contracts::surfaces::STACK_POPUP\]/);
+  const handler = stackPopupSource.match(/pub async fn commit_stack_local_drop\([\s\S]*?(?=\n#\[tauri::command\])/)[0];
+  assert.match(handler, /authorize_stack_command\(&window,[\s\S]*?callers:\s*&\[crate::shell_windows::STACK_POPUP_LABEL\][\s\S]*?visible_local_drop_owner\(&app_handle, &window\)[\s\S]*?receipt\.matches\(&request_id, owner\)[\s\S]*?guard\.native_drop\.take\(\)[\s\S]*?receipt\.commit\(/);
+  const owner = stackPopupSource.match(/fn visible_local_drop_owner\([\s\S]*?\n\}/)[0];
+  assert.match(owner, /stack_popup_owner_hwnd\(/);
+  assert.match(owner, /window\.hwnd\(/);
+  assert.match(owner, /window\.is_visible\(/);
+});
+
 const stackPhase1Commands = [
   ['LIST_PINNED_STACK_FOLDERS', 'list_pinned_stack_folders', ['top-bar', 'stack-popup']],
   ['PIN_STACK_FOLDER', 'pin_stack_folder', ['top-bar', 'stack-popup', 'search-panel']],

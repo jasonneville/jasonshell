@@ -23,7 +23,14 @@ test('stack browser marquee starts only from details background and spacer surfa
 test('stack browser marquee preserves row drag and resize pointer ownership', () => {
   const rowStart = stackPopupSurfaceSource.indexOf('<button', stackPopupSurfaceSource.indexOf('{#each virtualEntries.rows'));
   const row = stackPopupSurfaceSource.slice(rowStart, stackPopupSurfaceSource.indexOf('>', stackPopupSurfaceSource.indexOf('on:drop=', rowStart)) + 1);
-  assert.match(row, /<button[\s\S]*on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}[\s\S]*on:pointermove=\{\(event\) => moveRowDrag\(event, entry\)\}[\s\S]*on:pointerup=\{endRowDrag\}[\s\S]*on:pointercancel=\{endRowDrag\}/);
+  assert.match(row, /<button[\s\S]*on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}/);
+  const windowTag = stackPopupSurfaceSource.match(/<svelte:window\b[\s\S]*?\/>/)[0];
+  for (const binding of [
+    'on:pointermove={moveRowDrag}', 'on:pointerup={endRowDrag}',
+    'on:pointercancel={cancelRowPointer}', 'on:lostpointercapture={cancelRowPointer}',
+    'on:pointermove={handleMarqueePointerMove}', 'on:pointerup={endMarqueeSelection}',
+    'on:pointermove={handleResizePointerMove}', 'on:pointerup={endResize}',
+  ]) assert.ok(windowTag.includes(binding), `window must retain ${binding}`);
   assert.doesNotMatch(row, /on:dragstart=|\bdraggable=/, 'row native drag remains pointer-owned');
   const marqueeStart = stackPopupSurfaceSource.slice(stackPopupSurfaceSource.indexOf('function beginMarqueeSelection('), stackPopupSurfaceSource.indexOf('function ', stackPopupSurfaceSource.indexOf('function beginMarqueeSelection(') + 1));
   assert.match(marqueeStart, /isStackMarqueeScrollbarTarget\(event\)[\s\S]*!isStackMarqueeStartTarget\(event\.target\)/, 'marquee excludes scrollbar and non-background targets');

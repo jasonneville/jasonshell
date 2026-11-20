@@ -821,6 +821,15 @@ export function startStackFileDrag(paths: string[]): Promise<StackNativeDragOutc
   return invoke<StackNativeDragOutcome>(IPC_COMMANDS.startStackFileDrag, { paths });
 }
 
+export function commitStackLocalDrop(requestId: string, destination: string): Promise<{ moved: number; failures: StackPasteFailure[] }> {
+  return invoke(IPC_COMMANDS.commitStackLocalDrop, { requestId, destination });
+}
+
+export async function prepareStackLocalDrop(paths: string[]): Promise<string> {
+  const { requestId } = await invoke<{ requestId: string }>(IPC_COMMANDS.prepareStackLocalDrop, { paths });
+  return requestId;
+}
+
 export function openStackTerminalHere(path: string): Promise<void> {
   return invoke(IPC_COMMANDS.openStackTerminalHere, { path });
 }

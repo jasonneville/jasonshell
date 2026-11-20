@@ -315,6 +315,8 @@ fn main() {
             stack_popup::rename_stack_item,
             stack_popup::copy_stack_items,
             stack_popup::start_stack_file_drag,
+            stack_popup::commit_stack_local_drop,
+            stack_popup::prepare_stack_local_drop,
             stack_popup::cut_stack_items,
             stack_popup::paste_stack_items,
             stack_popup::delete_stack_item,
