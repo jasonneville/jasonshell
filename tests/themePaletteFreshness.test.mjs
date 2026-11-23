@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -17,13 +17,16 @@ function fixture(t, targetEOL = asLF) {
   assert.ok(process.env.LOCALAPPDATA, 'approved Windows LOCALAPPDATA location required');
   const root = mkdtempSync(join(process.env.LOCALAPPDATA, 'Temp', 'opencode', 'theme-freshness-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const relative of [scriptPath, cssPath, registryPath, generatedPath]) {
+  // VIS-03: the generator may import the contrast-gate helper that sits beside it.
+  const files = [scriptPath, cssPath, registryPath, generatedPath];
+  if (existsSync(join(repository, 'scripts/themeContrast.mjs'))) files.push('scripts/themeContrast.mjs');
+  for (const relative of files) {
     const destination = join(root, relative);
     mkdirSync(dirname(destination), { recursive: true });
     const original = readFileSync(join(repository, relative));
     // The generator is copied byte-for-byte. Only isolated fixture input EOLs
     // change; never rewrite repository source/generated files for this test.
-    writeFileSync(destination, relative === scriptPath ? original
+    writeFileSync(destination, relative === scriptPath || relative.startsWith('scripts/') ? original
       : (relative === generatedPath ? targetEOL : asLF)(original.toString('utf8')));
   }
   return root;

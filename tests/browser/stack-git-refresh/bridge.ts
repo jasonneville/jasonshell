@@ -1,5 +1,6 @@
-import { child, root, overrides, resetBridge as resetBase, status } from '../stack-mouse/bridge';
-export { child, root, ledger, handlers, overrides, listen, emit, emitTo, getCurrentWindow, invoke } from '../stack-mouse/bridge';
+import { child, root, overrides, resetBridge as resetBase, status, getCurrentWindow as getBaseWindow } from '../stack-mouse/bridge';
+export { child, root, ledger, handlers, overrides, listen, emit, emitTo, invoke } from '../stack-mouse/bridge';
+export const getCurrentWindow = () => ({ ...getBaseWindow(), isVisible: async () => true });
 export const deep = `${child}\\src`;
 export const nested = `${child}\\nested`;
 export const submodule = `${child}\\module`;
@@ -39,7 +40,8 @@ export function resetBridge() {
   overrides.set('rename_stack_item', ({ path, newName }) => ({ ...page(child).items[4], path: String(path).replace(/[^\\]+$/, String(newName)), name: newName }));
   overrides.set('paste_stack_items', () => ({ pasted: [{ ...page(child).items[4], path: `${child}\\incoming.txt`, name: 'incoming.txt' }], failures: [] }));
   overrides.set('list_stack_open_with_candidates', () => []);
-  for (const command of ['copy_stack_items', 'cut_stack_items', 'delete_stack_item', 'begin_stack_popup_focus_loss_hold', 'end_stack_popup_focus_loss_hold', 'extract_stack_archive']) overrides.set(command, () => undefined);
+  for (const command of ['copy_stack_items', 'cut_stack_items', 'begin_stack_popup_focus_loss_hold', 'end_stack_popup_focus_loss_hold', 'extract_stack_archive']) overrides.set(command, () => undefined);
+  overrides.set('delete_stack_items', ({ paths }) => ({ deleted: (paths as string[]).length, failures: [], undoMoveId: null }));
 }
 export function deferred<T>() {
   let resolve!: (value: T) => void;

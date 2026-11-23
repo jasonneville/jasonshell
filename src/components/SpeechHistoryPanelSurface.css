@@ -33,7 +33,7 @@
 .speech-history-copy { -webkit-user-select: none; align-items: center; background: transparent; border: 1px solid transparent; border-radius: 0.35rem; color: inherit; cursor: pointer; display: inline-flex; height: 1.65rem; justify-content: center; margin: -0.12rem -0.12rem 0 0; padding: 0; user-select: none; width: 1.65rem; }
 .speech-history-copy img { height: 0.9rem; opacity: 0.72; pointer-events: none; width: 0.9rem; }
 .speech-history-copy:hover { background: var(--js-color-control-hover); border-color: var(--js-color-border-soft); }
-.speech-history-copy:focus-visible { box-shadow: var(--js-focus-ring); outline: 0; }
+.speech-history-copy:focus-visible { box-shadow: var(--js-focus-ring); }
 .speech-history-copy:disabled { cursor: wait; opacity: 0.45; }
 .speech-history-copy-error { color: var(--js-color-danger, #df6b62); font-size: 0.6rem; margin: 0.3rem 0 0; }
 .speech-history-content li span { color: var(--js-color-text-muted); display: block; font-size: 0.54rem; font-weight: 750; letter-spacing: 0.035em; text-transform: uppercase; }

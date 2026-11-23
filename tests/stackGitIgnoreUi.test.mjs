@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { readRepoFile } from './support/repoSource.mjs';
 import ts from 'typescript';
-
-function readRepoFile(path) {
-  const url = new URL(`../${path}`, import.meta.url);
-  return existsSync(url) ? readFileSync(url, 'utf8') : '';
-}
 
 const panel = readRepoFile('src/components/StackGitPanel.svelte');
 const popup = readRepoFile('src/components/StackPopupSurface.svelte');

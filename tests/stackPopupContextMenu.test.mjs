@@ -61,7 +61,7 @@ test('background context menu is available off rows and keeps selection actions'
   }
   assert.doesNotMatch(backgroundMenu, />Paste<\/ContextMenuItem>/, 'background menu intentionally omits Paste');
   const toolbar = surface.slice(surface.indexOf('<div class="stack-actions">'), surface.indexOf('<div class="stack-search">'));
-  assert.match(toolbar, /ariaLabel="Paste into current folder"[^>]*disabled=\{!currentPath\}[^>]*onClick=\{\(\) => void pasteIntoCurrentFolder\(\)\}/, 'toolbar retains Paste ownership');
+  assert.match(toolbar, /ariaLabel="Paste into current folder"[^>]*disabled=\{!currentPath \|\| fileTransferPending \|\| fileOperationBusy\}[^>]*onClick=\{\(\) => void pasteIntoCurrentFolder\(\)\}/, 'toolbar retains Paste ownership and disables it during a transfer');
   assert.match(stackPopupApi, /newStackTextFile\(parent: string\): Promise<StackEntry>/);
   assert.match(stackPopupApi, /openStackTerminalHere\(path: string\): Promise<void>/);
 });

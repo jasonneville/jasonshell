@@ -93,7 +93,7 @@ async function editorJourney() {
   assert(document.execCommand('insertText', false, 'unsaved browser draft'), 'Browser text insertion unsupported');
   await until(() => element('.stack-text-editor-draft-state')?.textContent?.includes('Draft changed'), 'Draft did not become dirty');
   await sidePress(3, content);
-  assert(exists('[role="alertdialog"]'), 'Dirty Back failed to prompt');
+  await until(() => exists('[role="alertdialog"]'), 'Dirty Back failed to prompt');
   await sidePress(3, element('[role="alertdialog"]')!);
   assert(!exists('[role="alertdialog"]') && element('.cm-content')?.textContent === 'unsaved browser draft', 'Cancel lost draft');
   await sidePress(3, element('.cm-content')!);

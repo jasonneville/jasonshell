@@ -122,6 +122,6 @@
   h2, p { margin: 0; } h2 { color: var(--js-color-text-strong); font-size: .88rem; } p { color: var(--js-color-text-muted); font-size: .72rem; line-height: 1.45; }
   .stack-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
   .stack-confirm-actions button { background: var(--js-bg-control); border: 1px solid var(--js-color-border); border-radius: var(--js-radius-sm); color: var(--js-color-text); font: inherit; font-size: .7rem; min-height: 30px; padding: 0 12px; }
-  .stack-confirm-actions button:not(:disabled):hover, .stack-confirm-actions button:focus-visible { border-color: var(--js-color-accent-border); box-shadow: var(--js-focus-ring); outline: 0; }
+  .stack-confirm-actions button:not(:disabled):hover, .stack-confirm-actions button:focus-visible { border-color: var(--js-color-accent-border); box-shadow: var(--js-focus-ring); }
   .stack-confirm-actions .danger { background: var(--js-color-error); border-color: var(--js-color-error-border); color: var(--js-color-text-strong); }
 </style>

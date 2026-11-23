@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { readRepoFile } from './support/repoSource.mjs';
 import ts from 'typescript';
-
-function readRepoFile(path) {
-  const url = new URL(`../${path}`, import.meta.url);
-  return existsSync(url) ? readFileSync(url, 'utf8') : '';
-}
 
 const commands = readRepoFile('src/ipc/commands.ts');
 const api = readRepoFile('src/lib/stackPopup.ts');
@@ -164,8 +159,10 @@ test('stack git status tracks staged and unstaged state plus optional ahead behi
 
 test('extracted StackGitPanel owns OpenChamber-like no-AI sections and controls', () => {
   assert.ok(panel.length > 0, 'src/components/StackGitPanel.svelte must exist');
-  assert.match(surface, /import StackGitPanel from '\.\/StackGitPanel\.svelte';/);
-  assert.match(surface, /<StackGitPanel\b/);
+  // FE-34: the panel is loaded by dynamic import on first use (behaviour: tests/components/stack-lazy-panes.test.ts).
+  assert.doesNotMatch(surface, /^\s*import StackGitPanel from/m, 'FE-34: Git panel is loaded by dynamic import');
+  assert.match(surface, /import\('\.\/StackGitPanel\.svelte'\)/);
+  assert.match(surface, /<svelte:component[^>]*\bthis=\{StackGitPanelPane\}/);
   assert.match(panel, /class="stack-git-panel"/);
   for (const label of ['Changes', 'Staged', 'Unstaged', 'Diff', 'History', 'Branches']) {
     assert.match(panel, new RegExp(`>${label}<|aria-label="[^"]*${label}`));
@@ -389,7 +386,8 @@ test('stack git stash backend uses fixed argv, bounded message, explicit untrack
   assert.match(productionGitStatusRs, /"stash"[\s\S]*"drop"[\s\S]*stash_ref/);
   assert.match(productionGitStatusRs, /ProcessRunSpec\s*\{/);
   assert.match(productionGitStatusRs, /program:\s*trusted_git_path\(\)[\s\S]*\.into_owned\(\)/);
-  assert.match(productionGitStatusRs, /args:\s*std::iter::once\("-C"\.to_string\(\)\)/);
+  assert.match(productionGitStatusRs, /args:\s*hardened_git_args\(mode, cwd, args\)/);
+  assert.match(productionGitStatusRs, /"-C"\.to_string\(\)/);
   assert.match(productionGitStatusRs, /run_process\(spec\)/);
   assert.doesNotMatch(productionGitStatusRs, /Command::new\("git"\)/);
 });
@@ -482,11 +480,14 @@ test('StackGitPanel uses OpenChamber Git display geometry instead of card tabs a
 });
 
 test('StackGitPanel replaces the file grid instead of overlaying it', () => {
-  assert.match(surface, /\{#if editorPath\}[\s\S]*?<StackTextEditor\b[\s\S]*?\{:else if gitStatusPopupOpen\}\s*<StackGitPanel\b[\s\S]*?\{:else\}\s*<div\s+class="details-table"/);
+  // Layer order (editor, Git panel, file grid) is preserved; panes are lazily loaded <svelte:component>s with pending/error branches between.
+  assert.match(surface, /\{#if editorPath\}[\s\S]*?this=\{StackTextEditorPane\}[\s\S]*?\{:else if gitStatusPopupOpen\}[\s\S]*?this=\{StackGitPanelPane\}[\s\S]*?\{:else\}\s*<div\s+class="details-table"/);
   assert.match(panel, /\.stack-git-panel\s*\{[^}]*background:\s*var\(--js-bg-surface\)/);
   assert.doesNotMatch(panel, /\.stack-git-panel\s*\{[^}]*position:\s*absolute/);
   assert.match(surface, /function handleBackgroundContextMenu\(event: MouseEvent\) \{\s*if \(gitStatusPopupOpen \|\|/);
-  assert.match(surface, /function handleKeydown\(event: KeyboardEvent\) \{\s*if \(editorPath \|\| gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;/);
+  const handler = surface.match(/function handleKeydown\(event: KeyboardEvent\) \{[\s\S]*?(?=\n  function )/)?.[0] ?? '';
+  assert.match(handler, /^function handleKeydown\(event: KeyboardEvent\) \{\s*if \(event\.ctrlKey && event\.key\.toLowerCase\(\) === 'z'\) \{[\s\S]*?!canUndoMove[^\n]*return;[\s\S]*?void undoLastMove\(\);\s*return;\s*\}\s*if \(editorPath \|\| gitStatusPopupOpen \|\| isEditableKeyTarget\(event\.target\)\) \{\s*return;/);
+  assert.match(surface, /\$:\s*canUndoMove\s*=[^;]*&& !editorPath && !gitStatusPopupOpen\b/);
 });
 
 test('StackGitPanel branch button opens a grouped branch dropdown, not the Branches view', () => {

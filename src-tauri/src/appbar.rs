@@ -28,7 +28,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, IsIconic, IsWindowVisible, RegisterWindowMessageW, SetWindowPos,
     SystemParametersInfoW, GWL_STYLE, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPIF_SENDCHANGE, SPI_GETWORKAREA, SPI_SETWORKAREA,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     WS_CAPTION, WS_THICKFRAME,
 };
 
@@ -553,6 +554,7 @@ fn hwnd_from_tauri_window(window: &tauri::WebviewWindow) -> AppResult<HWND> {
     }
 }
 
+#[cfg(test)]
 fn register_tracked_appbar<RegisterFn, ConfigureFn>(
     state: &mut ShellRuntimeState,
     hwnd: HWND,
@@ -1221,7 +1223,9 @@ fn park_window_below_virtual_desktop(hwnd: HWND, surface_rect: RECT) -> AppResul
             parked.top,
             width,
             height,
-            SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            // Parking runs on the fullscreen guard worker thread; a synchronous
+            // cross-thread SetWindowPos would wait on the UI thread's message pump.
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS,
         )?;
     }
 
@@ -1409,6 +1413,12 @@ fn stop_runtime_guard_handles(
 }
 
 fn begin_cleanup_plan(state: &Mutex<ShellRuntimeState>) -> AppResult<CleanupSideEffects> {
+    // An in-flight fullscreen hide/restore runs with the runtime lock released. Let it
+    // finish (bounded) before cleanup takes the state, so it cannot overwrite the work
+    // area cleanup restores. No lock is held here, and transitions never wait on cleanup.
+    if !wait_for_fullscreen_transition_idle(CLEANUP_TRANSITION_WAIT) {
+        eprintln!("warning: fullscreen shell transition still running during cleanup");
+    }
     let legacy_owned = {
         let mut state = state.lock().expect("shell runtime state is poisoned");
         if matches!(
@@ -1524,12 +1534,14 @@ where
         cleanup_errors.push(error.to_string());
     }
 
+    let mut restore_results: Vec<bool> = Vec::new();
     let hidden_taskbars = if let Some(v2) = state.hidden_explorer_taskbars_v2.take() {
         let hidden_taskbars = v2.lock().expect("taskbar v2 state poisoned").clone();
         for taskbar_snapshot in hidden_taskbars {
             match restore_taskbar(taskbar_snapshot) {
-                Ok(true) => {}
+                Ok(true) => restore_results.push(true),
                 Ok(false) => {
+                    restore_results.push(false);
                     cleanup_errors.push(
                         "Explorer taskbar remained hidden after repeated restore attempts"
                             .to_string(),
@@ -1538,6 +1550,7 @@ where
                         Some(Arc::new(Mutex::new(vec![taskbar_snapshot])));
                 }
                 Err(error) => {
+                    restore_results.push(false);
                     cleanup_errors.push(error.to_string());
                     state.hidden_explorer_taskbars_v2 =
                         Some(Arc::new(Mutex::new(vec![taskbar_snapshot])));
@@ -1552,8 +1565,9 @@ where
     if !hidden_taskbars.is_empty() {
         for taskbar_snapshot in hidden_taskbars {
             match restore_taskbar(taskbar_snapshot) {
-                Ok(true) => {}
+                Ok(true) => restore_results.push(true),
                 Ok(false) => {
+                    restore_results.push(false);
                     cleanup_errors.push(
                         "Explorer taskbar remained hidden after repeated restore attempts"
                             .to_string(),
@@ -1561,12 +1575,19 @@ where
                     state.hidden_explorer_taskbars.push(taskbar_snapshot);
                 }
                 Err(error) => {
+                    restore_results.push(false);
                     cleanup_errors.push(error.to_string());
                     state.hidden_explorer_taskbars.push(taskbar_snapshot);
                 }
             }
         }
     }
+    // The hidden marker goes only once every owned taskbar is visible again. Unit
+    // tests drive this function with fake restorers and must not touch the real marker.
+    #[cfg(not(test))]
+    explorer::finish_taskbar_restore(&restore_results);
+    #[cfg(test)]
+    drop(restore_results);
 
     if let Some(baseline_work_area) = state.baseline_work_area.take() {
         if let Err(error) = restore_work_area(
@@ -1738,9 +1759,151 @@ fn foreground_fullscreen_target_for_layout(
     )
 }
 
+/// Only one fullscreen hide/restore transition may run at a time. The shell
+/// runtime lock is released while a transition performs cross-thread Win32 work,
+/// so this process-wide flag (not the lock) keeps a second transition out.
+static FULLSCREEN_TRANSITION_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct FullscreenTransitionGuard;
+
+impl FullscreenTransitionGuard {
+    fn try_begin() -> Option<Self> {
+        FULLSCREEN_TRANSITION_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for FullscreenTransitionGuard {
+    fn drop(&mut self) {
+        FULLSCREEN_TRANSITION_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+/// True while the runtime still describes the shell this transition started
+/// from (not cleaned up, not tearing down, same top/bottom surfaces).
+fn fullscreen_transition_is_current(state: &ShellRuntimeState, layout: ShellSurfaceLayout) -> bool {
+    !state.cleaned_up
+        && state.activation_phase == ActivationPhase::CommittedReserved
+        && state.shell_layout.is_some_and(|current| {
+            current.top_hwnd == layout.top_hwnd && current.bottom_hwnd == layout.bottom_hwnd
+        })
+}
+
+/// Returns registrations a transition took out of the runtime state (failed
+/// removals or newly registered AppBars) so cleanup can still see them.
+fn put_back_tracked_appbars(state: &mut ShellRuntimeState, mut tracked: Vec<isize>) {
+    if tracked.is_empty() {
+        return;
+    }
+    tracked.append(&mut state.registered_appbars);
+    state.registered_appbars = tracked;
+}
+
+const CLEANUP_TRANSITION_WAIT: Duration = Duration::from_millis(1500);
+
+/// Polls `flag` (at most every 10 ms) until it reads false. `true` = idle in time.
+fn wait_for_flag_clear(flag: &AtomicBool, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !flag.load(Ordering::Acquire) {
+            return true;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        thread::sleep((deadline - now).min(Duration::from_millis(10)));
+    }
+}
+
+fn wait_for_fullscreen_transition_idle(timeout: Duration) -> bool {
+    wait_for_flag_clear(&FULLSCREEN_TRANSITION_ACTIVE, timeout)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum StaleWorkAreaAction {
+    Keep,
+    RestoreBaseline(RECT),
+    Nothing,
+}
+
+/// A transition that finds the shell torn down must leave the SPI work area on
+/// the baseline cleanup restored, never on its own full-monitor/reserved value.
+fn stale_transition_work_area_action(
+    transition_current: bool,
+    baseline: Option<RECT>,
+) -> StaleWorkAreaAction {
+    match (transition_current, baseline) {
+        (true, _) => StaleWorkAreaAction::Keep,
+        (false, Some(baseline)) => StaleWorkAreaAction::RestoreBaseline(baseline),
+        (false, None) => StaleWorkAreaAction::Nothing,
+    }
+}
+
+fn reset_stale_work_area(
+    baseline: Option<RECT>,
+    set_work_area: &mut impl FnMut(RECT) -> AppResult<()>,
+) {
+    if let StaleWorkAreaAction::RestoreBaseline(baseline) =
+        stale_transition_work_area_action(false, baseline)
+    {
+        let _ = set_work_area(baseline);
+    }
+}
+
+/// Hide side effects with re-validation before each one. Returns `Ok(true)` only
+/// when the transition stayed current throughout.
+fn run_fullscreen_hide_effects_with(
+    layout: ShellSurfaceLayout,
+    baseline: Option<RECT>,
+    mut is_current: impl FnMut() -> bool,
+    mut set_work_area: impl FnMut(RECT) -> AppResult<()>,
+    mut park: impl FnMut(ShellSurfaceLayout) -> AppResult<()>,
+) -> AppResult<bool> {
+    if !is_current() {
+        reset_stale_work_area(baseline, &mut set_work_area);
+        return Ok(false);
+    }
+    let _ = set_work_area(layout.monitor_rect);
+    if !is_current() {
+        reset_stale_work_area(baseline, &mut set_work_area);
+        return Ok(false);
+    }
+    park(layout)?;
+    if !is_current() {
+        reset_stale_work_area(baseline, &mut set_work_area);
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Restore side effect: apply the reserved work area only while current.
+fn apply_reserved_work_area_with(
+    baseline: Option<RECT>,
+    reserved: RECT,
+    mut is_current: impl FnMut() -> bool,
+    mut set_work_area: impl FnMut(RECT) -> AppResult<()>,
+) -> AppResult<bool> {
+    if !is_current() {
+        reset_stale_work_area(baseline, &mut set_work_area);
+        return Ok(false);
+    }
+    let _ = set_work_area(reserved);
+    if !is_current() {
+        reset_stale_work_area(baseline, &mut set_work_area);
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
-    let state = app_handle.state::<Mutex<ShellRuntimeState>>();
-    let Ok(mut state) = state.try_lock() else {
+    let Some(_transition) = FullscreenTransitionGuard::try_begin() else {
+        return Ok(());
+    };
+    let runtime = app_handle.state::<Mutex<ShellRuntimeState>>();
+    let Ok(mut state) = runtime.try_lock() else {
         return Ok(());
     };
     if state.cleaned_up || state.activation_phase == ActivationPhase::CleanupInProgress {
@@ -1754,29 +1917,50 @@ fn hide_shell_for_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
         return Ok(());
     };
 
-    match state.fullscreen_state {
+    let baseline_work_area = state.baseline_work_area;
+    let previous_fullscreen_state = state.fullscreen_state;
+    match previous_fullscreen_state {
         FullscreenAppBarState::Reserved => {}
         FullscreenAppBarState::Released => {}
         FullscreenAppBarState::Parked => return Ok(()),
     }
 
-    let mut release_errors = Vec::new();
-    if let Err(error) =
-        unregister_tracked_appbars_with(&mut state.registered_appbars, unregister_appbar)
-    {
-        release_errors.push(error.to_string());
-    }
-
-    if !release_errors.is_empty() {
-        return Err(release_errors.join("; ").into());
-    }
-
+    // Take ownership of the tracked registrations and publish a non-Reserved
+    // state (which also rejects shell bar resizes), then release the runtime
+    // lock before any Win32 call that sends messages across threads.
+    let mut tracked = std::mem::take(&mut state.registered_appbars);
     state.fullscreen_state = FullscreenAppBarState::Released;
-    let _ = sync_work_area_best_effort_with(layout.monitor_rect, set_work_area, get_work_area);
+    drop(state);
+
+    if let Err(error) = unregister_tracked_appbars_with(&mut tracked, unregister_appbar) {
+        let mut state = runtime.lock().expect("shell runtime state is poisoned");
+        put_back_tracked_appbars(&mut state, tracked);
+        if fullscreen_transition_is_current(&state, layout) {
+            state.fullscreen_state = previous_fullscreen_state;
+        }
+        return Err(error.to_string().into());
+    }
+
     // Keep persistent WebView2 surfaces alive. Tauri hide/show can leave a surface blank
     // after fullscreen exits even when its HWND geometry is correct.
-    park_shell_surface_windows(layout)?;
-    state.fullscreen_state = FullscreenAppBarState::Parked;
+    let completed = run_fullscreen_hide_effects_with(
+        layout,
+        baseline_work_area,
+        || {
+            let state = runtime.lock().expect("shell runtime state is poisoned");
+            fullscreen_transition_is_current(&state, layout)
+        },
+        |rect| sync_work_area_best_effort(rect, "work area while hiding the shell for fullscreen"),
+        park_shell_surface_windows,
+    )?;
+    if !completed {
+        return Ok(());
+    }
+
+    let mut state = runtime.lock().expect("shell runtime state is poisoned");
+    if fullscreen_transition_is_current(&state, layout) {
+        state.fullscreen_state = FullscreenAppBarState::Parked;
+    }
     Ok(())
 }
 
@@ -1796,86 +1980,139 @@ where
 }
 
 fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
-    let restored_layout = {
-        let state = app_handle.state::<Mutex<ShellRuntimeState>>();
-        let Ok(mut state) = state.try_lock() else {
-            return Ok(());
-        };
-        if state.cleaned_up || state.activation_phase == ActivationPhase::CleanupInProgress
-            || state.fullscreen_state == FullscreenAppBarState::Reserved {
-            return Ok(());
-        }
-        if state.activation_phase != ActivationPhase::CommittedReserved {
-            return Ok(());
-        }
+    let Some(_transition) = FullscreenTransitionGuard::try_begin() else {
+        return Ok(());
+    };
+    let runtime = app_handle.state::<Mutex<ShellRuntimeState>>();
+    let Ok(mut state) = runtime.try_lock() else {
+        return Ok(());
+    };
+    if state.cleaned_up
+        || state.activation_phase == ActivationPhase::CleanupInProgress
+        || state.fullscreen_state == FullscreenAppBarState::Reserved
+    {
+        return Ok(());
+    }
+    if state.activation_phase != ActivationPhase::CommittedReserved {
+        return Ok(());
+    }
 
-        let Some(layout) = state.shell_layout else {
-            return Ok(());
-        };
+    let Some(layout) = state.shell_layout else {
+        return Ok(());
+    };
 
-        // A failed restore can leave registrations tracked. They must be removed
-        // successfully before a retry can issue a new ABM_NEW for either HWND.
-        if !state.registered_appbars.is_empty() {
-            prepare_fullscreen_restore_retry_with(
-                &mut state.registered_appbars,
-                unregister_appbar,
+    // Take ownership of any registrations a failed restore left tracked and
+    // release the runtime lock before every AppBar/SPI/park call below. The
+    // runtime stays Released/Parked (never Reserved) meanwhile, so shell bar
+    // resizes are rejected and the layout cannot be changed underneath us.
+    let baseline_work_area = state.baseline_work_area;
+    let mut tracked = std::mem::take(&mut state.registered_appbars);
+    drop(state);
+
+    // A failed restore can leave registrations tracked. They must be removed
+    // successfully before a retry can issue a new ABM_NEW for either HWND.
+    if !tracked.is_empty() {
+        if let Err(error) =
+            prepare_fullscreen_restore_retry_with(&mut tracked, unregister_appbar)
+        {
+            let mut state = runtime.lock().expect("shell runtime state is poisoned");
+            put_back_tracked_appbars(&mut state, tracked);
+            return Err(error);
+        }
+        let _ = sync_work_area_best_effort(
+            layout.monitor_rect,
+            "full-monitor work area before retrying fullscreen shell restore",
+        );
+    }
+
+    let top_hwnd = HWND(layout.top_hwnd as *mut _);
+    let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
+
+    let restore_result = (|| -> AppResult<(RECT, RECT)> {
+        let top_rect =
+            register_appbar_and_track_vec(&mut tracked, top_hwnd, register_appbar, |hwnd| {
+                reserve_appbar(hwnd, AppBarEdge::Top, layout.top_rect)
+            })?;
+        let bottom_rect =
+            register_appbar_and_track_vec(&mut tracked, bottom_hwnd, register_appbar, |hwnd| {
+                reserve_appbar(hwnd, AppBarEdge::Bottom, layout.bottom_rect)
+            })?;
+        Ok((top_rect, bottom_rect))
+    })();
+
+    let restored_layout = match restore_result {
+        Ok((top_rect, bottom_rect)) => {
+            let reserved = reserved_work_area(layout.monitor_rect, top_rect, bottom_rect);
+            let applied = apply_reserved_work_area_with(
+                baseline_work_area,
+                reserved,
+                || {
+                    let state = runtime.lock().expect("shell runtime state is poisoned");
+                    fullscreen_transition_is_current(&state, layout)
+                },
+                |rect| {
+                    sync_work_area_best_effort(
+                        rect,
+                        "reserved shell work area after fullscreen foreground app exits",
+                    )
+                },
             )?;
-            let _ = sync_work_area_best_effort(
-                layout.monitor_rect,
-                "full-monitor work area before retrying fullscreen shell restore",
-            );
+            (applied, restored_shell_surface_layout(layout, top_rect, bottom_rect))
         }
-
-        let top_hwnd = HWND(layout.top_hwnd as *mut _);
-        let bottom_hwnd = HWND(layout.bottom_hwnd as *mut _);
-
-        let restore_result = (|| -> AppResult<ShellSurfaceLayout> {
-            let top_rect =
-                register_tracked_appbar(&mut state, top_hwnd, register_appbar, |hwnd| {
-                    reserve_appbar(hwnd, AppBarEdge::Top, layout.top_rect)
-                })?;
-            let bottom_rect =
-                register_tracked_appbar(&mut state, bottom_hwnd, register_appbar, |hwnd| {
-                    reserve_appbar(hwnd, AppBarEdge::Bottom, layout.bottom_rect)
-                })?;
-            let _ = sync_work_area_best_effort(
-                reserved_work_area(layout.monitor_rect, top_rect, bottom_rect),
-                "reserved shell work area after fullscreen foreground app exits",
-            );
-
-            Ok(restored_shell_surface_layout(layout, top_rect, bottom_rect))
-        })();
-
-        match restore_result {
-            Ok(restored_layout) => restored_layout,
-            Err(error) => {
-                let mut cleanup_errors = Vec::new();
-                if let Err(park_error) = park_shell_surface_windows(layout) {
-                    cleanup_errors.push(format!(
-                        "failed to park released shell surfaces: {park_error}"
-                    ));
-                }
-                if let Err(release_error) = unregister_tracked_appbars_with(
-                    &mut state.registered_appbars,
-                    unregister_appbar,
-                ) {
-                    cleanup_errors.push(format!(
-                        "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
-                    ));
-                } else {
-                    let _ = sync_work_area_best_effort(
-                        layout.monitor_rect,
-                        "full-monitor work area after failed fullscreen shell restore",
-                    );
-                }
-
-                if cleanup_errors.is_empty() {
-                    return Err(error);
-                }
-                return Err(format!("{error}; {}", cleanup_errors.join("; ")).into());
+        Err(error) => {
+            let mut cleanup_errors = Vec::new();
+            if let Err(park_error) = park_shell_surface_windows(layout) {
+                cleanup_errors.push(format!(
+                    "failed to park released shell surfaces: {park_error}"
+                ));
             }
+            if let Err(release_error) =
+                unregister_tracked_appbars_with(&mut tracked, unregister_appbar)
+            {
+                cleanup_errors.push(format!(
+                    "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
+                ));
+            } else {
+                let _ = sync_work_area_best_effort(
+                    layout.monitor_rect,
+                    "full-monitor work area after failed fullscreen shell restore",
+                );
+            }
+            {
+                let mut state = runtime.lock().expect("shell runtime state is poisoned");
+                put_back_tracked_appbars(&mut state, tracked);
+            }
+
+            if cleanup_errors.is_empty() {
+                return Err(error);
+            }
+            return Err(format!("{error}; {}", cleanup_errors.join("; ")).into());
         }
     };
+
+    let (applied, restored_layout) = restored_layout;
+
+    // Store the new registrations so cleanup can release them. If the shell was
+    // torn down or replaced while the lock was released, nothing may track them:
+    // release them here, put the SPI work area back on the baseline cleanup
+    // restored, and leave the (new) runtime state untouched.
+    {
+        let mut state = runtime.lock().expect("shell runtime state is poisoned");
+        if !applied || !fullscreen_transition_is_current(&state, layout) {
+            drop(state);
+            let _ = unregister_tracked_appbars_with(&mut tracked, unregister_appbar);
+            if let StaleWorkAreaAction::RestoreBaseline(baseline) =
+                stale_transition_work_area_action(false, baseline_work_area)
+            {
+                let _ = sync_work_area_best_effort(
+                    baseline,
+                    "baseline work area after a stale fullscreen shell restore",
+                );
+            }
+            return Ok(());
+        }
+        put_back_tracked_appbars(&mut state, tracked);
+    }
 
     let top_hwnd = HWND(restored_layout.top_hwnd as *mut _);
     let bottom_hwnd = HWND(restored_layout.bottom_hwnd as *mut _);
@@ -1898,9 +2135,8 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
 
     match position_result {
         Ok(()) => {
-            let state = app_handle.state::<Mutex<ShellRuntimeState>>();
-            let mut state = state.lock().expect("shell runtime state is poisoned");
-            if state.cleaned_up || state.activation_phase == ActivationPhase::CleanupInProgress {
+            let mut state = runtime.lock().expect("shell runtime state is poisoned");
+            if !fullscreen_transition_is_current(&state, layout) {
                 return Ok(());
             }
 
@@ -1916,13 +2152,11 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
                 ));
             }
 
-            let state = app_handle.state::<Mutex<ShellRuntimeState>>();
-            let mut state = state.lock().expect("shell runtime state is poisoned");
+            let mut state = runtime.lock().expect("shell runtime state is poisoned");
             if !state.cleaned_up {
-                match unregister_tracked_appbars_with(
-                    &mut state.registered_appbars,
-                    unregister_appbar,
-                ) {
+                let mut tracked = std::mem::take(&mut state.registered_appbars);
+                drop(state);
+                match unregister_tracked_appbars_with(&mut tracked, unregister_appbar) {
                     Ok(()) => {
                         let _ = sync_work_area_best_effort(
                             restored_layout.monitor_rect,
@@ -1933,6 +2167,8 @@ fn restore_shell_after_fullscreen(app_handle: &AppHandle) -> AppResult<()> {
                         "cannot retry fullscreen shell restore until partial AppBar registrations are released: {release_error}"
                     )),
                 }
+                let mut state = runtime.lock().expect("shell runtime state is poisoned");
+                put_back_tracked_appbars(&mut state, tracked);
             }
 
             if cleanup_errors.is_empty() {
@@ -3499,3 +3735,7 @@ mod tests {
         assert!(!rect_covers_target(too_small, monitor));
     }
 }
+
+#[cfg(test)]
+#[path = "appbar_tier0_tests.rs"]
+mod tier0_tests;

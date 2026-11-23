@@ -101,8 +101,7 @@ test('explicit admin launch hands code 3 or access denied shortcut results to Ap
 
 test('elevated launcher helper has no status-file handoff and no helper argv path', () => {
   assert.doesNotMatch(launchersRs, /write_helper_status|wait_for_helper_status|launch_status_token|status_path/);
-  assert.match(taskWindowHelperRs, /helper_exit_code_for_shell_execute_result/);
-  assert.match(taskWindowHelperRs, /UAC canceled/);
+  assert.doesNotMatch(taskWindowHelperRs, /--task-window-helper|TerminateProcess/);
 });
 
 test('Explorer launch failure does not remove the visible launcher row', () => {

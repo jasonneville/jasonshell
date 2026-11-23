@@ -95,6 +95,9 @@ pub mod commands {
     pub const HIDE_SEARCH_PANEL: &str = "hide_search_panel";
     pub const PUBLISH_SEARCH_PANEL: &str = "publish_search_panel";
     pub const GET_SEARCH_PANEL_PAYLOAD: &str = "get_search_panel_payload";
+    pub const OPEN_SEARCH_URL: &str = "open_search_url";
+    pub const COPY_SEARCH_TEXT: &str = "copy_search_text";
+    pub const RUN_SEARCH_QUICK_COMMAND: &str = "run_search_quick_command";
     pub const SHOW_PROCESS_MANAGER: &str = "show_process_manager";
     pub const GET_PROCESS_MANAGER_CONTEXT: &str = "get_process_manager_context";
     pub const SET_PROCESS_MANAGER_TAB: &str = "set_process_manager_tab";
@@ -209,10 +212,12 @@ pub mod commands {
     pub const COPY_STACK_ITEMS: &str = "copy_stack_items";
     pub const START_STACK_FILE_DRAG: &str = "start_stack_file_drag";
     pub const COMMIT_STACK_LOCAL_DROP: &str = "commit_stack_local_drop";
+    pub const UNDO_STACK_MOVE: &str = "undo_stack_move";
     pub const PREPARE_STACK_LOCAL_DROP: &str = "prepare_stack_local_drop";
     pub const CUT_STACK_ITEMS: &str = "cut_stack_items";
     pub const PASTE_STACK_ITEMS: &str = "paste_stack_items";
     pub const DELETE_STACK_ITEM: &str = "delete_stack_item";
+    pub const DELETE_STACK_ITEMS: &str = "delete_stack_items";
     pub const NEW_STACK_FOLDER: &str = "new_stack_folder";
     pub const NEW_STACK_TEXT_FILE: &str = "new_stack_text_file";
     pub const OPEN_STACK_TERMINAL_HERE: &str = "open_stack_terminal_here";
@@ -294,6 +299,9 @@ pub mod commands {
         HIDE_SEARCH_PANEL,
         PUBLISH_SEARCH_PANEL,
         GET_SEARCH_PANEL_PAYLOAD,
+        OPEN_SEARCH_URL,
+        COPY_SEARCH_TEXT,
+        RUN_SEARCH_QUICK_COMMAND,
         SHOW_PROCESS_MANAGER,
         GET_PROCESS_MANAGER_CONTEXT,
         SET_PROCESS_MANAGER_TAB,
@@ -408,10 +416,12 @@ pub mod commands {
         COPY_STACK_ITEMS,
         START_STACK_FILE_DRAG,
         COMMIT_STACK_LOCAL_DROP,
+        UNDO_STACK_MOVE,
         PREPARE_STACK_LOCAL_DROP,
         CUT_STACK_ITEMS,
         PASTE_STACK_ITEMS,
         DELETE_STACK_ITEM,
+        DELETE_STACK_ITEMS,
         NEW_STACK_FOLDER,
         NEW_STACK_TEXT_FILE,
         OPEN_STACK_TERMINAL_HERE,

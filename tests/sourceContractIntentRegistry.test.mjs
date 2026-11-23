@@ -26,6 +26,7 @@ const SOURCE_CONTRACT_INTENTS = {
     'runtimeSmokeHarnessContract.test.mjs',
     'validationRunner.test.mjs', // Package wiring plus injected and subprocess runner behavior.
     'weeklyHealthGuards.test.mjs', // Dependency ownership and compile-boundary guards, not native acceptance.
+    'windowsCiWorkflow.test.mjs', // CI workflow file wiring only; not a CI run result.
     'speechContracts.test.mjs',
     'speechHistoryPanelUi.test.mjs',
     'processManagerAccessibility.test.mjs',

@@ -379,7 +379,7 @@
   .stack-text-editor-mode { background: var(--js-color-surface-sunken); border: 1px solid var(--js-color-border); border-radius: 999px; display: flex; padding: 2px; }
   .stack-text-editor-mode button { background: transparent; border: 0; border-radius: 999px; color: var(--js-color-text-muted); cursor: pointer; font: inherit; font-size: 0.68rem; padding: 0.28rem 0.65rem; }
   .stack-text-editor-mode button[aria-pressed='true'] { background: var(--js-color-accent-soft); box-shadow: inset 0 0 0 1px var(--js-color-accent-border); color: var(--js-color-text-strong); }
-  .stack-text-editor-mode button:focus-visible { box-shadow: var(--js-focus-ring); outline: none; }
+  .stack-text-editor-mode button:focus-visible { box-shadow: var(--js-focus-ring); }
 
   .stack-text-editor-body {
     display: grid;
@@ -391,7 +391,7 @@
   .stack-text-editor-feedback {
     align-items: center;
     background: var(--js-color-accent-soft);
-    border-bottom: 1px solid var(--js-color-accent-border);
+    border-bottom: 1px solid var(--js-color-border);
     color: var(--js-color-text);
     display: flex;
     font-size: 0.7rem;
@@ -403,7 +403,7 @@
 
   :global(.stack-text-editor-reload) {
     background: var(--js-bg-control);
-    border: 1px solid var(--js-color-accent-border);
+    border: 1px solid var(--js-color-border);
     border-radius: var(--js-radius-xs);
     color: var(--js-color-text);
     flex: none;
@@ -414,7 +414,6 @@
   :global(.stack-text-editor-reload:hover),
   :global(.stack-text-editor-reload:focus-visible) {
     box-shadow: var(--js-focus-ring);
-    outline: none;
   }
 
   .stack-text-editor-field { display: grid; min-height: 0; overflow: hidden; }

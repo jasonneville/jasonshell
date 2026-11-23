@@ -5,6 +5,8 @@ export interface ShowCommandPanelRequest {
   anchorLeft: number;
   anchorWidth: number;
   notificationId?: string;
+  /** Saved command to show without opening or starting a run. */
+  commandId?: string;
 }
 
 export const COMMAND_PANEL_CLOSED_EVENT = 'command-panel:closed';

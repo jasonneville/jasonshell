@@ -410,6 +410,7 @@
     --js-color-control-hover: #33455d; --js-color-selected: #344966; --js-bg-control: #27364b;
     --js-color-error: #702d3b; --js-color-error-border: #ffb5bf;
     --js-focus-ring: 0 0 0 2px #b5d0ff;
+    --js-focus-color: #b5d0ff;
     --js-scrollbar-thumb: #8294b0; --js-scrollbar-track: #182231;
     background: #182231; border: 1px solid #58677e; border-radius: var(--js-radius-md);
     color: #f1f5ff; display: grid; gap: .65rem; padding: .65rem; min-width: 0;

@@ -99,26 +99,14 @@ test('close previewed task window wrapper validates external hwnd and command wi
   assert.match(mainRs, /task_windows::close_task_window/);
 });
 
-test('task window close falls back to terminating the owning process', () => {
+test('task window close is request-only and never terminates or elevates', () => {
   assert.match(taskWindowActionsRs, /SendMessageTimeoutW/);
   assert.match(taskWindowActionsRs, /PostMessageW/);
   assert.match(taskWindowActionsRs, /revalidate_close_target/);
-  assert.match(taskWindowActionsRs, /GetWindowThreadProcessId/);
-  assert.match(taskWindowActionsRs, /OpenProcess\(PROCESS_TERMINATE, false, process_id\)/);
-  assert.match(taskWindowActionsRs, /spawn_task_window_helper/);
-  assert.match(taskWindowHelperRs, /WM_CLOSE/);
-  assert.match(taskWindowHelperRs, /PostMessageW\(Some\(hwnd\), WM_CLOSE/);
-  assert.match(taskWindowHelperRs, /OpenProcess\(\s*PROCESS_TERMINATE \| PROCESS_QUERY_LIMITED_INFORMATION,\s*false,\s*pid,?\s*\)/);
-  assert.match(taskWindowHelperRs, /TerminateProcess\(process_handle, 1\)/);
-  assert.match(taskWindowHelperRs, /creation_time/);
-  assert.match(taskWindowHelperRs, /canonical_image_path/);
-  assert.match(taskWindowHelperRs, /IsWindow\(Some\(hwnd\)\)\.as_bool\(\)/);
-  assert.match(taskWindowHelperRs, /utf16hex:/);
-  assert.match(taskWindowHelperRs, /decode_canonical_path/);
-  assert.match(taskWindowHelperRs, /std::process::exit\(exit_code\)/);
-  assert.doesNotMatch(taskWindowHelperRs, /SeDebugPrivilege|taskkill|kill_tree|kill-tree/);
-  assert.match(taskWindowHelperRs, /--task-window-helper/);
-  assert.match(mainRs, /task_windows::handle_task_window_helper_args/);
+  assert.match(taskWindowActionsRs, /close_followup\(/);
+  assert.doesNotMatch(taskWindowActionsRs.split('#[cfg(test)]')[0], /TerminateProcess|PROCESS_TERMINATE|spawn_task_window_helper|elevate_close_target/);
+  assert.doesNotMatch(taskWindowHelperRs, /TerminateProcess|PROCESS_TERMINATE|--task-window-helper/);
+  assert.doesNotMatch(mainRs, /handle_task_window_helper_args/);
   assert.match(mainRs, /match launchers::handle_launch_pinned_taskbar_helper_args\(\)/);
   assert.match(mainRs, /Err\(error\) => \{\r?\n\s*eprintln!/);
   assert.doesNotMatch(mainRs, /tauri::Builder::default\(\)[\s\S]*handle_launch_pinned_taskbar_helper_args/);

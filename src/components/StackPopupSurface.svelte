@@ -10,14 +10,14 @@
   import ContextMenu from './ContextMenu.svelte';
   import ContextMenuItem from './ContextMenuItem.svelte';
   import ContextMenuSeparator from './ContextMenuSeparator.svelte';
-  import StackGitPanel from './StackGitPanel.svelte';
+  // FE-34: the editor (CodeMirror) and Git panes load with import() on first use. Type-only imports are erased from the bundle.
+  import type StackGitPanelComponent from './StackGitPanel.svelte';
+  import type StackTextEditorComponent from './StackTextEditor.svelte';
   import StackConfirmDialog from './StackConfirmDialog.svelte';
-  import StackTerminalPane from './StackTerminalPane.svelte';
-  import StackTextEditor from './StackTextEditor.svelte';
   import {
     beginStackPopupFocusLossHold,
     copyStackItems,
-    deleteStackItem,
+    deleteStackItems,
     endStackPopupFocusLossHold,
     emitStackFolderListingDiagnostics,
     extractStackArchive,
@@ -44,9 +44,11 @@
     openStackTerminalHere,
     pinStackFolder,
     pasteStackItems,
+    pasteFailureSummary,
     startStackFileDrag,
     prepareStackLocalDrop,
     commitStackLocalDrop,
+    undoStackMove,
     renameStackItem,
     resolveStackItemIcons,
     resizeStackPopup,
@@ -55,7 +57,6 @@
     suggestStackPaths,
     STACK_POPUP_OPEN_EVENT,
     STACK_POPUP_CLOSE_REQUESTED_EVENT,
-    STACK_TERMINAL_PROFILE_OPTIONS,
     type StackEntry,
     type StackArchiveDestinationMode,
     type StackArchiveExtractor,
@@ -64,11 +65,8 @@
     type StackItemIconResolution,
     type StackFolderListing,
     type StackOpenWithCandidate,
-    type StackPathSuggestion,
-    type StackTerminalProfile
+    type StackPathSuggestion
   } from '../lib/stackPopup';
-  import { loadShellSettings } from '../lib/settings';
-  import { normalizeStackTerminalProfile } from '../lib/stackPopup';
   import { folderPathsFromTransfer, normalizeDroppedPath } from '../lib/folderDrag';
   import { beginStackRowDrag, moveStackRowDrag, type StackRowDragIntent } from '../features/stack-browser/nativeDragIntent';
   import {
@@ -94,7 +92,6 @@
     stackBreadcrumbSegments,
     stackPopupOpenPath,
     stackPopupRequestKey,
-    stackGitStatusPathMatchesEntry,
     stackSortHeaderState,
     updateStackSort,
     type StackEntryIconUpdate,
@@ -102,6 +99,7 @@
     type StackSortColumn
   } from '../lib/stackPopupState';
   import { stackFileIconForEntry } from '../lib/stackFileIcons';
+  import { buildStackGitStatusIndex, formatStackModified, stackAttributeLabels, stackGitStatusFromIndex } from '../lib/stackRowDisplay';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
   import { IPC_EVENTS, type StackFileOperationProgress } from '../ipc/events';
 
@@ -150,7 +148,6 @@
     submenuTop?: number;
   };
 
-  type StackBrowserViewMode = 'files' | 'terminal';
   type LocalDragSession = {
     paths: string[];
     folderPath: string;
@@ -176,7 +173,9 @@
   let openWithStatus: 'loading' | 'ready' | 'error' = 'ready';
   let openWithLaunching = false;
   let openWithPosition = { x: 8, y: 8 };
-  let deleteConfirmation: { title: string; message: string; paths: string[]; folderPath: string } | null = null;
+  let deleteConfirmation: {
+    title: string; message: string; paths: string[]; folderPath: string; loadSequence: number; visibilityEpoch: number;
+  } | null = null;
   let rowSubmenuOpensLeft = false;
   let createFolderDraft: string | null = null;
   let renameDraft: string | null = null;
@@ -270,18 +269,26 @@
   let gitPanelRefresh: () => void = () => {};
   let editorSaved: () => void = () => {};
   let gitStatusPopupFilter: StackGitFileStatusKind | 'all' = 'all';
-  let stackBrowserViewMode: StackBrowserViewMode = 'files';
-  let stackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
-  let stackTerminalPane: StackTerminalPane | null = null;
   let stackPopupSurface: HTMLElement | null = null;
   let editorPath: string | null = null;
   let editorDirty = false;
   let pendingEditorExit: PendingBasicTextEditorExit | null = null;
   let editorExitFocusOrigin: HTMLElement | null = null;
   let activeOperation: StackFileOperationProgress | null = null;
+  let undoReceipt: { id: string; kind: 'move' | 'delete' } | null = null;
+  $: undoLabel = undoReceipt?.kind === 'delete' ? 'Undo delete' : 'Undo move';
+  let fileTransferPending = false;
+  let pasteBusyMessage = '';
+  $: fileOperationBusy = !!activeOperation && activeOperation.phase !== 'completed' && activeOperation.phase !== 'failed';
+  $: canUndoMove = !!undoReceipt && !fileTransferPending && !fileOperationBusy && folderWatchVisible &&
+    !!currentPath && !editorPath && !gitStatusPopupOpen &&
+    !rowMenu && !backgroundMenu && !deleteConfirmation && !pendingEditorExit &&
+    createFolderDraft === null && renameDraft === null && !rowDragIntent && !pendingLocalDrop && !outboundDragging;
   let operationClock = Date.now();
   let operationClockTimer: number | null = null;
   let folderWatchVisible = true;
+  let folderWatchEnabled = true;
+  let popupVisibilityEpoch = 0;
   let folderWatchEpoch = 0;
   let desiredFolderWatch: { key: string; path: string; epoch: number } | null = null;
   let activeFolderWatch: { key: string; watchId: string; epoch: number } | null = null;
@@ -295,13 +302,13 @@
   let folderWatchStartingEpoch: number | null = null;
   let pendingFolderWatchErrors: StackFolderWatchError[] = [];
   let folderReadPending: { sequence: number; promise: Promise<StackFolderListing> } | null = null;
-  $: stackTerminalProfileLabel =
-    STACK_TERMINAL_PROFILE_OPTIONS.find((option) => option.value === stackTerminalProfile)?.label ?? 'PowerShell';
   $: currentPath = stackState.currentPath;
   $: entries = stackState.entries;
   $: visibleEntries = stackBrowserSearchEntries(entries, searchQuery);
   $: selectedEntry = selectedStackEntry(stackState);
   $: selectedPaths = selectedStackPaths(stackState);
+  $: selectedPathSet = new Set(stackState.selectedPaths);
+  $: gitStatusIndex = buildStackGitStatusIndex(gitStatus, gitStatusPath, currentPath, gitRepositoryContext?.canonicalPath);
   $: hasSelection = selectedPaths.length > 0;
   $: canGoBack = canNavigateStackBack(stackState);
   $: canGoForward = canNavigateStackForward(stackState);
@@ -310,7 +317,7 @@
   $: hasRetainedRows = stackPopupHasRetainedRows(stackState);
   $: virtualEntries = stackBrowserVirtualWindow(visibleEntries, detailsBodyScrollTop, detailsBodyHeight);
   $: marqueeRect = marqueeSelection ? stackBrowserMarqueeRect(marqueeSelection.start, marqueeSelection.current) : null;
-  $: if (loadingPath || !folderWatchVisible || stackBrowserViewMode !== 'files' || editorPath || gitStatusPopupOpen ||
+  $: if (loadingPath || !folderWatchVisible || editorPath || gitStatusPopupOpen ||
       rowMenu || backgroundMenu || deleteConfirmation || pendingEditorExit || createFolderDraft !== null || renameDraft !== null) {
     cancelRowDrag();
   }
@@ -325,9 +332,6 @@
 
   onMount(() => {
     const unlisteners: Array<() => void> = [];
-    const latestRequestTimer = window.setInterval(() => {
-      void reconcileLatestStackPopupRequest();
-    }, 250);
     void initializeFolderWatchDelivery(unlisteners, () => disposed).then(() => {
       if (!disposed) void initializeOpenRequestDelivery(unlisteners, () => disposed);
     });
@@ -337,7 +341,6 @@
       if (disposed) unlisten();
       else unlisteners.push(unlisten);
     }).catch((error) => console.error('Failed to listen for Stack popup close requests', error));
-    void loadStackTerminalProfile();
     void getCurrentWindow().listen<StackFileOperationProgress>(IPC_EVENTS.stackFileOperationProgress, ({ payload }) => {
       if (!activeOperation || payload.operationId !== activeOperation.operationId) return;
       activeOperation = { ...activeOperation, ...payload };
@@ -386,9 +389,6 @@
         window.cancelAnimationFrame(resizeFrame);
       }
       stopMarqueeAutoscroll();
-      const terminalPaneForCleanup = stackTerminalPane as StackTerminalPane | null;
-      void terminalPaneForCleanup?.stopTerminal();
-      window.clearInterval(latestRequestTimer);
       stopOperationClock();
       for (const unlisten of unlisteners) {
         unlisten();
@@ -414,7 +414,13 @@
       popup.listen('tauri://destroyed', () => suspendFolderWatch())
     ];
     // Focus is only a visibility observation, never an eligibility requirement.
-    if (typeof popup.onFocusChanged === 'function') registrations.push(popup.onFocusChanged(() => { void observeFolderWatchVisibility(); }));
+    if (typeof popup.onFocusChanged === 'function') {
+      registrations.push(popup.onFocusChanged((event: { payload: boolean }) => {
+        void observeFolderWatchVisibility();
+        // Recovery for an open event missed while hidden/unfocused; losing focus never pulls.
+        if (event?.payload === true) void reconcileLatestStackPopupRequest();
+      }));
+    }
     const listeners = await Promise.allSettled(registrations);
     folderWatchDeliveryReady = listeners.every((registration) => registration.status === 'fulfilled');
     for (const registration of listeners) {
@@ -426,7 +432,10 @@
       else unlisteners.push(registration.value);
     }
     if (isDisposed()) return;
-    const visibilityChanged = () => { void observeFolderWatchVisibility(); };
+    const visibilityChanged = () => {
+      void observeFolderWatchVisibility();
+      if (!document.hidden) void reconcileLatestStackPopupRequest();
+    };
     document.addEventListener('visibilitychange', visibilityChanged);
     unlisteners.push(() => document.removeEventListener('visibilitychange', visibilityChanged));
   }
@@ -443,7 +452,7 @@
 
   function failFolderWatch(error: StackFolderWatchError) {
     folderWatchErrorMessage = `Automatic folder updates stopped: ${error.message}. Use Refresh to retry.`;
-    suspendFolderWatch();
+    suspendFolderWatch(false);
   }
 
   async function observeFolderWatchVisibility() {
@@ -456,13 +465,19 @@
     }
   }
 
-  function suspendFolderWatch() {
+  function suspendFolderWatch(hiding = true) {
     cancelRowDrag();
-    if (folderWatchVisible) {
-      gitRefreshRevision += 1;
-      gitSummaryRequested = false;
+    if (hiding) {
+      deleteConfirmation = null;
+      if (folderWatchVisible) {
+        gitRefreshRevision += 1;
+        gitSummaryRequested = false;
+      }
+      folderWatchVisible = false;
+      popupVisibilityEpoch += 1;
+    } else {
+      folderWatchEnabled = false;
     }
-    folderWatchVisible = false;
     folderWatchEpoch += 1;
     const epoch = folderWatchEpoch;
     desiredFolderWatch = null;
@@ -480,7 +495,7 @@
   }
 
   function reconcileFolderWatch(folderPath: string, context: GitContext | null, catchup = true) {
-    if (!folderWatchVisible || gitDisposed || !folderWatchDeliveryReady) return Promise.resolve();
+    if (!folderWatchVisible || !folderWatchEnabled || gitDisposed || !folderWatchDeliveryReady) return Promise.resolve();
     const key = context ? `${context.repositoryRoot}\0${context.gitDir}` : `folder:${folderPath}`;
     if (desiredFolderWatch?.key === key) return folderWatchChain;
     const desired = { key, path: context?.repositoryRoot ?? folderPath, epoch: ++folderWatchEpoch };
@@ -611,17 +626,20 @@
     }
   }
 
-  async function refreshExternalFolderRows(path: string, loadSequence: number, epoch: number) {
+  async function refreshExternalFolderRows(path: string, loadSequence: number, epoch: number, afterMutation = false) {
+    const isCurrent = () => !gitDisposed && folderWatchVisible &&
+      epoch === (afterMutation ? popupVisibilityEpoch : folderWatchEpoch) &&
+      path === stackState.currentPath && loadSequence === folderLoadSequence;
     try {
       const listing = await listStackFolder(path);
-      if (!await popupIsVisible() || gitDisposed || epoch !== folderWatchEpoch || path !== stackState.currentPath || loadSequence !== folderLoadSequence) return;
+      if (!await popupIsVisible() || !isCurrent()) return;
       // Commit a complete listing in-place: do not navigate, refocus, reset
       // sorting/search/scroll, or remount an open editor or inline input.
       stackState = applyStackFolderListing(stackState, path, listing);
       scheduleVisibleIconHydration(path, loadSequence);
     } catch (error) {
-      if (!gitDisposed && epoch === folderWatchEpoch && path === stackState.currentPath && loadSequence === folderLoadSequence) {
-        folderWatchErrorMessage = `Automatic folder refresh failed: ${operationErrorMessage(error, 'Folder unavailable')}. Use Refresh.`;
+      if (isCurrent()) {
+        folderWatchErrorMessage = `${afterMutation ? 'Folder refresh failed' : 'Automatic folder refresh failed'}: ${operationErrorMessage(error, 'Folder unavailable')}. Use Refresh.`;
       }
     }
   }
@@ -629,6 +647,8 @@
   async function initializeOpenRequestDelivery(unlisteners: Array<() => void>, isDisposed: () => boolean) {
     try {
       const unlisten = await getCurrentWindow().listen<StackPopupOpenPayload>(STACK_POPUP_OPEN_EVENT, (event: { payload: StackPopupOpenPayload }) => {
+        // A newer event always supersedes any pull still in flight.
+        openRequestGeneration += 1;
         void handleOpenRequest(event.payload);
       });
       if (isDisposed()) {
@@ -644,22 +664,27 @@
     }
   }
 
-  async function openLatestStackPopupRequest() {
+  // Each pull takes a generation; an open event or a newer pull bumps it, so a stale pull result
+  // never navigates. Request keys already applied are rejected again inside handleOpenRequest.
+  let openRequestGeneration = 0;
+  async function pullStackPopupRequest(failure: string) {
     if (disposed) return;
+    const generation = ++openRequestGeneration;
     try {
-      await handleOpenRequest(await getStackPopupRequest());
+      const payload = await getStackPopupRequest();
+      if (disposed || generation !== openRequestGeneration) return;
+      await handleOpenRequest(payload);
     } catch (error) {
-      console.error('Failed to load latest stack popup request', error);
+      console.error(failure, error);
     }
   }
 
+  async function openLatestStackPopupRequest() {
+    await pullStackPopupRequest('Failed to load latest stack popup request');
+  }
+
   async function reconcileLatestStackPopupRequest() {
-    if (disposed) return;
-    try {
-      await handleOpenRequest(await getStackPopupRequest());
-    } catch (error) {
-      console.error('Failed to reconcile latest stack popup request', error);
-    }
+    await pullStackPopupRequest('Failed to reconcile latest stack popup request');
   }
 
   async function handleOpenRequest(payload: StackPopupOpenPayload) {
@@ -676,14 +701,12 @@
     if (visibilityEpoch !== folderWatchEpoch && !folderWatchVisible) return;
     if (requestKey === lastHandledOpenRequestKey || requestKey === pendingOpenRequestKey) return;
     folderWatchVisible = true;
+    folderWatchEnabled = true;
     pendingOpenRequestKey = requestKey;
     try {
       lastHandledOpenRequestKey = requestKey;
       await requestEditorExit(async () => {
         if (disposed) return;
-        await stopCurrentStackTerminal();
-        if (disposed) return;
-        stackBrowserViewMode = 'files';
         await performOpenFolder(path);
       });
     } finally {
@@ -720,6 +743,7 @@
     }
 
     closeMenus();
+    deleteConfirmation = null;
     const loadSequence = ++folderLoadSequence;
     stackSortLockedByUser = false;
     startNewIconHydrationSession(folderPath);
@@ -892,6 +916,7 @@
       return;
     }
 
+    deleteConfirmation = null;
     const loadSequence = ++folderLoadSequence;
     stackSortLockedByUser = false;
     startNewIconHydrationSession(folderPath);
@@ -1057,6 +1082,7 @@
 
   async function refreshCurrentFolder() {
     folderWatchVisible = true;
+    folderWatchEnabled = true;
     if (!activeFolderWatch) desiredFolderWatch = null;
     invalidateGitSummary();
     await loadFolder(currentPath);
@@ -1334,6 +1360,7 @@
       captureFolderViewport();
       editorSaved = captureGitInvalidation();
       editorPath = entry.path;
+      loadEditorPane();
       return;
     } else {
       await openStackItem(entry.path);
@@ -1406,42 +1433,95 @@
   }
 
   async function copySelected(cut: boolean) {
+    const paths = selectedPaths;
+    if (!paths.length || fileTransferPending || fileOperationBusy || disposed) return;
     closeMenus();
-    if (!selectedPaths.length) {
-      return;
-    }
-
+    fileTransferPending = true;
     try {
-      await copyStackItems(selectedPaths, cut);
+      await copyStackItems(paths, cut);
+      if (disposed) return;
       errorMessage = '';
-      stackState = { ...stackState, statusMessage: `${cut ? 'Cut' : 'Copied'} ${selectedPaths.length} item${selectedPaths.length === 1 ? '' : 's'}` };
+      stackState = { ...stackState, statusMessage: `${cut ? 'Cut' : 'Copied'} ${paths.length} item${paths.length === 1 ? '' : 's'}` };
     } catch (error) {
+      if (disposed) return;
       console.error('Failed to copy stack items', error);
       errorMessage = operationErrorMessage(error, cut ? 'Cut unavailable' : 'Copy unavailable');
+    } finally {
+      fileTransferPending = false;
     }
   }
 
   async function pasteIntoCurrentFolder() {
-    closeMenus();
-    if (!currentPath) {
+    const folder = currentPath;
+    if (!folder || disposed) return;
+    if (fileTransferPending || fileOperationBusy) {
+      pasteBusyMessage = 'File operation busy. Try Paste again when it finishes.';
       return;
     }
+    pasteBusyMessage = '';
+    closeMenus();
 
+    const sequence = folderLoadSequence;
+    const epoch = popupVisibilityEpoch;
+    fileTransferPending = true;
     const operationId = beginFileOperation('paste', 'planning');
     const refreshGit = captureGitInvalidation();
     try {
-      const listing = await invokePaste(currentPath, operationId, refreshGit);
-      stackState = applyStackFolderListing(stackState, currentPath, listing);
+      const listing = await invokePaste(folder, operationId, refreshGit, recordUndoMoveId);
+      if (disposed || activeOperation?.operationId !== operationId) return;
+      if (folder === stackState.currentPath && sequence === folderLoadSequence && epoch === popupVisibilityEpoch) {
+        stackState = applyStackFolderListing(stackState, folder, listing);
+      }
       errorMessage = pasteFailureSummary(listing.pasteFailures);
       finishFileOperation(operationId, errorMessage || undefined);
     } catch (error) {
+      if (disposed || activeOperation?.operationId !== operationId) return;
       console.error('Failed to paste stack items', error);
       errorMessage = operationErrorMessage(error, 'Paste unavailable');
       failFileOperation(operationId, errorMessage);
+    } finally {
+      fileTransferPending = false;
+    }
+  }
+
+  function recordUndoMoveId(receipt: string | null | undefined, kind: 'move' | 'delete' = 'move') {
+    if (!disposed && receipt !== undefined) undoReceipt = receipt === null ? null : { id: receipt, kind };
+  }
+
+  async function undoLastMove() {
+    if (!canUndoMove || !undoReceipt || fileTransferPending || disposed || document.hidden) return;
+    const receipt = undoReceipt;
+    const folder = stackState.currentPath;
+    const sequence = folderLoadSequence;
+    const epoch = popupVisibilityEpoch;
+    const refreshGit = captureGitInvalidation();
+    fileTransferPending = true;
+    undoReceipt = null;
+    errorMessage = '';
+    const operationId = beginFileOperation('paste', 'moving', { message: receipt.kind === 'delete' ? 'Undoing delete…' : 'Undoing move…' });
+    try {
+      const result = await undoStackMove(receipt.id);
+      if (disposed) return;
+      if (result.moved) {
+        refreshGit();
+        await refreshExternalFolderRows(folder, sequence, epoch, true);
+      }
+      if (disposed || activeOperation?.operationId !== operationId) return;
+      errorMessage = pasteFailureSummary(result.failures, 'Undo');
+      finishFileOperation(operationId, errorMessage || undefined);
+      activeOperation = { ...activeOperation, message: errorMessage ? 'Undo incomplete' : result.moved ? (receipt.kind === 'delete' ? 'Deleted items restored' : 'Move undone') : 'Nothing to undo' };
+    } catch (error) {
+      if (disposed || activeOperation?.operationId !== operationId) return;
+      errorMessage = operationErrorMessage(error, `Undo ${receipt.kind} unavailable`);
+      failFileOperation(operationId, errorMessage);
+      activeOperation = { ...activeOperation, message: 'Undo failed' };
+    } finally {
+      fileTransferPending = false;
     }
   }
 
   async function deleteSelected() {
+    if (fileTransferPending || fileOperationBusy || deleteConfirmation || disposed || !folderWatchVisible || document.hidden || loadingPath || hasRetainedRows) return;
     closeMenus();
     if (!selectedPaths.length || !currentPath) {
       return;
@@ -1456,7 +1536,9 @@
       title: deletePrompt.title,
       message: deletePrompt.message,
       paths: deletePrompt.paths,
-      folderPath: currentPath
+      folderPath: currentPath,
+      loadSequence: folderLoadSequence,
+      visibilityEpoch: popupVisibilityEpoch
     };
   }
 
@@ -1466,12 +1548,18 @@
   }
 
   async function confirmDeleteSelection() {
-    const refreshGit = captureGitInvalidation();
     const pendingDelete = deleteConfirmation;
-    if (!pendingDelete) {
+    if (!pendingDelete || fileTransferPending || fileOperationBusy) return;
+
+    const { loadSequence: sequence, visibilityEpoch: epoch } = pendingDelete;
+    const isCurrent = () => !disposed && folderWatchVisible && !document.hidden &&
+      currentPath === pendingDelete.folderPath && sequence === folderLoadSequence && epoch === popupVisibilityEpoch;
+    if (!isCurrent()) {
+      deleteConfirmation = null;
       return;
     }
-
+    const refreshGit = captureGitInvalidation();
+    fileTransferPending = true;
     deleteConfirmation = null;
     const operationId = beginFileOperation('delete', 'deleting', {
       determinate: false,
@@ -1482,30 +1570,24 @@
     try {
       await beginStackPopupFocusLossHold();
       focusHoldStarted = true;
-      const failures: string[] = [];
-      for (const [index, path] of pendingDelete.paths.entries()) {
-        updateDeleteProgress(operationId, index, pendingDelete.paths.length, path);
-        try {
-          await invokeDelete(path, operationId);
-          updateDeleteProgress(operationId, index + 1, pendingDelete.paths.length, path);
-        } catch (error) {
-          failures.push(operationErrorMessage(error, `Failed to delete ${path}`));
-        }
+      if (!await popupIsVisible() || !isCurrent()) {
+        finishFileOperation(operationId);
+        return;
       }
-      if (failures.length < pendingDelete.paths.length) refreshGit();
-      refreshFileOperation(operationId);
-      const listing = await listStackFolder(pendingDelete.folderPath);
-      if (currentPath === pendingDelete.folderPath) {
-        stackState = applyStackFolderListing(stackState, pendingDelete.folderPath, listing);
-      } else {
-        await loadFolder(currentPath);
+      const result = await deleteStackItems(pendingDelete.paths, operationId);
+      if (disposed) return;
+      recordUndoMoveId(result.undoMoveId, 'delete');
+      if (result.deleted) {
+        refreshGit();
+        refreshFileOperation(operationId);
+        await refreshExternalFolderRows(pendingDelete.folderPath, sequence, epoch, true);
       }
-      focusDetailsGrid();
-      errorMessage = failures.length
-        ? `Delete completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: ${failures[0]}`
-        : '';
-      finishFileOperation(operationId, failures.length ? errorMessage : undefined);
+      if (disposed || activeOperation?.operationId !== operationId) return;
+      if (sequence === folderLoadSequence && epoch === popupVisibilityEpoch) focusDetailsGrid();
+      errorMessage = pasteFailureSummary(result.failures, 'Delete');
+      finishFileOperation(operationId, errorMessage || undefined);
     } catch (error) {
+      if (disposed || activeOperation?.operationId !== operationId) return;
       console.error('Failed to delete stack item', error);
       errorMessage = operationErrorMessage(error, 'Delete unavailable');
       failFileOperation(operationId, errorMessage);
@@ -1518,6 +1600,7 @@
           errorMessage ||= operationErrorMessage(error, 'Stack Browser focus restore failed');
         }
       }
+      fileTransferPending = false;
     }
   }
 
@@ -1571,64 +1654,6 @@
     }
   }
 
-  async function loadStackTerminalProfile() {
-    try {
-      const settings = await loadShellSettings();
-      stackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
-    } catch (error) {
-      console.debug('Stack terminal profile unavailable', error);
-      stackTerminalProfile = 'windowsTerminal';
-    }
-  }
-
-  async function switchStackBrowserView(mode: StackBrowserViewMode) {
-    closeMenus();
-    if (mode === 'files') {
-      await stackTerminalPane?.syncFolderToTerminalCwd();
-      stackBrowserViewMode = 'files';
-      return;
-    }
-    stackBrowserViewMode = 'terminal';
-    await tick();
-    await stackTerminalPane?.startTerminal(true);
-  }
-
-  async function ensureStackTerminal() {
-    if (!currentPath) {
-      return;
-    }
-    await tick();
-    await stackTerminalPane?.startTerminal(true);
-  }
-
-  async function warmStackTerminalForCurrentFolder() {
-    if (!currentPath) {
-      return;
-    }
-    await tick();
-    await stackTerminalPane?.startTerminal(false);
-  }
-
-  async function restartStackTerminal(focusAfterStart = false) {
-    await loadStackTerminalProfile();
-    await tick();
-    await stackTerminalPane?.startTerminal(focusAfterStart || stackBrowserViewMode === 'terminal');
-  }
-
-  function focusStackTerminalInput() {
-    stackTerminalPane?.focusTerminal();
-  }
-
-  async function stopCurrentStackTerminal() {
-    await stackTerminalPane?.stopTerminal();
-  }
-
-  async function handleStackTerminalCwdChange(cwd: string) {
-    if (stackBrowserViewMode === 'terminal' && cwd && cwd !== currentPath) {
-      await openFolder(cwd, { warmTerminal: false });
-    }
-  }
-
   function handleEditorDirtyChange(dirty: boolean) {
     editorDirty = dirty;
   }
@@ -1675,9 +1700,9 @@
 
   function closeStackPopupFromSurface() {
     void requestEditorExit(async () => {
-      await stopCurrentStackTerminal();
-      stackBrowserViewMode = 'files';
       suspendFolderWatch();
+      // A Git pane still loading or failed must not mount into a hidden popup.
+      if (gitStatusPopupOpen && !StackGitPanelPane) closeGitStatusPopup();
       await hideStackPopup();
     }).catch((error) => {
       console.error('Failed to hide stack popup', error);
@@ -1910,26 +1935,6 @@
     return fallback;
   }
 
-  function pasteFailureSummary(failures: { path: string; message: string }[]) {
-    if (!failures.length) {
-      return '';
-    }
-    const first = failures[0];
-    const suffix = failures.length === 1 ? '' : ` and ${failures.length - 1} more`;
-    return `Paste completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: ${first.message}${suffix}`;
-  }
-
-  function formatModified(modifiedMs: number | null | undefined) {
-    if (!modifiedMs) {
-      return '';
-    }
-
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'short',
-      timeStyle: 'short'
-    }).format(new Date(modifiedMs));
-  }
-
   function closeMenus() {
     ++openWithRevision;
     closeOpenWith();
@@ -1945,6 +1950,7 @@
     gitStatusPopupFilter = filter;
     gitPanelRefresh = captureGitInvalidation();
     gitStatusPopupOpen = true;
+    loadGitPane();
   }
 
   function closeGitStatusPopup() {
@@ -2090,13 +2096,7 @@
     stopOperationClock();
   }
 
-  function updateDeleteProgress(operationId: string, completedItems: number, totalItems: number, currentPath: string) {
-    if (activeOperation?.operationId !== operationId) return;
-    activeOperation = { ...activeOperation, phase: 'deleting', determinate: false, completedItems, totalItems, currentPath };
-  }
-
   const invokePaste = pasteStackItems;
-  const invokeDelete = deleteStackItem as unknown as (path: string, operationId: string) => ReturnType<typeof deleteStackItem>;
   const invokeExtract = extractStackArchive as unknown as (
     archivePath: string,
     destinationMode: StackArchiveDestinationMode,
@@ -2377,15 +2377,6 @@
     return stackSortHeaderState(stackState, column);
   }
 
-  function stackAttributeLabels(entry: StackEntry) {
-    const labels = [];
-    if (entry.isHidden) labels.push('Hidden');
-    if (entry.isSystem) labels.push('System');
-    if (entry.isReadonly) labels.push('Read-only');
-    if (entry.isSymlink || entry.isReparsePoint) labels.push('Link');
-    return labels;
-  }
-
   function selectEntryFromMouse(event: MouseEvent, entry: StackEntry) {
     if (hasRetainedRows) {
       return;
@@ -2442,41 +2433,8 @@
     return parts;
   }
 
-  function stackGitStatusForEntry(
-    entry: StackEntry,
-    status: StackGitStatus | null,
-    statusPath: string,
-    folderPath: string,
-    canonicalPath: string | undefined
-  ) {
-    if (!status || statusPath !== folderPath) {
-      return null;
-    }
-    // Native context verified this folder's alias; compare rows in canonical Git coordinates.
-    const entryPath = canonicalPath ? `${canonicalPath.replace(/[\\/]+$/, '')}${entry.path.slice(folderPath.replace(/[\\/]+$/, '').length)}` : entry.path;
-    let nestedStatus: StackGitFileStatusKind | null = null;
-    for (const item of status.entries) {
-      if (stackGitStatusPathMatchesEntry(entryPath, item.path, false)) {
-        return item.status;
-      }
-      if (entry.entryType === 'Folder' && stackGitStatusPathMatchesEntry(entryPath, item.path, true)) {
-        nestedStatus = stackGitStatusPriority(nestedStatus, item.status);
-      }
-    }
-    return nestedStatus;
-  }
-
-  function stackGitStatusPriority(current: StackGitFileStatusKind | null, next: StackGitFileStatusKind) {
-    const rank: Record<StackGitFileStatusKind, number> = {
-      modified: 1,
-      untracked: 2,
-      added: 3,
-      deleted: 4,
-      conflict: 5
-    };
-    return !current || rank[next] > rank[current] ? next : current;
-  }
-
+  // Row badges resolve through a precomputed index (see `stackGitStatusFromIndex`) built in the
+  // reactive block near `visibleEntries`; it keeps the `stackGitStatusPathMatchesEntry` matching rules.
   function beginMarqueeSelection(event: PointerEvent) {
     if (
       event.button !== 0
@@ -2759,13 +2717,14 @@
   }
 
   function canDropLocally(session?: LocalDragSession) {
-    return !disposed && folderWatchVisible && !document.hidden && !loadingPath && !hasRetainedRows &&
+    return !disposed && !fileTransferPending && folderWatchVisible && !document.hidden && !loadingPath && !hasRetainedRows &&
       !!stackState.currentPath && stackState.entriesPath === stackState.currentPath &&
-      stackBrowserViewMode === 'files' && !editorPath && !gitStatusPopupOpen && !rowMenu && !backgroundMenu &&
+      !editorPath && !gitStatusPopupOpen && !rowMenu && !backgroundMenu &&
       !deleteConfirmation && !pendingEditorExit && createFolderDraft === null && renameDraft === null &&
       (!activeOperation || activeOperation.phase === 'completed' || activeOperation.phase === 'failed') &&
       (!session || (session.grid === detailsGrid && session.grid.isConnected &&
-        session.folderPath === stackState.currentPath && session.loadSequence === folderLoadSequence));
+        session.folderPath === stackState.currentPath && session.loadSequence === folderLoadSequence &&
+        session.visibilityEpoch === popupVisibilityEpoch));
   }
 
   function startLocalDrag(event: PointerEvent) {
@@ -2780,7 +2739,7 @@
     rowDragCapture = grid;
     return {
       paths, grid, folderPath: stackState.currentPath,
-      loadSequence: folderLoadSequence, visibilityEpoch: folderWatchEpoch,
+      loadSequence: folderLoadSequence, visibilityEpoch: popupVisibilityEpoch,
       prepared: Promise.resolve().then(() => prepareStackLocalDrop(paths)).then(
         (requestId) => ({ requestId }), (error: unknown) => ({ error })
       )
@@ -2873,14 +2832,17 @@
   }
 
   async function moveLocalDrop(session: LocalDragSession, requestId: string, destination: string) {
+    if (!canDropLocally(session)) return;
+    fileTransferPending = true;
     const operationId = beginFileOperation('paste', 'moving');
     const refreshGit = captureGitInvalidation();
     try {
       const result = await commitStackLocalDrop(requestId, destination);
       if (disposed) return;
+      recordUndoMoveId(result.undoMoveId);
       if (result.moved) {
         refreshGit();
-        await refreshExternalFolderRows(session.folderPath, session.loadSequence, session.visibilityEpoch);
+        await refreshExternalFolderRows(session.folderPath, session.loadSequence, session.visibilityEpoch, true);
       }
       if (disposed || activeOperation?.operationId !== operationId) return;
       errorMessage = pasteFailureSummary(result.failures);
@@ -2889,6 +2851,8 @@
       if (disposed || activeOperation?.operationId !== operationId) return;
       errorMessage = operationErrorMessage(error, 'Move unavailable');
       failFileOperation(operationId, errorMessage);
+    } finally {
+      fileTransferPending = false;
     }
   }
 
@@ -2933,20 +2897,21 @@
   }
 
   async function pasteDroppedPaths(paths: string[], destinationPath: string, move: boolean) {
-    if (!paths.length || !destinationPath) return;
+    if (!paths.length || !destinationPath || fileTransferPending || fileOperationBusy || disposed) return;
     const folder = stackState.currentPath;
     const sequence = folderLoadSequence;
-    const epoch = folderWatchEpoch;
+    const epoch = popupVisibilityEpoch;
+    fileTransferPending = true;
     const operationId = beginFileOperation('paste', move ? 'moving' : 'copying');
     const refreshGit = captureGitInvalidation();
     try {
       await copyStackItems(paths, move);
-      const listing = await invokePaste(destinationPath, operationId, refreshGit);
+      const listing = await invokePaste(destinationPath, operationId, refreshGit, recordUndoMoveId);
       if (disposed) return;
-      if (destinationPath === folder && folder === stackState.currentPath && sequence === folderLoadSequence && epoch === folderWatchEpoch) {
+      if (destinationPath === folder && folder === stackState.currentPath && sequence === folderLoadSequence && epoch === popupVisibilityEpoch) {
         stackState = applyStackFolderListing(stackState, folder, listing);
       } else if (destinationPath !== folder) {
-        await refreshExternalFolderRows(folder, sequence, epoch);
+        await refreshExternalFolderRows(folder, sequence, epoch, true);
       }
       if (disposed || activeOperation?.operationId !== operationId) return;
       errorMessage = pasteFailureSummary(listing.pasteFailures);
@@ -2956,7 +2921,9 @@
       console.error('Failed to drop stack items', error);
       errorMessage = operationErrorMessage(error, 'Drop unavailable');
       failFileOperation(operationId, errorMessage);
-      await refreshExternalFolderRows(folder, sequence, epoch);
+      await refreshExternalFolderRows(folder, sequence, epoch, true);
+    } finally {
+      fileTransferPending = false;
     }
   }
 
@@ -3005,6 +2972,14 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+      if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 ||
+          event.metaKey || event.altKey || event.shiftKey || event.composedPath().some(isEditableKeyTarget) ||
+          !canUndoMove || fileTransferPending || disposed || document.hidden) return;
+      event.preventDefault();
+      void undoLastMove();
+      return;
+    }
     if (editorPath || gitStatusPopupOpen || isEditableKeyTarget(event.target)) {
       return;
     }
@@ -3099,16 +3074,73 @@
     const direction = event.button === 3 ? -1 : 1;
     if (pendingEditorExit) { editorExitDialog?.handleMouseNavigation(direction); return; }
     if (deleteConfirmation) { deleteDialog?.handleMouseNavigation(direction); return; }
-    if (editorPath) { textEditor?.handleMouseNavigation(direction); return; }
-    if (gitStatusPopupOpen) { gitPanel?.handleMouseNavigation(direction); return; }
+    if (editorPath) {
+      // Pane still loading or failed to load: no child exists, so Back leaves via the shared exit path.
+      if (textEditor) textEditor.handleMouseNavigation(direction);
+      else if (direction === -1) requestEditorClose(false);
+      return;
+    }
+    if (gitStatusPopupOpen) {
+      if (gitPanel) gitPanel.handleMouseNavigation(direction);
+      else if (direction === -1) closeGitStatusPopup();
+      return;
+    }
     if (rowMenu || backgroundMenu) { if (direction === -1) closeMenus(); return; }
     if (renameDraft !== null || createFolderDraft !== null) { if (direction === -1) cancelInlineEditor(); return; }
-    if (stackBrowserViewMode === 'terminal') return;
     if (direction === -1 ? canGoBack : canGoForward) void navigateHistory(direction);
   }
 
-  let textEditor: StackTextEditor | undefined;
-  let gitPanel: StackGitPanel | undefined;
+  let textEditor: StackTextEditorComponent | null | undefined;
+  let gitPanel: StackGitPanelComponent | null | undefined;
+  // FE-34 lazy panes. A failed import() is cached by the browser for the same specifier, so Retry may keep failing until reload.
+  let StackTextEditorPane: typeof StackTextEditorComponent | null = null;
+  let StackGitPanelPane: typeof StackGitPanelComponent | null = null;
+  let editorLoadError = false;
+  let gitLoadError = false;
+  let editorLoadToken = 0;
+  let gitLoadToken = 0;
+  $: if (!editorPath) editorLoadError = false;
+  $: if (!gitStatusPopupOpen) gitLoadError = false;
+
+  function focusPendingPane(node: HTMLElement) {
+    node.focus({ preventScroll: true });
+  }
+
+  // Escape leaves a pane that is still loading or failed, as it does once mounted (no child owns the key yet).
+  function handlePendingPaneEscape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (editorPath && !StackTextEditorPane) {
+      event.preventDefault();
+      requestEditorClose(false);
+    } else if (!editorPath && gitStatusPopupOpen && !StackGitPanelPane) {
+      event.preventDefault();
+      closeGitStatusPopup();
+    }
+  }
+
+  function loadEditorPane() {
+    if (StackTextEditorPane) return;
+    editorLoadError = false;
+    const token = ++editorLoadToken;
+    import('./StackTextEditor.svelte').then((module) => {
+      if (!disposed) StackTextEditorPane = module.default;
+    }).catch((error) => {
+      console.error('Failed to load Stack editor', error);
+      if (!disposed && token === editorLoadToken && editorPath) editorLoadError = true;
+    });
+  }
+
+  function loadGitPane() {
+    if (StackGitPanelPane) return;
+    gitLoadError = false;
+    const token = ++gitLoadToken;
+    import('./StackGitPanel.svelte').then((module) => {
+      if (!disposed) StackGitPanelPane = module.default;
+    }).catch((error) => {
+      console.error('Failed to load Stack Git panel', error);
+      if (!disposed && token === gitLoadToken && gitStatusPopupOpen) gitLoadError = true;
+    });
+  }
   let deleteDialog: StackConfirmDialog | undefined;
   let editorExitDialog: StackConfirmDialog | undefined;
 
@@ -3205,6 +3237,7 @@
 
 <svelte:window
   on:keydown|capture={cancelRowDragOnEscape}
+  on:keydown={handlePendingPaneEscape}
   on:keydown={handleKeydown}
   on:click|capture={suppressTrailingDragClick}
   on:dblclick|capture={suppressTrailingDragClick}
@@ -3226,12 +3259,17 @@
   on:resize={() => { updateDetailsViewport(); void positionOpenMenus(); }}
 />
 
-<svelte:document on:visibilitychange={() => { if (document.hidden) cancelRowDrag(); }} />
+<svelte:document on:visibilitychange={() => {
+  if (document.hidden) {
+    deleteConfirmation = null;
+    popupVisibilityEpoch += 1;
+    cancelRowDrag();
+  }
+}} />
 
 <section
   bind:this={stackPopupSurface}
   class:resizing={!!resizeDrag}
-  class:terminal-mode={stackBrowserViewMode === 'terminal'}
   class="stack-popup"
   aria-label="Stack browser"
   aria-busy={loadingPath ? 'true' : 'false'}
@@ -3326,11 +3364,16 @@
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Back" tooltip="Back" disabled={!canGoBack} onClick={() => void navigateHistory(-1)}><MaterialSymbolIcon name="arrow_back" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Forward" tooltip="Forward" disabled={!canGoForward} onClick={() => void navigateHistory(1)}><MaterialSymbolIcon name="arrow_forward" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Refresh" tooltip="Refresh" onClick={() => void refreshCurrentFolder()}><MaterialSymbolIcon name="refresh" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel={undoLabel} tooltip={`${undoLabel} (Ctrl+Z)`} disabled={!canUndoMove} onKeyDown={(event) => { if (event.key === 'Enter') event.stopPropagation(); }} onClick={() => void undoLastMove()}>
+        <svg viewBox="0 -960 960 960" width="16" height="16" fill="currentColor" aria-hidden="true" focusable="false">
+          <path d="M280-200v-80h284q65 0 110.5-44T720-432q0-64-45.5-108T564-584H312l104 104-56 56-200-200 200-200 56 56-104 104h252q98 0 167 67t69 165q0 98-69 165t-167 67H280Z" />
+        </svg>
+      </MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel={selectedEntry?.entryType === 'Folder' ? 'Copy folder' : 'Copy selected item'} tooltip={selectedEntry?.entryType === 'Folder' ? 'Copy folder' : 'Copy selected item'} disabled={!hasSelection} onClick={() => void copySelected(false)}><MaterialSymbolIcon name={selectedEntry?.entryType === 'Folder' ? 'folder_copy' : 'file_copy'} /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Cut selected item" tooltip="Cut selected item" disabled={!hasSelection} onClick={() => void copySelected(true)}><MaterialSymbolIcon name="content_cut" /></MeltActionButton>
-      <MeltActionButton class="stack-action-icon-button" ariaLabel="Paste into current folder" tooltip="Paste into current folder" disabled={!currentPath} onClick={() => void pasteIntoCurrentFolder()}><MaterialSymbolIcon name="content_paste" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Paste into current folder" tooltip="Paste into current folder" disabled={!currentPath || fileTransferPending || fileOperationBusy} onClick={() => void pasteIntoCurrentFolder()}><MaterialSymbolIcon name="content_paste" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Rename selected item" tooltip="Rename selected item" disabled={!selectedEntry} onClick={beginRenameSelected}><MaterialSymbolIcon name="drive_file_rename" /></MeltActionButton>
-      <MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled={!hasSelection} onClick={() => void deleteSelected()}><MaterialSymbolIcon name="delete" /></MeltActionButton>
+      <MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled={!hasSelection || fileTransferPending || fileOperationBusy} onClick={() => void deleteSelected()}><MaterialSymbolIcon name="delete" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="New folder" tooltip="New folder" disabled={!currentPath} onClick={beginCreateFolder}><MaterialSymbolIcon name="create_new_folder" /></MeltActionButton>
       <MeltActionButton class="stack-action-icon-button" ariaLabel="Reveal selected item" tooltip="Reveal selected item" disabled={!selectedEntry} onClick={() => void revealSelected()}><MaterialSymbolIcon name="preview" /></MeltActionButton>
       <div class="stack-pin-status">
@@ -3349,7 +3392,7 @@
                 <span class="stack-operation-spinner" aria-hidden="true"></span>
               {/if}
               <span>{operationStatusText(activeOperation)}</span>
-              {#if activeOperation.operation === 'paste' && activeOperation.error}
+              {#if (activeOperation.operation === 'paste' || activeOperation.operation === 'delete') && activeOperation.error}
                 <span title={activeOperation.error}>{activeOperation.error}</span>
               {/if}
             </div>
@@ -3358,6 +3401,9 @@
           {/if}
           {#if folderWatchErrorMessage}
             <span title={folderWatchErrorMessage}>{folderWatchErrorMessage}</span>
+          {/if}
+          {#if pasteBusyMessage}
+            <span title={pasteBusyMessage}>{pasteBusyMessage}</span>
           {/if}
           {#if !activeOperation && loadingPath}
             <span title="Loading...">Loading...</span>
@@ -3415,16 +3461,35 @@
     </form>
   {/if}
   {#if editorPath}
-    <StackTextEditor bind:this={textEditor} path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} onSaved={editorSaved} />
+    {#if StackTextEditorPane}
+      <svelte:component this={StackTextEditorPane} bind:this={textEditor} path={editorPath} onDirtyChange={handleEditorDirtyChange} onDismiss={requestEditorClose} onSaved={editorSaved} />
+    {:else if editorLoadError}
+      <div class="empty-stack surface-state error" role="alert" tabindex="-1" use:focusPendingPane>
+        <span>Couldn't load the editor. Loading failed.</span>
+        <MeltActionButton onClick={loadEditorPane}>Retry</MeltActionButton>
+      </div>
+    {:else}
+      <div class="empty-stack surface-state loading" role="status" aria-label="Loading editor…" tabindex="-1" use:focusPendingPane>Loading editor…</div>
+    {/if}
   {:else if gitStatusPopupOpen}
-    <StackGitPanel
-      bind:this={gitPanel}
-      folderPath={currentPath}
-      initialStatus={null}
-      initialChangeFilter={gitStatusPopupFilter}
-      onClose={closeGitStatusPopup}
-      onRefresh={gitPanelRefresh}
-    />
+    {#if StackGitPanelPane}
+      <svelte:component
+        this={StackGitPanelPane}
+        bind:this={gitPanel}
+        folderPath={currentPath}
+        initialStatus={null}
+        initialChangeFilter={gitStatusPopupFilter}
+        onClose={closeGitStatusPopup}
+        onRefresh={gitPanelRefresh}
+      />
+    {:else if gitLoadError}
+      <div class="empty-stack surface-state error" role="alert">
+        <span>Couldn't load the Git panel. Loading failed.</span>
+        <MeltActionButton onClick={loadGitPane}>Retry</MeltActionButton>
+      </div>
+    {:else}
+      <div class="empty-stack surface-state loading" role="status" aria-label="Loading Git panel…">Loading Git panel…</div>
+    {/if}
   {:else}
     <div
       class="details-table"
@@ -3463,9 +3528,11 @@
         {#each virtualEntries.rows as virtualRow (virtualRow.item.id)}
           {@const entry = virtualRow.item}
           {@const fileIcon = stackFileIconForEntry(entry)}
-          {@const gitEntryStatus = stackGitStatusForEntry(entry, gitStatus, gitStatusPath, currentPath, gitRepositoryContext?.canonicalPath)}
+          {@const gitEntryStatus = stackGitStatusFromIndex(gitStatusIndex, entry)}
+          {@const attributeLabels = stackAttributeLabels(entry)}
+          {@const entrySelected = selectedPathSet.has(entry.path)}
           <button
-            class:selected={stackState.selectedPaths.includes(entry.path)}
+            class:selected={entrySelected}
             class:local-drop-target={localDropTargetPath === entry.path}
             class:subdued={entry.isHidden || entry.isSystem}
             class:readonly={entry.isReadonly}
@@ -3480,7 +3547,7 @@
             type="button"
             role="row"
             aria-rowindex={virtualRow.index + 2}
-            aria-selected={stackState.selectedPaths.includes(entry.path)}
+            aria-selected={entrySelected}
             aria-disabled={hasRetainedRows}
             disabled={hasRetainedRows}
             data-stack-entry-path={entry.path}
@@ -3504,9 +3571,9 @@
                 {/if}
               </span>
               <span>{entry.name}</span>
-              {#if stackAttributeLabels(entry).length}
-                <span class="item-badges" aria-label={stackAttributeLabels(entry).join(', ')}>
-                  {#each stackAttributeLabels(entry) as label (label)}
+              {#if attributeLabels.length}
+                <span class="item-badges" aria-label={attributeLabels.join(', ')}>
+                  {#each attributeLabels as label (label)}
                     <span>{label}</span>
                   {/each}
                 </span>
@@ -3517,7 +3584,7 @@
             </span>
             <span role="gridcell" aria-colindex="2">{entry.typeLabel}</span>
             <span role="gridcell" aria-colindex="3">{formatStackSize(entry.size)}</span>
-            <span role="gridcell" aria-colindex="4">{formatModified(entry.modifiedMs)}</span>
+            <span role="gridcell" aria-colindex="4">{formatStackModified(entry.modifiedMs)}</span>
           </button>
         {/each}
         {#if virtualEntries.afterHeight}

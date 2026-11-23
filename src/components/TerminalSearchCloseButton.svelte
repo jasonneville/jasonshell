@@ -28,7 +28,7 @@
   }
 
   .terminal-search-close:focus-visible {
-    outline: 2px solid var(--js-color-accent);
+    outline: 2px solid var(--js-focus-color);
     outline-offset: 1px;
     box-shadow: none;
   }

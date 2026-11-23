@@ -103,13 +103,18 @@ it.each(['folder', 'text', 'rename', 'paste', 'delete', 'extract'])('successful 
   } else if (operation === 'paste') {
     await fireEvent.click(screen.getByRole('button', { name: 'Paste into current folder' }));
   } else if (operation === 'delete') {
-    await fireEvent.click(screen.getByText('draft.txt')); await fireEvent.click(screen.getByRole('button', { name: 'Delete selected item' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete', exact: true }));
+    const visibility = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    overrides.set('delete_stack_items', () => ({ deleted: 1, failures: [] }));
+    try {
+      await fireEvent.click(screen.getByText('draft.txt')); await fireEvent.click(screen.getByRole('button', { name: 'Delete selected item' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Delete', exact: true }));
+      await waitFor(() => expect(calls('delete_stack_items')).toHaveLength(1));
+    } finally { visibility.mockRestore(); }
   } else {
     const archive = screen.getByText('archive.zip'); await fireEvent.click(archive); await fireEvent.contextMenu(archive);
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Extract here', exact: true }));
   }
-  const command = { folder: 'new_stack_folder', text: 'new_stack_text_file', rename: 'rename_stack_item', paste: 'paste_stack_items', delete: 'delete_stack_item', extract: 'extract_stack_archive' }[operation]!;
+  const command = { folder: 'new_stack_folder', text: 'new_stack_text_file', rename: 'rename_stack_item', paste: 'paste_stack_items', delete: 'delete_stack_items', extract: 'extract_stack_archive' }[operation]!;
   await waitFor(() => expect(calls(command)).toHaveLength(1));
   await waitFor(() => expect(calls('get_stack_git_summary')).toHaveLength(2));
 });
@@ -153,7 +158,7 @@ it('two explicit refreshes reject older same-repo summary completion', async () 
 it.each([true, false])('Git stage action success=%s invalidates summary only after success', async (success) => {
   await open(); overrides.set('stack_git_add_paths', () => success ? { repositoryRoot: child, summary: 'Added', output: '' } : Promise.reject(new Error('stage failed')));
   await fireEvent.click(branch()!); await screen.findByRole('region', { name: 'Git panel' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Stage all unstaged files' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Stage all unstaged files' }));
   await waitFor(() => expect(calls('stack_git_add_paths')).toHaveLength(1));
   if (success) await waitFor(() => expect(calls('get_stack_git_summary')).toHaveLength(2));
   else { await screen.findAllByText(/stage failed/i); expect(calls('get_stack_git_summary')).toHaveLength(1); }

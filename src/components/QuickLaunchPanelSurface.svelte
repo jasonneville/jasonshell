@@ -327,8 +327,8 @@
 
   .rows button:focus-visible {
     background: var(--js-color-selected);
-    box-shadow: var(--js-focus-ring);
-    outline: 0;
+    outline: 2px solid var(--js-focus-color);
+    outline-offset: -2px;
   }
 
   .launcher-icon {

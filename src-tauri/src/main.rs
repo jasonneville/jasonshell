@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #![deny(clashing_extern_declarations)]
 
@@ -15,11 +16,15 @@ mod graceful_exit;
 mod shutdown_workers;
 mod launchers;
 mod layout;
+mod process_flags;
 mod process_manager;
 mod providers;
 #[cfg(windows)]
 mod quick_command_notification;
 mod quick_command_notification_queue;
+#[cfg(test)]
+#[path = "quick_command_notification_tier1_tests.rs"]
+mod quick_command_notification_tier1_tests;
 mod quick_commands;
 mod quick_launch_panel;
 mod search;
@@ -105,14 +110,6 @@ fn main() {
             std::process::exit(1);
         }
     }
-    match task_windows::handle_task_window_helper_args() {
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
-    }
     match task_windows::handle_taskbar_flash_fixture_args() {
         Ok(true) => return,
         Ok(false) => {}
@@ -122,6 +119,16 @@ fn main() {
         }
     }
 
+    // Crash safety, installed only after every helper-subprocess dispatch above so a
+    // helper's panic never touches the taskbar. If any thread panics while
+    // JasonShell owns a hidden Explorer taskbar, only its visibility is restored
+    // (lock-free: marker file + ShowWindow). The work area is NOT restored here;
+    // AppBar registrations are released by the OS at process exit.
+    let default_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        explorer::emergency_restore_taskbar();
+        default_panic_hook(info);
+    }));
     let isolated_text_probe = cfg!(all(debug_assertions, feature = "text-document-feasibility"))
         && std::env::var_os("P02_NATIVE_PROBE_ROOT").is_some();
     let builder = tauri::Builder::default()
@@ -177,6 +184,8 @@ fn main() {
             search_panel::hide_search_panel,
             search_panel::publish_search_panel,
             search_panel::get_search_panel_payload,
+            search_panel::open_search_url,
+            search_panel::copy_search_text,
             appbar::resize_shell_bar,
             settings::save_shell_bar_height,
             settings::save_shell_bar_lock,
@@ -255,6 +264,7 @@ fn main() {
             shell_paths::launch_app_path,
             shell_paths::run_control_panel,
             quick_commands::run_quick_command,
+            quick_commands::run_search_quick_command,
             quick_commands::stop_quick_command,
             quick_commands::list_quick_command_history,
             quick_commands::send_quick_command_input,
@@ -316,10 +326,12 @@ fn main() {
             stack_popup::copy_stack_items,
             stack_popup::start_stack_file_drag,
             stack_popup::commit_stack_local_drop,
+            stack_popup::undo_stack_move,
             stack_popup::prepare_stack_local_drop,
             stack_popup::cut_stack_items,
             stack_popup::paste_stack_items,
             stack_popup::delete_stack_item,
+            stack_popup::delete_stack_items,
             stack_popup::new_stack_folder,
             stack_popup::new_stack_text_file,
             stack_popup::open_stack_terminal_here,
@@ -407,6 +419,8 @@ fn main() {
                 && matches!(event, WindowEvent::Destroyed)
             {
                 stack_popup::folder_watch::retire(window.app_handle());
+                #[cfg(windows)]
+                stack_popup::retire_move_undo(window.app_handle());
                 return;
             }
             if window.label() == shell_windows::STACK_POPUP_LABEL
@@ -603,6 +617,7 @@ fn main() {
                         {
                             return;
                         }
+                        command_panel::request_command_panel_size_flush();
                         if panel.hide().is_ok() {
                             quick_command_notification::panel_hidden_clear_target(&app_handle);
                             let _ = app_handle.emit_to(
@@ -617,12 +632,16 @@ fn main() {
             }
 
             if window.label() == shell_windows::COMMAND_PANEL_LABEL {
-                if let WindowEvent::Resized(size) = event {
-                    let _ = command_panel::save_command_panel_size_for_app(
-                        &window.app_handle().clone(),
+                match event {
+                    WindowEvent::Resized(size) => command_panel::record_command_panel_resize(
                         size.width,
                         size.height,
-                    );
+                        window.scale_factor().unwrap_or(1.0),
+                    ),
+                    WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
+                        command_panel::request_command_panel_size_flush();
+                    }
+                    _ => {}
                 }
             }
 

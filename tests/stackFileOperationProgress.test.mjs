@@ -33,7 +33,7 @@ test('one shared typed Stack file-operation event connects native emitter to pop
 test('popup creates operation IDs, passes them to each slow mutation, and discards prior operation updates', () => {
   assert.match(ui, /operationId/);
   assert.match(wrapper, /operationId/);
-  for (const name of ['paste_stack_items', 'delete_stack_item', 'extract_stack_archive']) {
+  for (const name of ['paste_stack_items', 'delete_stack_item', 'delete_stack_items', 'extract_stack_archive']) {
     assert.match(handler(name), /operation_id:\s*String/);
     assert.match(handler(name), /authorize_stack_command/);
   }
@@ -42,7 +42,7 @@ test('popup creates operation IDs, passes them to each slow mutation, and discar
 });
 
 test('progress is emitted only to authorized originating window, not application-wide or other callers', () => {
-  for (const name of ['paste_stack_items', 'delete_stack_item', 'extract_stack_archive']) {
+  for (const name of ['paste_stack_items', 'delete_stack_item', 'delete_stack_items', 'extract_stack_archive']) {
     const body = handler(name);
     assert.match(body, /authorize_stack_command/);
     assert.match(body, /window:\s*WebviewWindow/);
@@ -68,9 +68,11 @@ test('paste reports planning, copy/move, refresh and completion or failure witho
   assert.match(ui, /(?:completedFiles|completed_files|totalFiles|total_files)/);
 });
 
-test('delete keeps Recycle Bin semantics and shows indeterminate folder and top-level selection progress', () => {
+test('legacy terminal delete keeps Recycle Bin semantics while batch delete stages recoverable items', () => {
   assert.match(fileOps, /delete_path\s*\(/);
   assert.match(fileOps, /FOF_ALLOWUNDO|FOFX_RECYCLEONDELETE|RecycleBin|recycle/i);
+  assert.match(handler('delete_stack_items'), /stage_deleted_items/);
+  assert.doesNotMatch(handler('delete_stack_items'), /delete_stack_item_path_async|delete_path\(/);
   assert.match(ui, /deleteConfirmation/);
   assert.match(ui, /(?:completedItems|completed_items|completedPaths|completed_paths|deletedCount)/);
   assert.match(ui, /(?:totalItems|total_items|totalPaths|total_paths|paths\.length)/);
@@ -99,29 +101,30 @@ test('native completion waits for frontend listing before reporting finished', (
   for (const functionName of ['pasteIntoCurrentFolder', 'confirmDeleteSelection', 'extractSelectedArchive', 'pasteDroppedPaths']) {
     const start = ui.indexOf(`function ${functionName}(`);
     assert.ok(start >= 0, `${functionName} exists`);
-    const finish = ui.indexOf('finishFileOperation(operationId', start);
+    const finish = ui.indexOf(functionName === 'confirmDeleteSelection'
+      ? 'finishFileOperation(operationId, errorMessage || undefined)'
+      : 'finishFileOperation(operationId', start);
     assert.ok(finish > start, `${functionName} finishes`);
     const operation = ui.slice(start, finish);
-    assert.match(operation, /(?:await listStackFolder\(|await invokePaste\()/,
+    assert.match(operation, /(?:await listStackFolder\(|await invokePaste\(|await refreshExternalFolderRows\()/,
       `${functionName} must await listing before finishing`);
   }
 });
 
-test('delete success count advances after successful target, and elapsed clock ticks between events', () => {
-  assert.match(ui, /await invokeDelete\(path, operationId\);\s*updateDeleteProgress\(operationId, index \+ 1,/);
-  assert.match(ui, /updateDeleteProgress\(operationId, index, pendingDelete\.paths\.length, path\)/);
+test('delete refreshes after native success, and elapsed clock ticks between events', () => {
+  assert.match(ui, /await deleteStackItems\(pendingDelete\.paths, operationId\);[\s\S]*?if \(result\.deleted\) \{[\s\S]*?await refreshExternalFolderRows\(/);
   assert.match(ui, /operationClockTimer\s*=\s*window\.setInterval\(\(\)\s*=>\s*\{\s*operationClock\s*=\s*Date\.now\(\)/);
   assert.match(ui, /stopOperationClock\(\)/);
 });
 
-test('failed native delete target keeps elapsed clock alive for next target until batch terminates', () => {
+test('delete batch reports target failures at termination rather than retrying per target', () => {
   const listener = ui.slice(ui.indexOf('listen<StackFileOperationProgress>'), ui.indexOf('}).then((unlisten)', ui.indexOf('listen<StackFileOperationProgress>')));
   assert.match(listener, /payload\.operationId !== activeOperation\.operationId/);
   assert.match(listener, /if\s*\(payload\.phase === 'failed'\)\s*\{[\s\S]*?if\s*\(payload\.operation !== 'delete'\)\s*\{\s*stopOperationClock\(\);\s*\}/,
     'native delete failure must not stop clock; other native failures still do');
   const batch = ui.slice(ui.indexOf('async function confirmDeleteSelection()'), ui.indexOf('async function ', ui.indexOf('async function confirmDeleteSelection()') + 1));
-  assert.match(batch, /for\s*\(const \[index, path\] of pendingDelete\.paths\.entries\(\)\)\s*\{[\s\S]*?await invokeDelete\(path, operationId\);[\s\S]*?catch\s*\(error\)\s*\{\s*failures\.push\(/,
-    'failed target is recorded and loop continues to next target');
-  assert.match(batch, /finishFileOperation\(operationId, failures\.length \? errorMessage : undefined\)/,
+  assert.equal((batch.match(/await deleteStackItems\(/g) ?? []).length, 1);
+  assert.match(batch, /pasteFailureSummary\(result\.failures, 'Delete'\)/);
+  assert.match(batch, /finishFileOperation\(operationId, errorMessage \|\| undefined\)/,
     'batch termination stops clock after processing all targets');
 });

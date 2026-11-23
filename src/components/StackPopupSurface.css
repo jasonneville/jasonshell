@@ -71,7 +71,7 @@
 
 .stack-path-editor:focus-within {
   border-color: var(--js-color-accent-border);
-  box-shadow: var(--js-focus-ring);
+  outline: 2px solid var(--js-focus-color);
 }
 
 .path-input-shell {
@@ -104,6 +104,7 @@
 
 .stack-path-editor input:focus {
   box-shadow: none;
+  outline: 0;
 }
 
 .path-inline-ghost {
@@ -787,7 +788,6 @@
 .stack-actions button:not(:disabled):hover,
 .stack-actions button:not(:disabled):focus-visible {
   color: var(--js-color-text-strong);
-  outline: none;
 }
 
 .stack-search {
@@ -853,8 +853,6 @@
 
 .stack-search input:focus {
   border-color: var(--js-color-accent-border);
-  box-shadow: var(--js-focus-ring);
-  outline: 0;
 }
 
 .stack-pin-status {
@@ -971,8 +969,7 @@
 
 .inline-editor input:focus {
   border-color: var(--js-color-accent-border);
-  outline: 0;
-  box-shadow: var(--js-focus-ring);
+  outline-offset: -2px;
 }
 
 .inline-editor button {
@@ -1002,8 +999,8 @@
 }
 
 .details-table:focus-visible {
-  outline: 0;
-  box-shadow: inset var(--js-focus-ring);
+  outline: 2px solid var(--js-focus-color);
+  outline-offset: -2px;
 }
 
 .details-header,
@@ -1201,7 +1198,7 @@
 .details-header .details-sort:focus-visible {
   background: var(--js-color-control-hover);
   color: var(--js-color-text);
-  outline: 0;
+  outline-offset: -2px;
 }
 
 .details-body {
@@ -1357,8 +1354,8 @@
 .git-status-badge.git-status-untracked { color: #479fe6; }
 
 .details-body button:focus-visible {
-  outline: 0;
-  box-shadow: inset var(--js-focus-ring);
+  outline: 2px solid var(--js-focus-color);
+  outline-offset: -2px;
 }
 
 .context-menu {
@@ -1464,7 +1461,7 @@
 .stack-resize-grip {
   background: transparent;
   border: 0;
-  border-bottom: 2px solid var(--js-color-accent-border);
+  border-bottom: 2px solid var(--js-color-border);
   border-right: 2px solid var(--js-color-border);
   bottom: 0.25rem;
   cursor: nwse-resize;
@@ -1480,7 +1477,6 @@
 .stack-resize-grip:hover,
 .stack-resize-grip:focus-visible {
   opacity: 1;
-  outline: 0;
   filter: drop-shadow(0 0 0.35rem var(--js-color-accent-border));
 }
 
@@ -1489,6 +1485,26 @@
   display: grid;
   font-size: 0.72rem;
   justify-items: center;
+}
+
+/* Lazily loaded editor/Git panes: message plus Retry, centered in the pane. */
+.empty-stack.surface-state {
+  align-content: center;
+  gap: var(--js-space-3);
+}
+
+.empty-stack.surface-state button {
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
+  border-radius: var(--js-radius-sm);
+  color: var(--js-color-text);
+  min-height: 1.75rem;
+  padding: 0 var(--js-space-4);
+}
+
+.empty-stack.surface-state button:hover {
+  background: var(--js-color-control-hover);
+  border-color: var(--js-color-accent-border);
 }
 
 .path-segments .crumb-sep {

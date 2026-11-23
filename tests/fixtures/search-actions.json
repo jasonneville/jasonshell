@@ -1,0 +1,18 @@
+{
+  "comment": "Canonical wire shape of every SearchResultAction variant. Checked by the Rust serializer test (serialize == fixture, args omitted when absent) and by the TS isSearchAction / response tests.",
+  "actions": {
+    "openApp": { "kind": "openApp", "path": "C:\\Apps\\Test.lnk" },
+    "focusWindow": { "kind": "focusWindow", "windowId": "hwnd-1" },
+    "openFile": { "kind": "openFile", "path": "C:\\data\\report.docx" },
+    "openFolder": { "kind": "openFolder", "path": "C:\\data" },
+    "runCommand": { "kind": "runCommand", "commandId": "command:open-control-plane" },
+    "runCommandQuick": { "kind": "runCommand", "commandId": "quick:build" },
+    "openSetting": { "kind": "openSetting", "uri": "ms-settings:display" },
+    "runControlPanel": { "kind": "runControlPanel", "executable": "control.exe", "args": ["Microsoft.Display"] },
+    "runControlPanelNoArgs": { "kind": "runControlPanel", "executable": "control.exe" },
+    "copyText": { "kind": "copyText", "text": "42" },
+    "openWebUrl": { "kind": "openWebUrl", "url": "https://github.com/" },
+    "openWebSearch": { "kind": "openWebUrl", "url": "https://www.google.com/search?q=svelte" },
+    "openBookmark": { "kind": "openBookmark", "url": "https://svelte.dev/" }
+  }
+}

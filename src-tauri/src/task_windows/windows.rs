@@ -6,23 +6,20 @@ use super::{
 };
 use std::collections::HashMap;
 use std::mem::size_of;
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
-use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{
-    CloseHandle, FILETIME, HANDLE, HWND, LPARAM, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, FILETIME, HANDLE, HWND, LPARAM,
 };
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
-    WaitForSingleObject, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetAncestor, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
@@ -94,6 +91,9 @@ pub(super) struct ActivitySnapshot {
 
 static ACTIVITY_SNAPSHOTS: OnceLock<Mutex<HashMap<String, ActivitySnapshot>>> = OnceLock::new();
 
+// Cheap-flag/detail fields are read by the reference predicate (tests); production
+// filters through `resolve_taskbar_candidacy` before building the candidate.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub(super) struct WindowCandidate {
     pub(super) class_name: String,
@@ -134,8 +134,10 @@ pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
         loop {
             if SNAPSHOTS_STOPPED.load(Ordering::Acquire) { return; }
             let next_refresh_at = last_refresh_at + TASKBAR_SNAPSHOT_REFRESH_CADENCE;
+            let mut request_driven = false;
             match rx.recv_timeout(next_refresh_at.saturating_duration_since(Instant::now())) {
                 Ok(mut request) => {
+                    request_driven = true;
                     let mut due = request_due_at(request);
                     loop {
                         if SNAPSHOTS_STOPPED.load(Ordering::Acquire) { return; }
@@ -171,7 +173,13 @@ pub(super) fn ensure_taskbar_snapshot_worker_started(app: AppHandle) {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
-            let _ = refresh_taskbar_snapshot_now(Some(&app));
+            // Watchdog ticks skip the broadcast when nothing changed; refreshes that
+            // were requested (native hook / renderer) always broadcast.
+            let _ = if request_driven {
+                refresh_taskbar_snapshot_now(Some(&app))
+            } else {
+                refresh_taskbar_snapshot_heartbeat(Some(&app))
+            };
             if let Ok(mut diag) = TASKBAR_REFRESH_DIAGNOSTICS
                 .get_or_init(|| Mutex::new(TaskbarRefreshDiagnostics::default()))
                 .lock()
@@ -273,8 +281,127 @@ fn coalesce_request(
     }
 }
 
+/// Scan and publish. Request-driven (native/manual/initial) refreshes always emit,
+/// so optimistic renderer state is reconciled even when nothing changed.
 pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<(), String> {
+    refresh_taskbar_snapshot_with(app, true)
+}
+
+/// Watchdog tick: identical to a forced refresh except that an unchanged snapshot is
+/// stored (freshness, diagnostics) but not broadcast.
+fn refresh_taskbar_snapshot_heartbeat(app: Option<&AppHandle>) -> Result<(), String> {
+    refresh_taskbar_snapshot_with(app, false)
+}
+
+/// Fields compared to decide whether a snapshot must be emitted.
+fn should_emit_taskbar_snapshot(prev: Option<&[TaskbarWindow]>, next: &[TaskbarWindow]) -> bool {
+    prev != Some(next)
+}
+
+#[derive(Default)]
+struct SnapshotPublisher {
+    sequence: u64,
+    last_emitted: Option<Vec<TaskbarWindow>>,
+}
+
+struct PublishOutcome {
+    snapshot: TaskbarWindowsSnapshot,
+    emit: bool,
+}
+
+impl SnapshotPublisher {
+    fn new(start_sequence: u64) -> Self {
+        Self { sequence: start_sequence, last_emitted: None }
+    }
+
+    /// Changed (or first) => sequence advances and the snapshot is to be emitted.
+    /// Unchanged => sequence stays at the last emitted one; the caller still stores it.
+    #[cfg(test)]
+    fn publish(&mut self, windows: Vec<TaskbarWindow>) -> PublishOutcome {
+        self.publish_with(windows, false)
+    }
+
+    fn publish_with(&mut self, windows: Vec<TaskbarWindow>, force_emit: bool) -> PublishOutcome {
+        let emit = force_emit || should_emit_taskbar_snapshot(self.last_emitted.as_deref(), &windows);
+        if emit {
+            self.sequence += 1;
+            self.last_emitted = Some(windows.clone());
+        }
+        PublishOutcome {
+            snapshot: TaskbarWindowsSnapshot { sequence: self.sequence, windows },
+            emit,
+        }
+    }
+
+    /// Pull-path snapshot (no renderer receives it): does not move the emitted baseline.
+    fn observe(&self, windows: Vec<TaskbarWindow>) -> TaskbarWindowsSnapshot {
+        TaskbarWindowsSnapshot { sequence: self.sequence, windows }
+    }
+}
+
+struct PublishState {
+    publisher: SnapshotPublisher,
+    last_ticket: u64,
+    last_emit_at: Option<Instant>,
+}
+
+/// Unchanged watchdog ticks skip the broadcast, but a renderer that missed or lost an
+/// update (listener attached after its mount pull, overwritten state) must heal: a
+/// heartbeat emits anyway once the last emit is older than this.
+const HEARTBEAT_FORCE_EMIT_AFTER: Duration = Duration::from_secs(5);
+
+fn heartbeat_must_emit(last_emit: Option<Instant>, now: Instant) -> bool {
+    last_emit.map_or(true, |at| now.saturating_duration_since(at) >= HEARTBEAT_FORCE_EMIT_AFTER)
+}
+
+static PUBLISH_STATE: OnceLock<Mutex<PublishState>> = OnceLock::new();
+static SCAN_TICKET: AtomicU64 = AtomicU64::new(0);
+
+/// Process identity cache keyed by (pid, creation FILETIME ticks): a reused pid has a
+/// different creation time and therefore misses. Bounded, FIFO eviction.
+struct ProcessInfoCache {
+    capacity: usize,
+    entries: HashMap<(u32, u64), (Option<PathBuf>, String)>,
+    order: std::collections::VecDeque<(u32, u64)>,
+}
+
+impl ProcessInfoCache {
+    fn new(capacity: usize) -> Self {
+        Self { capacity: capacity.max(1), entries: HashMap::new(), order: Default::default() }
+    }
+
+    fn get(&self, pid: u32, creation_time: u64) -> Option<(Option<PathBuf>, String)> {
+        self.entries.get(&(pid, creation_time)).cloned()
+    }
+
+    fn insert(&mut self, pid: u32, creation_time: u64, path: Option<PathBuf>, name: String) {
+        let key = (pid, creation_time);
+        if self.entries.insert(key, (path, name)).is_none() {
+            self.order.push_back(key);
+        }
+        while self.entries.len() > self.capacity {
+            match self.order.pop_front() {
+                Some(oldest) => {
+                    self.entries.remove(&oldest);
+                }
+                None => break,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+const PROCESS_INFO_CACHE_CAPACITY: usize = 256;
+static PROCESS_INFO_CACHE: OnceLock<Mutex<ProcessInfoCache>> = OnceLock::new();
+
+fn refresh_taskbar_snapshot_with(app: Option<&AppHandle>, force_emit: bool) -> Result<(), String> {
     let _work = SNAPSHOT_WORKERS.get_or_init(Default::default).enter()?;
+    // Ordered at scan start: a scan that started earlier never overwrites a later one.
+    let ticket = SCAN_TICKET.fetch_add(1, Ordering::SeqCst) + 1;
     let current_process_id = std::process::id();
     let foreground = unsafe { GetForegroundWindow() };
     let mut handles = Vec::new();
@@ -291,13 +418,15 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
     let mut visible_attention_identities = Vec::new();
     let mut cpu_time_by_process_id: HashMap<u32, Option<u64>> = HashMap::new();
     for hwnd in handles {
-        let Some(candidate) = build_window_candidate(hwnd, foreground, current_process_id)? else {
+        let Some(candidate) = build_window_candidate(
+            hwnd,
+            foreground,
+            current_process_id,
+            &mut cpu_time_by_process_id,
+        )?
+        else {
             continue;
         };
-
-        if !is_taskbar_candidate(&candidate, current_process_id) {
-            continue;
-        }
 
         let native_hwnd = candidate.hwnd;
         let hwnd = candidate.hwnd_string();
@@ -319,7 +448,7 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
         if is_active {
             attention::clear_taskbar_attention_if_matches(&attention_identity);
         }
-        let icon_data_url = window_icon_data_url(native_hwnd, process_path.as_deref())
+        let icon_data_url = window_icon_data_url(native_hwnd, process_id, process_path.as_deref())
             .unwrap_or_else(|_| EMPTY_ICON_DATA_URL.to_string());
         let cpu_time_ticks = *cpu_time_by_process_id
             .entry(process_id)
@@ -345,15 +474,56 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
     attention::reconcile_taskbar_attention(&visible_attention_identities);
     sort_windows_stably(&mut windows);
     retain_activity_snapshots(windows.iter().map(|window| window.hwnd.as_str()));
-    let sequence = TASKBAR_SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Ok(mut snapshot) = LAST_TASKBAR_SNAPSHOT
-        .get_or_init(|| Mutex::new(None))
+    publish_taskbar_snapshot(app, ticket, force_emit, windows)
+}
+
+/// Serialises sequence assignment, snapshot storage and broadcast order across
+/// concurrent refreshes (worker vs command). The enumeration above runs with no lock held.
+fn publish_taskbar_snapshot(
+    app: Option<&AppHandle>,
+    ticket: u64,
+    force_emit: bool,
+    windows: Vec<TaskbarWindow>,
+) -> Result<(), String> {
+    let state = PUBLISH_STATE.get_or_init(|| {
+        Mutex::new(PublishState { publisher: SnapshotPublisher::new(0), last_ticket: 0, last_emit_at: None })
+    });
+    let mut state = state
         .lock()
-    {
-        *snapshot = Some(TaskbarWindowsSnapshot {
-            sequence,
-            windows: windows.clone(),
-        });
+        .map_err(|_| "taskbar snapshot publisher is poisoned".to_string())?;
+    let mut windows = windows;
+    if ticket < state.last_ticket {
+        // A scan that started later already published. A request-driven refresh still
+        // owes its renderers an emit, so republish the newest stored windows.
+        if !(force_emit && app.is_some()) {
+            return Ok(());
+        }
+        let newest = LAST_TASKBAR_SNAPSHOT
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .ok()
+            .and_then(|snapshot| snapshot.as_ref().map(|snapshot| snapshot.windows.clone()));
+        match newest {
+            Some(newest) => windows = newest,
+            None => return Ok(()),
+        }
+    } else {
+        state.last_ticket = ticket;
+    }
+    let (snapshot, emit) = if app.is_some() {
+        let force = force_emit || heartbeat_must_emit(state.last_emit_at, Instant::now());
+        let outcome = state.publisher.publish_with(windows, force);
+        if outcome.emit {
+            state.last_emit_at = Some(Instant::now());
+        }
+        (outcome.snapshot, outcome.emit)
+    } else {
+        (state.publisher.observe(windows), false)
+    };
+    TASKBAR_SNAPSHOT_SEQUENCE.store(snapshot.sequence, Ordering::SeqCst);
+    let payload = emit.then(|| snapshot.clone());
+    if let Ok(mut last) = LAST_TASKBAR_SNAPSHOT.get_or_init(|| Mutex::new(None)).lock() {
+        *last = Some(snapshot);
     }
     if let Ok(mut snapshot_at) = LAST_TASKBAR_SNAPSHOT_AT
         .get_or_init(|| Mutex::new(None))
@@ -361,14 +531,10 @@ pub(super) fn refresh_taskbar_snapshot_now(app: Option<&AppHandle>) -> Result<()
     {
         *snapshot_at = Some(Instant::now());
     }
-    if let Some(app) = app {
-        let _ = app.emit(
-            TASKBAR_WINDOWS_SNAPSHOT_EVENT,
-            TaskbarWindowsSnapshot {
-                sequence,
-                windows: windows.clone(),
-            },
-        );
+    if let (Some(app), Some(payload)) = (app, payload) {
+        // Broadcast kept: TopBar and BottomBar both consume it. Emitting while the
+        // publisher lock is held keeps emit order equal to sequence order.
+        let _ = app.emit(TASKBAR_WINDOWS_SNAPSHOT_EVENT, payload);
     }
     Ok(())
 }
@@ -392,14 +558,17 @@ pub(super) fn list_taskbar_process_windows() -> Result<Vec<TaskbarProcessWindow>
     }
 
     let mut windows = Vec::new();
+    let mut cpu_time_by_process_id: HashMap<u32, Option<u64>> = HashMap::new();
     for hwnd in handles {
-        let Some(candidate) = build_window_candidate(hwnd, foreground, current_process_id)? else {
+        let Some(candidate) = build_window_candidate(
+            hwnd,
+            foreground,
+            current_process_id,
+            &mut cpu_time_by_process_id,
+        )?
+        else {
             continue;
         };
-
-        if !is_taskbar_candidate(&candidate, current_process_id) {
-            continue;
-        }
 
         windows.push(TaskbarProcessWindow {
             hwnd: candidate.hwnd_string(),
@@ -426,109 +595,6 @@ pub(super) fn process_image_path_for_hwnd(hwnd: HWND) -> Result<PathBuf, String>
         .ok_or_else(|| "Task window executable path is unavailable".to_string())
 }
 
-pub(super) fn spawn_task_window_helper(
-    hwnd: String,
-    pid: u32,
-    creation_time: u64,
-    canonical_image_path: PathBuf,
-) -> Result<(), String> {
-    launch_task_window_helper(hwnd, pid, creation_time, canonical_image_path)
-}
-
-fn launch_task_window_helper(
-    hwnd: String,
-    pid: u32,
-    creation_time: u64,
-    canonical_image_path: PathBuf,
-) -> Result<(), String> {
-    let helper_exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let args = format!(
-        "--task-window-helper {} {} {} {}",
-        hwnd,
-        pid,
-        creation_time,
-        super::helper::encode_canonical_path(&canonical_image_path)
-    );
-    let process_handle = shell_execute_runas_wait(&helper_exe, &args, "task window helper")?;
-    let exit_code = wait_for_process_exit(process_handle, std::time::Duration::from_secs(8))?;
-    super::helper::helper_exit_code_for_shell_execute_result(exit_code)?;
-    Ok(())
-}
-
-fn shell_execute_runas_wait(
-    executable: &Path,
-    arguments: &str,
-    operation: &str,
-) -> Result<HANDLE, String> {
-    let mut execute_info = SHELLEXECUTEINFOW::default();
-    execute_info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    let verb = wide_null(std::ffi::OsStr::new("runas"));
-    let executable_wide = wide_null(executable.as_os_str());
-    let arguments_wide = wide_null(std::ffi::OsStr::new(arguments));
-    execute_info.lpVerb = windows::core::PCWSTR(verb.as_ptr());
-    execute_info.lpFile = windows::core::PCWSTR(executable_wide.as_ptr());
-    execute_info.lpParameters = windows::core::PCWSTR(arguments_wide.as_ptr());
-    execute_info.nShow = windows::Win32::UI::WindowsAndMessaging::SW_HIDE.0 as i32;
-    unsafe { ShellExecuteExW(&mut execute_info) }
-        .map_err(|error| shell_execute_error_for_operation(operation, error))?;
-    if execute_info.hProcess.0.is_null() {
-        return Err(format!(
-            "Failed to launch {operation}: process handle unavailable"
-        ));
-    }
-    Ok(execute_info.hProcess)
-}
-
-fn wait_for_process_exit(handle: HANDLE, timeout: std::time::Duration) -> Result<u32, String> {
-    struct ProcessHandleGuard(HANDLE);
-    impl Drop for ProcessHandleGuard {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
-    }
-    let _guard = ProcessHandleGuard(handle);
-    let wait =
-        unsafe { WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128) as u32) };
-    match wait {
-        WAIT_OBJECT_0 => {
-            let mut exit_code = 0u32;
-            unsafe { GetExitCodeProcess(handle, &mut exit_code) }
-                .map_err(|error| format!("Failed to read helper exit code: {error}"))?;
-            Ok(exit_code)
-        }
-        WAIT_TIMEOUT => Err("Task window helper timed out".to_string()),
-        _ => Err("Task window helper wait failed".to_string()),
-    }
-}
-
-fn shell_execute_error_for_operation(operation: &str, error: windows::core::Error) -> String {
-    if shell_execute_status_for_error(error.code()) == ShellExecuteStatus::UacCanceled {
-        return "UAC canceled".to_string();
-    }
-    format!("Failed to launch {operation}: {error}")
-}
-
-#[derive(PartialEq, Eq)]
-enum ShellExecuteStatus {
-    UacCanceled,
-    Other,
-}
-
-fn shell_execute_status_for_error(hr: windows::core::HRESULT) -> ShellExecuteStatus {
-    if super::helper::is_uac_canceled_shell_execute_code(hr.0 as u32) {
-        ShellExecuteStatus::UacCanceled
-    } else {
-        ShellExecuteStatus::Other
-    }
-}
-
-fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
-    value.encode_wide().chain(std::iter::once(0)).collect()
-}
-
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
     let handles = &mut *(lparam.0 as *mut Vec<HWND>);
     handles.push(hwnd);
@@ -542,41 +608,12 @@ impl WindowCandidate {
 }
 
 #[cfg(test)]
+#[path = "windows_tier1_tests.rs"]
+mod tier1_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn task_window_helper_arg_uses_plain_decimal_hwnd_value() {
-        let hwnd = 123456789isize;
-        assert_eq!(hwnd.to_string(), "123456789");
-    }
-
-    #[test]
-    fn shell_execute_error_maps_uac_cancel_before_context() {
-        let error = windows::core::Error::from(windows::core::HRESULT(1223));
-        assert_eq!(
-            shell_execute_error_for_operation("task window helper", error),
-            "UAC canceled"
-        );
-    }
-
-    #[test]
-    fn shell_execute_error_maps_hresult_from_win32_uac_cancel() {
-        let error = windows::core::Error::from(windows::core::HRESULT(0x8007_04C7u32 as i32));
-        assert_eq!(
-            shell_execute_error_for_operation("task window helper", error),
-            "UAC canceled"
-        );
-    }
-
-    #[test]
-    fn shell_execute_error_does_not_map_arbitrary_hresult() {
-        let error = windows::core::Error::from(windows::core::HRESULT(0x8007_0005u32 as i32));
-        assert_ne!(
-            shell_execute_error_for_operation("task window helper", error),
-            "UAC canceled"
-        );
-    }
 
     #[test]
     fn native_and_manual_refresh_due_rules_hold() {
@@ -608,6 +645,7 @@ fn build_window_candidate(
     hwnd: HWND,
     foreground: HWND,
     current_process_id: u32,
+    cpu_times: &mut HashMap<u32, Option<u64>>,
 ) -> Result<Option<WindowCandidate>, String> {
     let mut process_id = 0;
     unsafe {
@@ -618,59 +656,170 @@ fn build_window_candidate(
         return Ok(None);
     }
 
-    let title = window_text(hwnd);
-    let class_name = class_name(hwnd);
-    let process_path = process_image_path(process_id);
-    let process_name = resolve_process_name(process_path.as_deref());
+    // Cheap, handle-free checks first. Most of the several hundred top-level HWNDs
+    // are invisible, owned or tool windows and never reach title/class/process work.
+    let is_visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+    let is_minimized = unsafe { IsIconic(hwnd).as_bool() };
+    let is_shell_process = process_id == current_process_id;
+    if !(is_visible || is_minimized) || is_shell_process {
+        return Ok(None);
+    }
     let owner = unsafe { GetWindow(hwnd, GW_OWNER).unwrap_or_default() };
-    let ex_style = WINDOW_EX_STYLE(unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 });
+    let has_owner = !owner.0.is_null();
+    if has_owner {
+        return Ok(None);
+    }
+    let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 };
+    let mut flags = CheapWindowFlags {
+        is_visible,
+        is_minimized,
+        has_owner,
+        is_cloaked: false,
+        is_shell_process,
+        ex_style,
+    };
+    if !cheap_flags_allow(&flags) {
+        return Ok(None);
+    }
+    flags.is_cloaked = is_window_cloaked(hwnd);
+
+    let Some(detail) = resolve_taskbar_candidacy(&flags, || {
+        resolve_window_detail(hwnd, process_id, cpu_times)
+    }) else {
+        return Ok(None);
+    };
 
     Ok(Some(WindowCandidate {
-        class_name,
-        title,
-        process_name,
-        process_path,
+        class_name: detail.class_name,
+        title: detail.title,
+        process_name: detail.process_name,
+        process_path: detail.process_path,
         hwnd,
         is_active: hwnd == foreground
             || unsafe { GetAncestor(hwnd, GA_ROOTOWNER) }
                 == unsafe { GetAncestor(foreground, GA_ROOTOWNER) },
-        is_minimized: unsafe { IsIconic(hwnd).as_bool() },
-        has_owner: !owner.0.is_null(),
-        is_cloaked: is_window_cloaked(hwnd),
-        is_shell_process: process_id == current_process_id,
-        is_visible: unsafe { IsWindowVisible(hwnd).as_bool() },
-        ex_style,
+        is_minimized,
+        has_owner,
+        is_cloaked: flags.is_cloaked,
+        is_shell_process,
+        is_visible,
+        ex_style: WINDOW_EX_STYLE(ex_style),
         process_id,
     }))
 }
 
-pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_id: u32) -> bool {
-    let is_tool_window = (candidate.ex_style.0 & WS_EX_TOOLWINDOW.0) != 0
-        && (candidate.ex_style.0 & WS_EX_APPWINDOW.0) == 0;
-    let is_no_activate_window = (candidate.ex_style.0 & WS_EX_NOACTIVATE.0) != 0;
-    let forces_taskbar = (candidate.ex_style.0 & WS_EX_APPWINDOW.0) != 0;
-    let has_taskbar_identity = !candidate.title.trim().is_empty()
-        || (forces_taskbar && !candidate.process_name.is_empty());
-
-    (candidate.is_visible || candidate.is_minimized)
-        && !candidate.is_shell_process
-        && candidate.process_id != current_process_id
-        && !candidate.has_owner
-        && !candidate.is_cloaked
-        && !is_tool_window
-        && !is_no_activate_window
-        && has_taskbar_identity
-        && !is_internal_notification_window(candidate)
-        && !EXCLUDED_PROCESS_NAMES
-            .iter()
-            .any(|process_name| candidate.process_name.eq_ignore_ascii_case(process_name))
-        && !EXCLUDED_CLASSES
-            .iter()
-            .any(|class_name| candidate.class_name.eq_ignore_ascii_case(class_name))
+/// Flags obtainable without title / class / process-path / icon work.
+#[derive(Clone, Copy, Debug)]
+struct CheapWindowFlags {
+    is_visible: bool,
+    is_minimized: bool,
+    has_owner: bool,
+    is_cloaked: bool,
+    is_shell_process: bool,
+    ex_style: u32,
 }
 
+/// Expensive details: title, class, process path and name.
+#[derive(Clone, Debug)]
+struct WindowDetail {
+    title: String,
+    class_name: String,
+    process_name: String,
+    process_path: Option<PathBuf>,
+}
+
+fn cheap_flags_allow(flags: &CheapWindowFlags) -> bool {
+    let is_tool_window =
+        (flags.ex_style & WS_EX_TOOLWINDOW.0) != 0 && (flags.ex_style & WS_EX_APPWINDOW.0) == 0;
+    let is_no_activate_window = (flags.ex_style & WS_EX_NOACTIVATE.0) != 0;
+    (flags.is_visible || flags.is_minimized)
+        && !flags.is_shell_process
+        && !flags.has_owner
+        && !flags.is_cloaked
+        && !is_tool_window
+        && !is_no_activate_window
+}
+
+fn detail_allows(ex_style: u32, title: &str, class_name: &str, process_name: &str) -> bool {
+    let forces_taskbar = (ex_style & WS_EX_APPWINDOW.0) != 0;
+    let has_taskbar_identity =
+        !title.trim().is_empty() || (forces_taskbar && !process_name.is_empty());
+    has_taskbar_identity
+        && !is_internal_notification(title, class_name, process_name)
+        && !EXCLUDED_PROCESS_NAMES
+            .iter()
+            .any(|excluded| process_name.eq_ignore_ascii_case(excluded))
+        && !EXCLUDED_CLASSES
+            .iter()
+            .any(|excluded| class_name.eq_ignore_ascii_case(excluded))
+}
+
+/// Same verdict as `is_taskbar_candidate`, but `detail` is only evaluated when every
+/// cheap flag already allows the window, and at most once. Accepted details are
+/// returned so the caller never resolves them twice.
+fn resolve_taskbar_candidacy(
+    flags: &CheapWindowFlags,
+    detail: impl FnOnce() -> WindowDetail,
+) -> Option<WindowDetail> {
+    if !cheap_flags_allow(flags) {
+        return None;
+    }
+    let detail = detail();
+    detail_allows(
+        flags.ex_style,
+        &detail.title,
+        &detail.class_name,
+        &detail.process_name,
+    )
+    .then_some(detail)
+}
+
+fn resolve_window_detail(
+    hwnd: HWND,
+    process_id: u32,
+    cpu_times: &mut HashMap<u32, Option<u64>>,
+) -> WindowDetail {
+    let title = window_text(hwnd);
+    let class_name = class_name(hwnd);
+    let probe = probe_process(process_id);
+    cpu_times.entry(process_id).or_insert(probe.cpu_time_ticks);
+    let process_name = probe.process_name;
+    WindowDetail {
+        title,
+        class_name,
+        process_name,
+        process_path: probe.process_path,
+    }
+}
+
+/// Reference predicate (oracle for `resolve_taskbar_candidacy`); production filters
+/// through `resolve_taskbar_candidacy`.
+#[cfg(test)]
+pub(super) fn is_taskbar_candidate(candidate: &WindowCandidate, current_process_id: u32) -> bool {
+    let flags = CheapWindowFlags {
+        is_visible: candidate.is_visible,
+        is_minimized: candidate.is_minimized,
+        has_owner: candidate.has_owner,
+        is_cloaked: candidate.is_cloaked,
+        is_shell_process: candidate.is_shell_process || candidate.process_id == current_process_id,
+        ex_style: candidate.ex_style.0,
+    };
+    cheap_flags_allow(&flags)
+        && detail_allows(
+            flags.ex_style,
+            &candidate.title,
+            &candidate.class_name,
+            &candidate.process_name,
+        )
+}
+
+#[cfg(test)]
 pub(super) fn is_internal_notification_window(candidate: &WindowCandidate) -> bool {
-    let title = candidate.title.trim();
+    is_internal_notification(&candidate.title, &candidate.class_name, &candidate.process_name)
+}
+
+fn is_internal_notification(title: &str, class_name: &str, process_name: &str) -> bool {
+    let title = title.trim();
     if EXCLUDED_TITLES
         .iter()
         .any(|excluded| title.eq_ignore_ascii_case(excluded))
@@ -679,9 +828,49 @@ pub(super) fn is_internal_notification_window(candidate: &WindowCandidate) -> bo
     }
 
     title.eq_ignore_ascii_case("Notification")
-        && (candidate.process_name.is_empty()
-            || candidate.process_name.eq_ignore_ascii_case("dwm")
-            || candidate.class_name.to_ascii_lowercase().contains("dwm"))
+        && (process_name.is_empty()
+            || process_name.eq_ignore_ascii_case("dwm")
+            || class_name.to_ascii_lowercase().contains("dwm"))
+}
+
+struct ProcessProbe {
+    process_path: Option<PathBuf>,
+    process_name: String,
+    cpu_time_ticks: Option<u64>,
+}
+
+/// One process handle per window (not per pid): creation time (cache key) and CPU ticks
+/// come from the same `GetProcessTimes` call; the image path and name are only
+/// resolved on a cache miss, and never while the cache lock is held.
+fn probe_process(process_id: u32) -> ProcessProbe {
+    let Some(process_handle) =
+        (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok() })
+    else {
+        return ProcessProbe { process_path: None, process_name: String::new(), cpu_time_ticks: None };
+    };
+    let times = process_times(process_handle);
+    let cache = PROCESS_INFO_CACHE
+        .get_or_init(|| Mutex::new(ProcessInfoCache::new(PROCESS_INFO_CACHE_CAPACITY)));
+    let cached = times.and_then(|(creation, _)| {
+        cache.lock().ok().and_then(|cache| cache.get(process_id, creation))
+    });
+    let (process_path, process_name) = match cached {
+        Some(hit) => hit,
+        None => {
+            let path = query_process_image_path(process_handle);
+            let name = resolve_process_name(path.as_deref());
+            if let (Some((creation, _)), Some(path)) = (times, path.as_ref()) {
+                if let Ok(mut cache) = cache.lock() {
+                    cache.insert(process_id, creation, Some(path.clone()), name.clone());
+                }
+            }
+            (path, name)
+        }
+    };
+    unsafe {
+        let _ = CloseHandle(process_handle);
+    }
+    ProcessProbe { process_path, process_name, cpu_time_ticks: times.map(|(_, cpu)| cpu) }
 }
 
 pub(super) fn sort_windows_stably(windows: &mut [TaskbarWindow]) {
@@ -708,57 +897,59 @@ fn class_name(hwnd: HWND) -> String {
 fn process_image_path(process_id: u32) -> Option<PathBuf> {
     let process_handle =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()? };
-
-    let result = (|| {
-        let mut buffer = vec![0_u16; 1024];
-        let mut size = buffer.len() as u32;
-        unsafe {
-            QueryFullProcessImageNameW(
-                process_handle,
-                PROCESS_NAME_WIN32,
-                PWSTR(buffer.as_mut_ptr()),
-                &mut size,
-            )
-            .ok()?;
-        }
-
-        Some(PathBuf::from(from_wide_buffer(&buffer[..size as usize])))
-    })();
-
+    let result = query_process_image_path(process_handle);
     unsafe {
         let _ = CloseHandle(process_handle);
     }
-
     result
+}
+
+fn query_process_image_path(process_handle: HANDLE) -> Option<PathBuf> {
+    let mut buffer = vec![0_u16; 1024];
+    let mut size = buffer.len() as u32;
+    unsafe {
+        QueryFullProcessImageNameW(
+            process_handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        )
+        .ok()?;
+    }
+
+    Some(PathBuf::from(from_wide_buffer(&buffer[..size as usize])))
+}
+
+/// (creation FILETIME ticks, kernel + user CPU ticks).
+fn process_times(process_handle: HANDLE) -> Option<(u64, u64)> {
+    let mut creation_time = FILETIME::default();
+    let mut exit_time = FILETIME::default();
+    let mut kernel_time = FILETIME::default();
+    let mut user_time = FILETIME::default();
+    unsafe {
+        GetProcessTimes(
+            process_handle,
+            &mut creation_time,
+            &mut exit_time,
+            &mut kernel_time,
+            &mut user_time,
+        )
+        .ok()?;
+    }
+
+    Some((
+        filetime_ticks(creation_time),
+        filetime_ticks(kernel_time) + filetime_ticks(user_time),
+    ))
 }
 
 fn process_cpu_time_ticks(process_id: u32) -> Option<u64> {
     let process_handle =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()? };
-
-    let result = (|| {
-        let mut creation_time = FILETIME::default();
-        let mut exit_time = FILETIME::default();
-        let mut kernel_time = FILETIME::default();
-        let mut user_time = FILETIME::default();
-        unsafe {
-            GetProcessTimes(
-                process_handle,
-                &mut creation_time,
-                &mut exit_time,
-                &mut kernel_time,
-                &mut user_time,
-            )
-            .ok()?;
-        }
-
-        Some(filetime_ticks(kernel_time) + filetime_ticks(user_time))
-    })();
-
+    let result = process_times(process_handle).map(|(_, cpu)| cpu);
     unsafe {
         let _ = CloseHandle(process_handle);
     }
-
     result
 }
 

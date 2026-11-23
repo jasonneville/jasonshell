@@ -11,7 +11,7 @@ export function createFixture() {
   return Object.assign(createNative(), {
     history: [] as QuickCommandRunHistoryEntry[], banner: null as Banner | null,
     requested: null as (Target & { notificationId: string }) | null, target: null as Target | null,
-    panelVisible: false, serial: 0,
+    panelVisible: false, serial: 0, paused: false,
     channel: null as Channel | null, renderedId: null as string | null,
     finish(runId: string, announce = true, status: Banner['status'] = 'success') {
       const time = 1000 * ++this.serial;
@@ -25,6 +25,7 @@ export function createFixture() {
     },
     announce(runId: string, status: Banner['status'] = 'success') {
       if (this.panelVisible || this.banner) throw new Error('Expected hidden panel and idle banner');
+      this.paused = false; // Native: the next banner always starts unpaused.
       this.banner = { id: `banner-${this.serial}`, label: 'Build', status };
       this.requested = { commandId: 'build', runId, notificationId: this.banner.id };
       this.channel?.onmessage(null);
@@ -50,8 +51,11 @@ export async function invoke(command: string, args: Record<string, any> = {}) {
       }
       return structuredClone(n.banner);
     case 'act_on_quick_command_notification': {
-      if (caller !== overlay || n.banner?.id !== request.id || n.renderedId !== request.id || !['open', 'dismiss'].includes(request.action)) throw new Error('Invalid banner action');
+      // VIS-20b: pause/resume are new action values on the SAME command; they never retire the banner.
+      if (caller !== overlay || n.banner?.id !== request.id || n.renderedId !== request.id || !['open', 'dismiss', 'pause', 'resume'].includes(request.action)) throw new Error('Invalid banner action');
       n.record('banner-action', { action: request.action, id: request.id });
+      if (request.action === 'pause' || request.action === 'resume') { n.paused = request.action === 'pause'; return; }
+      n.paused = false;
       n.banner = null;
       n.channel?.onmessage(null);
       if (request.action === 'open') n.emit('top-bar', 'quick-command-notification:open-panel', { id: request.id });

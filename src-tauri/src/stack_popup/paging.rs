@@ -1,4 +1,7 @@
-use crate::stack_popup::items::{metadata_modified_epoch_millis, stack_item_metadata_from_path};
+use crate::stack_popup::items::{
+    metadata_is_reparse_point, metadata_modified_epoch_millis,
+    stack_item_metadata_from_known_metadata, stack_item_metadata_from_path,
+};
 use crate::stack_popup::models::{
     StackFolderPage, StackFolderPageDiagnostics, StackFolderWarning, StackItem,
 };
@@ -57,12 +60,19 @@ pub(crate) fn read_stack_folder_page_with_session_and_downloads_detector(
     let (effective_session_id, page_entries, total, session_started_at) = if offset == 0 {
         let (mut entries, discovered_warnings) = collect_stack_folder_entries(path, is_downloads)?;
         warnings.extend(discovered_warnings);
+        // Carried metadata is only trusted for the first page (listing just happened);
+        // later pages stat at build time, so nothing else retains it.
+        for entry in entries.iter_mut().skip(page_limit) {
+            entry.metadata = None;
+        }
         truncate_entries_to_session_byte_budget(&mut entries, path, &mut warnings);
         let total = entries.len();
         let effective_session_id =
             with_session_store(|store| store.start_session(path, entries, total, page_started_at));
         let snapshot = with_session_store(|store| {
-            store.session_page(path, &effective_session_id, offset, page_limit)
+            let snapshot = store.session_page(path, &effective_session_id, offset, page_limit);
+            store.drop_carried_metadata(&effective_session_id);
+            snapshot
         })?;
         (
             Some(effective_session_id),
@@ -93,7 +103,14 @@ pub(crate) fn read_stack_folder_page_with_session_and_downloads_detector(
     for entry in page_entries {
         match entry.item {
             StackFolderEntryItem::Filesystem(path) => {
-                match stack_item_metadata_from_path(path.clone()) {
+                // Plain rows carry the enumeration metadata: no second stat.
+                let result = match entry.metadata.as_ref() {
+                    Some(metadata) => {
+                        Ok(stack_item_metadata_from_known_metadata(path.clone(), metadata))
+                    }
+                    None => stack_item_metadata_from_path(path.clone()),
+                };
+                match result {
                     Ok(item) => items.push(item),
                     Err(message) => warnings.push(stack_folder_warning(Some(path), message)),
                 }
@@ -276,7 +293,7 @@ fn compare_stack_entries(
     } else {
         folder_sort_rank(a.is_dir)
             .cmp(&folder_sort_rank(b.is_dir))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.sort_key.cmp(&b.sort_key))
     }
 }
 
@@ -287,10 +304,10 @@ fn compare_newest_first(
     match (a.modified_at, b.modified_at) {
         (Some(a_modified), Some(b_modified)) => b_modified
             .cmp(&a_modified)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            .then_with(|| a.sort_key.cmp(&b.sort_key)),
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (Some(_), None) => std::cmp::Ordering::Less,
-        (None, None) => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        (None, None) => a.sort_key.cmp(&b.sort_key),
     }
 }
 
@@ -420,8 +437,10 @@ fn finalize_zip_children(
         .into_values()
         .map(|item| StackFolderEntrySummary {
             name: item.name.clone(),
+            sort_key: sort_key_for(&item.name),
             is_dir: item.kind == "folder",
             modified_at: item.modified_at,
+            metadata: None,
             item: StackFolderEntryItem::Virtual(item),
         })
         .collect::<Vec<_>>();
@@ -460,9 +479,19 @@ fn split_zip_virtual_path(path: &str) -> Option<(PathBuf, String)> {
 #[derive(Clone, Debug)]
 struct StackFolderEntrySummary {
     name: String,
+    /// Lowercased name, computed once; comparators never allocate.
+    sort_key: Box<str>,
     is_dir: bool,
     modified_at: Option<u64>,
+    /// `DirEntry::metadata()` for plain (non-symlink, non-reparse) rows so the page
+    /// build does not stat again. `None` for reparse/symlink/error rows.
+    metadata: Option<fs::Metadata>,
     item: StackFolderEntryItem,
+}
+
+/// Sort key computed once per entry (identical order to `name.to_lowercase()`).
+pub(crate) fn sort_key_for(name: &str) -> Box<str> {
+    name.to_lowercase().into_boxed_str()
 }
 
 #[derive(Clone, Debug)]
@@ -542,6 +571,14 @@ impl StackFolderListingSessionStore {
         ))
     }
 
+    fn drop_carried_metadata(&mut self, session_id: &str) {
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            for entry in &mut session.entries {
+                entry.metadata = None;
+            }
+        }
+    }
+
     fn finish_session(&mut self, path: &str, session_id: &str) {
         self.sessions.remove(session_id);
         if self
@@ -616,29 +653,71 @@ fn stack_folder_entry_summary(
             format!("Failed to inspect stack item: {error}"),
         )
     })?;
-    let is_dir = if file_type.is_dir() {
-        true
-    } else if file_type.is_symlink() {
-        fs::metadata(&path)
-            .map(|metadata| metadata.is_dir())
-            .unwrap_or(false)
-    } else {
-        false
-    };
     let name = entry
         .file_name()
         .to_str()
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
-
-    Ok(StackFolderEntrySummary {
+    let entry_metadata = entry.metadata();
+    let resolve_path = path.clone();
+    Ok(summarize_listing_entry(
         name,
+        path,
+        file_type,
+        entry_metadata,
+        move || fs::metadata(&resolve_path).ok(),
+    ))
+}
+
+/// Pure per-entry summary. `entry_metadata` is `DirEntry::metadata()` (free on
+/// Windows: it comes from the directory enumeration). `resolve_target` is the only
+/// place a per-path handle may be opened and runs once, and only for symlink /
+/// junction / reparse-point entries (OneDrive placeholders included, so their
+/// result is unchanged) or when `entry_metadata` failed.
+///
+/// Note: for plain files NTFS may report lazily updated size/timestamps in the
+/// directory entry (hard-linked or currently open files) that differ from
+/// `fs::metadata`; that is accepted, Explorer-equivalent behaviour.
+fn summarize_listing_entry(
+    name: String,
+    path: PathBuf,
+    file_type: fs::FileType,
+    entry_metadata: std::io::Result<fs::Metadata>,
+    resolve_target: impl FnOnce() -> Option<fs::Metadata>,
+) -> StackFolderEntrySummary {
+    let sort_key = sort_key_for(&name);
+    let plain = match entry_metadata {
+        Ok(metadata) if !file_type.is_symlink() && !metadata_is_reparse_point(&metadata) => {
+            Some(metadata)
+        }
+        _ => None,
+    };
+    if let Some(metadata) = plain {
+        return StackFolderEntrySummary {
+            name,
+            sort_key,
+            is_dir: file_type.is_dir(),
+            modified_at: metadata_modified_epoch_millis(&metadata),
+            metadata: Some(metadata),
+            item: StackFolderEntryItem::Filesystem(path),
+        };
+    }
+    let target = resolve_target();
+    let is_dir = if file_type.is_dir() {
+        true
+    } else if file_type.is_symlink() {
+        target.as_ref().is_some_and(|metadata| metadata.is_dir())
+    } else {
+        false
+    };
+    StackFolderEntrySummary {
+        name,
+        sort_key,
         is_dir,
-        modified_at: fs::metadata(&path)
-            .ok()
-            .and_then(|metadata| metadata_modified_epoch_millis(&metadata)),
+        modified_at: target.as_ref().and_then(metadata_modified_epoch_millis),
+        metadata: None,
         item: StackFolderEntryItem::Filesystem(path),
-    })
+    }
 }
 
 fn session_estimated_bytes(session: &StackFolderListingSession) -> usize {
@@ -655,7 +734,12 @@ fn stack_folder_entry_summary_estimated_bytes(entry: &StackFolderEntrySummary) -
         StackFolderEntryItem::Filesystem(path) => path.as_os_str().len(),
         StackFolderEntryItem::Virtual(item) => item.path.len(),
     };
-    96 + name_bytes + path_bytes
+    let metadata_bytes = if entry.metadata.is_some() {
+        std::mem::size_of::<fs::Metadata>()
+    } else {
+        0
+    };
+    96 + name_bytes + path_bytes + entry.sort_key.len() + metadata_bytes
 }
 
 fn truncate_entries_to_byte_budget(entries: &mut Vec<StackFolderEntrySummary>) -> bool {
@@ -716,6 +800,10 @@ pub(crate) fn stack_folder_warning(path: Option<PathBuf>, message: String) -> St
         message,
     }
 }
+
+#[cfg(test)]
+#[path = "paging_tier1_tests.rs"]
+mod tier1_tests;
 
 #[cfg(test)]
 mod tests {
@@ -917,18 +1005,24 @@ mod tests {
                     name: "file-0.txt".into(),
                     is_dir: false,
                     modified_at: Some(1),
+                    sort_key: "file-0.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(downloads.join("file-0.txt")),
                 },
                 StackFolderEntrySummary {
                     name: "file-2.txt".into(),
                     is_dir: false,
                     modified_at: Some(3),
+                    sort_key: "file-2.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(downloads.join("file-2.txt")),
                 },
                 StackFolderEntrySummary {
                     name: "file-1.txt".into(),
                     is_dir: false,
                     modified_at: Some(2),
+                    sort_key: "file-1.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(downloads.join("file-1.txt")),
                 },
             ],
@@ -955,12 +1049,16 @@ mod tests {
                     name: "bravo.txt".into(),
                     is_dir: false,
                     modified_at: Some(2),
+                    sort_key: "bravo.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(folder.join("bravo.txt")),
                 },
                 StackFolderEntrySummary {
                     name: "alpha.txt".into(),
                     is_dir: false,
                     modified_at: Some(1),
+                    sort_key: "alpha.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(folder.join("alpha.txt")),
                 },
             ],
@@ -984,18 +1082,24 @@ mod tests {
                     name: "old.txt".into(),
                     is_dir: false,
                     modified_at: Some(1),
+                    sort_key: "old.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(PathBuf::from("old.txt")),
                 },
                 StackFolderEntrySummary {
                     name: "missing.txt".into(),
                     is_dir: false,
                     modified_at: None,
+                    sort_key: "missing.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(PathBuf::from("missing.txt")),
                 },
                 StackFolderEntrySummary {
                     name: "new.txt".into(),
                     is_dir: false,
                     modified_at: Some(2),
+                    sort_key: "new.txt".into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(PathBuf::from("new.txt")),
                 },
             ],
@@ -1165,7 +1269,7 @@ mod tests {
         for index in 0..3usize {
             store.start_session(
                 &format!("byte-budget-{index}"),
-                synthetic_named_entry_summaries_for_test(1, 11 * 1024 * 1024),
+                synthetic_named_entry_summaries_for_test(1, 7 * 1024 * 1024),
                 1,
                 std::time::Instant::now(),
             );
@@ -1366,6 +1470,8 @@ mod tests {
                     name: name.clone(),
                     is_dir: false,
                     modified_at: None,
+                    sort_key: name.to_lowercase().into(),
+                    metadata: None,
                     item: StackFolderEntryItem::Filesystem(PathBuf::from(name)),
                 }
             })

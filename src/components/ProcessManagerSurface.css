@@ -39,7 +39,7 @@
 }
 
 .process-manager-tabs button:hover { background: var(--js-color-control-hover); }
-.process-manager-tabs button:focus-visible { outline: none; box-shadow: var(--js-focus-ring); }
+.process-manager-tabs button:focus-visible { box-shadow: var(--js-focus-ring); }
 .process-table[hidden], .system-info-panel[hidden] { display: none; }
 .system-info-panel { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .process-filtered-note { color: var(--js-color-text-muted); font-size: 0.58rem; margin: 0; padding: 0.22rem 0.6rem; }
@@ -117,8 +117,14 @@
   line-height: 1.2;
 }
 
+.process-filter input:focus-visible {
+  box-shadow: none;
+  outline: 0;
+}
+
 .process-filter:focus-within {
   border-color: var(--js-color-accent-border);
+  outline: 2px solid var(--js-focus-color);
   box-shadow: var(--js-focus-ring);
 }
 
@@ -434,7 +440,7 @@
 .process-child-count {
   align-items: center;
   background: var(--js-color-accent-soft);
-  border: 1px solid var(--js-color-accent-border);
+  border: 1px solid var(--js-color-border);
   border-radius: 999px;
   color: var(--js-color-text);
   display: inline-flex;

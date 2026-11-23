@@ -516,6 +516,7 @@ test('backend settings and diagnostics commands are registered with hardened app
         'tray-panel', 'terminal-panel', 'command-panel', 'audio-panel', 'calendar-panel',
         'speech-history-panel', 'speech-indicator', 'context-menu-overlay'],
       ['top-bar'],
+      ['top-bar'],
       ['tray-panel']
     ]
   );

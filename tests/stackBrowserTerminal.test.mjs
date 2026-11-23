@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
-
-function readRepoFile(path) {
-  const url = new URL(`../${path}`, import.meta.url);
-  return existsSync(url) ? readFileSync(url, 'utf8') : '';
-}
+import { readRepoFile } from './support/repoSource.mjs';
 
 const commandsSource = readRepoFile('src/ipc/commands.ts');
 const stackPopupApi = readRepoFile('src/lib/stackPopup.ts');
@@ -196,8 +191,8 @@ test('phase 3 terminal output is push-first and batched before xterm writes', ()
 });
 
 test('phase 4 extracts Stack terminal pane and modern xterm addons from parent surface', () => {
-  assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
-  assert.match(stackPopupSurface, /import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/);
+  // FE-34: the surface never mounts the pane at first render; no static import (xterm stays out of the Stack surface chunk).
+  assert.doesNotMatch(stackPopupSurface, /^\s*import StackTerminalPane from '\.\/StackTerminalPane\.svelte'/m);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/xterm'/);
   assert.doesNotMatch(stackPopupSurface, /from '@xterm\/addon-fit'/);
   assert.match(stackTerminalPane, /import \{ WebglAddon \} from '@xterm\/addon-webgl'/);
@@ -460,9 +455,9 @@ test('terminal cwd changes update Stack Browser path and breadcrumbs immediately
   assert.match(stackTerminalPane, /async function applyCwd\(nextCwd: string\)/);
   assert.match(stackTerminalPane, /await applyCwd\(result\.cwd \|\| cwd\)/);
   assert.match(stackTerminalPane, /await onCwdChange\(normalized\)/);
-  assert.match(stackPopupSurface, /async function handleStackTerminalCwdChange\(cwd: string\)/);
-  assert.match(stackPopupSurface, /stackBrowserViewMode === 'terminal'[\s\S]{0,220}await openFolder\(cwd, \{ warmTerminal: false \}\);/);
-  assert.match(stackPopupSurface, /await stackTerminalPane\?\.syncFolderToTerminalCwd\(\);[\s\S]*stackBrowserViewMode = 'files';/);
+  // FE-34: the surface never mounted StackTerminalPane (stackTerminalPane always null; switchStackBrowserView and handleStackTerminalCwdChange had no caller).
+  // Those dead surface pins were dropped; cwd sync stays pinned in the pane above and behaviour-tested in terminal-retention.test.ts.
+  assert.doesNotMatch(stackPopupSurface, /handleStackTerminalCwdChange|switchStackBrowserView|stackTerminalPane/);
 });
 
 test('stack terminal PowerShell profile loads normal shell affordances, preserves Tab completion cycling, and normalizes extended cwd paths', () => {
@@ -515,8 +510,8 @@ test('stack terminal PowerShell profile loads normal shell affordances, preserve
 });
 
 test('stack terminal profile uses JSON shell settings from settings panel, not Stack Browser toolbar', () => {
-  assert.match(stackPopupSurface, /loadShellSettings/);
-  assert.match(stackPopupSurface, /normalizeStackTerminalProfile\(settings\.stackBrowser\?\.terminalProfile\)/);
+  // FE-34: the surface's profile load was dead (baseline: only fed an unrendered label; no terminal pane was ever mounted), so it was dropped.
+  // Settings-side normalization is still pinned below.
   assert.doesNotMatch(stackPopupSurface, /saveShellSettings/);
   assert.doesNotMatch(stackPopupSurface, /class="stack-terminal-profile"/);
   assert.doesNotMatch(stackPopupSurface, /aria-label="Terminal profile"/);

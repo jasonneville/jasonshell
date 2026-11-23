@@ -7,6 +7,7 @@ use std::{
 };
 
 pub(crate) const BANNER_LIFETIME: Duration = Duration::from_secs(6);
+pub(crate) const MAX_PAUSE_TOTAL: Duration = Duration::from_secs(30);
 pub(crate) const READINESS_LIMIT: Duration = Duration::from_secs(2);
 const WAITING_LIMIT: usize = 3;
 
@@ -56,6 +57,8 @@ pub(crate) struct Banner {
 pub(crate) enum BannerAction {
     Open,
     Dismiss,
+    Pause,
+    Resume,
 }
 
 struct Entry {
@@ -72,7 +75,43 @@ enum Phase {
     Queued,
     Awaiting { deadline: Instant, offered: bool },
     Acknowledged(Instant),
-    Shown(Instant),
+    Shown(Shown),
+}
+
+#[derive(Clone, Copy)]
+struct Shown {
+    at: Instant,
+    paused_at: Option<Instant>,
+    paused_total: Duration,
+}
+
+impl Shown {
+    fn fresh(at: Instant) -> Self {
+        Self {
+            at,
+            paused_at: None,
+            paused_total: Duration::ZERO,
+        }
+    }
+
+    fn spent(&self, now: Instant) -> Duration {
+        let live = self
+            .paused_at
+            .map_or(Duration::ZERO, |start| now.saturating_duration_since(start));
+        (self.paused_total + live).min(MAX_PAUSE_TOTAL)
+    }
+
+    fn deadline(&self, now: Instant) -> Instant {
+        self.at + BANNER_LIFETIME + self.spent(now)
+    }
+
+    /// Constant while paused so a dead renderer cannot pin the banner.
+    fn wake(&self) -> Instant {
+        match self.paused_at {
+            Some(_) => self.at + BANNER_LIFETIME + MAX_PAUSE_TOTAL,
+            None => self.at + BANNER_LIFETIME + self.paused_total,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -191,6 +230,12 @@ impl Queue {
             .map(|current| &current.entry.banner)
     }
 
+    pub(crate) fn is_paused(&self) -> bool {
+        self.current.as_ref().is_some_and(|current| {
+            matches!(current.phase, Phase::Shown(shown) if shown.paused_at.is_some())
+        })
+    }
+
     pub(crate) fn banner(&self) -> Option<&Banner> {
         self.current
             .as_ref()
@@ -206,7 +251,7 @@ impl Queue {
             return false;
         };
         if shown {
-            current.phase = Phase::Shown(now + BANNER_LIFETIME);
+            current.phase = Phase::Shown(Shown::fresh(now));
         } else {
             self.advance();
         }
@@ -218,8 +263,8 @@ impl Queue {
             .as_ref()
             .and_then(|current| match current.phase {
                 Phase::Awaiting { deadline, .. }
-                | Phase::Acknowledged(deadline)
-                | Phase::Shown(deadline) => Some(deadline),
+                | Phase::Acknowledged(deadline) => Some(deadline),
+                Phase::Shown(shown) => Some(shown.wake()),
                 Phase::Queued => None,
             })
             .or_else(|| self.opening.as_ref().map(|(_, deadline)| *deadline))
@@ -233,13 +278,25 @@ impl Queue {
     }
 
     pub(crate) fn act(&mut self, id: &str, action: BannerAction, now: Instant) -> bool {
-        if !self.current.as_ref().is_some_and(|current| {
+        let Some(current) = self.current.as_mut().filter(|current| {
             current.entry.banner.id == id
-                && matches!(current.phase, Phase::Shown(deadline) if now < deadline)
-        }) {
+                && matches!(current.phase, Phase::Shown(shown) if now < shown.deadline(now))
+        }) else {
             return false;
-        }
+        };
+        let Phase::Shown(shown) = &mut current.phase else {
+            return false;
+        };
         match action {
+            BannerAction::Pause => {
+                shown.paused_at.get_or_insert(now);
+            }
+            BannerAction::Resume => {
+                if shown.paused_at.is_some() {
+                    shown.paused_total = shown.spent(now);
+                    shown.paused_at = None;
+                }
+            }
             BannerAction::Dismiss => self.advance(),
             BannerAction::Open => {
                 self.opening = self

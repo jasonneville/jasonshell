@@ -1,10 +1,11 @@
 use crate::shell_windows::{
     SEARCH_PANEL_HEIGHT_LOGICAL, SEARCH_PANEL_LABEL, SEARCH_PANEL_WIDTH_LOGICAL, TOP_BAR_LABEL,
 };
+use crate::stack_popup::{authorize_stack_command, CallerAuthError, StackCommandAuth};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 const SEARCH_PANEL_UPDATE_EVENT: &str = "search-panel:update";
 pub const SEARCH_PANEL_INTERACTION_EVENT: &str = "search-panel:interaction";
@@ -189,6 +190,100 @@ pub fn get_search_panel_payload(
     state: tauri::State<'_, Mutex<SearchPanelRuntimeState>>,
 ) -> Result<Option<Value>, String> {
     Ok(latest_search_panel_payload(&state))
+}
+
+const MAX_COPY_SEARCH_TEXT_CHARS: usize = 4096;
+
+pub(crate) fn validate_copy_search_text(text: &str) -> Result<(), String> {
+    if text.is_empty() {
+        return Err("There is no text to copy".to_string());
+    }
+    if text.chars().count() > MAX_COPY_SEARCH_TEXT_CHARS {
+        return Err("Text is too long to copy".to_string());
+    }
+    if text.contains('\0') {
+        return Err("Text contains characters that cannot be copied".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn copy_search_text(window: WebviewWindow, text: String) -> Result<(), String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::COPY_SEARCH_TEXT,
+            callers: &[TOP_BAR_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    validate_copy_search_text(&text)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::speech_clipboard::write_unicode_text(&text)
+            .map_err(|error| format!("Could not copy to the clipboard ({})", error.code()))
+    })
+    .await
+    .map_err(|error| format!("Could not copy to the clipboard: {error}"))?
+}
+
+#[tauri::command]
+pub async fn open_search_url(window: WebviewWindow, url: String) -> Result<(), String> {
+    authorize_stack_command(
+        &window,
+        StackCommandAuth::AllowedCallers {
+            command: crate::contracts::commands::OPEN_SEARCH_URL,
+            callers: &[TOP_BAR_LABEL],
+        },
+    )
+    .map_err(CallerAuthError::into_string)?;
+    let url = crate::search::providers::web::validate_search_open_url(&url)?;
+    tauri::async_runtime::spawn_blocking(move || open_url_native(&url))
+        .await
+        .map_err(|error| format!("Could not open the URL: {error}"))?
+}
+
+#[cfg(target_os = "windows")]
+fn open_url_native(url: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                // SAFETY: balances the successful CoInitializeEx on this same thread.
+                unsafe { CoUninitialize() }
+            }
+        }
+    }
+
+    let url_wide = url.encode_utf16().chain([0]).collect::<Vec<_>>();
+    // SAFETY: the shell may use COM protocol handlers; an already-initialized pool thread is left
+    // alone. `url_wide` is NUL-terminated and outlives the call, which does not retain it.
+    let result = unsafe {
+        let _com = ComGuard(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
+        ShellExecuteW(
+            Some(HWND::default()),
+            None,
+            PCWSTR(url_wide.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code <= 32 {
+        return Err(format!("Could not open the URL (code {code})"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_url_native(_url: &str) -> Result<(), String> {
+    Err("Opening URLs is only supported on Windows".to_string())
 }
 
 fn store_search_panel_payload(state: &Mutex<SearchPanelRuntimeState>, payload: Value) -> bool {

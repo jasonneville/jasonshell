@@ -160,7 +160,7 @@
 }
 .task-gallery-close:hover { background: var(--js-color-control-hover); }
 .task-gallery-close[aria-disabled='true'] { color: var(--js-color-text-muted); cursor: progress; }
-.task-gallery-activate:focus-visible, .task-gallery-close:focus-visible { outline: 2px solid var(--js-color-accent); outline-offset: -2px; }
+.task-gallery-activate:focus-visible, .task-gallery-close:focus-visible { outline: 2px solid var(--js-focus-color); outline-offset: -2px; }
 /* Measured local menus stay inside the native gallery client. Disable the shared
    scale-in so its measured box and final clickable box have identical geometry. */
 .task-gallery-panel .task-gallery-context-menu {

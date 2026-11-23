@@ -9,6 +9,7 @@ use crate::stack_popup::recovery_journal::{
     RecoveryJournalState,
 };
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -91,52 +92,89 @@ pub(crate) fn next_new_text_document_path(parent: &Path) -> Result<PathBuf, Stri
     Err("Could not choose a New Text Document name".to_string())
 }
 
+/// One terminal launch attempt. The directory is only ever passed through the
+/// process working directory (and, for Windows Terminal, a single `-d` argv
+/// entry with `;` escaped); it is never embedded in shell script text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalLaunchPlan {
+    pub program: PathBuf,
+    pub args: Vec<OsString>,
+    pub current_dir: PathBuf,
+}
+
+/// Plans in preference order: Windows Terminal (when resolved), PowerShell, cmd.
+pub(crate) fn terminal_launch_plans(
+    directory: &Path,
+    system32: &Path,
+    wt: Option<PathBuf>,
+) -> Vec<TerminalLaunchPlan> {
+    let mut plans = Vec::new();
+    if let Some(wt) = wt {
+        // wt treats a bare `;` as a subcommand separator.
+        let lossy = directory.as_os_str().to_string_lossy();
+        let start_dir = if lossy.contains(';') {
+            OsString::from(lossy.replace(';', r"\;"))
+        } else {
+            directory.as_os_str().to_os_string()
+        };
+        plans.push(TerminalLaunchPlan {
+            program: wt,
+            args: vec![OsString::from("-d"), start_dir],
+            current_dir: directory.to_path_buf(),
+        });
+    }
+    plans.push(TerminalLaunchPlan {
+        program: system32
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe"),
+        args: vec![OsString::from("-NoExit"), OsString::from("-NoLogo")],
+        current_dir: directory.to_path_buf(),
+    });
+    // cmd.exe cannot use a UNC working directory (it falls back to %SystemRoot%
+    // and the folder would silently be wrong), so it is not offered for UNC paths.
+    if !directory.as_os_str().to_string_lossy().starts_with(r"\\") {
+        plans.push(TerminalLaunchPlan {
+            program: system32.join("cmd.exe"),
+            args: vec![OsString::from("/K")],
+            current_dir: directory.to_path_buf(),
+        });
+    }
+    plans
+}
+
 #[cfg(target_os = "windows")]
 fn launch_terminal_at_dir(directory: &Path) -> Result<(), String> {
-    use std::fs;
     use std::process::Command;
 
     let system_root =
         std::env::var_os("SystemRoot").ok_or_else(|| "SystemRoot is unavailable".to_string())?;
     let system32 = PathBuf::from(system_root).join("System32");
-    let wt = system32.join("wt.exe");
-    let powershell = system32
-        .join("WindowsPowerShell")
-        .join("v1.0")
-        .join("powershell.exe");
-    let cmd = system32.join("cmd.exe");
+    // The Windows Terminal app-execution alias lives under WindowsApps, not System32.
+    let wt = std::env::var_os("LOCALAPPDATA")
+        .map(|local| {
+            PathBuf::from(local)
+                .join("Microsoft")
+                .join("WindowsApps")
+                .join("wt.exe")
+        })
+        .filter(|path| path.is_absolute() && path.exists());
 
-    if wt.exists()
-        && Command::new(fs::canonicalize(&wt).unwrap_or(wt))
-            .arg("-d")
-            .arg(directory)
+    let mut last_error = None;
+    for plan in terminal_launch_plans(directory, &system32, wt) {
+        match Command::new(&plan.program)
+            .args(&plan.args)
+            .current_dir(&plan.current_dir)
             .spawn()
-            .is_ok()
-    {
-        return Ok(());
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
     }
-
-    if powershell.exists()
-        && Command::new(fs::canonicalize(&powershell).unwrap_or(powershell))
-            .arg("-NoExit")
-            .arg("-NoLogo")
-            .arg("-Command")
-            .arg("Set-Location -LiteralPath $args[0]")
-            .arg(directory)
-            .spawn()
-            .is_ok()
-    {
-        return Ok(());
-    }
-
-    Command::new(fs::canonicalize(&cmd).unwrap_or(cmd))
-        .arg("/K")
-        .arg("cd")
-        .arg("/d")
-        .arg(directory)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Failed to open terminal here: {error}"))
+    Err(match last_error {
+        Some(error) => format!("Failed to open terminal here: {error}"),
+        None => "Failed to open terminal here".to_string(),
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -293,7 +331,7 @@ pub(crate) fn copy_path_with_journal_progress(
     )?;
     journal.transition_to(RecoveryJournalState::CopyStarted, now_ms());
     write_journal(Some(journal_dir), &operation_id, &journal)?;
-    let res = copy_path_with_manifest_progress(source, destination, &mut journal, progress);
+    let res = copy_path_with_manifest_progress(source, destination, &mut journal, progress, false);
     match res {
         Ok(()) => {
             journal.transition_to(RecoveryJournalState::CopiedVerified, now_ms());
@@ -322,26 +360,95 @@ pub(crate) fn move_path_with_fallback_journal(
     destination: &Path,
     journal_dir: Option<&Path>,
 ) -> Result<(), String> {
-    move_path_with_fallback_journal_progress(source, destination, journal_dir, &mut |_, _| {}, &mut || Ok(()), &mut || {})
+    move_path_with_fallback_journal_progress(source, destination, journal_dir, &mut |_, _| {}, &mut || Ok(()), &mut || {}, &mut |_| {})
+}
+
+pub(super) enum MoveMethod {
+    Rename,
+    CopyDelete,
+}
+
+#[cfg(windows)]
+fn wide_move_path(path: &Path) -> io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::{Component, Prefix};
+
+    let mut units: Vec<_> = path.as_os_str().encode_wide().collect();
+    if units.contains(&0) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Move path contains a NUL"));
+    }
+    // Keep ordinary short path semantics and existing verbatim/device paths.
+    // Normalize long DOS paths before adding a prefix: verbatim syntax would
+    // otherwise change how slashes and dot components are interpreted.
+    let device_path = matches!(path.components().next(), Some(Component::Prefix(prefix))
+        if prefix.kind().is_verbatim() || matches!(prefix.kind(), Prefix::DeviceNS(_)));
+    if units.len() >= 248 && !device_path {
+        let absolute = std::path::absolute(path)?;
+        let normalized: Vec<_> = absolute.as_os_str().encode_wide().collect();
+        match absolute.components().next() {
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_)) => {
+                units = r"\\?\".encode_utf16().chain(normalized).collect();
+            }
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::UNC(_, _)) => {
+                units = r"\\?\UNC\".encode_utf16().chain(normalized.into_iter().skip(2)).collect();
+            }
+            _ => units = normalized,
+        }
+    }
+    units.push(0);
+    Ok(units)
+}
+
+#[cfg(windows)]
+fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use windows::{core::PCWSTR, Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS}};
+
+    let source = wide_move_path(source)?;
+    let destination = wide_move_path(destination)?;
+    // SAFETY: Both paths are NUL-terminated and valid through the call. Zero
+    // flags disallow both replacement and the API's implicit copy/delete.
+    unsafe { MoveFileExW(PCWSTR(source.as_ptr()), PCWSTR(destination.as_ptr()), MOVE_FILE_FLAGS(0)) }
+        .map_err(|error| {
+            let code = error.code().0 as u32;
+            // Only Win32 facility errors may trigger the cross-volume path.
+            if code >> 16 == 0x8007 { io::Error::from_raw_os_error((code & 0xffff) as i32) }
+            else { io::Error::other(error) }
+        })
+}
+
+#[cfg(not(windows))]
+fn rename_no_replace(_source: &Path, _destination: &Path) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Non-replacing Stack move requires Windows"))
+}
+
+fn is_cross_volume(error: &io::Error) -> bool {
+    #[cfg(windows)]
+    { error.raw_os_error() == Some(windows::Win32::Foundation::ERROR_NOT_SAME_DEVICE.0 as i32) }
+    #[cfg(not(windows))]
+    { let _ = error; false }
 }
 
 pub(crate) fn move_path_with_fallback_journal_progress(
     source: &Path, destination: &Path, journal_dir: Option<&Path>,
     progress: &mut impl FnMut(&Path, u64),
     fallback: &mut impl FnMut() -> Result<(), String>, deleting: &mut impl FnMut(),
+    moved: &mut impl FnMut(MoveMethod),
 ) -> Result<(), String> {
     let operation_id = new_recovery_operation_id();
     let Some(journal_dir) = journal_dir else {
-        return match fs::rename(source, destination) {
-            Ok(()) => Ok(()),
-            Err(rename_error) => {
+        return match rename_no_replace(source, destination) {
+            Ok(()) => { moved(MoveMethod::Rename); Ok(()) }
+            Err(rename_error) if is_cross_volume(&rename_error) => {
                 fallback()?;
-                copy_path_progress(source, destination, progress).map_err(|copy_error|
+                copy_path_inner_progress(source, destination, &mut HashSet::new(), progress, true).map_err(|copy_error|
                     format!("Failed to move stack item: {rename_error}; fallback copy failed: {copy_error}"))?;
                 deleting();
                 remove_after_move_copy(source).map_err(|error|
-                    format!("Failed to move stack item after fallback copy: {error}"))
+                    format!("Failed to move stack item after fallback copy: {error}"))?;
+                moved(MoveMethod::CopyDelete);
+                Ok(())
             }
+            Err(error) => Err(format!("Failed to move stack item: {error}")),
         };
     };
     let mut journal = journal_entry_for(
@@ -353,15 +460,16 @@ pub(crate) fn move_path_with_fallback_journal_progress(
     )?;
     journal.transition_to(RecoveryJournalState::CopyStarted, now_ms());
     write_journal(Some(journal_dir), &operation_id, &journal)?;
-    match fs::rename(source, destination) {
+    match rename_no_replace(source, destination) {
         Ok(()) => {
+            moved(MoveMethod::Rename);
             journal.transition_to(RecoveryJournalState::Completed, now_ms());
             write_journal(Some(journal_dir), &operation_id, &journal)?;
             Ok(())
         }
-        Err(rename_error) => {
+        Err(rename_error) if is_cross_volume(&rename_error) => {
             fallback()?;
-            let copy_res = copy_path_with_manifest_progress(source, destination, &mut journal, progress);
+            let copy_res = copy_path_with_manifest_progress(source, destination, &mut journal, progress, true);
             if let Err(message) = copy_res {
                 journal.mark_failed(format!("Failed to move stack item: {rename_error}; fallback copy failed: {message}"), now_ms());
                 write_journal(Some(journal_dir), &operation_id, &journal).ok();
@@ -375,6 +483,7 @@ pub(crate) fn move_path_with_fallback_journal_progress(
             let delete_res = remove_after_move_copy(source);
             match delete_res {
                 Ok(()) => {
+                    moved(MoveMethod::CopyDelete);
                     journal.transition_to(RecoveryJournalState::SourceRemoved, now_ms());
                     write_journal(Some(journal_dir), &operation_id, &journal)?;
                     journal.transition_to(RecoveryJournalState::Completed, now_ms());
@@ -392,6 +501,12 @@ pub(crate) fn move_path_with_fallback_journal_progress(
                     ))
                 }
             }
+        }
+        Err(error) => {
+            let message = format!("Failed to move stack item: {error}");
+            journal.mark_failed(message.clone(), now_ms());
+            write_journal(Some(journal_dir), &operation_id, &journal).ok();
+            Err(message)
         }
     }
 }
@@ -433,10 +548,11 @@ fn journal_entry_for(
 fn copy_path_with_manifest_progress(
     source: &Path, destination: &Path, journal: &mut RecoveryJournalEntry,
     progress: &mut impl FnMut(&Path, u64),
+    exclusive: bool,
 ) -> Result<(), String> {
     let manifest = build_manifest(source)?;
     journal.source_manifest = Some(manifest.clone());
-    copy_path_progress(source, destination, progress)?;
+    copy_path_inner_progress(source, destination, &mut HashSet::new(), progress, exclusive)?;
     journal.copied_manifest = Some(build_manifest(destination)?);
     if journal.source_manifest != journal.copied_manifest {
         return Err("Failed to copy stack item: manifest mismatch".to_string());
@@ -544,17 +660,18 @@ fn copy_path_inner(
     destination: &Path,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
-    copy_path_inner_progress(source, destination, visited, &mut |_, _| {})
+    copy_path_inner_progress(source, destination, visited, &mut |_, _| {}, false)
 }
 
 fn copy_path_progress(source: &Path, destination: &Path, progress: &mut impl FnMut(&Path, u64)) -> Result<(), String> {
     let mut visited = HashSet::new();
-    copy_path_inner_progress(source, destination, &mut visited, progress)
+    copy_path_inner_progress(source, destination, &mut visited, progress, false)
 }
 
 fn copy_path_inner_progress(
     source: &Path, destination: &Path, visited: &mut HashSet<PathBuf>,
     progress: &mut impl FnMut(&Path, u64),
+    exclusive: bool,
 ) -> Result<(), String> {
     ensure_paste_destination_allowed(source, destination)?;
     let metadata = fs::symlink_metadata(source)
@@ -566,10 +683,14 @@ fn copy_path_inner_progress(
         );
     }
     if metadata.is_dir() {
-        copy_dir_inner_progress(source, destination, visited, progress)
+        copy_dir_inner_progress(source, destination, visited, progress, exclusive)
     } else {
         let expected = metadata.len();
-        let copied = fs::copy(source, destination)
+        let copied = if exclusive {
+            copy_new_file(source, destination)
+        } else {
+            fs::copy(source, destination)
+        }
             .map_err(|error| format!("Failed to copy stack item: {error}"))?;
         if copied != expected {
             return Err("Failed to copy stack item: byte count mismatch".to_string());
@@ -579,18 +700,39 @@ fn copy_path_inner_progress(
     }
 }
 
+#[cfg(windows)]
+fn copy_new_file(source: &Path, destination: &Path) -> io::Result<u64> {
+    use windows::{core::PCWSTR, Win32::Storage::FileSystem::CopyFileW};
+    let from = wide_move_path(source)?;
+    let to = wide_move_path(destination)?;
+    // SAFETY: Both paths are NUL-terminated. bFailIfExists makes publication
+    // exclusive while retaining CopyFile's Windows metadata and stream handling.
+    unsafe { CopyFileW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), true) }.map_err(io::Error::other)?;
+    Ok(fs::metadata(destination)?.len())
+}
+
+#[cfg(not(windows))]
+fn copy_new_file(source: &Path, destination: &Path) -> io::Result<u64> {
+    let mut source = fs::File::open(source)?;
+    let mut target = fs::OpenOptions::new().write(true).create_new(true).open(destination)?;
+    let bytes = io::copy(&mut source, &mut target)?;
+    target.set_permissions(source.metadata()?.permissions())?;
+    Ok(bytes)
+}
+
 #[cfg(test)]
 fn copy_dir_inner(
     source: &Path,
     destination: &Path,
     visited: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
-    copy_dir_inner_progress(source, destination, visited, &mut |_, _| {})
+    copy_dir_inner_progress(source, destination, visited, &mut |_, _| {}, false)
 }
 
 fn copy_dir_inner_progress(
     source: &Path, destination: &Path, visited: &mut HashSet<PathBuf>,
     progress: &mut impl FnMut(&Path, u64),
+    exclusive: bool,
 ) -> Result<(), String> {
     ensure_paste_destination_allowed(source, destination)?;
     let canonical_source = fs::canonicalize(source)
@@ -598,11 +740,11 @@ fn copy_dir_inner_progress(
     if !visited.insert(canonical_source) {
         return Err("Cannot copy a folder cycle from Stack Browser".to_string());
     }
-    fs::create_dir_all(destination)
+    (if exclusive { fs::create_dir(destination) } else { fs::create_dir_all(destination) })
         .map_err(|error| format!("Failed to create pasted folder: {error}"))?;
     for entry in fs::read_dir(source).map_err(|error| format!("Failed to copy folder: {error}"))? {
         let entry = entry.map_err(|error| format!("Failed to copy folder entry: {error}"))?;
-        copy_path_inner_progress(&entry.path(), &destination.join(entry.file_name()), visited, progress)?;
+        copy_path_inner_progress(&entry.path(), &destination.join(entry.file_name()), visited, progress, exclusive)?;
     }
     Ok(())
 }
@@ -722,3 +864,7 @@ fn recycle_path(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "file_ops_tier0_tests.rs"]
+mod tier0_tests;

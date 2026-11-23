@@ -59,11 +59,11 @@ test('request-only primitive validates shell/exact identity before one fallible 
   assert.ok(facadeBody.indexOf('reject_internal_shell_hwnd') < facadeBody.indexOf('actions::request_close_task_window_with_identity'));
 });
 
-test('preview X keeps legacy close policy and existing authorization removal semantics', () => {
+test('preview X keeps legacy close policy; request-only close leaves row reconciliation to the next refresh', () => {
   const body = functionBody(gallery, 'close_task_gallery_previewed_window');
   assert.match(body, /TASK_PREVIEW_LABEL/);
   assert.match(body, /close_task_window_with_identity\(authorized\.row\.hwnd, authorized\.identity\)/);
-  assert.match(body, /windows_by_hwnd\.remove\(&args\.hwnd\)/);
+  assert.doesNotMatch(body, /windows_by_hwnd\.remove\(/);
 });
 
 test('gallery Close is independent sibling with fixed 24x24 footer target and visible keyboard ring', () => {

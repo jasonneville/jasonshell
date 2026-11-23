@@ -39,7 +39,8 @@ test('stack archive extraction and recursive file ops run behind blocking task b
   assert.match(pasteStackItems, /clipboard::paste_stack_clipboard_items_async\(&app_handle, &state, destination, window, operation_id\)\.await/);
 
   const pasteAsync = extractFunction(stackClipboard, 'paste_stack_clipboard_items_async');
-  assert.match(pasteAsync, /tauri::async_runtime::spawn_blocking\(move \|\| \{\s*paste_clipboard_items_progress\(&clipboard, &destination, journal_dir\.as_deref\(\), &worker_window, &mut progress\)/);
+  const worker = pasteAsync.match(/tauri::async_runtime::spawn_blocking\(move \|\| \{([\s\S]*?)\n\s*\}\)\s*\.await/)?.[1] ?? '';
+  assert.match(worker, /paste_clipboard_items_progress\(\s*&clipboard,\s*&destination,\s*journal_dir\.as_deref\(\),\s*&worker_window,\s*&mut progress\b/);
   assert.ok(pasteAsync.indexOf('clipboard_for_paste(state)?') < pasteAsync.indexOf('spawn_blocking('), 'clipboard snapshot precedes worker');
   assert.ok(pasteAsync.indexOf('spawn_blocking(') < pasteAsync.indexOf('update_cut_clipboard_after_paste('), 'cut state updates after worker join');
 

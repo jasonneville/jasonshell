@@ -1,6 +1,6 @@
 .terminal-panel {
-  background: #05070a;
-  color: #d7e2f5;
+  background: var(--js-color-bg);
+  color: var(--js-color-text);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
@@ -10,8 +10,8 @@
 
 .terminal-panel-header {
   align-items: center;
-  background: #111722;
-  border-bottom: 1px solid #263246;
+  background: var(--js-bg-bar);
+  border-bottom: 1px solid var(--js-color-border-soft);
   box-sizing: border-box;
   display: grid;
   gap: 0.35rem 0.5rem;
@@ -29,7 +29,7 @@
 }
 
 .terminal-panel-header span {
-  color: #9fadbf;
+  color: var(--js-color-text-muted);
   font-size: 0.62rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -52,11 +52,11 @@
 
 .terminal-tab-shell {
   align-items: center;
-  background: #0b1220;
-  border: 1px solid #27364d;
+  background: var(--js-color-surface);
+  border: 1px solid var(--js-color-border);
   border-radius: 0;
   box-sizing: border-box;
-  color: #c6d4ea;
+  color: var(--js-color-text-muted);
   display: grid;
   flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) 1rem;
@@ -66,9 +66,9 @@
 }
 
 .terminal-tab-shell.active {
-  border-color: #67a3ff;
-  box-shadow: 0 0 0 1px rgb(103 163 255 / 40%);
-  color: #ffffff;
+  background: var(--js-color-surface-raised);
+  border-color: var(--js-color-accent-border);
+  color: var(--js-color-text-strong);
 }
 
 .terminal-tab-button,
@@ -99,8 +99,8 @@
 }
 
 .terminal-session-tabs .terminal-tab-new {
-  background: #0b1220;
-  border: 1px solid #27364d;
+  background: var(--js-color-surface);
+  border: 1px solid var(--js-color-border);
   flex: 0 0 auto;
   font-weight: 700;
   max-width: none;
@@ -109,14 +109,14 @@
 }
 
 .terminal-tab-status {
-  color: #69d68b;
+  color: var(--js-status-success);
   font-size: 0.62rem;
   justify-self: center;
 }
 
 .terminal-tab-close {
   align-items: center;
-  color: #d7e2f5;
+  color: var(--js-color-text);
   display: none;
   font-size: 0.8rem;
   height: 100%;
@@ -142,8 +142,8 @@
 .terminal-tab-close:focus-visible,
 .terminal-session-tabs .terminal-tab-new:hover,
 .terminal-session-tabs .terminal-tab-new:focus-visible {
-  background: #1d2b42;
-  outline: 0;
+  background: var(--js-color-control-hover);
+  outline-offset: -2px;
 }
 
 .terminal-toolbar {
@@ -171,10 +171,10 @@
 .terminal-search button,
 .terminal-quick-fixes button,
 .terminal-quick-select button {
-  background: #172235;
-  border: 1px solid #33435a;
+  background: var(--js-bg-control);
+  border: 1px solid var(--js-color-border);
   border-radius: 4px;
-  color: #d7e2f5;
+  color: var(--js-color-text);
   cursor: pointer;
   font: inherit;
   font-size: 0.66rem;
@@ -187,8 +187,7 @@
 .terminal-search button:hover,
 .terminal-quick-fixes button:hover,
 .terminal-quick-select button:hover {
-  background: #1d2b42;
-  outline: 0;
+  background: var(--js-color-control-hover);
 }
 
 .terminal-toolbar button:disabled,
@@ -198,10 +197,10 @@
 }
 
 .terminal-toolbar-menu {
-  background: #111722;
-  border: 1px solid #33435a;
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-border);
   border-radius: 6px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 36%);
+  box-shadow: var(--js-shadow-raised);
   display: grid;
   gap: 0.2rem;
   max-height: min(22rem, calc(100vh - 3.5rem));
@@ -215,13 +214,13 @@
 }
 
 .terminal-toolbar-menu strong {
-  color: #9fadbf;
+  color: var(--js-color-text-muted);
   font-size: 0.62rem;
   padding: 0.25rem 0.35rem 0;
 }
 
 .terminal-toolbar-menu span {
-  color: #7f8da4;
+  color: var(--js-color-text-muted);
   font-size: 0.65rem;
   padding: 0.25rem 0.35rem;
 }
@@ -238,7 +237,7 @@
 }
 
 .terminal-toolbar-menu button.danger {
-  color: #ffb8b8;
+  color: var(--js-color-error-text);
 }
 
 .terminal-recent-menu {
@@ -256,7 +255,7 @@
 
 .terminal-pane-tree,
 .terminal-pane-split {
-  background: #172235;
+  background: transparent;
   box-sizing: border-box;
   gap: 0.35rem;
   height: 100%;
@@ -290,8 +289,8 @@
 }
 
 .terminal-pane {
-  background: #05070a;
-  border: 1px solid #263246;
+  background: var(--js-color-surface);
+  border: 1px solid var(--js-color-border-soft);
   border-radius: 8px;
   box-sizing: border-box;
   display: grid;
@@ -303,16 +302,15 @@
 }
 
 .terminal-pane.focused {
-  border-color: black;
-  box-shadow: inset 0 0 0 1px rgb(103 163 255 / 45%);
+  border-color: var(--js-color-accent-border);
 }
 
 .terminal-pane-chrome {
   align-items: center;
-  background: #0b1220;
-  border-bottom: 1px solid #263246;
+  background: var(--js-color-surface);
+  border-bottom: 1px solid var(--js-color-border-soft);
   box-sizing: border-box;
-  color: #9fadbf;
+  color: var(--js-color-text-muted);
   display: grid;
   font-size: 0.62rem;
   grid-template-rows: minmax(1.3rem, auto);
@@ -334,7 +332,7 @@
 }
 
 .terminal-panel-output {
-  background: #05070a;
+  background: var(--js-color-surface);
   box-sizing: border-box;
   font-family: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, SFMono-Regular, monospace;
   font-feature-settings: "liga" 0, "calt" 0, "tnum" 1;
@@ -370,7 +368,7 @@
 
 .terminal-panel-output :global(.xterm-viewport),
 .terminal-panel-output :global(.xterm-screen) {
-  background: #05070a !important;
+  background: transparent !important;
 }
 
 .terminal-panel-output :global(.xterm-helper-textarea) {
@@ -393,10 +391,10 @@
 .terminal-search,
 .terminal-quick-fixes,
 .terminal-quick-select {
-  background: color-mix(in srgb, #05070a 88%, #172235);
-  border: 1px solid #33435a;
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-border);
   border-radius: 6px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 30%);
+  box-shadow: var(--js-shadow-raised);
   display: flex;
   gap: 0.35rem;
   left: 0.65rem;
@@ -412,10 +410,10 @@
 }
 
 .terminal-search-input {
-  background: #05070a;
-  border: 1px solid #33435a;
+  background: var(--js-color-surface-sunken);
+  border: 1px solid var(--js-color-border);
   border-radius: 4px;
-  color: #d7e2f5;
+  color: var(--js-color-text);
   font: inherit;
   min-width: 14rem;
   padding: 0.3rem 0.45rem;
@@ -427,7 +425,7 @@
 }
 
 .terminal-quick-fixes button {
-  border-color: #5a5133;
+  border-color: var(--js-color-warning-border);
 }
 
 .terminal-quick-select {
@@ -450,19 +448,19 @@
 }
 
 .terminal-quick-select kbd {
-  background: #d7e2f5;
+  background: var(--js-color-text);
   border-radius: 3px;
-  color: #05070a;
+  color: var(--js-color-bg);
   min-width: 1.15rem;
   padding: 0 0.2rem;
   text-align: center;
 }
 
 .terminal-panel-status {
-  background: color-mix(in srgb, #05070a 86%, #172235);
-  border: 1px solid #36506d;
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-border);
   border-radius: 4px;
-  color: #d7e2f5;
+  color: var(--js-color-text);
   display: grid;
   gap: 0.25rem;
   left: 0.65rem;
@@ -474,7 +472,7 @@
 }
 
 .terminal-panel-status.error {
-  border-color: #a45151;
+  border-color: var(--js-color-error-border);
 }
 
 .terminal-panel-status strong {
@@ -482,15 +480,15 @@
 }
 
 .terminal-panel-status span {
-  color: #aebbd0;
+  color: var(--js-color-text-muted);
   font-size: 0.65rem;
 }
 
 .terminal-panel-context-menu {
-  background: #111722;
-  border: 1px solid #33435a;
+  background: var(--js-color-surface-raised);
+  border: 1px solid var(--js-color-border);
   border-radius: 6px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 36%);
+  box-shadow: var(--js-shadow-raised);
   display: grid;
   max-height: min(24rem, calc(100vh - 1rem));
   min-width: 13rem;
@@ -504,7 +502,7 @@
   background: transparent;
   border: 0;
   border-radius: 4px;
-  color: #d7e2f5;
+  color: var(--js-color-text);
   cursor: pointer;
   font: inherit;
   padding: 0.38rem 0.55rem;
@@ -513,6 +511,5 @@
 
 .terminal-panel-context-menu button:hover:not(:disabled),
 .terminal-panel-context-menu button:focus-visible {
-  background: #1d2b42;
-  outline: 0;
+  background: var(--js-color-control-hover);
 }

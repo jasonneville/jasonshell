@@ -1,5 +1,13 @@
 import type { SearchPanelResult } from '../../lib/searchPanel';
 import type { SearchMode } from '../../lib/searchSettings';
+import { implicitSearchSelectionIndex, isWebSearchFallback } from '../../lib/searchSelection.js';
+
+export {
+  implicitSearchSelectionIndex,
+  isImplicitlySelectable,
+  isWebSearchFallback,
+  quickCommandIdForResult
+} from '../../lib/searchSelection.js';
 
 export type SearchResultGroupId = 'everything' | 'apps' | 'windows' | 'places' | 'files' | 'commands';
 
@@ -41,6 +49,8 @@ export type SearchVisibleRowIdentity = {
   rowKey?: string;
   recordKey?: string;
   resultIndex?: number;
+  /** Show a Quick Commands row in its panel instead of running it. */
+  intent?: 'reveal';
 };
 export type SearchVisibleGroupOverflow = {
   groupId: SearchExpandableGroupId;
@@ -222,13 +232,11 @@ export function resolveVisibleSearchRowResultIndex(
     }
   }
 
-  if (identity.recordKey) {
-    const recordKeyIndex = results.findIndex((result) =>
+  if (identity.recordKey !== undefined) {
+    // The row the user acted on is gone; a row that merely reuses its id is not a substitute.
+    return results.findIndex((result) =>
       result.id === identity.id && result.recordKey === identity.recordKey
     );
-    if (recordKeyIndex >= 0) {
-      return recordKeyIndex;
-    }
   }
 
   return results.findIndex((result) => result.id === identity.id);
@@ -519,7 +527,30 @@ function visibleRowDomId(resultIndex: number): string {
   return `search-result-${resultIndex}`;
 }
 
+/**
+ * Selection after results stream in: a row the user chose is followed by identity, never by position.
+ * Interim payloads omit final-only rows, so a chosen row missing from one selects nothing rather than
+ * another row; only a final payload without it gives up the choice (`chosen: false`).
+ */
+export function streamedSearchSelection(
+  results: readonly SearchPanelResult[],
+  chosen: Pick<SearchPanelResult, 'id' | 'recordKey'> | null,
+  interim = false
+): { index: number; chosen: boolean } {
+  if (chosen) {
+    const index = results.findIndex((result) => result.id === chosen.id && result.recordKey === chosen.recordKey);
+    if (index >= 0 || interim) {
+      return { index, chosen: true };
+    }
+  }
+  return { index: results.length ? implicitSearchSelectionIndex(results, interim) : 0, chosen: false };
+}
+
 function reorderVisibleSearchResults(results: readonly SearchPanelResult[]): GroupedSearchResult[] {
+  const last = results.length - 1;
+  if (last > 0 && isWebSearchFallback(results[last])) {
+    return reorderVisibleSearchResults(results.slice(0, last)).concat({ result: results[last], index: last });
+  }
   const leadingApps: GroupedSearchResult[] = [];
   let tailStartIndex = results.length;
 

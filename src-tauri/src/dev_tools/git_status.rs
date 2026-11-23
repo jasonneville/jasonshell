@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::stack_popup::{trusted_git_path, workspace_git_stdout};
+
+// Every git call here goes through `workspace_git_stdout`, which runs the trusted
+// git binary via `hardened_git_args` (`-c core.fsmonitor=false`,
+// `-c protocol.ext.allow=never`, no untracked cache/external diff/pager) with a
+// bounded timeout and output cap.
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -25,25 +30,18 @@ pub fn get_workspace_git_status(path: String) -> Result<GitWorkspaceStatus, Stri
     if !workspace.is_dir() {
         return Err("workspace path must be an existing directory".to_string());
     }
-    let status_output = Command::new("git")
-        .arg("-C")
-        .arg(&workspace)
-        .arg("status")
-        .arg("--porcelain=v2")
-        .arg("--branch")
-        .output()
-        .map_err(|error| format!("failed to run git status: {error}"))?;
-
-    if !status_output.status.success() {
+    trusted_git_path()?;
+    let Some(status_text) =
+        workspace_git_stdout(&workspace, &["status", "--porcelain=v2", "--branch"])
+            .map_err(|error| format!("failed to run git status: {error}"))?
+    else {
         return Ok(GitWorkspaceStatus {
             is_repository: false,
             is_clean: true,
             summary: "not a git repository".to_string(),
             ..GitWorkspaceStatus::default()
         });
-    }
-
-    let status_text = String::from_utf8_lossy(&status_output.stdout);
+    };
     let git_dir = resolve_git_dir(&workspace).ok();
     let state = git_dir
         .as_deref()
@@ -167,17 +165,10 @@ fn summarize_git_status(status: &GitWorkspaceStatus) -> String {
 }
 
 fn resolve_git_dir(workspace: &Path) -> Result<PathBuf, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .arg("rev-parse")
-        .arg("--git-dir")
-        .output()
-        .map_err(|error| format!("failed to run git rev-parse: {error}"))?;
-    if !output.status.success() {
-        return Err("not a git repository".to_string());
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let output = workspace_git_stdout(workspace, &["rev-parse", "--git-dir"])
+        .map_err(|error| format!("failed to run git rev-parse: {error}"))?
+        .ok_or_else(|| "not a git repository".to_string())?;
+    let raw = output.trim().to_string();
     let path = PathBuf::from(raw);
     if path.is_absolute() {
         Ok(path)
@@ -191,6 +182,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]

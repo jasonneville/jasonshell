@@ -17,6 +17,24 @@ fn stack_item_from_path_with_icon_mode(
 ) -> Result<StackItem, String> {
     let link_metadata = fs::symlink_metadata(&path)
         .map_err(|error| format!("Failed to inspect stack item: {error}"))?;
+    Ok(stack_item_from_link_metadata(path, &link_metadata, include_icon_data))
+}
+
+/// Same item as `stack_item_metadata_from_path` when `link_metadata` is fresh
+/// (e.g. `DirEntry::metadata()` of a plain, non-symlink, non-reparse entry).
+/// Performs no filesystem call for such entries.
+pub(crate) fn stack_item_metadata_from_known_metadata(
+    path: PathBuf,
+    link_metadata: &fs::Metadata,
+) -> StackItem {
+    stack_item_from_link_metadata(path, link_metadata, false)
+}
+
+fn stack_item_from_link_metadata(
+    path: PathBuf,
+    link_metadata: &fs::Metadata,
+    include_icon_data: bool,
+) -> StackItem {
     let is_symlink = link_metadata.file_type().is_symlink();
     let is_reparse_point = metadata_is_reparse_point(&link_metadata);
     let target_metadata = if is_symlink || is_reparse_point {
@@ -24,7 +42,7 @@ fn stack_item_from_path_with_icon_mode(
     } else {
         None
     };
-    let metadata = target_metadata.as_ref().unwrap_or(&link_metadata);
+    let metadata = target_metadata.as_ref().unwrap_or(link_metadata);
     let is_dir = metadata.is_dir();
     let name = path
         .file_name()
@@ -33,7 +51,7 @@ fn stack_item_from_path_with_icon_mode(
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
     let modified_at = metadata_modified_epoch_millis(&link_metadata);
 
-    Ok(StackItem {
+    StackItem {
         path: path.to_string_lossy().into_owned(),
         type_label: type_label(&path, is_dir, is_symlink, is_reparse_point),
         icon_data_url: include_icon_data
@@ -48,7 +66,7 @@ fn stack_item_from_path_with_icon_mode(
         is_reparse_point,
         kind: if is_dir { "folder" } else { "file" }.to_string(),
         name,
-    })
+    }
 }
 
 #[cfg(target_os = "windows")]

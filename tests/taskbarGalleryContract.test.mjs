@@ -151,7 +151,7 @@ test('closing a gallery preview retains the gallery until snapshot count leaves 
   assert.match(gallerySource, /if \(event\.payload\.mode === 'immediate'\) \{[\s\S]*?if \(!event\.payload\.preserveGallery\) void closeTaskGallery\(\)/);
   const closeCommand = nativeGallerySource.match(/pub (?:async )?fn close_task_gallery_previewed_window[\s\S]*?\n\}/)?.[0] ?? '';
   assert.ok(closeCommand);
-  assert.match(closeCommand, /windows_by_hwnd\.remove\(&args\.hwnd\)/);
+  assert.doesNotMatch(closeCommand, /windows_by_hwnd\.remove\(/);
   assert.doesNotMatch(closeCommand, /hide_gallery_and_reset/);
   assert.match(bottomBarSource, /!galleryGroup \|\| galleryGroup\.windows\.length < 2 \|\| taskGroupDisplay\(galleryGroup\) !== 'capsule'/);
   assert.match(bottomBarSource, /windows: taskGroupGalleryItems\(galleryGroup\)/);

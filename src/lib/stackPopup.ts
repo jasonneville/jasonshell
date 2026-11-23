@@ -258,6 +258,7 @@ type StackFolderPageDiagnostics = {
 type StackPasteResult = {
   pasted: StackItem[];
   failures?: StackPasteFailure[];
+  undoMoveId?: string | null;
 };
 
 export type StackOpenWithCandidate = {
@@ -380,6 +381,12 @@ type StackFolderListingDiagnostics = {
 export type StackPasteListing = StackFolderListing & {
   pasteFailures: StackPasteFailure[];
 };
+
+export function pasteFailureSummary(failures: StackPasteFailure[], operation = 'Paste') {
+  if (!failures.length) return '';
+  const suffix = failures.length === 1 ? '' : ` and ${failures.length - 1} more`;
+  return `${operation} completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: ${failures[0].message}${suffix}`;
+}
 
 export type ShowStackPopupRequest = {
   anchorLeft: number;
@@ -580,13 +587,22 @@ export function copyStackItems(paths: string[], cut: boolean): Promise<void> {
 export async function pasteStackItems(
   destinationPath: string,
   operationId = crypto.randomUUID(),
-  onPasted?: () => void
+  onPasted?: () => void,
+  onUndoMoveId?: (undoMoveId: string | null | undefined) => void
 ): Promise<StackPasteListing> {
   const result = await invoke<StackPasteResult>(IPC_COMMANDS.pasteStackItems, { destination: destinationPath, operationId });
   // Mutation succeeded independently of the following, fallible folder read.
+  onUndoMoveId?.(result.undoMoveId);
   if (result.pasted?.length) onPasted?.();
-  const listing = await listStackFolder(destinationPath);
-  return { ...listing, pasteFailures: result.failures ?? [] };
+  try {
+    const listing = await listStackFolder(destinationPath);
+    return { ...listing, pasteFailures: result.failures ?? [] };
+  } catch (error) {
+    const reason = (typeof error === 'string' ? error : error instanceof Error ? error.message : '').trim();
+    const detail = reason ? ` (${reason})` : '';
+    const failures = pasteFailureSummary(result.failures ?? []);
+    throw new Error(`Paste finished, but the folder listing could not be refreshed${detail}. Use Refresh.${failures ? ` ${failures}` : ''}`, { cause: error });
+  }
 }
 
 export function renameStackItem(path: string, newName: string): Promise<StackEntry> {
@@ -595,6 +611,14 @@ export function renameStackItem(path: string, newName: string): Promise<StackEnt
 
 export function deleteStackItem(path: string, operationId = crypto.randomUUID()): Promise<void> {
   return invoke(IPC_COMMANDS.deleteStackItem, { path, operationId });
+}
+
+export function deleteStackItems(paths: string[], operationId: string): Promise<{
+  deleted: number;
+  failures: StackPasteFailure[];
+  undoMoveId?: string | null;
+}> {
+  return invoke(IPC_COMMANDS.deleteStackItems, { paths, operationId });
 }
 
 export function newStackFolder(parent: string, name: string): Promise<StackEntry> {
@@ -821,8 +845,14 @@ export function startStackFileDrag(paths: string[]): Promise<StackNativeDragOutc
   return invoke<StackNativeDragOutcome>(IPC_COMMANDS.startStackFileDrag, { paths });
 }
 
-export function commitStackLocalDrop(requestId: string, destination: string): Promise<{ moved: number; failures: StackPasteFailure[] }> {
+type StackMoveResult = { moved: number; failures: StackPasteFailure[] };
+
+export function commitStackLocalDrop(requestId: string, destination: string): Promise<StackMoveResult & { undoMoveId?: string | null }> {
   return invoke(IPC_COMMANDS.commitStackLocalDrop, { requestId, destination });
+}
+
+export function undoStackMove(undoMoveId: string): Promise<StackMoveResult> {
+  return invoke(IPC_COMMANDS.undoStackMove, { undoMoveId });
 }
 
 export async function prepareStackLocalDrop(paths: string[]): Promise<string> {

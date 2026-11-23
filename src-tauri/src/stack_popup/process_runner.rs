@@ -76,6 +76,7 @@ pub fn run_process(spec: ProcessRunSpec) -> Result<ProcessRunOutput, ProcessRunE
     if spec.stdin.is_some() {
         command.stdin(Stdio::piped());
     }
+    hide_console_window(&mut command);
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }
@@ -552,11 +553,23 @@ fn wait_for_cleanup_with(
     Ok((stdout, stderr, status))
 }
 
+/// Release builds use the GUI subsystem; without this every helper process
+/// (git, taskkill) would flash a console window.
+#[cfg(windows)]
+fn hide_console_window(command: &mut Command) {
+    crate::process_flags::no_console_window(command);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_command: &mut Command) {}
+
 #[cfg(windows)]
 fn kill_child_tree(child: &Child) -> Result<(), String> {
     let pid = child.id();
-    let status = Command::new(trusted_taskkill_path()?)
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
+    let mut taskkill = Command::new(trusted_taskkill_path()?);
+    taskkill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+    hide_console_window(&mut taskkill);
+    let status = taskkill
         .status()
         .map_err(|err| err.to_string())?;
     if status.success() {

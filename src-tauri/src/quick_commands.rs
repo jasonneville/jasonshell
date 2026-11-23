@@ -728,6 +728,132 @@ pub fn save_quick_commands_settings(
     .map(|s| s.quick_commands)
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSearchQuickCommandRequest {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum SearchQuickCommandRunResult {
+    Started { run_id: String, process_id: u32 },
+    /// Nothing was launched: the command asks for input only the panel can give.
+    OpenPanel { command_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SearchQuickCommandLaunch {
+    Run(QuickCommandEntry),
+    OpenPanel(QuickCommandEntry),
+}
+
+/// Makes the already-running check and the spawn one step for search activations.
+static SEARCH_LAUNCH_LOCK: Mutex<()> = Mutex::new(());
+
+/// Runs off the UI thread: settings I/O and process creation can block.
+#[tauri::command(async)]
+pub fn run_search_quick_command(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    request: RunSearchQuickCommandRequest,
+) -> Result<SearchQuickCommandRunResult, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers { command: crate::contracts::commands::RUN_SEARCH_QUICK_COMMAND, callers: &[crate::shell_windows::TOP_BAR_LABEL] }).map_err(CallerAuthError::into_string)?;
+    let _admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+    let _launching = SEARCH_LAUNCH_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let settings = settings::load_shell_settings_for_app(&app_handle)?;
+    let running = running_command_ids()?;
+    let entry = match plan_search_quick_command_launch(&settings, &request.id, &running)? {
+        SearchQuickCommandLaunch::Run(entry) => entry,
+        SearchQuickCommandLaunch::OpenPanel(entry) => {
+            return Ok(SearchQuickCommandRunResult::OpenPanel { command_id: entry.id });
+        }
+    };
+    let plan = build_spawn_plan(&entry)?;
+    let run_id = new_run_id();
+    let app_for_exit = app_handle.clone();
+    let process_id = spawn_quick_command_with_completion(
+        app_handle.clone(),
+        &plan,
+        entry.id.clone(),
+        run_id.clone(),
+        Some(entry.label),
+        move |history| {
+            let saved_id = history.run_id.clone();
+            settings::update_shell_settings_for_app(&app_for_exit, |settings| {
+                settings.quick_commands.history = append_quick_command_history_bounded(
+                    std::mem::take(&mut settings.quick_commands.history),
+                    history,
+                );
+            }).is_ok_and(|settings| settings.quick_commands.history.iter().any(|run| run.run_id == saved_id))
+        },
+    )?;
+    emit_run_snapshot(
+        &app_handle,
+        &QuickCommandRunUpdatedPayload {
+            run_id: run_id.clone(),
+            command_id: entry.id,
+            process_id,
+            kind: "started".into(),
+            body: String::new(),
+            prompt: None,
+            request_id: None,
+            max_length: None,
+            secret: false,
+            redacted: false,
+            sequence: next_sequence(),
+            at_epoch_ms: current_epoch_ms(),
+            pending: false,
+        },
+    );
+    Ok(SearchQuickCommandRunResult::Started { run_id, process_id })
+}
+
+fn running_command_ids() -> Result<Vec<String>, String> {
+    Ok(runs()
+        .lock()
+        .map_err(|_| "quick command runtime state is poisoned".to_string())?
+        .values()
+        .filter(|run| run.running)
+        .map(|run| run.command_id.clone())
+        .collect())
+}
+
+pub(crate) fn plan_search_quick_command_launch(
+    settings: &settings::ShellSettings,
+    id: &str,
+    running_command_ids: &[String],
+) -> Result<SearchQuickCommandLaunch, String> {
+    if id.trim().is_empty() {
+        return Err("quick command id must not be empty".into());
+    }
+    let saved = settings
+        .quick_commands
+        .entries
+        .iter()
+        .find(|entry| entry.id == id)
+        .ok_or_else(|| format!("quick command '{id}' is not configured"))?;
+    if running_command_ids.iter().any(|running| running == id) {
+        return Err(format!("quick command '{id}' is already running"));
+    }
+    if requests_panel_input(saved) {
+        return Ok(SearchQuickCommandLaunch::OpenPanel(saved.clone()));
+    }
+    validate_quick_command_entry(saved).map(SearchQuickCommandLaunch::Run)
+}
+
+/// Commands that emit the input marker, directly or through the injected helper, would wait for
+/// an answer only the panel can give. The escape byte is usually spelled as a shell expression.
+fn requests_panel_input(entry: &QuickCommandEntry) -> bool {
+    let marker = MARKER_PREFIX.trim_start_matches('\x1b').to_ascii_lowercase();
+    entry.commands.iter().any(|command| {
+        let command = command.to_ascii_lowercase();
+        command.contains(&marker) || command.contains("request-jasonshellinput")
+    })
+}
+
 fn resolve_quick_command_entry(
     settings: &settings::ShellSettings,
     command_id: &str,

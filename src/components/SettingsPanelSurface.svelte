@@ -51,11 +51,14 @@
     type StandardHotkeyAction,
     type ShellSettings
   } from '../lib/settings';
+  import { DEFAULT_SEARCH_SETTINGS, WEB_SEARCH_ENGINES, type WebSearchEngine } from '../lib/searchSettings';
   let themeEditor: ThemeEditor;
   const stackTerminalProfileOptions = STACK_TERMINAL_PROFILE_OPTIONS.map((option) => ({
     value: option.value,
     label: option.label
   }));
+  const webEngineLabels: Record<WebSearchEngine, string> = { google: 'Google', duckduckgo: 'DuckDuckGo', bing: 'Bing', brave: 'Brave' };
+  const webEngineOptions = WEB_SEARCH_ENGINES.map((engine) => ({ value: engine, label: webEngineLabels[engine] }));
   const stackEditorFontSelectOptions = STACK_EDITOR_FONT_OPTIONS.map((font) => ({ value: font.id, label: font.label }));
   const dateFormatExamples = [
     'EEE, MMM d',
@@ -71,6 +74,8 @@
   let powerError = '';
   let powerBusy = false;
   let selectedStackTerminalProfile: StackTerminalProfile = 'windowsTerminal';
+  let selectedWebEngine: WebSearchEngine = DEFAULT_SEARCH_SETTINGS.search.webEngine;
+  let selectSaves: Promise<void> = Promise.resolve();
   let settingsError = '';
   let hotkeyError = '';
   let hotkeyBusy = false;
@@ -258,13 +263,31 @@
       shellSettings = settings;
       hotkeyDraft = { ...settings.hotkeys };
       selectedStackTerminalProfile = normalizeStackTerminalProfile(settings.stackBrowser?.terminalProfile);
+      selectedWebEngine = settings.search?.webEngine ?? DEFAULT_SEARCH_SETTINGS.search.webEngine;
       shellSettingsLoaded = true;
       settingsError = '';
     } catch (error) {
       console.error('Failed to load shell settings', error);
       selectedStackTerminalProfile = 'windowsTerminal';
+      selectedWebEngine = DEFAULT_SEARCH_SETTINGS.search.webEngine;
       shellSettingsLoaded = false;
       settingsError = error instanceof Error ? error.message : 'Shell settings unavailable.';
+    }
+  }
+
+  async function handleWebEngineChange(value: string) {
+    const engine = WEB_SEARCH_ENGINES.find((candidate) => candidate === value);
+    if (!shellSettingsLoaded || !engine) return;
+
+    selectedWebEngine = engine;
+    try {
+      const saved = await saveSelectSettings();
+      if (!hotkeyMounted) return;
+      shellSettings = { ...saved, hotkeys: shellSettings.hotkeys };
+      settingsError = '';
+    } catch (error) {
+      console.error('Failed to save web search engine', error);
+      settingsError = error instanceof Error ? error.message : 'Web search engine unavailable.';
     }
   }
 
@@ -273,13 +296,7 @@
 
     selectedStackTerminalProfile = normalizeStackTerminalProfile(value);
     try {
-      const saved = await saveShellSettings({
-        ...shellSettings,
-        stackBrowser: {
-          ...(shellSettings.stackBrowser ?? { terminalProfile: 'windowsTerminal' }),
-          terminalProfile: selectedStackTerminalProfile
-        }
-      });
+      const saved = await saveSelectSettings();
       if (!hotkeyMounted) return;
       shellSettings = { ...saved, hotkeys: shellSettings.hotkeys };
       settingsError = '';
@@ -287,6 +304,21 @@
       console.error('Failed to save Stack Browser terminal profile', error);
       settingsError = error instanceof Error ? error.message : 'Terminal profile unavailable.';
     }
+  }
+
+  // Selects save one at a time, each onto settings read just before it: bar
+  // height, locks, and hotkeys changed elsewhere meanwhile must survive.
+  function saveSelectSettings(): Promise<ShellSettings> {
+    const save = selectSaves.then(async () => {
+      const current = await loadShellSettings();
+      return saveShellSettings({
+        ...current,
+        stackBrowser: { ...current.stackBrowser, terminalProfile: selectedStackTerminalProfile },
+        search: { ...current.search, webEngine: selectedWebEngine }
+      });
+    });
+    selectSaves = save.then(() => undefined, () => undefined);
+    return save;
   }
 
   $: draftValidation = hotkeyDraftError(hotkeyDraft);
@@ -769,6 +801,12 @@
         value={selectedStackTerminalProfile}
         options={stackTerminalProfileOptions}
         onChange={handleStackTerminalProfileChange}
+      />
+      <MeltSelect
+        label="Web search engine"
+        value={selectedWebEngine}
+        options={webEngineOptions}
+        onChange={handleWebEngineChange}
       />
     </fieldset>
     {#if settingsError}

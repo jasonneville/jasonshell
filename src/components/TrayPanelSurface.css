@@ -48,7 +48,6 @@
 
 .tray-icon-button:focus-visible {
   box-shadow: var(--js-focus-ring);
-  outline: 0;
 }
 
 .tray-main {

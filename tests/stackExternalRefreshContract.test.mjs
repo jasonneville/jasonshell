@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
-function source(path) { const url = new URL(`../${path}`, import.meta.url); return existsSync(url) ? readFileSync(url, 'utf8') : ''; }
+import { readRepoFile as source } from './support/repoSource.mjs';
 test('external refresh has bounded watcher IPC separate from Git status collection', () => {
   const commands = source('src/ipc/commands.ts'); const api = source('src/lib/stackPopup.ts'); const native = source('src-tauri/src/stack_popup.rs');
   for (const [name, command] of [['start', 'start_stack_folder_watch'], ['stop', 'stop_stack_folder_watch']]) {

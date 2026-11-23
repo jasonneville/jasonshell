@@ -10,6 +10,9 @@ export type EverythingSdkSource = (typeof EVERYTHING_SDK_SOURCES)[number];
 export const EVERYTHING_SORT_MODES = ['nameAsc', 'pathAsc', 'dateModifiedDesc', 'runCountDesc'] as const;
 export type EverythingSortMode = (typeof EVERYTHING_SORT_MODES)[number];
 
+export const WEB_SEARCH_ENGINES = ['google', 'duckduckgo', 'bing', 'brave'] as const;
+export type WebSearchEngine = (typeof WEB_SEARCH_ENGINES)[number];
+
 export const EVERYTHING_SETUP_ACTIONS = [
   'launchInstalled',
   'downloadInstaller',
@@ -27,6 +30,7 @@ export type SearchSettingsContract = {
   };
   search: {
     resultLimit: number;
+    webEngine: WebSearchEngine;
     everything: {
       enabled: boolean;
       installMode: EverythingInstallMode;
@@ -65,6 +69,7 @@ export const DEFAULT_SEARCH_SETTINGS: SearchSettingsContract = {
     },
     search: {
     resultLimit: 50,
+    webEngine: 'google',
     everything: {
       enabled: true,
       installMode: 'ask',
@@ -104,6 +109,7 @@ export function coerceSearchSettings(value: unknown): SearchSettingsContract {
         RESULT_LIMIT_MAX,
         defaults.search.resultLimit
       ),
+      webEngine: enumValue(WEB_SEARCH_ENGINES, search?.webEngine, defaults.search.webEngine),
       everything: {
         enabled: booleanValue(everything?.enabled, defaults.search.everything.enabled),
         installMode: enumValue(
@@ -164,6 +170,7 @@ function cloneSearchSettings(settings: SearchSettingsContract): SearchSettingsCo
     ui: { ...settings.ui },
     search: {
       resultLimit: settings.search.resultLimit,
+      webEngine: settings.search.webEngine,
       everything: { ...settings.search.everything }
     }
   };

@@ -155,7 +155,10 @@ fn cleanup_native_resources(app: AppHandle, deadline: Instant) {
         },
         |app: &AppHandle| stop_terminal(app, crate::shell_windows::TERMINAL_PANEL_LABEL),
         |app: &AppHandle| stop_terminal(app, crate::shell_windows::STACK_POPUP_LABEL),
-    ] as [fn(&AppHandle); 9]
+        // Bounded (1 s) flush of the debounced command panel size; the 3 s
+        // watchdog is independent of this lane.
+        |_: &AppHandle| crate::command_panel::shutdown_command_panel_size_saver(),
+    ] as [fn(&AppHandle); 10]
     {
         let app = app.clone();
         let _ = thread::Builder::new().spawn(move || cleanup(&app));

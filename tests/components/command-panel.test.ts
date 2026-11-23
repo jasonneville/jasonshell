@@ -164,3 +164,13 @@ it('close request followed by surface disposal rejects late settings and history
   expect(tauri.invoke).toHaveBeenCalledTimes(before);
   expect(view.container.textContent).toBe('');
 });
+
+// Tier 1 PRD-03: search Shift+Enter opens the panel at a command with a show-only target
+// (empty runId = select/edit that command; there is no run to open). Must not report an error.
+it('opens the targeted command without a run when the notification target has an empty run id', async () => {
+  const view = notificationTargetFixture();
+  await view.findByRole('button', { name: 'Edit Build' });
+  view.wake('');
+  await waitFor(() => expect((view.getByLabelText('Label') as HTMLInputElement).value).toBe('Build'));
+  expect(view.queryByRole('alert')).toBeNull();
+});

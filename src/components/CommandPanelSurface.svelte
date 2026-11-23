@@ -596,6 +596,18 @@
     const initialTab = activeTab;
     const matchesTarget = (run: QuickCommandRunHistoryEntry) => run.commandId === target.commandId && run.runId === target.runId;
     const preserveEdit = () => { panelError = 'Finish or cancel the current edit, then find the notified run in Previous runs.'; };
+    // Search reveals a command without naming a run; there is no output to open.
+    if (!target.runId) {
+      const entry = entries.find((item) => item.id === target.commandId);
+      if (!entry) panelError = 'That quick command is no longer available.';
+      else if (notificationNavigationBlocked()) {
+        if (editor.id !== entry.id) panelError = `Finish or cancel the current edit, then select ${entry.label}.`;
+      } else {
+        startEditEntry(entry);
+        contextEntry = null;
+      }
+      return;
+    }
     if (notificationNavigationBlocked()) { preserveEdit(); return; }
 
     let allRuns: QuickCommandRunHistoryEntry[];

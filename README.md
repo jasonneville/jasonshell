@@ -140,7 +140,7 @@ npm run tauri dev
 ### Search for something
 
 1. Use the centered search surface.
-2. Search apps, windows, settings, folders, commands, or Everything results when available.
+2. Search apps, windows, settings, folders, commands, or Everything results when available. Type a calculation (`12*7`, `=2026-11-23`) to copy its result, a URL to open it, or a saved Quick Command's label to run it (Shift+Enter shows it in Quick Commands instead). Chrome and Edge bookmarks are included, and a last-place row searches the web with the engine chosen in Settings.
 3. Open the result directly.
 
 ## Feature overview
@@ -180,6 +180,7 @@ Quick Command launch requires Windows job assignment at process creation, availa
 - inline thumbnails can be live, captured, or unavailable; window actions remain available when preview capture fails. Live Windows/DWM and mixed-DPI verification remains consent-gated
 - grouped tiles (two or more windows) offer **Open in Process Manager**, **Pin to taskbar**, and **Close all windows** on right-click, without opening the gallery first
 - **Close all windows** sends normal close requests to the selected group's captured, still-current windows; apps can keep unsaved-work prompts open, and this action does not force-kill processes
+- the window Close action is request-only: it asks the app to close (apps may keep a save prompt open) and never force-kills or elevates; use Process Manager to end a process
 - includes process manager access
 - reserves AppBar work area on the primary monitor
 
@@ -205,6 +206,8 @@ Quick Command launch requires Windows job assignment at process creation, availa
 - the submenu keeps loading, empty, and error states explicit, guards stale lookups, and supports pointer grace plus keyboard entry/return navigation. Native association/picker and packaged-app smoke remain unverified
 - In Stack Browser, drag selected rows onto a different folder row to move the drag-start selection there without using the clipboard or overwriting existing items. The local pointer gesture is carried through release; background, file-row, self, selected-folder, stale, and linked/reparse targets do nothing. External native drops still copy into the open folder; HTML drops retain their existing destination and modifier behavior.
 - Dragging from Stack Browser across the popup viewport to Explorer or another Shell target requests a copy-only native Shell/OLE transfer. Mixed-parent drags are unsupported. Returning to the same popup with an exact matching source does not copy or commit a local move. Live Windows transfer, cancellation, focus, and link handling still need consent-gated smoke; a returned `copied` effect does not verify destination contents.
+- After moving `report.txt` into `Archive`, click **Undo move** or press `Ctrl+Z` in the folder view to put it back. Undo covers the latest eligible same-volume move batch made by local drag, cut/paste within Stack Browser, or Shift-drop. It never overwrites an occupied original name. Copies, cross-volume moves, and files cut in Explorer or another app cannot be undone. `Ctrl+Z` still undoes typing in text fields.
+- Select files or folders and confirm **Delete**, then click **Undo delete** or press `Ctrl+Z` to restore the batch without overwriting anything. Stack Browser uses JasonShell recovery storage, not the Windows Recycle Bin. Items on another volume stay in place. Undo tracks only the latest eligible action. For manual recovery, look under `%LOCALAPPDATA%\com.jnev1.jasonshell\stack-deleted`: each item’s `manifest.json` records its original path, and its `payload` folder holds the item.
 - Changes, History, Stashes, and Branches views
 - fetch / pull / push / checkout / create branch actions
 
@@ -223,7 +226,7 @@ Quick Command launch requires Windows job assignment at process creation, availa
 - run history
 - direct command replay
 - runs that finish and save history while Quick Commands is hidden show a top-right banner with a short chime. Click it to open that exact run in **Previous Runs**, or dismiss with **×**. Banners expire after six seconds; stopped runs and launch errors do not notify.
-- The banner’s top-left × dismisses it; the ring counts down to auto-dismiss. The bundled **Confirmation Trill** can be replaced by swapping `src-tauri/resources/quick-command-complete.wav` for a short PCM WAV and rebuilding. Live Windows focus, DPI placement, and playback validation remain consent-gated.
+- The banner’s × button dismisses it; the ring counts down to auto-dismiss. Hovering the banner or focusing its buttons pauses the countdown for up to 30 seconds. The bundled **Confirmation Trill** can be replaced by swapping `src-tauri/resources/quick-command-complete.wav` for a short PCM WAV and rebuilding. Live Windows focus, DPI placement, and playback validation remain consent-gated.
 
 ### Search
 

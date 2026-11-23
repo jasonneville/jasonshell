@@ -1,5 +1,7 @@
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 use crate::settings;
@@ -30,6 +32,26 @@ pub struct ShowCommandPanelRequest {
     pub anchor_left: f64,
     pub anchor_width: f64,
     pub notification_id: Option<String>,
+    /// Shows this saved command without opening or starting a run.
+    pub command_id: Option<String>,
+}
+
+/// An empty run ID means "open the command"; a notification always names a run.
+#[cfg(windows)]
+fn saved_command_target(
+    shell_settings: &settings::ShellSettings,
+    command_id: &str,
+) -> Result<crate::quick_command_notification_queue::RunTarget, String> {
+    shell_settings
+        .quick_commands
+        .entries
+        .iter()
+        .find(|entry| entry.id == command_id)
+        .map(|entry| crate::quick_command_notification_queue::RunTarget {
+            command_id: entry.id.clone(),
+            run_id: String::new(),
+        })
+        .ok_or_else(|| format!("quick command '{command_id}' is not configured"))
 }
 
 #[tauri::command]
@@ -39,15 +61,28 @@ pub fn show_command_panel(
     request: ShowCommandPanelRequest,
 ) -> Result<(), String> {
     #[cfg(windows)]
-    let target = request.notification_id.as_deref()
-        .map(|id| crate::quick_command_notification::claim_open(&window, id)).transpose()?;
+    let target = match (request.notification_id.as_deref(), request.command_id.as_deref()) {
+        (Some(id), _) => Some(crate::quick_command_notification::claim_open(&window, id)?),
+        (None, Some(id)) => {
+            authorize_stack_command(
+                &window,
+                StackCommandAuth::AllowedCallers {
+                    command: crate::contracts::commands::SHOW_COMMAND_PANEL,
+                    callers: &[TOP_BAR_LABEL],
+                },
+            )
+            .map_err(CallerAuthError::into_string)?;
+            Some(saved_command_target(&settings::load_shell_settings_for_app(&app_handle)?, id)?)
+        }
+        (None, None) => None,
+    };
     #[cfg(not(windows))]
     let _ = window;
     let panel = match show_command_panel_window(&app_handle, &request) {
         Ok(panel) => panel,
         Err(error) => {
             #[cfg(windows)]
-            if target.is_some() {
+            if request.notification_id.is_some() {
                 crate::quick_command_notification::panel_show_failed(&app_handle);
             }
             return Err(error);
@@ -86,8 +121,11 @@ fn show_command_panel_window(app_handle: &AppHandle, request: &ShowCommandPanelR
     let work_area = monitor.work_area();
     let scale_factor = monitor.scale_factor();
     let shell_settings = settings::load_shell_settings_for_app(app_handle)?;
-    let saved_width = shell_settings.ui.command_panel_width_logical;
-    let saved_height = shell_settings.ui.command_panel_height_logical;
+    ensure_size_saver(app_handle, &shell_settings, scale_factor);
+    let (saved_width, saved_height) = pending_logical_size().unwrap_or((
+        shell_settings.ui.command_panel_width_logical,
+        shell_settings.ui.command_panel_height_logical,
+    ));
     let desired_width = ((saved_width * scale_factor).round() as i32).max(1);
     let desired_height = ((saved_height * scale_factor).round() as i32).max(1);
     let desired_x = top_position.x
@@ -121,24 +159,387 @@ fn show_command_panel_window(app_handle: &AppHandle, request: &ShowCommandPanelR
     Ok(panel)
 }
 
+/// Physical (width, height) of the command panel.
+pub(crate) type PanelSizePhysical = (u32, u32);
+
+/// Pure trailing-debounce state machine for the persisted panel size.
+/// Time is injected; there is no I/O and no sleeping.
+pub(crate) struct SizeDebouncer {
+    quiet: Duration,
+    persisted: Option<PanelSizePhysical>,
+    pending: Option<PanelSizePhysical>,
+    due: Option<Instant>,
+    inflight: bool,
+    /// Consecutive failed persists of the current pending size.
+    failures: u32,
+}
+
+/// After this many consecutive failures retries stop until a new record or an
+/// explicit flush; delays double from `quiet` up to `MAX_RETRY_DELAY`.
+const MAX_PERSIST_FAILURES: u32 = 5;
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+impl SizeDebouncer {
+    pub(crate) fn new(quiet: Duration, persisted: Option<PanelSizePhysical>) -> Self {
+        Self { quiet, persisted, pending: None, due: None, inflight: false, failures: 0 }
+    }
+
+    pub(crate) fn record(&mut self, size: PanelSizePhysical, now: Instant) {
+        self.failures = 0;
+        if !self.inflight && Some(size) == self.persisted {
+            self.pending = None;
+            self.due = None;
+        } else {
+            self.pending = Some(size);
+            self.due = Some(now + self.quiet);
+        }
+    }
+
+    pub(crate) fn pending(&self) -> Option<PanelSizePhysical> {
+        self.pending
+    }
+
+    pub(crate) fn due_at(&self) -> Option<Instant> {
+        self.pending.and(self.due)
+    }
+
+    fn take(&mut self) -> Option<PanelSizePhysical> {
+        if self.inflight {
+            return None;
+        }
+        match self.pending {
+            Some(size) if Some(size) != self.persisted => {
+                self.inflight = true;
+                Some(size)
+            }
+            Some(_) => {
+                self.pending = None;
+                self.due = None;
+                None
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) fn poll(&mut self, now: Instant) -> Option<PanelSizePhysical> {
+        match self.due {
+            Some(due) if now >= due => self.take(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn flush(&mut self) -> Option<PanelSizePhysical> {
+        self.take()
+    }
+
+    pub(crate) fn report_ok(&mut self, size: PanelSizePhysical) {
+        self.inflight = false;
+        self.failures = 0;
+        self.persisted = Some(size);
+        if self.pending == Some(size) {
+            self.pending = None;
+            self.due = None;
+        }
+    }
+
+    pub(crate) fn report_err(&mut self, size: PanelSizePhysical, now: Instant) {
+        self.inflight = false;
+        if self.pending == Some(size) {
+            self.failures = self.failures.saturating_add(1);
+            self.due = if self.failures >= MAX_PERSIST_FAILURES {
+                None
+            } else {
+                let factor = 1u32 << (self.failures - 1).min(16);
+                Some(now + self.quiet.saturating_mul(factor).min(MAX_RETRY_DELAY))
+            };
+        }
+    }
+}
+
+struct SaverState {
+    debouncer: SizeDebouncer,
+    flush_requested: bool,
+    stop: bool,
+    finished: bool,
+    error_count: u64,
+}
+
+struct SaverShared {
+    state: Mutex<SaverState>,
+    wake: Condvar,
+}
+
+/// Worker-backed saver. `record` and `request_flush` never persist on the
+/// caller; only `flush` / `shutdown` wait, and both are bounded.
+pub(crate) struct DebouncedSizeSaver {
+    shared: Arc<SaverShared>,
+}
+
+impl DebouncedSizeSaver {
+    pub(crate) fn spawn(
+        quiet: Duration,
+        persisted: Option<PanelSizePhysical>,
+        persist: impl Fn(PanelSizePhysical) -> Result<(), String> + Send + 'static,
+    ) -> Self {
+        let shared = Arc::new(SaverShared {
+            state: Mutex::new(SaverState {
+                debouncer: SizeDebouncer::new(quiet, persisted),
+                flush_requested: false,
+                stop: false,
+                finished: false,
+                error_count: 0,
+            }),
+            wake: Condvar::new(),
+        });
+        let worker = Arc::clone(&shared);
+        let spawned = std::thread::Builder::new()
+            .name("command-panel-size-saver".into())
+            .spawn(move || Self::run(&worker, persist));
+        if spawned.is_err() {
+            if let Ok(mut state) = shared.state.lock() {
+                state.finished = true;
+            }
+        }
+        Self { shared }
+    }
+
+    fn run(shared: &SaverShared, persist: impl Fn(PanelSizePhysical) -> Result<(), String>) {
+        let mut stop_attempted = false;
+        let mut state = match shared.state.lock() {
+            Ok(state) => state,
+            Err(_) => return,
+        };
+        loop {
+            let take = loop {
+                let now = Instant::now();
+                if state.stop && stop_attempted {
+                    state.finished = true;
+                    shared.wake.notify_all();
+                    return;
+                }
+                let flushing = state.flush_requested || state.stop;
+                state.flush_requested = false;
+                let taken = if flushing {
+                    state.debouncer.flush()
+                } else {
+                    state.debouncer.poll(now)
+                };
+                if let Some(size) = taken {
+                    if state.stop {
+                        stop_attempted = true;
+                    }
+                    break size;
+                }
+                if state.stop {
+                    state.finished = true;
+                    shared.wake.notify_all();
+                    return;
+                }
+                state = match state.debouncer.due_at() {
+                    Some(due) => match shared
+                        .wake
+                        .wait_timeout(state, due.saturating_duration_since(now))
+                    {
+                        Ok((guard, _)) => guard,
+                        Err(_) => return,
+                    },
+                    None => match shared.wake.wait(state) {
+                        Ok(guard) => guard,
+                        Err(_) => return,
+                    },
+                };
+            };
+            drop(state);
+            let result = persist(take);
+            state = match shared.state.lock() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            match result {
+                Ok(()) => state.debouncer.report_ok(take),
+                Err(_) => {
+                    state.error_count += 1;
+                    state.debouncer.report_err(take, Instant::now());
+                }
+            }
+            shared.wake.notify_all();
+        }
+    }
+
+    pub(crate) fn record(&self, size: PanelSizePhysical) {
+        if let Ok(mut state) = self.shared.state.lock() {
+            state.debouncer.record(size, Instant::now());
+            self.shared.wake.notify_all();
+        }
+    }
+
+    pub(crate) fn pending(&self) -> Option<PanelSizePhysical> {
+        self.shared.state.lock().ok().and_then(|state| state.debouncer.pending())
+    }
+
+    /// Signal the worker to persist now. Never blocks on I/O.
+    pub(crate) fn request_flush(&self) {
+        if let Ok(mut state) = self.shared.state.lock() {
+            if state.debouncer.pending().is_some() {
+                state.flush_requested = true;
+                self.shared.wake.notify_all();
+            }
+        }
+    }
+
+    /// Waits (bounded) until nothing is pending. Production hide/blur/close use the
+    /// non-blocking `request_flush`; only exit waits, through `shutdown`.
+    #[cfg(test)]
+    pub(crate) fn flush(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let Ok(mut state) = self.shared.state.lock() else { return false };
+        if state.debouncer.pending().is_none() {
+            return true;
+        }
+        let errors_at_request = state.error_count;
+        state.flush_requested = true;
+        self.shared.wake.notify_all();
+        loop {
+            if state.debouncer.pending().is_none() {
+                return true;
+            }
+            if state.error_count != errors_at_request || state.finished {
+                return false;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            state = match self.shared.wake.wait_timeout(state, remaining) {
+                Ok((guard, _)) => guard,
+                Err(_) => return false,
+            };
+        }
+    }
+
+    pub(crate) fn shutdown(&self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let Ok(mut state) = self.shared.state.lock() else { return };
+        state.stop = true;
+        state.flush_requested = true;
+        self.shared.wake.notify_all();
+        while !state.finished {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            state = match self.shared.wake.wait_timeout(state, remaining) {
+                Ok((guard, _)) => guard,
+                Err(_) => return,
+            };
+        }
+    }
+}
+
+const SIZE_SAVE_QUIET: Duration = Duration::from_millis(500);
+const SIZE_SAVE_EXIT_BOUND: Duration = Duration::from_millis(1_000);
+static SIZE_SAVER: OnceLock<DebouncedSizeSaver> = OnceLock::new();
+/// Scale factor passed with the most recent `record` (f64 bits), written just before
+/// the size. The persist closure converts physical to logical with it; a DPI change
+/// always arrives with a new `Resized`, which updates both together. A pending size
+/// older than the latest record is superseded by it, so it is never converted with a
+/// mismatched scale in practice.
+static RECORD_SCALE_BITS: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000);
+
+fn sanitize_scale(scale: f64) -> f64 {
+    if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }
+}
+
+fn record_scale() -> f64 {
+    sanitize_scale(f64::from_bits(RECORD_SCALE_BITS.load(Ordering::SeqCst)))
+}
+
+fn logical_to_physical(logical: f64, scale: f64) -> u32 {
+    ((logical * scale).round().max(1.0)) as u32
+}
+
+fn ensure_size_saver(
+    app_handle: &AppHandle,
+    shell_settings: &settings::ShellSettings,
+    scale: f64,
+) -> &'static DebouncedSizeSaver {
+    SIZE_SAVER.get_or_init(|| {
+        let scale = sanitize_scale(scale);
+        RECORD_SCALE_BITS.store(scale.to_bits(), Ordering::SeqCst);
+        let seed = (
+            logical_to_physical(shell_settings.ui.command_panel_width_logical, scale),
+            logical_to_physical(shell_settings.ui.command_panel_height_logical, scale),
+        );
+        let app = app_handle.clone();
+        DebouncedSizeSaver::spawn(SIZE_SAVE_QUIET, Some(seed), move |(width, height)| {
+            let scale = record_scale();
+            let width_logical = (width as f64 / scale).max(1.0);
+            let height_logical = (height as f64 / scale).max(1.0);
+            settings::update_shell_settings_for_app(&app, |settings| {
+                settings.ui.command_panel_width_logical = width_logical;
+                settings.ui.command_panel_height_logical = height_logical;
+            })
+            .map(|_| ())
+        })
+    })
+}
+
+fn pending_logical_size() -> Option<(f64, f64)> {
+    let (width, height) = SIZE_SAVER.get()?.pending()?;
+    let scale = record_scale();
+    Some(((width as f64 / scale).max(1.0), (height as f64 / scale).max(1.0)))
+}
+
+/// `WindowEvent::Resized` entry point: memory only, no settings I/O.
+pub fn record_command_panel_resize(width_physical: u32, height_physical: u32, scale_factor: f64) {
+    if take_command_panel_resize_save_suppression() {
+        return;
+    }
+    let Some(saver) = SIZE_SAVER.get() else { return };
+    if width_physical == 0 || height_physical == 0 {
+        return; // minimised
+    }
+    RECORD_SCALE_BITS.store(sanitize_scale(scale_factor).to_bits(), Ordering::SeqCst);
+    saver.record((width_physical, height_physical));
+}
+
+/// Hide / focus-loss / close: ask the worker to write now. Never blocks on I/O.
+pub fn request_command_panel_size_flush() {
+    if let Some(saver) = SIZE_SAVER.get() {
+        saver.request_flush();
+    }
+}
+
+/// Graceful exit: flush pending and stop the worker, bounded.
+pub fn shutdown_command_panel_size_saver() {
+    if let Some(saver) = SIZE_SAVER.get() {
+        saver.shutdown(SIZE_SAVE_EXIT_BOUND);
+    }
+}
+
 pub fn save_command_panel_size_for_app(
     app_handle: &AppHandle,
     width_physical: u32,
     height_physical: u32,
 ) -> Result<settings::ShellSettings, String> {
+    let mut current = settings::load_shell_settings_for_app(app_handle)?;
     if take_command_panel_resize_save_suppression() {
-        return settings::load_shell_settings_for_app(app_handle);
+        return Ok(current);
     }
     let panel = app_handle
         .get_webview_window(COMMAND_PANEL_LABEL)
         .ok_or_else(|| "Command panel window is unavailable".to_string())?;
-    let scale_factor = panel.scale_factor().unwrap_or(1.0);
-    let width_logical = (width_physical as f64 / scale_factor).max(1.0);
-    let height_logical = (height_physical as f64 / scale_factor).max(1.0);
-    settings::update_shell_settings_for_app(app_handle, |settings| {
-        settings.ui.command_panel_width_logical = width_logical;
-        settings.ui.command_panel_height_logical = height_logical;
-    })
+    let scale_factor = sanitize_scale(panel.scale_factor().unwrap_or(1.0));
+    let saver = ensure_size_saver(app_handle, &current, scale_factor);
+    if width_physical > 0 && height_physical > 0 {
+        RECORD_SCALE_BITS.store(scale_factor.to_bits(), Ordering::SeqCst);
+        saver.record((width_physical, height_physical));
+    }
+    if let Some((width, height)) = pending_logical_size() {
+        current.ui.command_panel_width_logical = width;
+        current.ui.command_panel_height_logical = height;
+    }
+    Ok(current)
 }
 
 #[tauri::command]
@@ -165,6 +566,7 @@ pub fn hide_command_panel(app_handle: AppHandle) -> Result<(), String> {
     let panel = app_handle
         .get_webview_window(COMMAND_PANEL_LABEL)
         .ok_or_else(|| "Command panel window is unavailable".to_string())?;
+    request_command_panel_size_flush();
     panel
         .hide()
         .map_err(|error| format!("Failed to hide the command panel: {error}"))?;
@@ -352,6 +754,10 @@ pub fn command_panel_work_area(
 
     (panel_x, panel_y, panel_width, panel_height)
 }
+
+#[cfg(test)]
+#[path = "command_panel_tier1_tests.rs"]
+mod tier1_tests;
 
 #[cfg(test)]
 mod tests {

@@ -58,22 +58,50 @@ use contracts::{
     SearchQueryRequest, SearchResult,
 };
 use providers::apps::search_apps;
+use providers::bookmarks::{search_known_bookmarks, BookmarkCache};
+use providers::calculator::search_calculator;
 use providers::everything::{search_everything, search_everything_latest_only};
 use providers::local::search_local;
 use providers::open_windows::search_open_windows;
+use providers::quick_commands::search_quick_commands;
 use providers::settings::{search_settings, settings_provider_health};
-use scoring::rank_visible_results;
+use providers::web::{search_web, WEB_SEARCH_ID};
+use scoring::{is_final_only_row, rank_visible_results};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
-use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::time::Instant;
+use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const SEARCH_ENGINE_PROGRESS_EVENT: &str = "search-engine:progress";
 static LATEST_SEARCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const SETTINGS_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+static BOOKMARK_CACHE: OnceLock<Arc<BookmarkCache>> = OnceLock::new();
+static PROVIDER_INPUTS_CACHE: Mutex<ProviderInputsCache> = Mutex::new(ProviderInputsCache {
+    stamp: None,
+    inputs: None,
+    failed: None,
+});
+
+/// Inputs parsed from one exact settings-file revision, so a keystroke costs a stat, not a parse.
+struct ProviderInputsCache {
+    stamp: Option<crate::settings::SettingsFileStamp>,
+    inputs: Option<Arc<SearchProviderInputs>>,
+    failed: Option<(Option<crate::settings::SettingsFileStamp>, Instant)>,
+}
 #[cfg(test)]
 static PHASE3_REGISTRY_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SearchProviderInputs {
+    pub(crate) web_engine: crate::settings::WebSearchEngine,
+    pub(crate) web_search_disabled: bool,
+    pub(crate) quick_commands: Vec<crate::settings::QuickCommandEntry>,
+    /// `None` disables the bookmarks provider.
+    pub(crate) bookmarks_local_app_data: Option<std::path::PathBuf>,
+}
 
 #[tauri::command]
 pub(crate) async fn search_engine(
@@ -82,12 +110,73 @@ pub(crate) async fn search_engine(
 ) -> Result<SearchEngineResponse, String> {
     begin_search_engine_request(&request);
     tauri::async_runtime::spawn_blocking(move || {
+        let inputs = load_search_provider_inputs(&app_handle);
         run_search_engine_latest_only(request, |payload| {
             let _ = app_handle.emit(SEARCH_ENGINE_PROGRESS_EVENT, payload);
-        })
+        }, &inputs)
     })
     .await
     .map_err(|error| format!("search engine worker failed: {error}"))
+}
+
+/// Runs on the blocking search worker. Unreadable settings never fail a search.
+fn load_search_provider_inputs(app_handle: &AppHandle) -> Arc<SearchProviderInputs> {
+    // Stamped before the read: a concurrent save can only make the cache look stale, never fresh.
+    let stamp = crate::settings::settings_file_stamp(app_handle);
+    let mut cache = PROVIDER_INPUTS_CACHE
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let retry_later = cache
+        .failed
+        .as_ref()
+        .is_some_and(|(failed, at)| *failed == stamp && at.elapsed() < SETTINGS_RETRY_INTERVAL);
+    let current = stamp.is_some() && cache.stamp == stamp;
+    if let Some(inputs) = cache.inputs.as_ref().filter(|_| current || retry_later) {
+        return Arc::clone(inputs);
+    }
+    if !retry_later {
+        match crate::settings::load_shell_settings_for_app(app_handle) {
+            Ok(settings) => {
+                let inputs = Arc::new(provider_inputs_from(Ok(settings)));
+                *cache = ProviderInputsCache {
+                    stamp,
+                    inputs: Some(Arc::clone(&inputs)),
+                    failed: None,
+                };
+                return inputs;
+            }
+            // Keep the last good inputs; a failing file is not re-parsed on every keystroke.
+            Err(_) => cache.failed = Some((stamp, Instant::now())),
+        }
+    }
+    match &cache.inputs {
+        Some(inputs) => Arc::clone(inputs),
+        None => Arc::new(provider_inputs_from(Err(String::new()))),
+    }
+}
+
+fn provider_inputs_from(
+    loaded: Result<crate::settings::ShellSettings, String>,
+) -> SearchProviderInputs {
+    SearchProviderInputs {
+        // Without any known choice, do not guess which engine receives the query.
+        web_search_disabled: loaded.is_err(),
+        quick_commands: loaded
+            .as_ref()
+            .map(|settings| settings.quick_commands.entries.clone())
+            .unwrap_or_default(),
+        web_engine: web_engine_after_settings_load(Default::default(), loaded),
+        bookmarks_local_app_data: std::env::var_os("LOCALAPPDATA")
+            .filter(|root| !root.is_empty())
+            .map(std::path::PathBuf::from),
+    }
+}
+
+pub(crate) fn web_engine_after_settings_load(
+    last_good: crate::settings::WebSearchEngine,
+    loaded: Result<crate::settings::ShellSettings, String>,
+) -> crate::settings::WebSearchEngine {
+    loaded.map_or(last_good, |settings| settings.search.web_engine)
 }
 
 #[cfg(test)]
@@ -110,11 +199,18 @@ fn run_search_engine(
 fn run_search_engine_latest_only(
     request: SearchQueryRequest,
     on_progress: impl FnMut(SearchProgressPayload),
+    inputs: &SearchProviderInputs,
 ) -> SearchEngineResponse {
     let sequence = request.sequence;
-    run_search_engine_latest_only_with_everything(request, on_progress, move |query, limit| {
-        search_everything_latest_only(query, limit, sequence, search_sequence_is_latest)
-    })
+    run_search_engine_core(
+        request,
+        inputs,
+        || search_sequence_is_latest(sequence),
+        on_progress,
+        move |query, limit| {
+            search_everything_latest_only(query, limit, sequence, search_sequence_is_latest)
+        },
+    )
 }
 
 #[cfg(test)]
@@ -173,6 +269,30 @@ pub(crate) fn phase3_registry_test_guard() -> MutexGuard<'static, ()> {
 
 fn run_search_engine_with_everything(
     request: SearchQueryRequest,
+    on_progress: impl FnMut(SearchProgressPayload),
+    search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
+) -> SearchEngineResponse {
+    run_search_engine_with_inputs(
+        request,
+        &SearchProviderInputs::default(),
+        on_progress,
+        search_everything_impl,
+    )
+}
+
+pub(crate) fn run_search_engine_with_inputs(
+    request: SearchQueryRequest,
+    inputs: &SearchProviderInputs,
+    on_progress: impl FnMut(SearchProgressPayload),
+    search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
+) -> SearchEngineResponse {
+    run_search_engine_core(request, inputs, || true, on_progress, search_everything_impl)
+}
+
+fn run_search_engine_core(
+    request: SearchQueryRequest,
+    inputs: &SearchProviderInputs,
+    is_latest: impl Fn() -> bool,
     mut on_progress: impl FnMut(SearchProgressPayload),
     search_everything_impl: impl Fn(&str, usize) -> providers::everything::EverythingSearchRun,
 ) -> SearchEngineResponse {
@@ -214,8 +334,37 @@ fn run_search_engine_with_everything(
     health.push(open_windows_run.health.clone());
     local_rows.extend(open_windows_run.results);
 
+    let calculator_run = search_calculator(&query, limit);
+    provider_timings.push(calculator_run.timing);
+    health.push(calculator_run.health);
+    local_rows.extend(calculator_run.results);
+
+    let quick_commands_run = search_quick_commands(&query, limit, &inputs.quick_commands);
+    provider_timings.push(quick_commands_run.timing);
+    health.push(quick_commands_run.health);
+    local_rows.extend(quick_commands_run.results);
+
+    // Only the last completed index here: bookmark disk I/O must never delay the Local payload.
+    let bookmark_cache = BOOKMARK_CACHE.get_or_init(|| Arc::new(BookmarkCache::new()));
+    if let Some(local_app_data) = inputs.bookmarks_local_app_data.as_deref() {
+        let bookmarks_run = search_known_bookmarks(&query, limit, local_app_data, bookmark_cache);
+        provider_timings.push(bookmarks_run.timing);
+        health.push(bookmarks_run.health);
+        local_rows.extend(bookmarks_run.results);
+    }
+
+    let web_run = search_web(&query, limit, inputs.web_engine);
+    provider_timings.push(web_run.timing);
+    health.push(web_run.health);
+    local_rows.extend(
+        web_run
+            .results
+            .into_iter()
+            .filter(|row| !inputs.web_search_disabled || row.id != WEB_SEARCH_ID),
+    );
+
     let mut merged_rows = merge_result_batches(Vec::new(), local_rows);
-    let local_ranked = rank_visible_results(&query, merged_rows.clone(), limit);
+    let local_ranked = rank_interim_results(&query, &merged_rows, limit);
     on_progress(progress_payload(
         &request,
         SearchProgressPhase::Local,
@@ -224,6 +373,11 @@ fn run_search_engine_with_everything(
         local_status_message(&local_ranked),
         false,
     ));
+    if let Some(local_app_data) = inputs.bookmarks_local_app_data.as_deref() {
+        if !query.is_empty() && is_latest() {
+            bookmark_cache.refresh_if_due(local_app_data);
+        }
+    }
 
     let everything_run = search_everything_impl(&query, limit);
     provider_timings.push(everything_run.timing.clone());
@@ -233,7 +387,7 @@ fn run_search_engine_with_everything(
 
     if !everything_results.is_empty() {
         merged_rows = merge_result_batches(merged_rows, everything_results);
-        let provider_ranked = rank_visible_results(&query, merged_rows.clone(), limit);
+        let provider_ranked = rank_interim_results(&query, &merged_rows, limit);
         on_progress(progress_payload(
             &request,
             SearchProgressPhase::Provider,
@@ -262,6 +416,20 @@ fn run_search_engine_with_everything(
         ));
     }
 
+    if let Some(local_app_data) = inputs.bookmarks_local_app_data.as_deref() {
+        if !query.is_empty() && is_latest() {
+            bookmark_cache.wait_for_first_index(local_app_data, &is_latest);
+        }
+        let bookmarks_run = search_known_bookmarks(&query, limit, local_app_data, bookmark_cache);
+        if let Some(timing) = provider_timings
+            .iter_mut()
+            .find(|timing| timing.provider_id == SearchProviderId::Bookmarks)
+        {
+            *timing = bookmarks_run.timing;
+        }
+        merged_rows.retain(|row| row.provider_id != SearchProviderId::Bookmarks);
+        merged_rows = merge_result_batches(merged_rows, bookmarks_run.results);
+    }
     let results = rank_visible_results(&query, merged_rows, limit);
 
     let response = SearchEngineResponse {
@@ -316,6 +484,16 @@ fn progress_payload(
         generated_at: iso_now(),
         stale,
     }
+}
+
+/// Ranking for every payload before the final one.
+fn rank_interim_results(query: &str, rows: &[SearchResult], limit: usize) -> Vec<SearchResult> {
+    let rows = rows
+        .iter()
+        .filter(|row| !is_final_only_row(row))
+        .cloned()
+        .collect();
+    rank_visible_results(query, rows, limit)
 }
 
 fn local_status_message(results: &[SearchResult]) -> String {

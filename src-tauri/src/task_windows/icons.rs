@@ -5,9 +5,10 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
@@ -34,12 +35,101 @@ static WINDOW_ICON_CACHE: OnceLock<
     Mutex<crate::task_windows::bounded_string_cache::BoundedStringCache<String>>,
 > = OnceLock::new();
 
+const HUNG_ICON_BACKOFF_TTL: Duration = Duration::from_secs(5);
+const HUNG_ICON_BACKOFF_CAPACITY: usize = 256;
+
+/// Short backoff for windows whose message loop did not answer `WM_GETICON`, keyed by
+/// (hwnd, pid) so a reused HWND is never penalised. Entries expire (never permanent).
+pub(super) struct HungIconBackoff {
+    ttl: Duration,
+    entries: HashMap<(isize, u32), Instant>,
+}
+
+impl HungIconBackoff {
+    pub(super) fn new(ttl: Duration) -> Self {
+        Self { ttl, entries: HashMap::new() }
+    }
+
+    pub(super) fn should_skip(&self, hwnd: isize, pid: u32, now: Instant) -> bool {
+        self.entries
+            .get(&(hwnd, pid))
+            .is_some_and(|recorded_at| now < *recorded_at + self.ttl)
+    }
+
+    pub(super) fn record_unresponsive(&mut self, hwnd: isize, pid: u32, now: Instant) {
+        let ttl = self.ttl;
+        self.entries.retain(|_, recorded_at| now < *recorded_at + ttl);
+        if self.entries.len() >= HUNG_ICON_BACKOFF_CAPACITY {
+            self.entries.clear();
+        }
+        self.entries.insert((hwnd, pid), now);
+    }
+
+    pub(super) fn record_responsive(&mut self, hwnd: isize, pid: u32) {
+        self.entries.remove(&(hwnd, pid));
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+static HUNG_ICON_BACKOFF: OnceLock<Mutex<HungIconBackoff>> = OnceLock::new();
+/// Last icon returned per (hwnd, pid); served while a hung window is in backoff.
+static LAST_WINDOW_ICON: OnceLock<Mutex<HashMap<(isize, u32), String>>> = OnceLock::new();
+
+fn hung_icon_backoff() -> &'static Mutex<HungIconBackoff> {
+    HUNG_ICON_BACKOFF.get_or_init(|| Mutex::new(HungIconBackoff::new(HUNG_ICON_BACKOFF_TTL)))
+}
+
+fn last_window_icons() -> &'static Mutex<HashMap<(isize, u32), String>> {
+    LAST_WINDOW_ICON.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_window_icon(key: (isize, u32), icon: &str) {
+    if let Ok(mut icons) = last_window_icons().lock() {
+        if icons.len() >= WINDOW_ICON_CACHE_CAPACITY && !icons.contains_key(&key) {
+            icons.clear();
+        }
+        icons.insert(key, icon.to_string());
+    }
+}
+
 pub(super) fn window_icon_data_url(
     hwnd: HWND,
+    process_id: u32,
     process_path: Option<&Path>,
 ) -> Result<String, String> {
-    let icon_identity = taskbar_icon_identity(hwnd);
-    window_icon_data_url_with_resolver(
+    let key = (hwnd.0 as isize, process_id);
+    let skip = hung_icon_backoff()
+        .lock()
+        .map(|backoff| backoff.should_skip(key.0, key.1, Instant::now()))
+        .unwrap_or(false);
+    if skip {
+        // No WM_GETICON (up to 3 x 25 ms) and no icon-cache write: the retry after the
+        // backoff resolves the real icon.
+        let known = last_window_icons().lock().ok().and_then(|icons| icons.get(&key).cloned());
+        if let Some(known) = known {
+            return Ok(known);
+        }
+        let fallback = match process_path {
+            Some(path) => file_icon_data_url(path).unwrap_or_else(|_| empty_icon_data_url().to_string()),
+            None => empty_icon_data_url().to_string(),
+        };
+        remember_window_icon(key, &fallback);
+        return Ok(fallback);
+    }
+
+    let (icon_identity, unresponsive) = taskbar_icon_identity(hwnd);
+    if let Ok(mut backoff) = hung_icon_backoff().lock() {
+        if unresponsive {
+            backoff.record_unresponsive(key.0, key.1, Instant::now());
+        } else {
+            backoff.record_responsive(key.0, key.1);
+        }
+    }
+    let result = window_icon_data_url_with_resolver(
         hwnd,
         process_path,
         icon_identity,
@@ -53,7 +143,11 @@ pub(super) fn window_icon_data_url(
                 Ok(empty_icon_data_url().to_string())
             }
         },
-    )
+    );
+    if let Ok(icon) = &result {
+        remember_window_icon(key, icon);
+    }
+    result
 }
 
 fn window_icon_data_url_with_resolver<F>(
@@ -132,22 +226,31 @@ impl WindowIconIdentity {
     }
 }
 
-fn taskbar_icon_identity(hwnd: HWND) -> WindowIconIdentity {
-    taskbar_icon_handle(hwnd)
-        .map(WindowIconIdentity::Icon)
-        .unwrap_or(WindowIconIdentity::Missing)
+/// Returns the identity and whether the window failed to answer `WM_GETICON` in time.
+fn taskbar_icon_identity(hwnd: HWND) -> (WindowIconIdentity, bool) {
+    let (handle, unresponsive) = taskbar_icon_handle(hwnd);
+    (
+        handle
+            .map(WindowIconIdentity::Icon)
+            .unwrap_or(WindowIconIdentity::Missing),
+        unresponsive,
+    )
 }
 
 fn empty_icon_data_url() -> &'static str {
     EMPTY_ICON_DATA_URL
 }
 
-fn taskbar_icon_handle(hwnd: HWND) -> Option<HICON> {
+fn taskbar_icon_handle(hwnd: HWND) -> (Option<HICON>, bool) {
+    let mut unresponsive = false;
     for icon_kind in [ICON_SMALL2, ICON_SMALL, ICON_BIG] {
         match taskbar_icon_handle_with_timeout(hwnd, icon_kind as usize) {
-            IconLookup::Found(icon) => return Some(icon),
+            IconLookup::Found(icon) => return (Some(icon), false),
             IconLookup::Unavailable => continue,
-            IconLookup::Unresponsive => break,
+            IconLookup::Unresponsive => {
+                unresponsive = true;
+                break;
+            }
         }
     }
 
@@ -155,11 +258,11 @@ fn taskbar_icon_handle(hwnd: HWND) -> Option<HICON> {
         let icon_value = unsafe { GetClassLongPtrW(hwnd, class_index) };
         let icon = HICON(icon_value as *mut _);
         if !icon.0.is_null() {
-            return Some(icon);
+            return (Some(icon), unresponsive);
         }
     }
 
-    None
+    (None, unresponsive)
 }
 
 enum IconLookup {

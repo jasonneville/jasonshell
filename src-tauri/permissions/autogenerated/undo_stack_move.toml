@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-undo-stack-move"
+description = "Enables the undo_stack_move command without any pre-configured scope."
+commands.allow = ["undo_stack_move"]
+
+[[permission]]
+identifier = "deny-undo-stack-move"
+description = "Denies the undo_stack_move command without any pre-configured scope."
+commands.deny = ["undo_stack_move"]

@@ -13,6 +13,7 @@ const loaders = {
 };
 
 if (label) {
+  document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') ?? 'base-dark';
   const recordError = (message: string) => fixture().record('startup-error', { surface: label, message });
   window.addEventListener('error', event => recordError(event.message));
   window.addEventListener('unhandledrejection', event => recordError(String(event.reason)));
@@ -24,7 +25,7 @@ if (label) {
     recordError(String(error));
   }
 } else {
-  const host = window as Window & { __sevenNative: Fixture; runJourney: () => Promise<string> };
+  const host = window as Window & { __sevenNative: Fixture; runJourney: () => Promise<string>; beginHover: () => Promise<any>; hoverStatus: () => any; endHover: () => Promise<void> };
   const n = host.__sevenNative = createFixture();
   n.settings.quickCommands = { orderVersion: 1, listWidth: 180, history: [], entries: [{ id: 'build', label: 'Build', mode: 'direct', targetPath: 'fixture.exe', args: [], commands: [], cwd: null, artifactLocation: null }] };
   const frames = Object.fromEntries(Object.keys(loaders).map(key => {
@@ -33,7 +34,7 @@ if (label) {
     if (key === overlay) frame.style.border = '0'; // Match the undecorated native client viewport.
     frame.width = key === overlay ? '327' : '850';
     frame.height = key === panel ? '500' : key === overlay ? '57' : '100';
-    frame.src = `?surface=${key}`;
+    frame.src = `?surface=${key}&theme=${encodeURIComponent(new URLSearchParams(location.search).get('theme') ?? 'base-dark')}`;
     root.append(frame);
     return [key, frame];
   }));
@@ -48,19 +49,32 @@ if (label) {
     const verdict = [...open.querySelectorAll('span')].find(el => el.textContent === outcome);
     const icon = open.querySelector('svg[aria-hidden="true"]');
     if (!label || !verdict || !icon || open.textContent?.trim().replace(/\s+/g, ' ') !== `Build ${outcome}`) throw new Error('Expected command, plain verdict, and decorative icon');
-    const token = outcome === 'Succeeded' ? '--js-color-success-border' : '--js-color-error-text';
-    const probe = document.createElement('span');
-    probe.style.color = `var(${token})`;
-    icon.parentElement!.append(probe);
+    // VIS-20b: the verdict icon uses a solid semantic colour (the old 42%-alpha success-border token
+    // is rejected) that keeps >= 3:1 non-text contrast against the card surface.
     const css = document.defaultView!.getComputedStyle.bind(document.defaultView);
-    const expected = css(probe).color;
-    probe.remove();
-    if (!css(icon).getPropertyValue(token).trim() || css(icon).stroke !== expected) throw new Error(`${outcome} SVG stroke ${css(icon).stroke} must match ${token} (${expected})`);
+    const channels = (value: string) => { const m = value.match(/^rgba?\(([^)]*)\)/); if (!m) throw new Error(`Unparseable colour ${value}`); const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p[3] ?? 1 }; };
+    const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => [r, g, b].map(c => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; }).reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+    const stroke = channels(css(icon).stroke);
+    if (stroke.a !== 1) throw new Error(`${outcome} icon colour ${css(icon).stroke} must be opaque`);
+    const cardBackground = channels(css(document.querySelector('[aria-label="Quick Commands notification"]')!).backgroundColor);
+    const [hi, lo] = [luminance(stroke), luminance(cardBackground)].sort((x, y) => y - x);
+    if ((hi + 0.05) / (lo + 0.05) < 3) throw new Error(`${outcome} icon contrast ${((hi + 0.05) / (lo + 0.05)).toFixed(2)} < 3:1`);
+    const live = document.querySelector('[role="status"], [role="alert"]');
+    if (!live || live.getAttribute('role') !== (outcome === 'Succeeded' ? 'status' : 'alert') || !live.textContent?.includes('Build') || !live.textContent.includes(outcome)) throw new Error(`Expected role=${outcome === 'Succeeded' ? 'status' : 'alert'} live region containing the label and verdict`);
     const [labelBox, verdictBox, iconBox, dismissBox] = [label, verdict, icon, dismiss].map(el => el.getBoundingClientRect());
     const card = document.querySelector('[aria-label="Quick Commands notification"]')!.getBoundingClientRect();
     const near = (actual: number, expected: number) => Math.abs(actual - expected) < 0.25;
-    if (!near(card.x, 7) || !near(card.y, 7) || !near(card.width, 320) || !near(card.height, 50)) throw new Error(`Expected 320×50 card at (7, 7); got ${JSON.stringify(card.toJSON())}`);
-    if (!near(dismissBox.width, 14) || !near(dismissBox.height, 14) || !near(dismissBox.x + dismissBox.width / 2, card.x) || !near(dismissBox.y + dismissBox.height / 2, card.y)) throw new Error('Expected 14px dismiss centered on the card corner');
+    // The 50 px strip geometry is unchanged (320x50 card); its offset inside the native client area may change.
+    if (!near(card.width, 320) || !near(card.height, 50)) throw new Error(`Expected a 320×50 card; got ${JSON.stringify(card.toJSON())}`);
+    const viewport = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
+    if (card.x < 0 || card.y < 0 || card.right > viewport.width + 0.25 || card.bottom > viewport.height + 0.25) throw new Error('Card is clipped by the native client viewport');
+    // VIS-20b: >= 24x24 CSS px dismiss target, fully inside the client viewport (not half outside).
+    if (dismissBox.width < 24 - 0.25 || dismissBox.height < 24 - 0.25) throw new Error(`Dismiss target ${dismissBox.width}x${dismissBox.height} must be at least 24x24`);
+    if (dismissBox.x < 0 || dismissBox.y < 0 || dismissBox.right > viewport.width + 0.25 || dismissBox.bottom > viewport.height + 0.25) throw new Error('Dismiss target is clipped by the client viewport');
+    const dismissCenter = { x: dismissBox.x + dismissBox.width / 2, y: dismissBox.y + dismissBox.height / 2 };
+    for (const [dx, dy] of [[0, 0], [-11, -11], [11, -11], [-11, 11], [11, 11]]) {
+      if (document.elementFromPoint(dismissCenter.x + dx, dismissCenter.y + dy)?.closest('button') !== dismiss) throw new Error(`24x24 area around the dismiss centre is not all dismiss hit target (offset ${dx},${dy})`);
+    }
     if (labelBox.right > verdictBox.left || verdictBox.right > iconBox.left) throw new Error('Trailing verdict overlaps or is out of order');
     const circles = [...dismiss.querySelectorAll('svg circle')];
     const countdown = circles.flatMap(circle => circle.getAnimations().map(animation => ({ circle, animation })))
@@ -80,10 +94,39 @@ if (label) {
     }
     const hit = (box: DOMRect) => document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) as HTMLElement | null;
     const verdictHit = hit(verdictBox);
-    const dismissHit = document.elementFromPoint(card.x - 3, card.y - 3);
+    const dismissHit = document.elementFromPoint(dismissCenter.x, dismissCenter.y);
     if (verdictHit?.closest('button') !== open || dismissHit?.closest('button') !== dismiss) throw new Error('Verdict and dismiss must hit their separate buttons');
     return { open, dismissHit };
   }
+  const reducedMotion = () => doc(overlay).defaultView!.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ring = () => [...button(overlay, /dismiss/i)!.querySelectorAll('svg circle')].flatMap(circle => circle.getAnimations()).find(animation => (animation.effect as KeyframeEffect | null)?.getTiming().duration === 6000);
+  const bannerActions = () => n.trace.filter(e => e.type === 'banner-action').map(e => e.action);
+  // VIS-20b: focus-within pauses the native deadline and the visible ring (WCAG 2.2.1); leaving resumes.
+  // Under reduced motion there is no ring animation but native pausing must still work.
+  async function pauseByFocus(outcome: string) {
+    const dismiss = button(overlay, /dismiss/i)!;
+    const before = bannerActions().filter(action => action === 'pause').length;
+    dismiss.focus();
+    await until(() => n.paused, `${outcome}: focusing the banner did not pause native`);
+    if (bannerActions().filter(action => action === 'pause').length !== before + 1) throw new Error('Focus must send exactly one pause');
+    if (!reducedMotion()) await until(() => ring()?.playState === 'paused', `${outcome}: ring animation did not pause`);
+    else if (ring()) throw new Error('Reduced-motion ring must not animate');
+    await new Promise(resolve => setTimeout(resolve, 150));
+    if (!n.paused || bannerActions().filter(action => action === 'pause').length !== before + 1) throw new Error('Pause must be idempotent while focus stays inside');
+    dismiss.blur();
+    await until(() => !n.paused, `${outcome}: leaving did not resume native`);
+    if (!reducedMotion()) await until(() => ring()?.playState === 'running', `${outcome}: ring animation did not resume`);
+  }
+  host.beginHover = async () => {
+    n.finish('hover-run', true, 'success');
+    await until(() => n.renderedId === n.banner?.id && button(overlay, /open/i), 'No rendered banner for hover journey');
+    frames[overlay].scrollIntoView({ block: 'center' });
+    const box = frames[overlay].getBoundingClientRect();
+    const open = button(overlay, /open/i)!.getBoundingClientRect();
+    return { over: { x: Math.round(box.left + open.left + open.width / 2), y: Math.round(box.top + open.top + open.height / 2) }, away: { x: Math.round(box.left + box.width / 2), y: Math.max(2, Math.round(box.top - 30)) }, reducedMotion: reducedMotion() };
+  };
+  host.hoverStatus = () => ({ paused: n.paused, actions: bannerActions(), ring: ring()?.playState ?? null });
+  host.endHover = async () => { button(overlay, /dismiss/i)!.click(); await until(() => !n.banner, 'Hover journey banner did not dismiss'); };
   async function until(check: () => unknown, message: string) {
     const deadline = performance.now() + 3000;
     while (!check()) {
@@ -98,6 +141,8 @@ if (label) {
     await until(() => button('top-bar', /open quick commands/i), 'No Quick Commands launcher');
     n.finish('dismissed', true, 'failure');
     await until(() => n.renderedId === n.banner?.id && button(overlay, /dismiss/i), 'No rendered and acknowledged dismiss action');
+    verdictHitTargets('Failed');
+    await pauseByFocus('Failed');
     verdictHitTargets('Failed').dismissHit!.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 4, clientY: 4 }));
     await until(() => !button(overlay, /dismiss/i), 'Dismiss did not remove banner');
     if (n.panelVisible || traceCount('show') || !n.trace.some(e => e.type === 'banner-action' && e.action === 'dismiss')) throw new Error('Dismiss must acknowledge only the banner and leave panel closed');
@@ -118,6 +163,8 @@ if (label) {
     await until(() => !n.panelVisible, 'Could not hide warm panel');
     n.announce('older');
     await until(() => n.renderedId === n.banner?.id && button(overlay, /open/i), 'No rendered and acknowledged Open action');
+    verdictHitTargets('Succeeded');
+    await pauseByFocus('Succeeded');
     verdictHitTargets('Succeeded').open.click();
     await until(() => n.panelVisible && runs().some(row => row.open && row.innerText.includes('older output sentinel')), 'Actual panel did not expand the exact older output');
     if (!runs().some(row => !row.open && row.textContent?.includes('newer output sentinel'))) throw new Error('Newer run must be present and collapsed');

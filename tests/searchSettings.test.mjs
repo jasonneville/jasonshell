@@ -6,6 +6,7 @@ import {
   EVERYTHING_SDK_SOURCES,
   EVERYTHING_SORT_MODES,
   SEARCH_MODES,
+  WEB_SEARCH_ENGINES,
   coerceSearchSettings,
   defaultSearchSettings,
   isEverythingSetupConsentAllowed
@@ -19,6 +20,7 @@ test('search settings defaults match JSON-owned Everything safe defaults', () =>
     },
     search: {
       resultLimit: 50,
+      webEngine: 'google',
       everything: {
         enabled: true,
         installMode: 'ask',
@@ -182,4 +184,31 @@ test('everything setup consent blocks unsafe download, bundle, or execution path
     }),
     false
   );
+});
+
+// Tier 1 PRD-02b: configurable web-search engine (fixed allowlist, default google).
+test('web search engine allowlist is fixed and google is the default', () => {
+  assert.deepEqual(WEB_SEARCH_ENGINES, ['google', 'duckduckgo', 'bing', 'brave']);
+  assert.equal(defaultSearchSettings().search.webEngine, 'google');
+});
+
+test('legacy settings without webEngine migrate to google and valid engines persist', () => {
+  assert.equal(coerceSearchSettings({ search: { resultLimit: 10 } }).search.webEngine, 'google');
+  assert.equal(coerceSearchSettings({}).search.webEngine, 'google');
+  for (const engine of WEB_SEARCH_ENGINES) {
+    assert.equal(coerceSearchSettings({ search: { webEngine: engine } }).search.webEngine, engine);
+  }
+});
+
+test('invalid or hostile webEngine values fall back to google', () => {
+  for (const value of ['yahoo', 'Google', '', 'https://evil.example/?q=', 7, null, {}, ['bing']]) {
+    assert.equal(coerceSearchSettings({ search: { webEngine: value } }).search.webEngine, 'google', String(value));
+  }
+});
+
+test('shell settings carry webEngine inside search and default settings stay clone-isolated', () => {
+  const settings = defaultShellSettings();
+  assert.equal(settings.search.webEngine, 'google');
+  settings.search.webEngine = 'brave';
+  assert.equal(defaultSearchSettings().search.webEngine, 'google');
 });

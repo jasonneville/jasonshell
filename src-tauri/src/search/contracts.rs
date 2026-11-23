@@ -137,7 +137,7 @@ pub(crate) struct SearchResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub(crate) enum SearchResultAction {
     OpenApp {
         path: String,
@@ -159,6 +159,7 @@ pub(crate) enum SearchResultAction {
     },
     RunControlPanel {
         executable: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<Vec<String>>,
     },
     CopyText {
@@ -200,7 +201,7 @@ impl SearchResultAction {
             }
             Self::CopyText { .. } => true,
             Self::OpenWebUrl { url } | Self::OpenBookmark { url } => {
-                url.starts_with("https://") || url.starts_with("http://")
+                crate::search::providers::web::validate_search_open_url(url).is_ok()
             }
         }
     }

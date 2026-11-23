@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SearchActivationKind, SearchPanelPayload, SearchPanelResult } from './searchPanel';
 import { IPC_COMMANDS } from '../ipc/commands.js';
+import { implicitSearchSelectionIndex } from './searchSelection.js';
 
 export const SEARCH_ENGINE_COMMAND = IPC_COMMANDS.searchEngine;
 export const SEARCH_ENGINE_PROGRESS_EVENT = 'search-engine:progress';
@@ -177,7 +178,8 @@ export function searchEngineResultToPanelResult(result: SearchResult): SearchPan
     copyText: result.action.kind === 'copyText' ? result.action.text : undefined,
     titleHighlightData: result.titleHighlightData,
     subtitleHighlightData: result.subtitleHighlightData,
-    recordKey: result.recordKey
+    recordKey: result.recordKey,
+    matchReason: result.matchReason
   };
 }
 
@@ -187,14 +189,14 @@ export function searchEngineResponseToPanelResults(response: SearchEngineRespons
 
 export function searchEngineResponseToPanelPayload(
   response: SearchEngineResponse,
-  selectedIndex = 0,
+  selectedIndex?: number,
   presentation: SearchEnginePresentation = 'centered'
 ): SearchPanelPayload {
   const results = searchEngineResponseToPanelResults(response);
   return {
     query: response.query,
     results,
-    selectedIndex: Math.min(selectedIndex, Math.max(results.length - 1, 0)),
+    selectedIndex: panelSelectedIndex(results, selectedIndex),
     statusMessage: searchPanelStatusMessageFromResponse(response, results),
     presentation
   };
@@ -202,19 +204,30 @@ export function searchEngineResponseToPanelPayload(
 
 export function searchEngineProgressToPanelPayload(
   payload: SearchProgressPayload,
-  selectedIndex = 0,
+  selectedIndex?: number,
   presentation: SearchEnginePresentation = 'centered'
 ): SearchPanelPayload {
   const results = payload.results.map(searchEngineResultToPanelResult);
   return {
     query: payload.query,
     results,
-    selectedIndex: Math.min(selectedIndex, Math.max(results.length - 1, 0)),
+    selectedIndex: panelSelectedIndex(results, selectedIndex, payload.phase !== 'complete'),
     statusMessage: searchPanelStatusMessageFromProgress(payload, results),
     presentation,
     phase: payload.phase,
     sequence: payload.sequence
   };
+}
+
+function panelSelectedIndex(
+  results: readonly SearchPanelResult[],
+  selectedIndex: number | undefined,
+  interim = false
+): number {
+  if (selectedIndex === undefined) {
+    return results.length ? implicitSearchSelectionIndex(results, interim) : 0;
+  }
+  return Math.min(selectedIndex, Math.max(results.length - 1, 0));
 }
 
 export function searchPanelStatusMessageFromResponse(
@@ -528,13 +541,19 @@ function isSafeDataUrl(value: string): boolean {
   return /^data:image\/(?:png|webp|jpeg|svg\+xml);base64,[a-z0-9+/=]+$/iu.test(value);
 }
 
+const MAX_OPEN_URL_CHARS = 2048;
+// Host labels or a bracketed IPv6 address, optional port. `@` is not a host character, so credentials fail.
+const SAFE_URL_AUTHORITY =
+  /^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[(?=[0-9a-f.]*:)[0-9a-f:.]+\])(?::[0-9]{1,5})?$/iu;
+
+// Mirrors `validate_search_open_url` in src-tauri/src/search/providers/web.rs. Do not parse with
+// `URL` here: a stricter rule than Rust's would discard every row of an otherwise valid response.
 function isSafeHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (_error) {
+  if (value.length > MAX_OPEN_URL_CHARS || !/^[\x21\x23-\x5b\x5d-\x7e]+$/u.test(value)) {
     return false;
   }
+  const match = /^https?:\/\/([^/?#]*)/iu.exec(value);
+  return match !== null && SAFE_URL_AUTHORITY.test(match[1]);
 }
 
 function panelProviderId(providerId: string): SearchPanelResult['providerId'] {

@@ -31,6 +31,7 @@
 .preview-surface:focus-visible {
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-shadow-raised), var(--js-inset-highlight), var(--js-focus-ring);
+  outline: 2px solid var(--js-focus-color);
 }
 
 .preview-surface-native {
@@ -150,5 +151,4 @@
 .preview-close-button:focus-visible {
   border-color: var(--js-color-accent-border);
   box-shadow: var(--js-focus-ring);
-  outline: none;
 }

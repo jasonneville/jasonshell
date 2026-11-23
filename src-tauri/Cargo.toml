@@ -84,3 +84,8 @@ windows-core = "0.61.2"
 # Windows teardown backport and scoped local-drop observation; see vendor/wry/JASONSHELL_PATCH.md.
 [patch.crates-io]
 wry = { path = "vendor/wry" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

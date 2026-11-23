@@ -8,6 +8,9 @@
     "core:default",
     "core:window:default",
     "allow-commit-stack-local-drop",
-    "allow-prepare-stack-local-drop"
+    "allow-prepare-stack-local-drop",
+    "allow-undo-stack-move",
+    "allow-delete-stack-items",
+    "deny-delete-stack-item"
   ]
 }

@@ -25,6 +25,7 @@
   import ContextMenu from './ContextMenu.svelte';
   import ContextMenuItem from './ContextMenuItem.svelte';
   import { TerminalSequenceTracker } from '../lib/terminalSequenceTracker';
+  import { activeTerminalTheme, bindTerminalTheme, TERMINAL_MINIMUM_CONTRAST_RATIO } from '../lib/terminalTheme';
 
   type TerminalLifecycleState = 'idle' | 'starting' | 'runningWaitingForFirstByte' | 'running' | 'exited' | 'failed';
   type StackTerminalClosedPayload = { sessionId: string; running?: boolean };
@@ -75,6 +76,7 @@
   let searchOpen = false;
   let searchDraft = '';
   let renderer: StackTerminalRenderer = 'default';
+  let disposeTerminalTheme: (() => void) | null = null;
   let contextMenu: { x: number; y: number } | null = null;
 
   $: detectedLinks = detectStackTerminalLinks(output.slice(-12000), cwd);
@@ -239,13 +241,8 @@
       screenReaderMode: false,
       scrollback: 5000,
       windowsPty: { backend: 'conpty' },
-      theme: {
-        background: '#06080b',
-        foreground: '#d7e2f5',
-        cursor: '#d7e2f5',
-        cursorAccent: '#06080b',
-        selectionBackground: '#315f8c'
-      }
+      minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST_RATIO,
+      theme: activeTerminalTheme()
     });
     const nextFitAddon = new FitAddon();
     const nextSearchAddon = new SearchAddon();
@@ -303,6 +300,7 @@
     });
     nextTerminal.open(host);
     terminal = nextTerminal;
+    disposeTerminalTheme = bindTerminalTheme(nextTerminal);
     fitAddon = nextFitAddon;
     searchAddon = nextSearchAddon;
     serializeAddon = nextSerializeAddon;
@@ -453,6 +451,8 @@
     fitAddon = null;
     searchAddon = null;
     serializeAddon = null;
+    disposeTerminalTheme?.();
+    disposeTerminalTheme = null;
     terminal?.dispose();
     terminal = null;
     cancelOutputFlush();

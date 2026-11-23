@@ -53,28 +53,52 @@ pub(crate) fn detect_system_sdk(installed_exe: Option<&Path>) -> EverythingSdkDe
 }
 
 pub(crate) fn sdk_candidates(installed_exe: Option<&Path>) -> Vec<PathBuf> {
+    everything_dll_candidates(
+        env::var_os("JASONSHELL_EVERYTHING_SDK_DIR").map(PathBuf::from),
+        env::current_dir().ok(),
+        installed_exe.and_then(Path::parent).map(Path::to_path_buf),
+        env::var_os("ProgramFiles").map(PathBuf::from),
+        cfg!(debug_assertions),
+    )
+}
+
+/// Pure DLL candidate policy. The env override and working-directory
+/// candidates are developer conveniences (`allow_dev_candidates`, i.e. debug
+/// builds only): in release a hijacked env var or cwd must never choose code we
+/// load in-process. Release candidates are always absolute.
+pub(crate) fn everything_dll_candidates(
+    env_dir: Option<PathBuf>,
+    cwd: Option<PathBuf>,
+    installed_dir: Option<PathBuf>,
+    program_files: Option<PathBuf>,
+    allow_dev_candidates: bool,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Some(dir) = env::var_os("JASONSHELL_EVERYTHING_SDK_DIR").map(PathBuf::from) {
+    if allow_dev_candidates {
+        if let Some(dir) = env_dir {
+            candidates.push(dir.join("Everything64.dll"));
+            candidates.push(dir.join("Everything.dll"));
+        }
+        if let Some(current_dir) = cwd {
+            push_repo_local_sdk_candidates(&mut candidates, &current_dir);
+        }
+    }
+
+    if let Some(dir) = installed_dir {
         candidates.push(dir.join("Everything64.dll"));
         candidates.push(dir.join("Everything.dll"));
     }
 
-    if let Ok(current_dir) = env::current_dir() {
-        push_repo_local_sdk_candidates(&mut candidates, &current_dir);
-    }
-
-    if let Some(exe) = installed_exe.and_then(Path::parent) {
-        candidates.push(exe.join("Everything64.dll"));
-        candidates.push(exe.join("Everything.dll"));
-    }
-
-    if let Some(program_files) = env::var_os("ProgramFiles").map(PathBuf::from) {
+    if let Some(program_files) = program_files {
         candidates.push(program_files.join(r"Everything SDK\dll\Everything64.dll"));
         candidates.push(program_files.join(r"Everything\Everything64.dll"));
         candidates.push(program_files.join(r"Everything\Everything.dll"));
     }
 
+    if !allow_dev_candidates {
+        candidates.retain(|path| path.is_absolute());
+    }
     candidates
 }
 
@@ -95,14 +119,59 @@ pub(crate) fn query_everything_sdk(
     request: &EverythingSdkRequest,
 ) -> Result<Vec<EverythingSdkRawResult>, EverythingSdkError> {
     with_serialized_sdk_access(|| {
+        let library = cached_everything_library(dll_path)?;
         // SAFETY: fixed Everything SDK symbols are called with documented signatures;
         // all string buffers are nul-terminated UTF-16 and reset is called before releasing the global SDK lock.
-        unsafe {
-            let library = Library::new(dll_path)
-                .map_err(|error| EverythingSdkError::QueryFailed(error.to_string()))?;
-            run_query_with_library(&library, request)
-        }
+        unsafe { run_query_with_library(library, request) }
     })
+}
+
+/// Process-wide loaded SDK. Loaded once with a restricted DLL search (the DLL's
+/// own directory plus System32, never the application/cwd/PATH order) and kept
+/// loaded for the process lifetime. Only reached with the SDK lock held.
+static EVERYTHING_LIBRARY: Mutex<Option<(PathBuf, &'static Library)>> = Mutex::new(None);
+
+fn cached_everything_library(dll_path: &Path) -> Result<&'static Library, EverythingSdkError> {
+    let mut cached = EVERYTHING_LIBRARY
+        .lock()
+        .map_err(|_| EverythingSdkError::QueryFailed("Everything SDK cache failed".to_string()))?;
+    if let Some((path, library)) = cached.as_ref() {
+        if path == dll_path {
+            return Ok(library);
+        }
+    }
+    if !dll_path.is_absolute() {
+        return Err(EverythingSdkError::QueryFailed(
+            "Everything SDK DLL path must be absolute".to_string(),
+        ));
+    }
+    let library: &'static Library = Box::leak(Box::new(load_everything_library(dll_path)?));
+    *cached = Some((dll_path.to_path_buf(), library));
+    Ok(library)
+}
+
+#[cfg(windows)]
+fn load_everything_library(dll_path: &Path) -> Result<Library, EverythingSdkError> {
+    use libloading::os::windows::{
+        Library as WindowsLibrary, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
+    };
+    // SAFETY: loading the Everything SDK runs its DllMain; the path is an
+    // approved absolute candidate and the search order is restricted.
+    unsafe {
+        WindowsLibrary::load_with_flags(
+            dll_path,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    }
+    .map(Library::from)
+    .map_err(|error| EverythingSdkError::QueryFailed(error.to_string()))
+}
+
+#[cfg(not(windows))]
+fn load_everything_library(_dll_path: &Path) -> Result<Library, EverythingSdkError> {
+    Err(EverythingSdkError::QueryFailed(
+        "Everything SDK is only available on Windows".to_string(),
+    ))
 }
 
 fn with_serialized_sdk_access<T>(
@@ -327,3 +396,7 @@ mod tests {
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
     }
 }
+
+#[cfg(test)]
+#[path = "everything_tier0_tests.rs"]
+mod tier0_tests;

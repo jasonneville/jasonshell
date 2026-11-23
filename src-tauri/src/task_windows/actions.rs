@@ -4,8 +4,8 @@ use std::thread;
 use std::time::Duration;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, LPARAM, WPARAM};
 use windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentThreadId, GetProcessTimes, OpenProcess, TerminateProcess,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    AttachThreadInput, GetCurrentThreadId, GetProcessTimes, OpenProcess,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetAncestor, GetForegroundWindow, GetLastActivePopup,
@@ -16,8 +16,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 const CLOSE_TIMEOUT_MS: u32 = 750;
-const CLOSE_VERIFY_ATTEMPTS: usize = 10;
-const CLOSE_VERIFY_DELAY_MS: u64 = 50;
 const ACTIVATE_RESTORE_ATTEMPTS: usize = 10;
 const ACTIVATE_RESTORE_DELAY_MS: u64 = 50;
 
@@ -280,10 +278,35 @@ fn request_close_with(
     dispatch()
 }
 
+/// What follows the synchronous `SendMessageTimeoutW(WM_CLOSE)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloseFollowup {
+    Done,
+    PostFallback,
+}
+
+const ERROR_TIMEOUT: u32 = 1460;
+
+/// A delivered close, or a timeout (the app is probably showing a "Save changes?"
+/// prompt, and a second WM_CLOSE would duplicate or answer it), is final. Only a
+/// genuine delivery failure against a surviving window falls back to one post.
+fn close_followup(send_succeeded: bool, last_error: u32, window_exists: bool) -> CloseFollowup {
+    if send_succeeded || last_error == ERROR_TIMEOUT || !window_exists {
+        CloseFollowup::Done
+    } else {
+        CloseFollowup::PostFallback
+    }
+}
+
+/// Close is request-only: one WM_CLOSE, with a single `PostMessage` fallback only
+/// when the synchronous send could not be delivered. A window that stays open
+/// (for example a save prompt) is success. This never terminates the owning
+/// process and never elevates.
 fn close_window_with_identity(
     hwnd: windows::Win32::Foundation::HWND,
     initial_identity: TaskWindowIdentity,
 ) -> Result<(), String> {
+    revalidate_close_target(hwnd, &initial_identity)?;
     let mut result = 0usize;
     let close_status = unsafe {
         SendMessageTimeoutW(
@@ -296,96 +319,21 @@ fn close_window_with_identity(
             Some(&mut result),
         )
     };
-    let send_timeout_succeeded = close_status.0 != 0;
-    let send_error = if send_timeout_succeeded {
+    let send_succeeded = close_status.0 != 0;
+    let last_error = if send_succeeded {
         0
     } else {
         unsafe { GetLastError().0 }
     };
 
-    if send_error != 0 && should_elevate_after_access_denied(send_error) {
-        revalidate_close_target(hwnd, &initial_identity)?;
-        return elevate_close_target(hwnd, &initial_identity);
-    }
-
-    if send_timeout_succeeded && wait_for_window_close(hwnd) {
-        return Ok(());
-    }
-
-    if should_fallback_post_close(send_timeout_succeeded, window_exists(hwnd)) {
-        revalidate_close_target(hwnd, &initial_identity)?;
-        match unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) } {
-            Ok(()) => {}
-            Err(error) if should_elevate_after_access_denied(error.code().0 as u32) => {
-                return elevate_close_target(hwnd, &initial_identity);
-            }
-            Err(error) => {
-                return Err(format!("Failed to close task window: {error}"));
-            }
-        }
-        if wait_for_window_close(hwnd) {
-            return Ok(());
+    match close_followup(send_succeeded, last_error, window_exists(hwnd)) {
+        CloseFollowup::Done => Ok(()),
+        CloseFollowup::PostFallback => {
+            revalidate_close_target(hwnd, &initial_identity)?;
+            unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
+                .map_err(|error| format!("Failed to close task window: {error}"))
         }
     }
-
-    terminate_window_process(hwnd, &initial_identity)
-}
-
-fn terminate_window_process(
-    hwnd: windows::Win32::Foundation::HWND,
-    initial_identity: &TaskWindowIdentity,
-) -> Result<(), String> {
-    if !window_exists(hwnd) {
-        return Ok(());
-    }
-
-    let mut process_id = 0_u32;
-    unsafe {
-        let _ = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-    }
-    if process_id == 0 {
-        return Err(
-            "Task window did not close and its owning process could not be identified".to_string(),
-        );
-    }
-
-    revalidate_close_target(hwnd, initial_identity)?;
-
-    let process_handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, process_id) };
-    let process_handle = match process_handle {
-        Ok(handle) => handle,
-        Err(error) if should_elevate_after_access_denied(error.code().0 as u32) => {
-            return elevate_close_target(hwnd, initial_identity);
-        }
-        Err(error) => {
-            return Err(format!(
-                "Failed to open task window process {process_id} for termination: {error}"
-            ));
-        }
-    };
-    let result = unsafe { TerminateProcess(process_handle, 1) };
-    unsafe {
-        let _ = CloseHandle(process_handle);
-    }
-    match result {
-        Ok(()) => {}
-        Err(error) if should_elevate_after_access_denied(error.code().0 as u32) => {
-            return elevate_close_target(hwnd, initial_identity);
-        }
-        Err(error) => {
-            return Err(format!(
-                "Failed to terminate task window process {process_id}: {error}"
-            ));
-        }
-    }
-
-    if wait_for_window_close(hwnd) {
-        return Ok(());
-    }
-
-    Err(format!(
-        "Task window process {process_id} was terminated but the window still exists"
-    ))
 }
 
 fn revalidate_close_target(
@@ -426,19 +374,6 @@ fn capture_task_window_identity_at_start(
     hwnd: windows::Win32::Foundation::HWND,
 ) -> Result<TaskWindowIdentity, String> {
     current_task_window_identity(hwnd)
-}
-
-fn elevate_close_target(
-    hwnd: windows::Win32::Foundation::HWND,
-    initial_identity: &TaskWindowIdentity,
-) -> Result<(), String> {
-    revalidate_close_target(hwnd, initial_identity)?;
-    crate::task_windows::spawn_task_window_helper(
-        (hwnd.0 as isize).to_string(),
-        initial_identity.process_id,
-        initial_identity.creation_time,
-        initial_identity.canonical_image_path.clone(),
-    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -520,21 +455,9 @@ pub(super) fn should_use_foreground_handoff(set_foreground_succeeded: bool) -> b
     !set_foreground_succeeded
 }
 
-pub(super) fn should_fallback_post_close(
-    _send_timeout_succeeded: bool,
-    window_still_exists: bool,
-) -> bool {
-    window_still_exists
-}
-
-fn should_elevate_after_access_denied(status: u32) -> bool {
-    super::helper::is_access_denied_win32_code(status)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_windows::helper;
     use std::cell::Cell;
 
     fn request_identity_fixture() -> TaskWindowIdentity {
@@ -658,29 +581,6 @@ mod tests {
         .is_err());
     }
 
-    #[test]
-    fn access_denied_win32_code_matches_raw_and_hresult_from_win32_only() {
-        assert!(helper::is_access_denied_win32_code(5));
-        assert!(helper::is_access_denied_win32_code(0x8007_0005));
-        assert!(!helper::is_access_denied_win32_code(0x8007_0002));
-        assert!(!helper::is_access_denied_win32_code(1223));
-    }
-
-    #[test]
-    fn access_denied_helper_recognizes_terminate_and_open_denied_forms() {
-        for code in [5, 0x8007_0005] {
-            assert!(helper::is_access_denied_win32_code(code));
-        }
-    }
-
-    #[test]
-    fn elevate_gate_triggers_only_for_access_denied_forms() {
-        assert!(should_elevate_after_access_denied(5));
-        assert!(should_elevate_after_access_denied(0x8007_0005));
-        assert!(!should_elevate_after_access_denied(2));
-        assert!(!should_elevate_after_access_denied(0x8007_0002));
-    }
-
     fn capture_task_window_identity_at_start_for_test(
         current: &TaskWindowIdentity,
         process_id: u32,
@@ -713,16 +613,10 @@ mod tests {
     }
 }
 
-fn wait_for_window_close(hwnd: windows::Win32::Foundation::HWND) -> bool {
-    for _ in 0..CLOSE_VERIFY_ATTEMPTS {
-        if !window_exists(hwnd) {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(CLOSE_VERIFY_DELAY_MS));
-    }
-    !window_exists(hwnd)
-}
-
 fn window_exists(hwnd: windows::Win32::Foundation::HWND) -> bool {
     unsafe { IsWindow(Some(hwnd)).as_bool() }
 }
+
+#[cfg(test)]
+#[path = "actions_tier0_tests.rs"]
+mod tier0_tests;

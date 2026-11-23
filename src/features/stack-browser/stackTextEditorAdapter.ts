@@ -41,7 +41,7 @@ export const stackEditorTheme = EditorView.theme({
     fontSize: '0.78rem',
     height: '100%'
   },
-  '&.cm-focused': { outline: 'var(--js-focus-ring)' },
+  '&.cm-focused': { outline: '2px solid var(--js-focus-color)', outlineOffset: '-2px' },
   '.cm-scroller': { lineHeight: '1.55', overflow: 'auto' },
   '.cm-content': { caretColor: calmEditorCaret, padding: 'var(--js-space-3) 0' },
   '.cm-cursor': {

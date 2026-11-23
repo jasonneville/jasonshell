@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { readRepoFile } from './support/repoSource.mjs';
 import ts from 'typescript';
 
 const surface = readFileSync(new URL('../src/components/StackPopupSurface.svelte', import.meta.url), 'utf8');
@@ -10,10 +11,7 @@ const surfaceCss = readFileSync(new URL('../src/components/StackPopupSurface.css
 const editor = readFileSync(new URL('../src/components/StackTextEditor.svelte', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../src/features/stack-browser/stackTextEditorAdapter.ts', import.meta.url), 'utf8');
 const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
-const languageRegistryUrl = new URL('../src/features/stack-browser/stackTextEditorLanguages.ts', import.meta.url);
-const languageRegistry = (() => {
-  try { return readFileSync(languageRegistryUrl, 'utf8'); } catch { return ''; }
-})();
+const languageRegistry = readRepoFile('src/features/stack-browser/stackTextEditorLanguages.ts');
 
 async function importTranspiledModule(relativePath) {
   const source = readFileSync(new URL(relativePath, import.meta.url), 'utf8');
@@ -171,7 +169,8 @@ test('normal text files route to the directly mounted editor while unsupported f
   assert.match(surface, /const STACK_BASIC_TEXT_EXTENSIONS = new Set\(\[[\s\S]*'txt'[\s\S]*'md'[\s\S]*'json'[\s\S]*'svelte'[\s\S]*\]\);/);
   assert.match(surface, /if \(entry\.entryType === 'File' && isStackBasicTextFile\(entry\.path\)\) \{[\s\S]*editorPath = entry\.path;[\s\S]*return;/);
   assert.match(surface, /await openStackItem\(entry\.path\);/);
-  assert.match(surface, /<StackTextEditor\s+bind:this=\{textEditor\}\s+path=\{editorPath\}/);
+  // FE-34: the editor is a lazily loaded component rendered through <svelte:component>; ref/props contract unchanged.
+  assert.match(surface, /<svelte:component[^>]*\bthis=\{StackTextEditorPane\}[\s\S]*?bind:this=\{textEditor\}[\s\S]*?path=\{editorPath\}/);
 });
 
 test('editor replaces the file or Git content row and owns internal scrolling', () => {
@@ -472,5 +471,5 @@ test('folder, popup-request, editor-back, and surface-close routes use dirty-dra
   assert.match(surface, /getCurrentWindow\(\)\.listen\(STACK_POPUP_CLOSE_REQUESTED_EVENT, \(\) => \{\s*closeStackPopupFromSurface\(\);/, 'popup routes native request through its guarded close');
   assert.match(surface, /if \(disposed\) unlisten\(\);\s*else unlisteners\.push\(unlisten\);/, 'late listener registration cleans up on unmount');
   assert.match(surface, /for \(const unlisten of unlisteners\) \{\s*unlisten\(\);/, 'mounted listener is removed on unmount');
-  assert.match(surface, /<StackTextEditor[\s\S]*onDirtyChange=\{handleEditorDirtyChange\}[\s\S]*onDismiss=\{requestEditorClose\}/);
+  assert.match(surface, /<svelte:component[^>]*\bthis=\{StackTextEditorPane\}[\s\S]*onDirtyChange=\{handleEditorDirtyChange\}[\s\S]*onDismiss=\{requestEditorClose\}/);
 });

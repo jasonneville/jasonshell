@@ -90,7 +90,7 @@
 }
 
 .bottom-bar .process-manager-button:focus-visible {
-  outline: 2px solid var(--js-color-accent);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: -2px;
 }
 
@@ -130,7 +130,7 @@
 }
 
 .bottom-bar .quick-launch-button:focus-visible {
-  outline: 2px solid var(--js-color-accent);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: -2px;
 }
 
@@ -170,12 +170,12 @@
 }
 
 .bottom-bar .launcher-button:focus-visible {
-  outline: 2px solid var(--js-color-accent-border);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: 2px;
 }
 
 .bottom-bar .task-button:focus-visible {
-  outline: 2px solid var(--js-color-accent);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: -2px;
 }
 
@@ -487,7 +487,7 @@
 .bottom-bar .taskbar-overflow-status {
   align-items: center;
   background: var(--js-color-surface);
-  border-left: 1px solid var(--js-color-accent-border);
+  border-left: 1px solid var(--js-color-border);
   color: var(--js-color-text-muted);
   display: none;
   font-size: 0.54rem;

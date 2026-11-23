@@ -36,8 +36,10 @@ test('stack browser has an accessible token-styled close button wired to the sur
   assert.match(stackPopupSource, /ariaLabel="Close stack browser"/);
   assert.match(stackPopupSource, /<MaterialSymbolIcon name="close" \/>/);
   assert.match(stackPopupSource, /onClick=\{\(\) => void closeStackPopupFromSurface\(\)\}/);
-  assert.match(closeBody, /await stopCurrentStackTerminal\(\)/);
-  assert.match(closeBody, /stackBrowserViewMode\s*=\s*'files'/);
+  // FE-34: stopCurrentStackTerminal was a no-op (the pane was never mounted) and was removed.
+  assert.doesNotMatch(closeBody, /stopCurrentStackTerminal/);
+  // FE-34: stackBrowserViewMode could only become 'terminal' via the unreachable switchStackBrowserView, so the reset was dead and removed.
+  assert.match(closeBody, /closeGitStatusPopup\(\)/); // a still-loading Git pane must not mount into a hidden popup
   assert.match(closeBody, /await hideStackPopup\(\)/);
 
   assert.match(toolbarRule, /padding-right:\s*3rem/);

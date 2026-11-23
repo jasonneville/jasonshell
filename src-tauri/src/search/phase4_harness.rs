@@ -175,13 +175,15 @@ fn phase4_everything_overfetch_artifact_meets_targets() {
     expected = "phase4 artifact must not pass with broken phase3 regression observations"
 )]
 fn phase4_artifact_rejects_broken_phase3_regression_observations() {
-    let artifact = phase4_artifact_with_phase3_summary(Phase3RegressionSummary {
+    let mut artifact = phase4_artifact_with_phase3_summary(Phase3RegressionSummary {
         stale_everything_boundaries: 1,
         stale_sdk_entries: 1,
         latest_completions: 29,
         latest_completion_target: 30,
         recursive_scans: 1,
     });
+    // Wall-clock latency is load-sensitive; this test is about the regression check, so pin it (the real gate is untouched).
+    artifact.latency_p95_ms = 0;
 
     assert_phase4_targets(&artifact);
 }

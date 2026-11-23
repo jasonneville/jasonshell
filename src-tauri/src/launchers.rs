@@ -500,13 +500,15 @@ mod imp {
     }
 
     fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
-        std::process::Command::new("powershell.exe")
+        let mut command = std::process::Command::new("powershell.exe");
+        command
             .args([
                 "-NoProfile",
                 "-Command",
                 "Set-Clipboard -Value $env:JASONSHELL_CLIPBOARD_TEXT",
             ])
-            .env("JASONSHELL_CLIPBOARD_TEXT", text)
+            .env("JASONSHELL_CLIPBOARD_TEXT", text);
+        crate::process_flags::no_console_window(&mut command)
             .spawn()
             .map_err(|error| format!("Failed to copy launcher path: {error}"))?;
 

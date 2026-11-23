@@ -1,6 +1,6 @@
 import { loadSavedThemeState, writeSavedThemeState, type SavedThemeState, SAVED_THEMES_STORAGE_KEY } from './themePersistence.js';
 import { installThemeSelectionAuthority, requestThemeSelectionThroughAuthority } from './themeSelectionAuthority.js';
-import { THEME_PALETTE_TOKENS, resolveThemePaletteColor, validateCustomTheme, type CustomTheme } from './themePalette.js';
+import { THEME_PALETTE_TOKENS, getThemePaletteColorLayers, resolveThemePaletteColor, validateCustomTheme, type CustomTheme } from './themePalette.js';
 import { installThemePreviewSync, previewSelectionGuard, requestPreviewSelection, currentPreviewTheme, reportThemeSyncError } from './themePreview.js';
 
 export const SHELL_THEME_STORAGE_KEY = 'jasonshell.theme';
@@ -35,15 +35,15 @@ export const SHELL_THEMES = [
   { id: 'base-light', label: 'Base Light', family: 'JasonShell', mode: 'light', accent: '#2563eb' },
   { id: 'monokai', label: 'Monokai', family: 'Editor', mode: 'dark', accent: '#a6e22e' },
   { id: 'atom-one-dark', label: 'Atom One Dark', family: 'Editor', mode: 'dark', accent: '#61afef' },
-  { id: 'atom-one-light', label: 'Atom One Light', family: 'Editor', mode: 'light', accent: '#4078f2' },
+  { id: 'atom-one-light', label: 'Atom One Light', family: 'Editor', mode: 'light', accent: '#386fe8' },
   { id: 'nord', label: 'Nord', family: 'Editor', mode: 'dark', accent: '#88c0d0' },
   { id: 'dracula', label: 'Dracula', family: 'Editor', mode: 'dark', accent: '#bd93f9' },
-  { id: 'solarized-dark', label: 'Solarized Dark', family: 'Editor', mode: 'dark', accent: '#268bd2' },
-  { id: 'solarized-light', label: 'Solarized Light', family: 'Editor', mode: 'light', accent: '#268bd2' },
+  { id: 'solarized-dark', label: 'Solarized Dark', family: 'Editor', mode: 'dark', accent: '#3f9fe8' },
+  { id: 'solarized-light', label: 'Solarized Light', family: 'Editor', mode: 'light', accent: '#0078be' },
   { id: 'github-dark', label: 'GitHub Dark', family: 'Application', mode: 'dark', accent: '#2f81f7' },
   { id: 'github-light', label: 'GitHub Light', family: 'Application', mode: 'light', accent: '#0969da' },
   { id: 'gruvbox-dark', label: 'Gruvbox Dark', family: 'Editor', mode: 'dark', accent: '#fabd2f' },
-  { id: 'gruvbox-light', label: 'Gruvbox Light', family: 'Editor', mode: 'light', accent: '#b57614' },
+  { id: 'gruvbox-light', label: 'Gruvbox Light', family: 'Editor', mode: 'light', accent: '#a06300' },
   { id: 'tokyo-night', label: 'Tokyo Night', family: 'Editor', mode: 'dark', accent: '#7aa2f7' },
   { id: 'catppuccin-mocha', label: 'Catppuccin Mocha', family: 'Editor', mode: 'dark', accent: '#cba6f7' },
   { id: 'ayu-dark', label: 'Ayu Dark', family: 'Editor', mode: 'dark', accent: '#ffcc66' },
@@ -58,12 +58,12 @@ export const SHELL_THEMES = [
   { id: 'kanagawa-wave', label: 'Kanagawa Wave', family: 'Editor', mode: 'dark', accent: '#7e9cd8' },
   { id: 'vitesse-dark', label: 'Vitesse Dark', family: 'Editor', mode: 'dark', accent: '#e2b776' },
   { id: 'aura-dark', label: 'Aura Dark', family: 'Editor', mode: 'dark', accent: '#a277ff' },
-  { id: 'horizon', label: 'Horizon', family: 'Editor', mode: 'dark', accent: '#e95678' },
+  { id: 'horizon', label: 'Horizon', family: 'Editor', mode: 'dark', accent: '#fc6787' },
   { id: 'moonlight-ii', label: 'Moonlight II', family: 'Editor', mode: 'dark', accent: '#82aaff' },
   { id: 'synthwave-84', label: "SynthWave '84", family: 'Editor', mode: 'dark', accent: '#ff7edb' },
-  { id: 'github-dark-dimmed', label: 'GitHub Dark Dimmed', family: 'Application', mode: 'dark', accent: '#539bf5' },
+  { id: 'github-dark-dimmed', label: 'GitHub Dark Dimmed', family: 'Application', mode: 'dark', accent: '#559ef8' },
   { id: 'tomorrow-night', label: 'Tomorrow Night', family: 'Editor', mode: 'dark', accent: '#81a2be' },
-  { id: 'noctis', label: 'Noctis', family: 'Editor', mode: 'dark', accent: '#7f9cff' },
+  { id: 'noctis', label: 'Noctis', family: 'Editor', mode: 'dark', accent: '#85a2ff' },
   { id: 'andromeda', label: 'Andromeda', family: 'Editor', mode: 'dark', accent: '#04d9c4' }
 ] as const satisfies readonly ShellTheme[];
 
@@ -221,7 +221,7 @@ export function applyThemeToElement(value: string | CustomTheme, element: ThemeD
     const theme = shellThemeById(value);
     delete element.dataset.customTheme;
     element.dataset.theme = theme.id;
-    for (const name of THEME_PALETTE_TOKENS) element.style?.removeProperty?.(name.replace('--js-', '--js-custom-'));
+    for (const name of [...THEME_PALETTE_TOKENS, '--js-focus-color']) element.style?.removeProperty?.(name.replace('--js-', '--js-custom-'));
     if (element.style) element.style.colorScheme = theme.mode;
     return;
   }
@@ -229,7 +229,12 @@ export function applyThemeToElement(value: string | CustomTheme, element: ThemeD
   element.dataset.theme = theme.baseBuiltinId;
   element.dataset.customTheme = theme.id;
   if (element.style) element.style.colorScheme = theme.mode;
-  for (const [name, color] of Object.entries(theme.palette)) {
+  // The editable focus ring is a translucent shadow; outlines need its tint as an
+  // opaque color. Aliases and mixes are made opaque by app.css instead.
+  const focusColor = getThemePaletteColorLayers(theme.palette, '--js-focus-ring')[0]
+    .replace(/^(#[0-9a-f]{6})[0-9a-f]{2}$|^(#[0-9a-f]{3})[0-9a-f]$/i, '$1$2')
+    .replace(/^rgba\((.*),[^,]*\)$/, 'rgb($1)');
+  for (const [name, color] of [...Object.entries(theme.palette), ['--js-focus-color', focusColor]]) {
     element.style?.setProperty?.(name.replace('--js-', '--js-custom-'), color.replace(/var\((--js-[\w-]+)\)/g, (_match, ref: string) => `var(${ref.replace('--js-', '--js-custom-')})`));
   }
 }

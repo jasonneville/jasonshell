@@ -74,7 +74,7 @@
 }
 
 .search-panel-header-centered:focus-within {
-  outline: 1px solid var(--js-color-accent);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: 2px;
 }
 
@@ -168,7 +168,7 @@
 
 .search-panel .search-panel-scope .melt-select-trigger:focus-visible,
 .search-panel-clear-button:focus-visible {
-  outline: 2px solid var(--js-color-accent-border);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: 2px;
 }
 
@@ -337,6 +337,7 @@
 .result-actions {
   align-items: center;
   display: flex;
+  white-space: nowrap;
   gap: var(--js-space-2);
 }
 
@@ -404,6 +405,11 @@
   position: absolute;
   right: 0;
   width: 1.2rem;
+}
+
+.result-row:focus-visible,
+.search-resize-grip:focus-visible {
+  outline-offset: -2px;
 }
 
 .search-resize-grip::after {

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub use diagnostics::{TaskbarRuntimeDiagnostics, ToastListenerStatus};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskbarWindow {
     pub hwnd: String,
@@ -315,23 +315,8 @@ pub(crate) fn perform_task_window_action(
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn handle_task_window_helper_args() -> Result<bool, String> {
-    helper::handle_task_window_helper_args()
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) fn handle_taskbar_flash_fixture_args() -> Result<bool, String> {
     flash_fixture::handle_taskbar_flash_fixture_args()
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn spawn_task_window_helper(
-    hwnd: String,
-    pid: u32,
-    creation_time: u64,
-    canonical_image_path: std::path::PathBuf,
-) -> Result<(), String> {
-    windows::spawn_task_window_helper(hwnd, pid, creation_time, canonical_image_path)
 }
 
 #[cfg(not(target_os = "windows"))]

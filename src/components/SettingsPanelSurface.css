@@ -86,6 +86,8 @@
 
 .settings-select-guard {
   border: 0;
+  display: grid;
+  gap: 0.55rem;
   margin: 0;
   min-width: 0;
   padding: 0;
@@ -150,7 +152,7 @@
 }
 
 .speech-model-actions button:focus-visible {
-  outline: 2px solid var(--js-color-accent);
+  outline: 2px solid var(--js-focus-color);
   outline-offset: 2px;
 }
 
@@ -262,8 +264,7 @@
 .hotkey-capture:focus-visible {
   background: var(--js-bg-active);
   border-color: var(--js-color-accent);
-  box-shadow: 0 0 0 2px var(--js-color-accent-border);
-  outline: none;
+  outline: 2px solid var(--js-focus-color);
 }
 
 .hotkey-capture:disabled,
@@ -371,6 +372,7 @@
   --js-color-error: #702d3b;
   --js-color-error-border: #ffb5bf;
   --js-focus-ring: 0 0 0 2px #b5d0ff;
+  --js-focus-color: #b5d0ff;
   color: #f1f5ff;
 }
 .settings-section.settings-exit {

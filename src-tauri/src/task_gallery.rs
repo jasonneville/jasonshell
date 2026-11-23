@@ -728,16 +728,10 @@ pub async fn close_task_gallery_previewed_window(
         );
     }
     let authorized = snapshot_window(&args.nonce, &args.hwnd)?;
-    task_windows::close_task_window_with_identity(authorized.row.hwnd, authorized.identity)?;
-    let _lane = native_lane().lock().map_err(|_| "Gallery native lane poisoned")?;
-    let removed = {
-        let mut runtime = state().lock().unwrap();
-        if runtime.nonce.as_deref() != Some(args.nonce.as_str()) { return Ok(()); }
-        runtime.windows_by_hwnd.remove(&args.hwnd);
-        runtime.thumbnails.remove(&args.hwnd)
-    };
-    drop(removed);
-    Ok(())
+    // Close is request-only: the window may survive (for example a save prompt), so
+    // the row and thumbnail stay registered. The next gallery refresh drops rows and
+    // thumbnails of windows that actually closed (`retain_visible`).
+    task_windows::close_task_window_with_identity(authorized.row.hwnd, authorized.identity)
 }
 
 #[tauri::command]

@@ -4,7 +4,17 @@ use crate::search::contracts::{
 use crate::search::matcher::{
     best_match, full_highlight, query_tokens as match_query_tokens, MatchField, MatchTier,
 };
+use crate::search::providers::bookmarks::BookmarkMatch;
+use crate::search::providers::quick_commands::QuickCommandMatch;
+use crate::search::providers::web::{WEB_BARE_DOMAIN_REASON, WEB_SEARCH_ID, WEB_URL_REASON};
 use std::collections::HashMap;
+
+/// Above every attainable match, kind, provider and intent total.
+const CALCULATOR_SCORE: i32 = 20_000;
+/// A typed `http(s)://` or `www.` address is unambiguous.
+const EXPLICIT_URL_SCORE: i32 = 15_000;
+/// `logo.ai` is also a filename: just below the weakest exact or prefix file match (1650 + 200 + 80).
+const BARE_DOMAIN_SCORE: i32 = 1_900;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MatchQuality {
@@ -37,15 +47,21 @@ pub(crate) fn rank_visible_results(
     rows: Vec<SearchResult>,
     limit: usize,
 ) -> Vec<SearchResult> {
-    let query_text = normalize(query);
-    let tokens = query_tokens(query);
-    if tokens.is_empty() {
+    if query.trim().is_empty() {
         return Vec::new();
     }
+    // Punctuation-only queries have no tokens; only provider-owned rows can survive them.
+    let query_text = normalize(query);
+    let tokens = query_tokens(query);
     let intent = classify_intent(query, &tokens);
     let mut deduped: HashMap<String, SearchResult> = HashMap::new();
+    let mut web_fallback = None;
 
     for mut row in rows {
+        if is_web_search_fallback(&row) {
+            web_fallback = Some(row);
+            continue;
+        }
         let Some(score) = score_row(&row, &query_text, &tokens, intent) else {
             continue;
         };
@@ -65,7 +81,90 @@ pub(crate) fn rank_visible_results(
     let mut results = deduped.into_values().collect::<Vec<_>>();
     results.sort_by(compare_results);
     results.truncate(limit);
+    if let Some(mut row) = web_fallback.filter(|_| limit > 0) {
+        row.score = 0;
+        // Pinned last with a reserved slot, but never at the cost of the only real result.
+        if limit > 1 {
+            results.truncate(limit - 1);
+        }
+        if results.len() < limit {
+            results.push(row);
+        }
+    }
     results
+}
+
+fn is_web_search_fallback(row: &SearchResult) -> bool {
+    row.provider_id == SearchProviderId::Web && row.id == WEB_SEARCH_ID
+}
+
+/// Rows that only the final payload may show: offering them while other providers are still
+/// pending would put a launch or a web request under a quick Enter.
+pub(crate) fn is_final_only_row(row: &SearchResult) -> bool {
+    QuickCommandMatch::of_row(row).is_some_and(QuickCommandMatch::is_weak)
+        || BookmarkMatch::of_row(row).is_some_and(BookmarkMatch::is_weak)
+        || is_bare_domain_row(row)
+        || is_web_search_fallback(row)
+}
+
+fn is_bare_domain_row(row: &SearchResult) -> bool {
+    row.provider_id == SearchProviderId::Web && row.match_reason == WEB_BARE_DOMAIN_REASON
+}
+
+/// Rows whose provider, not the text matcher, decides the match, with their complete score.
+fn provider_owned_score(
+    row: &SearchResult,
+    query: &str,
+    tokens: &[String],
+    intent: QueryIntent,
+) -> Option<MatchScore> {
+    let mut title_highlight_data = Vec::new();
+    let (quality, score, reason) = match row.provider_id {
+        SearchProviderId::Calculator => (MatchQuality::Exact, CALCULATOR_SCORE, "calculator"),
+        SearchProviderId::Web if is_bare_domain_row(row) => (
+            MatchQuality::TokenPrefix,
+            BARE_DOMAIN_SCORE,
+            WEB_BARE_DOMAIN_REASON,
+        ),
+        SearchProviderId::Web => (MatchQuality::Exact, EXPLICIT_URL_SCORE, WEB_URL_REASON),
+        SearchProviderId::Commands => {
+            let tier = QuickCommandMatch::of_row(row)?;
+            let bases =
+                kind_base(row.kind) + provider_base(row.provider_id) + intent_boost(row.kind, intent);
+            let (quality, score) = match tier {
+                QuickCommandMatch::Exact => (MatchQuality::Exact, MatchTier::Exact.score() + bases),
+                QuickCommandMatch::Prefix => {
+                    (MatchQuality::Prefix, MatchTier::Prefix.score() + bases)
+                }
+                // Negative: below every row the text matcher can score.
+                QuickCommandMatch::WordPrefix => (MatchQuality::TokenPrefix, -1_000),
+                QuickCommandMatch::Substring => (MatchQuality::Subsequence, -2_000),
+            };
+            title_highlight_data = best_match(&row.title, None, &[], query, tokens, false)
+                .map(|matched| matched.highlight_data)
+                .unwrap_or_default();
+            (quality, score, tier.reason())
+        }
+        _ => return None,
+    };
+    Some(MatchScore {
+        quality,
+        score,
+        reason,
+        title_highlight_data,
+        subtitle_highlight_data: Vec::new(),
+    })
+}
+
+/// Bookmarks match substrings of the title and URL, which the text matcher may not accept.
+fn bookmark_fallback_match(row: &SearchResult) -> Option<MatchScore> {
+    (row.provider_id == SearchProviderId::Bookmarks).then(|| MatchScore {
+        quality: MatchQuality::Subsequence,
+        score: MatchTier::Subsequence.score(),
+        reason: "bookmark",
+        title_highlight_data: Vec::new(),
+        subtitle_highlight_data: Vec::new(),
+    })
 }
 
 fn score_row(
@@ -74,8 +173,16 @@ fn score_row(
     tokens: &[String],
     intent: QueryIntent,
 ) -> Option<MatchScore> {
+    if let Some(score) = provider_owned_score(row, query, tokens, intent) {
+        return Some(score);
+    }
     let fields = SearchFields::from_result(row);
-    let mut score = match_quality_score(row, &fields, row.provider_id, query, tokens)?;
+    let mut score = match_quality_score(row, &fields, row.provider_id, query, tokens)
+        .or_else(|| bookmark_fallback_match(row))?;
+    if let Some(tier) = BookmarkMatch::of_row(row) {
+        // The text matcher also matches the URL and record key; only the title decides this tier.
+        score.reason = tier.reason();
+    }
 
     score.score += kind_base(row.kind);
     score.score += provider_base(row.provider_id);

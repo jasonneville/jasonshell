@@ -163,7 +163,7 @@ async function runFocus(theme = 'vitesse-dark', width = 320, strong = false) {
   const separation = queryTextLeft - dividerRight;
   check(queryFocus.boxShadow === 'none', 'query focus must not paint nested box-shadow ring from global focus-visible');
   check(queryFocus.outlineStyle === 'none' || parseFloat(queryFocus.outlineWidth) === 0, 'query focus must not paint nested outline');
-  check(headerFocus.outlineStyle !== 'none' && parseFloat(headerFocus.outlineWidth) > 0 && parseFloat(headerFocus.outlineWidth) <= 1, 'header owns single restrained focus outline (at most 1px)');
+  check(headerFocus.outlineStyle !== 'none' && parseFloat(headerFocus.outlineWidth) > 0 && parseFloat(headerFocus.outlineWidth) <= 2, 'header owns single focus outline (the 2px --js-focus-color ring; VIS-10)');
   check(separation >= 14, 'query text starts at least 14px after fixed scope divider');
   check(select.getBoundingClientRect().width === 112, '112px combined lens-plus-picker capsule preserves divider position');
   select.focus(); await settle();

@@ -17,11 +17,14 @@
     type TaskbarWindow
   } from '../lib/taskbarWindows';
   import {
+    copySearchText,
     hideSearchPanel,
     launchAppPath,
+    openSearchUrl,
     openShellPath,
     publishSearchPanel,
     runControlPanel,
+    runSearchQuickCommand,
     SEARCH_PANEL_ACTIVATE_EVENT,
     SEARCH_PANEL_CLOSED_EVENT,
     SEARCH_PANEL_EXPAND_GROUP_EVENT,
@@ -147,6 +150,8 @@
   } from '../lib/systemSearchState';
   import { topBarIdentityState } from '../features/top-bar/topBarUxState';
   import {
+    quickCommandIdForResult,
+    streamedSearchSelection,
     buildVisibleSearchRows,
     createLatestSearchQueryController,
     clearLatestSearchQuery,
@@ -275,6 +280,8 @@
   let searchOpen = false;
   let micControl: TopBarMicControl | null = null;
   let selectedIndex = 0;
+  // The row the user picked for the current query, kept while an interim payload omits it.
+  let chosenSearchRow: SearchPanelResult | null = null;
   let searchStatus = 'Loading search catalog...';
   let searchControl: HTMLDivElement;
   // Pin rail UI
@@ -301,6 +308,7 @@
   let lastSearchPanelInputSequence = 0;
   const searchQueryController = createLatestSearchQueryController();
   let searchPanelPayloadSequence = 0;
+  const searchActionsInFlight = new Set<string>();
   let searchMode: SearchMode = 'centeredHotkey';
   let searchPresentation: 'anchored' | 'centered' = 'centered';
   let expandedVisibleGroups = new Set<SearchExpandableGroupId>();
@@ -836,6 +844,7 @@
     searchResults = [];
     searchResultsQuery = '';
     selectedIndex = 0;
+    chosenSearchRow = null;
     searchStatus = 'Search is ready';
     expandedVisibleGroups = new Set<SearchExpandableGroupId>();
   }
@@ -1050,14 +1059,15 @@
     await openCommandPanel(target);
   }
 
-  async function openCommandPanel(target: EventTarget | null, notificationId?: string) {
+  async function openCommandPanel(target: EventTarget | null, notificationId?: string, commandId?: string) {
     const button = target instanceof HTMLElement ? target : null;
     const rect = button?.getBoundingClientRect();
     if (!rect) {
       return;
     }
     const revision = ++commandPanelOpenRevision;
-    await closePanel();
+    // Search asked for this command: keep it open until the panel shows, to report a refusal.
+    if (commandId === undefined) await closePanel();
     await closeAudioPanel();
     await closeTrayPanel();
     await closeTerminalPanel();
@@ -1065,14 +1075,21 @@
     if (disposed || revision !== commandPanelOpenRevision) return;
     const wasOpen = commandOpen;
     commandOpen = true;
+    let shown = true;
     await showCommandPanel({
       anchorLeft: rect.left,
       anchorWidth: rect.width,
-      ...(notificationId === undefined ? {} : { notificationId })
+      ...(notificationId === undefined ? {} : { notificationId }),
+      ...(commandId === undefined ? {} : { commandId })
     }).catch((error) => {
+      shown = false;
       if (!disposed && revision === commandPanelOpenRevision) commandOpen = wasOpen;
       console.error('Failed to show command panel', error);
+      if (commandId !== undefined && !disposed) {
+        reportSearchActionFailure(searchActionErrorMessage('Could not open Quick Commands', error));
+      }
     });
+    if (commandId !== undefined && shown && !disposed) await closePanel();
   }
 
   async function toggleTerminalPanel(target: EventTarget | null) {
@@ -1711,27 +1728,24 @@
     }, SEARCH_PROVIDER_CACHE_RETRY_DELAY_MS);
   }
 
+  function applyStreamedSelection(interim: boolean) {
+    const selection = streamedSearchSelection(searchResults, chosenSearchRow, interim);
+    selectedIndex = selection.index;
+    if (!selection.chosen) chosenSearchRow = null;
+  }
+
   function applySearchEngineProgress(payload: SearchProgressPayload) {
     if (!searchQueryController.shouldApply({ query: payload.query, sequence: payload.sequence }, searchQuery)) {
       return;
     }
     const nextPayload = searchEngineProgressToPanelPayload(payload, selectedIndex, searchPresentation);
-    const selectedIndexBeforeUpdate = selectedIndex;
-    const currentStableKey = searchResults[selectedIndex]?.recordKey ?? searchResults[selectedIndex]?.id ?? null;
     const nextResultSet = nextProgressiveSearchResultSet(
       { query: searchResultsQuery, results: searchResults },
       { query: payload.query, phase: payload.phase, results: nextPayload.results }
     );
-    const replacedResultSet = nextResultSet.query !== searchResultsQuery;
     searchResults = nextResultSet.results;
     searchResultsQuery = nextResultSet.query;
-    if (searchResults.length && (replacedResultSet || selectedIndexBeforeUpdate <= 0 || !currentStableKey)) {
-      selectedIndex = Math.min(nextPayload.selectedIndex, searchResults.length - 1);
-    } else {
-      selectedIndex = currentStableKey
-        ? Math.max(0, searchResults.findIndex((result) => (result.recordKey ?? result.id) === currentStableKey))
-        : Math.min(selectedIndex, Math.max(searchResults.length - 1, 0));
-    }
+    applyStreamedSelection(payload.phase !== 'complete');
     searchStatus = nextPayload.statusMessage;
     queueSearchPanelPublish({
       ...nextPayload,
@@ -1771,10 +1785,11 @@
       const payload = searchEngineResponseToPanelPayload(response, selectedIndex, searchPresentation);
       searchResults = payload.results;
       searchResultsQuery = response.query;
-      selectedIndex = payload.selectedIndex;
+      applyStreamedSelection(false);
       searchStatus = payload.statusMessage;
       queueSearchPanelPublish({
         ...payload,
+        selectedIndex,
         phase: 'complete',
         sequence: response.sequence
       });
@@ -1796,12 +1811,74 @@
     }
   }
 
-  async function activateResult(result: SearchPanelResult | undefined) {
+  function reportSearchActionFailure(message: string) {
+    if (!searchOpen) {
+      console.error('Search action failed', message);
+      return;
+    }
+    searchStatus = message;
+    queueSearchPanelPublish();
+  }
+
+  function searchActionErrorMessage(prefix: string, error: unknown): string {
+    const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+    return detail ? `${prefix}: ${detail}` : prefix;
+  }
+
+  // One activation at a time per row; a held or repeated Enter must not act twice.
+  async function runSearchAction<T>(
+    resultId: string,
+    failurePrefix: string,
+    action: () => Promise<T>
+  ): Promise<{ value: T } | null> {
+    if (searchActionsInFlight.has(resultId)) return null;
+    searchActionsInFlight.add(resultId);
+    try {
+      return { value: await action() };
+    } catch (error) {
+      reportSearchActionFailure(searchActionErrorMessage(failurePrefix, error));
+      return null;
+    } finally {
+      searchActionsInFlight.delete(resultId);
+    }
+  }
+
+  async function revealQuickCommandFromSearch(commandId: string) {
+    await queueSoundCommandTransition(() => openCommandPanel(
+      document.querySelector('.command-button') ?? searchControl,
+      undefined,
+      commandId
+    ));
+  }
+
+  async function activateResult(result: SearchPanelResult | undefined, intent?: 'reveal') {
     if (!result) {
       return;
     }
 
-    if (result.actionId === 'runControlPanel') {
+    const quickCommandId = quickCommandIdForResult(result);
+    if (quickCommandId !== null) {
+      if (intent === 'reveal') {
+        await revealQuickCommandFromSearch(quickCommandId);
+        return;
+      }
+      const launch = await runSearchAction(
+        result.id,
+        'Could not run the quick command',
+        () => runSearchQuickCommand(quickCommandId)
+      );
+      if (!launch) return;
+      if (launch.value.outcome === 'openPanel') {
+        await revealQuickCommandFromSearch(launch.value.commandId);
+        return;
+      }
+    } else if (result.actionId === 'copyCalculatorResult' && result.copyText) {
+      const text = result.copyText;
+      if (!await runSearchAction(result.id, 'Could not copy the result', () => copySearchText(text))) return;
+    } else if ((result.actionId === 'openWebUrl' || result.actionId === 'openBookmark') && result.url) {
+      const url = result.url;
+      if (!await runSearchAction(result.id, 'Could not open the link', () => openSearchUrl(url))) return;
+    } else if (result.actionId === 'runControlPanel') {
       await runControlPanel(result.actionArgs);
     } else if (result.path && (result.providerId === 'everything' || result.providerId === 'local')) {
       await openShellPath(result.path as string);
@@ -1862,12 +1939,13 @@
       searchFreshnessRetriedQuery = '';
       resetSearchProviderCacheRetry();
     }
-    selectedIndex = 0;
     searchStatus = request.query ? 'Searching...' : 'Search is ready';
     if (!request.query || normalizedChanged) {
       searchResults = [];
       searchResultsQuery = '';
+      chosenSearchRow = null;
     }
+    applyStreamedSelection(true);
     openConfiguredPanel({ publishCurrentPayload: false });
     queueSearchPanelPublish({
       query: request.query,
@@ -1912,12 +1990,14 @@
       const nextIndex = nextVisibleRowIndex(visibleRows, selectedVisibleIndex, 1);
       if (nextIndex >= 0) {
         selectedIndex = visibleRows[nextIndex]?.resultIndex ?? selectedIndex;
+        chosenSearchRow = searchResults[selectedIndex] ?? null;
       }
       queueSearchPanelPublish();
     } else if (action === 'selectPrevious') {
       const nextIndex = nextVisibleRowIndex(visibleRows, selectedVisibleIndex, -1);
       if (nextIndex >= 0) {
         selectedIndex = visibleRows[nextIndex]?.resultIndex ?? selectedIndex;
+        chosenSearchRow = searchResults[selectedIndex] ?? null;
       }
       queueSearchPanelPublish();
     } else if (action === 'activate') {
@@ -1933,6 +2013,7 @@
   function selectSearchResult(resultId: string) {
     const index = resolveVisibleSearchRowResultIndex(searchResults, resultId);
     if (index >= 0) {
+      chosenSearchRow = searchResults[index];
       if (selectedIndex !== index) {
         selectedIndex = index;
         queueSearchPanelPublish();
@@ -1943,6 +2024,7 @@
   function selectSearchVisibleRow(identity: SearchVisibleRowIdentity | string) {
     const index = resolveVisibleSearchRowResultIndex(searchResults, identity);
     if (index >= 0) {
+      chosenSearchRow = searchResults[index];
       if (selectedIndex !== index) {
         selectedIndex = index;
         queueSearchPanelPublish();
@@ -2003,7 +2085,8 @@
     registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_ACTIVATE_EVENT, (event) => {
       markSearchPanelInteraction();
       const index = resolveVisibleSearchRowResultIndex(searchResults, event.payload);
-      void activateResult(index >= 0 ? searchResults[index] : undefined);
+      const intent = typeof event.payload === 'object' ? event.payload?.intent : undefined;
+      void activateResult(index >= 0 ? searchResults[index] : undefined, intent);
     }));
     registerAsyncUnlistener(listen<SearchVisibleRowIdentity | string>(SEARCH_PANEL_SELECT_EVENT, (event) => {
       markSearchPanelInteraction();

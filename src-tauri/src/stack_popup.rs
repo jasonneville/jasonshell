@@ -3,6 +3,7 @@ mod clipboard;
 mod file_ops;
 pub(crate) mod folder_watch;
 mod git_status;
+pub(crate) use git_status::{trusted_git_path, workspace_git_stdout};
 mod icons;
 mod items;
 #[cfg(windows)]
@@ -52,6 +53,7 @@ pub use models::{
     StackGitStashRefRequest, StackGitStashRequest, StackGitStashes, StackGitStatus, StackGitTree,
     StackGitTreeRequest, StackItem, StackItemIconResolutionBatch, StackNativeDragOutcome,
     StackLocalDropResult, StackOpenWithCandidate, StackPasteResult, StackPopupLogicalSize, StackPopupRuntimeState,
+    StackDeleteResult, StackUndoMoveResult,
 };
 
 const STACK_BASIC_TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
@@ -1462,12 +1464,20 @@ pub fn suggest_stack_paths(
         std::fs::read_dir(&parent).map_err(|error| format!("Folder unavailable: {error}"))?
     {
         let entry = entry.map_err(|error| format!("Folder unavailable: {error}"))?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
         let name = entry.file_name().to_string_lossy().into_owned();
         if !normalized_segment.is_empty() && !name.to_lowercase().starts_with(&normalized_segment) {
+            continue;
+        }
+        let path = entry.path();
+        // Directory kind comes from the enumeration; only symlink/junction rows
+        // are resolved with a per-path stat (same result as `path.is_dir()`).
+        let is_dir = match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => true,
+            Ok(file_type) if file_type.is_symlink() => path.is_dir(),
+            Ok(_) => false,
+            Err(_) => path.is_dir(),
+        };
+        if !is_dir {
             continue;
         }
         suggestions.push(StackPathSuggestion {
@@ -1475,7 +1485,7 @@ pub fn suggest_stack_paths(
             path: path.to_string_lossy().into_owned(),
         });
     }
-    suggestions.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    suggestions.sort_by_cached_key(|suggestion| paging::sort_key_for(&suggestion.name));
     suggestions.truncate(max);
     Ok(suggestions)
 }
@@ -1618,7 +1628,7 @@ pub fn copy_stack_items(
     )
     .map_err(CallerAuthError::into_string)?;
     let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
-    clipboard::set_stack_clipboard(&state, models::ClipboardMode::Copy, paths)
+    clipboard::set_stack_clipboard(&window, &state, models::ClipboardMode::Copy, paths)
 }
 
 #[tauri::command]
@@ -1812,6 +1822,36 @@ fn visible_local_drop_owner(app: &AppHandle, window: &WebviewWindow) -> Result<i
     Ok(owner)
 }
 
+#[cfg(windows)]
+fn record_stack_move(
+    state: &Mutex<StackPopupRuntimeState>,
+    permit: &local_drop::MovePermit,
+    owner: Option<isize>,
+    moved: usize,
+    items: Vec<local_drop::UndoItem>,
+) -> Option<Option<String>> {
+    if moved == 0 { return None; }
+    let receipt = if owner.is_some() && items.len() == moved {
+        // SAFETY: CoCreateGuid has no input pointers; the binding owns the GUID output.
+        unsafe { windows::Win32::System::Com::CoCreateGuid() }.ok()
+            .map(|guid| (format!("{guid:?}"), items))
+    } else {
+        None
+    };
+    Some(state.lock().ok().and_then(|mut state| state.move_undo.replace(permit, owner, receipt)))
+}
+
+#[cfg(windows)]
+pub(crate) fn retire_move_undo(app: &AppHandle) {
+    if let Some(state) = app.try_state::<Mutex<StackPopupRuntimeState>>() {
+        if let Ok(mut state) = state.lock() {
+            state.move_undo.retire_owner();
+            state.native_drop = None;
+            state.local_drop_generation = state.local_drop_generation.wrapping_add(1);
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn commit_stack_local_drop(
     window: WebviewWindow,
@@ -1828,22 +1868,61 @@ pub async fn commit_stack_local_drop(
     {
         let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
         let owner = visible_local_drop_owner(&app_handle, &window)?;
-        let receipt = {
+        let (receipt, permit) = {
             let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
             if guard.native_drag_active || guard.local_drop_hiding || !guard.native_drop.as_ref().is_some_and(|receipt| receipt.matches(&request_id, owner)) {
                 return Err("Local drop receipt unavailable".into());
             }
-            guard.native_drop.take().ok_or("Local drop receipt unavailable")?
+            let permit = guard.move_undo.reserve()?;
+            (guard.native_drop.take().ok_or("Local drop receipt unavailable")?, permit)
         };
         return tauri::async_runtime::spawn_blocking(move || {
             let _admission = admission;
-            receipt.commit(Path::new(&destination))
+            let (mut result, items) = receipt.commit(Path::new(&destination))?;
+            let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+            result.undo_move_id = record_stack_move(&state, &permit, Some(owner), result.moved, items);
+            Ok(result)
         }).await.map_err(|_| "Local drop worker unavailable".to_string())?;
     }
     #[cfg(not(windows))]
     {
         let _ = (app_handle, state, request_id, destination);
         Err("Local drops require Windows".into())
+    }
+}
+
+#[tauri::command]
+pub async fn undo_stack_move(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    undo_move_id: String,
+) -> Result<StackUndoMoveResult, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::UNDO_STACK_MOVE,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    #[cfg(windows)]
+    {
+        let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+        let owner = visible_local_drop_owner(&app_handle, &window)?;
+        let (items, permit) = {
+            let mut guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
+            if guard.native_drag_active || guard.local_drop_hiding {
+                return Err("Stack popup is not available to undo this move".into());
+            }
+            let permit = guard.move_undo.reserve()?;
+            (guard.move_undo.take(&undo_move_id, owner)?, permit)
+        };
+        tauri::async_runtime::spawn_blocking(move || {
+            let (_admission, _permit) = (admission, permit);
+            local_drop::undo_moves(items)
+        }).await.map_err(|_| "Move undo worker unavailable".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app_handle, state, undo_move_id);
+        Err("Move undo requires Windows".into())
     }
 }
 
@@ -1865,7 +1944,7 @@ pub fn cut_stack_items(
     )
     .map_err(CallerAuthError::into_string)?;
     let _admission = crate::graceful_exit::admit_mutation(window.app_handle())?;
-    clipboard::set_stack_clipboard(&state, models::ClipboardMode::Cut, paths)
+    clipboard::set_stack_clipboard(&window, &state, models::ClipboardMode::Cut, paths)
 }
 
 #[tauri::command]
@@ -1896,6 +1975,67 @@ pub async fn paste_stack_items(
 }
 
 #[tauri::command]
+pub async fn delete_stack_items(
+    window: WebviewWindow,
+    app_handle: AppHandle,
+    state: State<'_, Mutex<StackPopupRuntimeState>>,
+    paths: Vec<String>,
+    operation_id: String,
+) -> Result<StackDeleteResult, String> {
+    authorize_stack_command(&window, StackCommandAuth::AllowedCallers {
+        command: crate::contracts::commands::DELETE_STACK_ITEMS,
+        callers: &[crate::shell_windows::STACK_POPUP_LABEL],
+    }).map_err(CallerAuthError::into_string)?;
+    #[cfg(windows)]
+    {
+        let admission = crate::graceful_exit::admit_mutation(&app_handle)?;
+        let owner = visible_local_drop_owner(&app_handle, &window)?;
+        let permit = {
+            let guard = state.lock().map_err(|_| "Stack popup state unavailable")?;
+            if guard.native_drag_active || guard.local_drop_hiding {
+                return Err("Stack popup is not available for recoverable delete".into());
+            }
+            guard.move_undo.reserve()?
+        };
+        if paths.is_empty() || paths.len() > local_drop::MAX_LOCAL_ITEMS ||
+            paths.iter().any(|path| path.len() > 131_068 || path.contains('\0')) {
+            return Err("Invalid recoverable-delete selection".into());
+        }
+        let staging = app_handle.path().app_local_data_dir()
+            .map_err(|_| "Recovery storage unavailable")?.join("stack-deleted");
+        tauri::async_runtime::spawn_blocking(move || {
+            let _admission = admission;
+            let paths: Vec<_> = paths.into_iter().map(PathBuf::from).collect();
+            let mut progress = models::StackFileOperationProgress::new(
+                operation_id, "delete", "deleting", file_ops::now_ms(),
+            );
+            let report = |progress: &models::StackFileOperationProgress| {
+                let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, progress);
+            };
+            report(&progress);
+            let outcome = local_drop::stage_deleted_items(&paths, &staging).map(|(mut result, items)| {
+                let state = app_handle.state::<Mutex<StackPopupRuntimeState>>();
+                result.undo_move_id = record_stack_move(&state, &permit, Some(owner), result.deleted, items);
+                result
+            });
+            progress.error = match &outcome {
+                Ok(result) if !result.failures.is_empty() => Some(format!("{} item(s) could not be moved to recovery storage", result.failures.len())),
+                Err(error) => Some(error.clone()),
+                _ => None,
+            };
+            progress.phase(if progress.error.is_some() { "failed" } else { "completed" });
+            report(&progress);
+            outcome
+        }).await.map_err(|_| "Recoverable-delete worker unavailable".to_string())?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app_handle, state, paths, operation_id);
+        Err("Recoverable delete requires Windows".into())
+    }
+}
+
+#[tauri::command]
 pub async fn delete_stack_item(
     window: WebviewWindow,
     app_handle: AppHandle,
@@ -1907,10 +2047,7 @@ pub async fn delete_stack_item(
         &window,
         StackCommandAuth::AllowedCallers {
             command: crate::contracts::commands::DELETE_STACK_ITEM,
-            callers: &[
-                crate::shell_windows::STACK_POPUP_LABEL,
-                crate::shell_windows::TERMINAL_PANEL_LABEL,
-            ],
+            callers: &[crate::shell_windows::TERMINAL_PANEL_LABEL],
         },
     )
     .map_err(CallerAuthError::into_string)?;

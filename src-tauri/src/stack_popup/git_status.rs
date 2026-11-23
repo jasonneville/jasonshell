@@ -43,6 +43,9 @@ const GIT_READ_TIMEOUT_SECS: u64 = 10;
 const GIT_LOCAL_MUTATION_TIMEOUT_SECS: u64 = 30;
 const GIT_REMOTE_TIMEOUT_SECS: u64 = 90;
 const GIT_TIMEOUT_ENV_VAR: &str = "JASONSHELL_GIT_TIMEOUT_MS";
+/// Large worktrees can produce multi-megabyte `status` output. Output beyond
+/// this cap is never parsed (see `ensure_stdout_complete`).
+const GIT_STDOUT_CAP_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GitRunMode {
@@ -1564,6 +1567,12 @@ fn nul_joined_pathspecs(pathspecs: &[String]) -> Vec<u8> {
     input
 }
 
+/// Hardened read-only git for callers outside `stack_popup` (trusted binary,
+/// hardened config, bounded output and timeout). `Ok(None)` = not a repository.
+pub(crate) fn workspace_git_stdout(cwd: &Path, args: &[&str]) -> Result<Option<String>, String> {
+    git_stdout(cwd, args)
+}
+
 fn git_stdout(cwd: &Path, args: &[&str]) -> Result<Option<String>, String> {
     git_stdout_bytes(cwd, args)
         .map(|output| output.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
@@ -1571,10 +1580,64 @@ fn git_stdout(cwd: &Path, args: &[&str]) -> Result<Option<String>, String> {
 
 fn git_stdout_bytes(cwd: &Path, args: &[&str]) -> Result<Option<Vec<u8>>, String> {
     match run_git_command(cwd, args, None, GitRunMode::OptionalProbe) {
-        Ok(output) => Ok(Some(output.stdout)),
+        Ok(output) => ensure_stdout_complete(output).map(|output| Some(output.stdout)),
         Err(GitCommandError::NotRepository(_)) => Ok(None),
         Err(error) => Err(error.into_message()),
     }
+}
+
+/// A truncated stdout would be parsed as a partial (and therefore wrong) result,
+/// so truncation is surfaced as an explicit error instead.
+fn ensure_stdout_complete(
+    output: crate::stack_popup::process_runner::ProcessRunOutput,
+) -> Result<crate::stack_popup::process_runner::ProcessRunOutput, String> {
+    if output.stdout_truncated {
+        return Err(
+            "Git output was too large to read completely (too many changes to display)"
+                .to_string(),
+        );
+    }
+    Ok(output)
+}
+
+/// Full git argv (without the program): `-C <cwd>`, hardening `-c` pairs, then
+/// the caller's args. Automatic invocations must not execute repository-chosen
+/// helpers (fsmonitor hooks, external diff drivers, textconv, pagers, `ext::`
+/// transports). User-initiated mutations keep normal hooks.
+fn hardened_git_args(mode: GitRunMode, cwd: &Path, args: &[&str]) -> Vec<String> {
+    let mut out = vec!["-C".to_string(), cwd.to_string_lossy().into_owned()];
+    let mut config: Vec<&str> = vec!["core.fsmonitor=false", "protocol.ext.allow=never"];
+    if matches!(mode, GitRunMode::OptionalProbe | GitRunMode::Read) {
+        config.extend([
+            "core.untrackedCache=false",
+            "diff.external=",
+            "core.pager=cat",
+        ]);
+    }
+    for pair in config {
+        out.push("-c".to_string());
+        out.push(pair.to_string());
+    }
+    // Number of leading user args that name the subcommand; patch-producing
+    // commands get the external-diff/textconv opt-outs right after them.
+    let subcommand_words = if args.first() == Some(&"stash") && args.get(1) == Some(&"show") {
+        2
+    } else if matches!(args.first(), Some(&"diff") | Some(&"show"))
+        || (args.first() == Some(&"log")
+            && args.iter().any(|arg| matches!(*arg, "-p" | "--patch")))
+    {
+        1
+    } else {
+        0
+    };
+    for (index, value) in args.iter().enumerate() {
+        out.push(value.to_string());
+        if subcommand_words != 0 && index + 1 == subcommand_words {
+            out.push("--no-ext-diff".to_string());
+            out.push("--no-textconv".to_string());
+        }
+    }
+    out
 }
 
 fn run_git(
@@ -1640,15 +1703,12 @@ fn run_git_command(
             .map_err(GitCommandError::Spawn)?
             .to_string_lossy()
             .into_owned(),
-        args: std::iter::once("-C".to_string())
-            .chain(std::iter::once(cwd.to_string_lossy().into_owned()))
-            .chain(args.iter().map(|value| value.to_string()))
-            .collect(),
+        args: hardened_git_args(mode, cwd, args),
         cwd: None,
         envs: std::mem::take(&mut envs),
         stdin,
         timeout,
-        stdout_cap: 64 * 1024,
+        stdout_cap: GIT_STDOUT_CAP_BYTES,
         stderr_cap: 64 * 1024,
         poll_interval: Duration::from_millis(50),
         kill_tree: true,
@@ -1666,7 +1726,7 @@ fn run_git_command(
     }
 }
 
-fn trusted_git_path() -> Result<PathBuf, String> {
+pub(crate) fn trusted_git_path() -> Result<PathBuf, String> {
     git_candidates()
         .into_iter()
         .find(|candidate| candidate.is_file())
@@ -1674,14 +1734,32 @@ fn trusted_git_path() -> Result<PathBuf, String> {
 }
 
 fn git_candidates() -> Vec<PathBuf> {
+    git_candidate_paths(|key| std::env::var_os(key))
+}
+
+/// Trusted git locations from absolute environment roots only; relative or
+/// missing values are dropped so discovery can never resolve against the cwd.
+fn git_candidate_paths(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let root = |key: &str| env(key).map(PathBuf::from).filter(|path| path.is_absolute());
     let mut candidates = Vec::new();
-    if let Some(system_root) = std::env::var_os("SystemRoot") {
-        candidates.push(PathBuf::from(system_root).join("System32").join("git.exe"));
+    if let Some(system_root) = root("SystemRoot") {
+        candidates.push(system_root.join("System32").join("git.exe"));
     }
-    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+    for key in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(program_files) = root(key) {
+            candidates.push(program_files.join("Git").join("cmd").join("git.exe"));
+        }
+    }
+    if let Some(local) = root("LOCALAPPDATA") {
+        candidates.push(local.join("Programs").join("Git").join("cmd").join("git.exe"));
+    }
+    if let Some(profile) = root("USERPROFILE") {
         candidates.push(
-            PathBuf::from(program_files)
-                .join("Git")
+            profile
+                .join("scoop")
+                .join("apps")
+                .join("git")
+                .join("current")
                 .join("cmd")
                 .join("git.exe"),
         );
@@ -3949,3 +4027,7 @@ mod tests {
         assert_eq!(entries[1].index, 1);
     }
 }
+
+#[cfg(test)]
+#[path = "git_tier0_tests.rs"]
+mod tier0_tests;

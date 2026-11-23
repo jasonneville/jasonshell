@@ -1,0 +1,5 @@
+{
+  "identifier": "search-top-bar",
+  "windows": ["top-bar"],
+  "permissions": ["allow-open-search-url", "allow-copy-search-text", "allow-run-search-quick-command"]
+}

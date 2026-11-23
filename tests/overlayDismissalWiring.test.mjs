@@ -20,9 +20,8 @@ test('stack browser delete confirmation stays inside stack popup webview', () =>
   assert.match(stackRust, /suppress_next_stack_popup_focus_loss/);
   assert.match(main, /suppress_stack_popup_focus_loss/);
   assert.match(stackSurface, /await beginStackPopupFocusLossHold\(\)/);
-  assert.match(stackSurface, /const invokeDelete = deleteStackItem as unknown/);
-  assert.match(stackSurface, /await invokeDelete\(path, operationId\)/);
-  assert.match(stackSurface, /applyStackFolderListing\(stackState, pendingDelete\.folderPath, listing\)/);
+  assert.match(stackSurface, /await deleteStackItems\(pendingDelete\.paths, operationId\)/);
+  assert.match(stackSurface, /await refreshExternalFolderRows\(pendingDelete\.folderPath, sequence, epoch, true\)/);
   assert.match(stackSurface, /await endStackPopupFocusLossHold\(\)/);
 });
 

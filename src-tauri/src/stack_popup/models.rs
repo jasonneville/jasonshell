@@ -5,6 +5,9 @@ use std::path::PathBuf;
 pub struct StackPopupRuntimeState {
     pub(crate) latest_request: Option<ShowStackPopupRequest>,
     pub(crate) clipboard: Option<StackClipboard>,
+    pub(super) clipboard_revision: u64,
+    #[cfg(windows)]
+    pub(super) native_cut: Option<NativeCutPublication>,
     pub(crate) focus_loss_hold_count: usize,
     pub(crate) focus_loss_suppression_expires_at_ms: Option<u64>,
     pub(crate) topmost_restore_suppression_expires_at_ms: Option<u64>,
@@ -16,6 +19,8 @@ pub struct StackPopupRuntimeState {
     pub(super) local_drop_generation: u64,
     #[cfg(windows)]
     pub(super) local_drop_hiding: bool,
+    #[cfg(windows)]
+    pub(super) move_undo: super::local_drop::UndoState,
     pub(crate) terminal_sessions: super::terminal::StackTerminalRegistry,
 }
 
@@ -451,6 +456,8 @@ pub struct StackItemIconResolutionBatch {
 pub struct StackPasteResult {
     pub pasted: Vec<StackItem>,
     pub failures: Vec<StackPasteFailure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_move_id: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -513,9 +520,27 @@ pub struct StackNativeDragOutcome {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackLocalDropResult {
     pub moved: usize,
     pub failures: Vec<StackPasteFailure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_move_id: Option<Option<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StackUndoMoveResult {
+    pub moved: usize,
+    pub failures: Vec<StackPasteFailure>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackDeleteResult {
+    pub deleted: usize,
+    pub failures: Vec<StackPasteFailure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_move_id: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -529,6 +554,13 @@ pub struct StackPasteFailure {
 pub(crate) enum ClipboardMode {
     Copy,
     Cut,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub(super) struct NativeCutPublication {
+    pub(super) owner: isize,
+    pub(super) sequence: u32,
 }
 
 #[derive(Clone, Debug)]

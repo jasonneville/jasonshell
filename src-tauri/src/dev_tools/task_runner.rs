@@ -258,12 +258,14 @@ pub fn append_history_entry_bounded(
 
 fn spawn_task_child(task: &ResolvedWorkspaceTask) -> Result<Child, String> {
     validate_resolved_task(task)?;
-    Command::new(&task.executable)
+    let mut command = Command::new(&task.executable);
+    command
         .args(&task.args)
         .current_dir(&task.workspace_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::process_flags::no_console_window(&mut command)
         .spawn()
         .map_err(|error| format!("failed to spawn task '{}': {error}", task.label))
 }

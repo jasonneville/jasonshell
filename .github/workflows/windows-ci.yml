@@ -3,7 +3,7 @@ name: Windows CI
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
 
 jobs:
@@ -24,6 +24,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install dependencies
         run: npm ci
 
@@ -36,8 +41,12 @@ jobs:
       - name: Node tests
         run: npm run test:node
 
+      - name: Component tests
+        run: npm run test:component
+
       - name: Cargo test
         run: npm run cargo:test
 
-      - name: Cargo check
-        run: npm run cargo:check
+      - name: Permission drift check
+        shell: pwsh
+        run: $drift = git status --porcelain -- src-tauri/permissions; if ($drift) { Write-Host "Build regenerated permission files:"; $drift; git --no-pager diff -- src-tauri/permissions; exit 1 }

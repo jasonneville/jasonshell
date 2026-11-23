@@ -26,6 +26,7 @@
   import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import { hideTerminalPanel } from '../lib/terminalPanel';
   import { TerminalSequenceTracker } from '../lib/terminalSequenceTracker';
+  import { activeTerminalTheme, bindTerminalTheme, TERMINAL_MINIMUM_CONTRAST_RATIO } from '../lib/terminalTheme';
   import { positionScrollableContextMenuInViewport } from '../lib/contextMenuPosition';
   import { openStackFolderInVscode, openStackItem, openStackTerminalHere, revealStackItem } from '../lib/stackPopup';
   import {
@@ -87,6 +88,7 @@
     selectedCommandIndex: number;
     shellCwdMarkerSeen: boolean;
     shellParserDisposers: Array<() => void>;
+    disposeTheme: (() => void) | null;
     recentOutputText: string;
     replayedSessionOutput: boolean;
   };
@@ -177,6 +179,7 @@
   let selectedCommandIndex = -1;
   let shellCwdMarkerSeen = false;
   let shellParserDisposers: Array<() => void> = [];
+  let disposeTerminalTheme: (() => void) | null = null;
 
   $: terminalActionState = buildTerminalActionState(
     session,
@@ -956,6 +959,7 @@
       selectedCommandIndex: -1,
       shellCwdMarkerSeen: false,
       shellParserDisposers: [],
+      disposeTheme: null,
       recentOutputText: '',
       replayedSessionOutput: false
     };
@@ -984,6 +988,8 @@
       scrollback: 8000,
       letterSpacing: 0,
       screenReaderMode: false,
+      minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST_RATIO,
+      theme: activeTerminalTheme(),
       windowsPty: { backend: 'conpty' }
     });
     fitAddon = new FitAddon();
@@ -1055,6 +1061,7 @@
       return true;
     });
     terminal.open(host);
+    disposeTerminalTheme = bindTerminalTheme(terminal);
     resizeObserver = new ResizeObserver(() => scheduleFit());
     resizeObserver.observe(host);
     void tick().then(() => {
@@ -1077,6 +1084,8 @@
       scrollback: 8000,
       letterSpacing: 0,
       screenReaderMode: false,
+      minimumContrastRatio: TERMINAL_MINIMUM_CONTRAST_RATIO,
+      theme: activeTerminalTheme(),
       windowsPty: { backend: 'conpty' }
     });
     runtime.terminal = paneTerminal;
@@ -1092,6 +1101,7 @@
     registerShellIntegrationParserForRuntime(runtime, paneTerminal);
     paneTerminal.attachCustomKeyEventHandler((event) => handleTerminalKeyForRuntime(runtime, event));
     paneTerminal.open(runtime.host);
+    runtime.disposeTheme = bindTerminalTheme(paneTerminal);
     runtime.resizeObserver = new ResizeObserver(() => scheduleFitForRuntime(runtime));
     runtime.resizeObserver.observe(runtime.host);
     commitRuntime(runtime);
@@ -1377,6 +1387,8 @@
     runtime.resizeObserver = null;
     runtime.shellParserDisposers.forEach((dispose) => dispose());
     runtime.shellParserDisposers = [];
+    runtime.disposeTheme?.();
+    runtime.disposeTheme = null;
     runtime.fitAddon?.dispose();
     runtime.fitAddon = null;
     runtime.searchAddon?.dispose();
@@ -1396,6 +1408,8 @@
     resizeObserver = null;
     shellParserDisposers.forEach((dispose) => dispose());
     shellParserDisposers = [];
+    disposeTerminalTheme?.();
+    disposeTerminalTheme = null;
     fitAddon?.dispose();
     fitAddon = null;
     searchAddon?.dispose();

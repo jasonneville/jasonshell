@@ -167,7 +167,7 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
   assert.match(stackPopupSource, /import MeltActionButton from '\.\/melt\/MeltActionButton\.svelte'/);
   assert.match(stackPopupSource, /<MeltActionButton class="path-segment" ariaCurrent=\{crumb\.path === currentPath \? 'page' : undefined\} title=\{crumb\.path\} onClick=\{\(\) => void openFolder\(crumb\.path\)\}/);
   assert.match(stackPopupSource, /<MeltActionButton class="stack-action-icon-button" ariaLabel="Back" tooltip="Back" disabled=\{!canGoBack\} onClick=\{\(\) => void navigateHistory\(-1\)\}><MaterialSymbolIcon name="arrow_back"\s*\/><\/MeltActionButton>/);
-  assert.match(stackPopupSource, /<MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled=\{!hasSelection\} onClick=\{\(\) => void deleteSelected\(\)\}><MaterialSymbolIcon name="delete"\s*\/><\/MeltActionButton>/);
+  assert.match(stackPopupSource, /<MeltActionButton class="stack-action-icon-button" ariaLabel="Delete selected item" tooltip="Delete selected item" disabled=\{!hasSelection \|\| fileTransferPending \|\| fileOperationBusy\} onClick=\{\(\) => void deleteSelected\(\)\}><MaterialSymbolIcon name="delete"\s*\/><\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton type="submit">OK<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton onClick=\{cancelInlineEditor\}>Cancel<\/MeltActionButton>/);
   assert.match(stackPopupSource, /<MeltActionButton class=\{sortHeader\('name'\)\.className\} role="columnheader" ariaColindex=\{1\} ariaSort=\{sortHeader\('name'\)\.ariaSort\} onClick=\{\(\) => sortBy\('name'\)\}/);
@@ -176,7 +176,7 @@ test('stack-popup safe controls use MeltActionButton while risky grid/ref contro
   assert.match(stackPopupSource, /<ContextMenuItem\b[^>]*disabled=\{!currentPath\}[^>]*onClick=\{beginCreateFolder\}>New Folder<\/ContextMenuItem>/);
   assert.match(stackPopupSource, /\{#if deleteConfirmation\}\s*<StackConfirmDialog[^>]*confirmLabel="Delete"[^>]*tone="danger"[^>]*initialFocus="cancel"[^>]*dismissOnBackdrop=\{false\}[^>]*returnFocus=\{detailsGrid\}[^>]*onCancel=\{cancelDeleteConfirmation\}[^>]*onConfirm=\{\(\) => void confirmDeleteSelection\(\)\}/);
 
-  assert.match(stackPopupSource, /<button[\s\S]*type="button"[\s\S]*role="row"[\s\S]*aria-selected=\{stackState\.selectedPaths\.includes\(entry\.path\)\}[\s\S]*on:dblclick=\{\(\) => void activateEntry\(entry\)\}[\s\S]*on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}/);
+  assert.match(stackPopupSource, /<button[\s\S]*type="button"[\s\S]*role="row"[\s\S]*aria-selected=\{(?:entrySelected|stackState\.selectedPaths\.includes\(entry\.path\))\}[\s\S]*on:dblclick=\{\(\) => void activateEntry\(entry\)\}[\s\S]*on:pointerdown=\{\(event\) => beginRowDrag\(event, entry\)\}/);
   assert.match(stackPopupSource, /import StackConfirmDialog from '\.\/StackConfirmDialog\.svelte'/);
   assert.match(stackPopupSource, /class="stack-resize-grip"[\s\S]*bind:this=\{resizeGrip\}[\s\S]*on:pointerdown=\{beginResize\}/);
   assert.match(stackPopupSource, /STACK_BROWSER_BACKGROUND_CONTEXT_MENU_IGNORE_SELECTORS/);

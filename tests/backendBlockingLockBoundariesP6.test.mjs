@@ -53,16 +53,17 @@ test('P6 phase 1 Stack recursive paste and delete commands use async blocking bo
   );
   assert.match(pasteCommand, /clipboard::paste_stack_clipboard_items_async\(&app_handle,\s*&state,\s*destination,\s*window,\s*operation_id\)\.await/);
   assert.match(stackClipboardSource, /pub\(crate\)\s+async\s+fn\s+paste_stack_clipboard_items_async/);
-  assert.match(stackClipboardSource, /tauri::async_runtime::spawn_blocking\(move \|\| \{\s*paste_clipboard_items_progress\(&clipboard,\s*&destination,\s*journal_dir\.as_deref\(\),\s*&worker_window,\s*&mut progress\)\s*\}\)/);
   const pasteBody = stackClipboardSource.slice(
     stackClipboardSource.indexOf('pub(crate) async fn paste_stack_clipboard_items_async'),
     stackClipboardSource.indexOf('fn update_cut_clipboard_after_paste')
   );
   assert.match(pasteBody, /recovery_journal_dir\(app_handle\)\?/);
   assert.match(pasteBody, /journal_dir\.as_deref\(\)/);
-  assert.match(pasteBody, /let clipboard = clipboard_for_paste\(state\)\?/);
+  const worker = pasteBody.match(/tauri::async_runtime::spawn_blocking\(move \|\| \{([\s\S]*?)\n\s*\}\)\s*\.await/)?.[1] ?? '';
+  assert.match(worker, /paste_clipboard_items_progress\(\s*&clipboard,\s*&destination,\s*journal_dir\.as_deref\(\),\s*&worker_window,\s*&mut progress\b/);
+  assert.match(pasteBody, /let snapshot = clipboard_for_paste\(state\)\?/);
   assert.ok(pasteBody.indexOf('clipboard_for_paste(state)?') < pasteBody.indexOf('spawn_blocking('));
-  assert.match(pasteBody, /\.await\s*\.map_err\([\s\S]*?\?;\s*if matches!\(mode, ClipboardMode::Cut\) \{\s*update_cut_clipboard_after_paste\(state, used_internal_clipboard, &result\)/);
+  assert.match(pasteBody, /\}\)\s*\.await\s*\.map_err\([\s\S]*?\?;[\s\S]*?if matches!\(mode, ClipboardMode::Cut\) \{\s*update_cut_clipboard_after_paste\(state, clipboard_revision, worker_result\.retry_cut_paths\)/);
   const clipboardSnapshot = stackClipboardSource.slice(
     stackClipboardSource.indexOf('fn clipboard_for_paste('),
     stackClipboardSource.indexOf('pub(crate) fn paste_clipboard_items(')

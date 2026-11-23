@@ -74,7 +74,6 @@
   :global(.js-context-menu .context-menu-item:hover),
   :global(.js-context-menu .context-menu-item:focus-visible) {
     background: var(--js-color-control-hover);
-    outline: 0;
   }
 
   :global(.js-context-menu .context-menu-item:focus-visible) { box-shadow: var(--js-focus-ring); }

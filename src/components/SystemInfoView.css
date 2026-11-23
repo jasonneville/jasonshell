@@ -7,7 +7,7 @@
   scrollbar-color: var(--js-scrollbar-thumb) var(--js-scrollbar-track);
 }
 
-.system-info-view:focus-visible { outline: none; box-shadow: inset var(--js-focus-ring); }
+.system-info-view:focus-visible { outline: 2px solid var(--js-focus-color); outline-offset: -2px; }
 .system-info-update { color: var(--js-color-text-muted); font-size: 0.65rem; margin-bottom: 0.7rem; }
 .system-info-section {
   display: grid;
@@ -51,7 +51,7 @@
 .system-info-sampling { margin-top: 0.45rem; color: var(--js-color-text-muted); font-size: 0.63rem; min-width: 0; }
 .system-info-sampling summary { cursor: pointer; width: fit-content; max-width: 100%; padding: 0.2rem 0; overflow-wrap: anywhere; }
 .system-info-sampling summary:hover { color: var(--js-color-text); }
-.system-info-sampling summary:focus-visible { outline: none; border-radius: var(--js-radius-xs); box-shadow: var(--js-focus-ring); }
+.system-info-sampling summary:focus-visible { border-radius: var(--js-radius-xs); }
 .system-info-sampling > p { margin: 0.4rem 0; }
 .system-info-sampling > dl { margin: 0; }
 .system-info-provenance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0.5rem; padding: 0.4rem 0; border-top: 1px solid var(--js-color-border-soft); }

@@ -22,7 +22,7 @@ test('stack git status backend and API use git porcelain outside folder listing'
 test('stack browser renders minimal git summary and row badges', () => {
   assert.match(surface, /class="stack-git-summary"/);
   assert.match(surface, /stackGitSummaryParts/);
-  assert.match(surface, /stackGitStatusForEntry/);
+  assert.match(surface, /stackGitStatusForEntry|stackGitStatusFromIndex/); // FE-25: precomputed index lookup may replace the per-row scan
   assert.match(surface, /data-git-status=\{gitEntryStatus \?\? undefined\}/);
   assert.match(surface, /git-status-badge/);
   assert.match(css, /\.stack-git-summary/);

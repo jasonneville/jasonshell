@@ -270,10 +270,9 @@ fn process_entry_name(
 }
 
 fn everything_service_running() -> bool {
-    let Ok(output) = Command::new("sc.exe")
-        .args(["query", "Everything"])
-        .output()
-    else {
+    let mut command = Command::new("sc.exe");
+    command.args(["query", "Everything"]);
+    let Ok(output) = crate::process_flags::no_console_window(&mut command).output() else {
         return false;
     };
     if !output.status.success() {

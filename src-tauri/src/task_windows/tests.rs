@@ -4,7 +4,7 @@ use super::{
     TaskbarWindowAttentionState,
 };
 use super::{
-    actions::{should_fallback_post_close, should_minimize_window, should_use_foreground_handoff},
+    actions::{should_minimize_window, should_use_foreground_handoff},
     windows::{
         infer_activity_state, is_activity_indicator_eligible, is_internal_notification_window,
         is_taskbar_candidate, sort_windows_stably, ActivitySnapshot, WindowCandidate,
@@ -191,13 +191,6 @@ fn minimizes_only_from_live_foreground_state() {
 #[test]
 fn does_not_minimize_already_minimized_window() {
     assert!(!should_minimize_window(true, false, true, true));
-}
-
-#[test]
-fn retries_close_with_post_message_when_window_remains() {
-    assert!(should_fallback_post_close(false, true));
-    assert!(should_fallback_post_close(true, true));
-    assert!(!should_fallback_post_close(false, false));
 }
 
 #[test]

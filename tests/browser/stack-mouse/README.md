@@ -38,7 +38,7 @@ Component cases mock body geometry explicitly (30px production row height, 240px
 
 Component coverage includes rapid physical-press/compatibility sequences, delayed Stash detail/diff responses, busy Git ignore confirmation, cancellation focus restoration, destructive-call exclusion, ordinary click/keyboard behavior, and popup unmount/remount cleanup. Busy ignore starts exactly one explicitly confirmed bridge operation; side buttons must add no commands while it remains pending.
 
-Terminal limitation: current popup imports `StackTerminalPane` and keeps terminal-mode functions/state, but renders neither a terminal pane nor a control invoking its mode switch. No test-only production hook is added. Cleanup tests use an isolated terminal input target after popup unmount; this establishes no leaked capture listener, **not** live mounted-terminal integration or native terminal behavior.
+Terminal limitation: the popup does not import or render `StackTerminalPane` and has no terminal mode. No test-only production hook is added. Cleanup tests use an isolated terminal input target after popup unmount; this establishes no leaked capture listener, **not** live mounted-terminal integration or native terminal behavior.
 
 ## Explicit-origin push acceptance
 

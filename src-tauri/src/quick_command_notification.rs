@@ -612,6 +612,7 @@ pub(crate) fn act_on_quick_command_notification(
             Wake { id: &id },
         );
     }
+    // Pause/Resume only re-sync the native timer; they never retire or open.
     schedule_drive(app);
     Ok(())
 }

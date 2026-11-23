@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
-
-function readRepoFile(path) {
-  const url = new URL(`../${path}`, import.meta.url);
-  return existsSync(url) ? readFileSync(url, 'utf8') : '';
-}
+import { readRepoFile } from './support/repoSource.mjs';
 
 const quickSelect = readRepoFile('src/features/terminal/terminalQuickSelect.ts');
 const panel = readRepoFile('src/components/TerminalPanelSurface.svelte');

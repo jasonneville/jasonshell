@@ -125,6 +125,18 @@ pub struct SearchSettings {
     pub result_limit: usize,
     #[serde(default)]
     pub everything: EverythingSearchSettings,
+    #[serde(default)]
+    pub web_engine: WebSearchEngine,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WebSearchEngine {
+    #[default]
+    Google,
+    DuckDuckGo,
+    Bing,
+    Brave,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -316,6 +328,7 @@ impl Default for SearchSettings {
         Self {
             result_limit: default_search_result_limit(),
             everything: EverythingSearchSettings::default(),
+            web_engine: WebSearchEngine::default(),
         }
     }
 }
@@ -471,6 +484,21 @@ pub fn save_shell_bar_lock(
 pub(crate) fn load_shell_settings_for_app(app_handle: &AppHandle) -> Result<ShellSettings, String> {
     let path = settings_path(app_handle)?;
     load_settings_from_path(&path)
+}
+/// Identity of one settings-file revision. Equal stamps mean an unchanged file (including absent).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SettingsFileStamp {
+    path: PathBuf,
+    revision: Option<(SystemTime, u64)>,
+}
+pub(crate) fn settings_file_stamp(app_handle: &AppHandle) -> Option<SettingsFileStamp> {
+    let path = settings_path(app_handle).ok()?;
+    let revision = match fs::metadata(&path) {
+        Ok(metadata) => Some((metadata.modified().ok()?, metadata.len())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => return None,
+    };
+    Some(SettingsFileStamp { path, revision })
 }
 pub(crate) fn load_hotkey_startup_settings(app_handle: &AppHandle) -> Result<(ShellSettings, MissingHotkeys), String> {
     let _guard = SETTINGS_WRITE_LOCK.lock().map_err(|_| "settings write lock is poisoned".to_string())?;

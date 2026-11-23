@@ -431,9 +431,7 @@ export function stackBrowserDeletePrompt(
     itemCount,
     label,
     title: itemCount === 1 ? `Delete ${selectedEntries[0]?.name ?? 'item'}?` : `Delete ${itemCount} items?`,
-    message: itemCount === 1
-      ? `Delete "${selectedEntries[0]?.name ?? 'item'}"? This cannot be undone.`
-      : `Delete ${itemCount} selected items? This cannot be undone.`
+    message: `${itemCount === 1 ? 'This item will be moved' : 'These items will be moved'} to the JasonShell recovery folder. Undo can restore the latest batch.`
   };
 }
 

@@ -32,6 +32,8 @@
   import { topBarWebviewWindowEventTarget } from '../lib/topBarPins';
   import {
     buildVisibleSearchRows,
+    implicitSearchSelectionIndex,
+    quickCommandIdForResult,
     nextSearchPanelFallbackDelay,
     nextVisibleRowIndex,
     selectedVisibleRowIndex,
@@ -79,8 +81,12 @@
     (searchScope === 'everything' ? row.result.providerId === 'everything' : row.result.kind === searchScope)
   );
   $: underlyingSelectedRowIndex = selectedVisibleRowIndex(visibleRows, selectedIndex);
+  $: interim = panelState.phase !== 'complete';
+  // An interim payload that selects nothing is waiting for the user's chosen row, so nothing replaces it.
+  $: selectableResults = interim && selectedIndex < 0 ? [] : visibleRows.map((row) => row.result);
+  // A scope can hide the selected row; the replacement must be one a plain Enter may activate.
   $: selectedRowIndex = presentation === 'centered' && underlyingSelectedRowIndex < 0 && visibleRows.length
-    ? 0 : underlyingSelectedRowIndex;
+    ? implicitSearchSelectionIndex(selectableResults, interim) : underlyingSelectedRowIndex;
   $: selectedRow = selectedRowIndex >= 0 ? visibleRows[selectedRowIndex] : null;
   $: void revealSelectedResult(selectedRowIndex, visibleRows.length);
   $: visibleStatusMessage = searchPanelStatusMessage(statusMessage, results.length);
@@ -184,6 +190,16 @@
     void emitTo(topBarTarget, SEARCH_PANEL_ACTIVATE_EVENT, searchVisibleRowIdentity(row));
   }
 
+  // Shift+Enter shows a Quick Commands row in its panel; every other row has nothing to reveal.
+  function revealRow(row: SearchVisibleRow): boolean {
+    if (quickCommandIdForResult(row.result) === null) {
+      return false;
+    }
+    markPanelInteraction();
+    void emitTo(topBarTarget, SEARCH_PANEL_ACTIVATE_EVENT, { ...searchVisibleRowIdentity(row), intent: 'reveal' });
+    return true;
+  }
+
   function updateQuery(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value;
     optimisticQueryDraft = value;
@@ -220,6 +236,7 @@
     }
     if (event.key === 'Enter') {
       if (selectedRow) {
+        if (event.shiftKey && revealRow(selectedRow)) return;
         activateRow(selectedRow);
         return;
       }
@@ -271,6 +288,7 @@
   function handleOptionKeydown(event: KeyboardEvent, row: SearchVisibleRow) {
     if (event.key === 'Enter') {
       event.preventDefault();
+      if (event.shiftKey && revealRow(row)) return;
       activateRow(row);
     }
   }

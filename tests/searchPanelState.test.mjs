@@ -468,8 +468,7 @@ test('top-bar cancels search work on native panel close and listens only to app 
   assert.match(immediate, /if \(!request\.query \|\| normalizedChanged\) \{[\s\S]*searchResults = \[\];[\s\S]*searchResultsQuery = '';/);
   assert.match(start, /publishPendingSearchPayload\(request\.sequence, searchResults\)/);
   assert.match(start, /void loadSearchEngineResults\(request\)/);
-  assert.match(source, /const selectedIndexBeforeUpdate = selectedIndex/);
-  assert.match(source, /selectedIndexBeforeUpdate <= 0/);
+  // Selection follow-up is covered by behaviour tests on streamedSearchSelection (searchImplicitSelection.test.mjs).
   assert.match(source, /if \(!shouldRetry\) \{[\s\S]*resetSearchProviderCacheRetry\(\)/);
   assert.match(refreshHandler, /isAppSearchIndexRefreshedPayload\(event\.payload\)/);
   assert.match(refreshHandler, /lastAppIndexRefreshGeneration/);
@@ -550,7 +549,8 @@ test('search panel keyboard and aria state follow visibleRows order', () => {
   const optionTag = source.match(/<div\b[^<]*?role="option"[^<]*?>/)?.[0] ?? '';
 
   assert.match(source, /underlyingSelectedRowIndex = selectedVisibleRowIndex\(visibleRows, selectedIndex\)/);
-  assert.match(source, /selectedRowIndex = presentation === 'centered' && underlyingSelectedRowIndex < 0 && visibleRows\.length\s*\? 0 : underlyingSelectedRowIndex/);
+  assert.match(source, /selectedRowIndex = presentation === 'centered' && underlyingSelectedRowIndex < 0 && visibleRows\.length[\s\S]*?\? implicitSearchSelectionIndex\(/);
+  // Hidden-selection fallback is no longer row 0; behaviour is covered in search-providers-panel.test.ts.
   assert.match(inputTag, /aria-activedescendant=\{selectedRow\?\.domId\}/);
   assert.doesNotMatch(listboxTag, /aria-activedescendant=/);
   assert.doesNotMatch(optionTag, /<button|MeltActionButton|tabindex="0"|on:click=\{\(event\) => pinFolderResult/);

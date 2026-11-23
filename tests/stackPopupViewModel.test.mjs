@@ -218,7 +218,7 @@ test('builds explicit delete prompt state from visible selection only', () => {
   assert.deepEqual(prompt.paths, [entries[0].path, entries[2].path]);
   assert.equal(prompt.itemCount, 2);
   assert.equal(prompt.label, '2 items');
-  assert.equal(prompt.message, 'Delete 2 selected items? This cannot be undone.');
+  assert.equal(prompt.message, 'These items will be moved to the JasonShell recovery folder. Undo can restore the latest batch.');
 });
 
 test('delete prompt falls back to selectedPath and rejects empty selections', () => {
@@ -230,7 +230,7 @@ test('delete prompt falls back to selectedPath and rejects empty selections', ()
     itemCount: 1,
     label: 'alpha.txt',
     title: 'Delete alpha.txt?',
-    message: 'Delete "alpha.txt"? This cannot be undone.'
+    message: 'This item will be moved to the JasonShell recovery folder. Undo can restore the latest batch.'
   });
 
   assert.equal(stackBrowserDeletePrompt(entries, [], null).canDelete, false);

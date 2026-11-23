@@ -147,6 +147,7 @@ export type SearchPanelResult = {
   titleHighlightData?: number[];
   subtitleHighlightData?: number[];
   recordKey?: string;
+  matchReason?: string;
   runCount?: number;
   topMost?: boolean;
   providerHealth?: ProviderHealthState;
@@ -213,6 +214,23 @@ export function launchAppPath(path: string): Promise<void> {
 
 export function runControlPanel(args?: string[]): Promise<void> {
   return invoke(IPC_COMMANDS.runControlPanel, { args });
+}
+
+export function openSearchUrl(url: string): Promise<void> {
+  return invoke(IPC_COMMANDS.openSearchUrl, { url });
+}
+
+export function copySearchText(text: string): Promise<void> {
+  return invoke(IPC_COMMANDS.copySearchText, { text });
+}
+
+export type SearchQuickCommandRunResult =
+  | { outcome: 'started'; runId: string; processId: number }
+  /** Nothing was launched: the command asks for input only the Quick Commands panel can give. */
+  | { outcome: 'openPanel'; commandId: string };
+
+export function runSearchQuickCommand(id: string): Promise<SearchQuickCommandRunResult> {
+  return invoke(IPC_COMMANDS.runSearchQuickCommand, { request: { id } });
 }
 
 export function getSearchProviderHealth(): Promise<ProviderHealthContract[]> {

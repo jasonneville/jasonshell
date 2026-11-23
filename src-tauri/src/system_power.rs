@@ -35,8 +35,9 @@ pub async fn trigger_system_power_action(window: WebviewWindow, request: SystemP
         SystemPowerAction::Sleep => trigger_sleep(),
         SystemPowerAction::Restart | SystemPowerAction::Shutdown => {
             let plan = power_action_plan(request.action);
-            let mut child = std::process::Command::new(plan.program)
-                .args(plan.args)
+            let mut command = std::process::Command::new(plan.program);
+            command.args(plan.args);
+            let mut child = crate::process_flags::no_console_window(&mut command)
                 .spawn()
                 .map_err(|_| "Failed to trigger system power action")?;
             loop {

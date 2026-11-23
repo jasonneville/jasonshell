@@ -2,8 +2,10 @@
 use crate::stack_popup::file_ops::{copy_path_with_journal, move_path_with_fallback_journal};
 use crate::stack_popup::file_ops::{
     available_destination_path, ensure_paste_destination_allowed,
-    copy_path_with_journal_progress, move_path_with_fallback_journal_progress,
+    copy_path_with_journal_progress, move_path_with_fallback_journal_progress, MoveMethod,
 };
+#[cfg(windows)]
+use super::local_drop::{UndoItem, MAX_LOCAL_ITEMS};
 use crate::stack_popup::items::stack_item_from_path;
 use crate::stack_popup::models::{
     ClipboardMode, StackClipboard, StackPasteFailure, StackPasteResult, StackPopupRuntimeState,
@@ -18,13 +20,38 @@ use crate::stack_popup::models::StackFileOperationProgress;
 #[cfg(target_os = "windows")]
 struct ClipboardSession;
 
+#[cfg(windows)]
+use super::models::NativeCutPublication;
+
+#[cfg(windows)]
+impl NativeCutPublication {
+    fn retire(self) -> Result<(), String> {
+        use windows::Win32::System::DataExchange::{EmptyClipboard, GetClipboardOwner, GetClipboardSequenceNumber};
+
+        // Hold the OS clipboard lock from comparison through clearing. A busy
+        // clipboard must not leave a completed move backed by a live stale cut.
+        let _session = ClipboardSession::open(None)?;
+        // SAFETY: These clipboard APIs take no pointers. The session serializes writes.
+        unsafe {
+            let current = GetClipboardSequenceNumber();
+            if current == 0 || self.sequence == 0 {
+                return Err("Unable to verify the staged Cut clipboard".into());
+            }
+            if current == self.sequence && GetClipboardOwner().ok().map(|owner| owner.0 as isize) == Some(self.owner) {
+                EmptyClipboard().map_err(|error| format!("Failed to retire the staged Cut clipboard: {error}"))?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "windows")]
 impl ClipboardSession {
-    fn open() -> Result<Self, String> {
+    fn open(owner: Option<windows::Win32::Foundation::HWND>) -> Result<Self, String> {
         use windows::Win32::System::DataExchange::OpenClipboard;
 
         unsafe {
-            OpenClipboard(None).map_err(|error| format!("Failed to open clipboard: {error}"))?
+            OpenClipboard(owner).map_err(|error| format!("Failed to open clipboard: {error}"))?
         };
         Ok(Self)
     }
@@ -126,6 +153,7 @@ impl Drop for OwnedGlobalMem {
 }
 
 pub(crate) fn set_stack_clipboard(
+    window: &WebviewWindow,
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
     mode: ClipboardMode,
     paths: Vec<String>,
@@ -139,15 +167,16 @@ pub(crate) fn set_stack_clipboard(
         .collect::<Result<Vec<_>, _>>()?;
 
     #[cfg(target_os = "windows")]
-    set_native_file_clipboard(&resolved, mode)?;
+    let (_session, native_cut) = set_native_file_clipboard(window.hwnd().map_err(|_| "File clipboard owner unavailable")?, &resolved, mode)?;
+    #[cfg(not(windows))]
+    let _ = window;
 
-    state
-        .lock()
-        .expect("stack popup runtime state is poisoned")
-        .clipboard = Some(StackClipboard {
-        mode,
-        paths: resolved,
-    });
+    // Keep the native clipboard open until the matching internal snapshot is staged.
+    let mut state = state.lock().map_err(|_| "Stack popup state unavailable")?;
+    state.clipboard_revision = state.clipboard_revision.wrapping_add(1);
+    state.clipboard = Some(StackClipboard { mode, paths: resolved });
+    #[cfg(windows)]
+    { state.native_cut = native_cut; }
     Ok(())
 }
 
@@ -171,22 +200,62 @@ pub(crate) async fn paste_stack_clipboard_items_async(
     } else {
         Some(recovery_journal_dir(app_handle)?)
     };
-    let used_internal_clipboard = state
-        .lock()
-        .expect("stack popup runtime state is poisoned")
-        .clipboard
-        .is_some();
-    let clipboard = clipboard_for_paste(state)?;
+    let snapshot = clipboard_for_paste(state)?;
+    let clipboard_revision = snapshot.revision;
+    let clipboard = snapshot.clipboard;
+    #[cfg(windows)]
+    let native_cut = snapshot.native_cut;
     let mode = clipboard.mode;
+    #[cfg(windows)]
+    let permit = if mode == ClipboardMode::Cut {
+        Some(state.lock().map_err(|_| "Stack popup state unavailable")?.move_undo.reserve()?)
+    } else {
+        None
+    };
+    #[cfg(windows)]
+    let owner = permit.as_ref().and_then(|_| {
+        // External Cut publications cannot be retired by Stack. Restoring their
+        // sources would make the unchanged publication actionable again.
+        (clipboard_revision.is_some() && window.label() == crate::shell_windows::STACK_POPUP_LABEL)
+            .then(|| super::visible_local_drop_owner(app_handle, &window).ok()).flatten()
+    });
     let worker_window = window.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        paste_clipboard_items_progress(&clipboard, &destination, journal_dir.as_deref(), &worker_window, &mut progress)
+        #[cfg(windows)]
+        if let Some(publication) = native_cut {
+            // Retire before mutating. Failed items remain staged internally
+            // without republishing stale paths to the system clipboard.
+            publication.retire()?;
+        }
+        let worker_result = paste_clipboard_items_progress(
+            &clipboard, &destination, journal_dir.as_deref(), &worker_window, &mut progress,
+            #[cfg(windows)]
+            owner.is_some(),
+        );
+        #[cfg(windows)]
+        return Ok::<_, String>((worker_result, permit));
+        #[cfg(not(windows))]
+        Ok::<_, String>(worker_result)
     })
     .await
-    .map_err(|error| format!("Failed to join stack paste task: {error}"))?;
+    .map_err(|error| format!("Failed to join stack paste task: {error}"))??;
+
+    #[cfg(windows)]
+    let (worker_result, permit) = result;
+    #[cfg(not(windows))]
+    let worker_result = result;
+    let mut result = worker_result.result;
+    #[cfg(windows)]
+    if let Some(permit) = permit.as_ref() {
+        result.undo_move_id = super::record_stack_move(state, permit, owner, worker_result.moved, worker_result.undo_items);
+    }
+    #[cfg(not(windows))]
+    if worker_result.moved > 0 {
+        result.undo_move_id = Some(None);
+    }
 
     if matches!(mode, ClipboardMode::Cut) {
-        update_cut_clipboard_after_paste(state, used_internal_clipboard, &result);
+        update_cut_clipboard_after_paste(state, clipboard_revision, worker_result.retry_cut_paths);
     }
 
     Ok(result)
@@ -202,41 +271,55 @@ pub(crate) async fn paste_stack_clipboard_items_async(
 
 fn update_cut_clipboard_after_paste(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
-    used_internal_clipboard: bool,
-    result: &StackPasteResult,
+    clipboard_revision: Option<u64>,
+    retry_cut_paths: Vec<PathBuf>,
 ) {
-    if !used_internal_clipboard {
-        return;
-    }
+    let Some(revision) = clipboard_revision else { return };
+    let Ok(mut state) = state.lock() else { return };
+    if state.clipboard_revision != revision { return; }
 
-    let mut state = state.lock().expect("stack popup runtime state is poisoned");
-    if result.failures.is_empty() {
+    state.clipboard_revision = state.clipboard_revision.wrapping_add(1);
+    #[cfg(windows)]
+    { state.native_cut = None; }
+    if retry_cut_paths.is_empty() {
         state.clipboard = None;
     } else {
         state.clipboard = Some(StackClipboard {
             mode: ClipboardMode::Cut,
-            paths: result
-                .failures
-                .iter()
-                .map(|failure| PathBuf::from(&failure.path))
-                .collect(),
+            paths: retry_cut_paths,
         });
     }
 }
 
+struct ClipboardSnapshot {
+    clipboard: StackClipboard,
+    revision: Option<u64>,
+    #[cfg(windows)]
+    native_cut: Option<NativeCutPublication>,
+}
+
 fn clipboard_for_paste(
     state: &State<'_, Mutex<StackPopupRuntimeState>>,
-) -> Result<StackClipboard, String> {
-    if let Some(clipboard) = state
-        .lock()
-        .expect("stack popup runtime state is poisoned")
-        .clipboard
-        .clone()
+) -> Result<ClipboardSnapshot, String> {
     {
-        return Ok(clipboard);
+        let state = state.lock().map_err(|_| "Stack popup state unavailable")?;
+        if let Some(clipboard) = state.clipboard.clone() {
+            return Ok(ClipboardSnapshot {
+                clipboard,
+                revision: Some(state.clipboard_revision),
+                #[cfg(windows)]
+                native_cut: state.native_cut,
+            });
+        }
     }
 
-    read_native_file_clipboard()?.ok_or_else(|| "Stack clipboard is empty".to_string())
+    read_native_file_clipboard()?.map(|clipboard| ClipboardSnapshot {
+        clipboard,
+        revision: None,
+        #[cfg(windows)]
+        native_cut: None,
+    })
+        .ok_or_else(|| "Stack clipboard is empty".to_string())
 }
 
 #[cfg(test)]
@@ -258,17 +341,31 @@ pub(crate) fn paste_clipboard_items(
         }
     }
 
-    StackPasteResult { pasted, failures }
+    StackPasteResult { pasted, failures, undo_move_id: None }
+}
+
+struct PasteWorkerResult {
+    result: StackPasteResult,
+    moved: usize,
+    retry_cut_paths: Vec<PathBuf>,
+    #[cfg(windows)]
+    undo_items: Vec<UndoItem>,
 }
 
 fn paste_clipboard_items_progress(
     clipboard: &StackClipboard, destination: &Path, journal_dir: Option<&Path>,
     window: &WebviewWindow, progress: &mut StackFileOperationProgress,
-) -> StackPasteResult {
+    #[cfg(windows)] track_undo: bool,
+) -> PasteWorkerResult {
     let report = |p: &StackFileOperationProgress| { let _ = window.emit(crate::contracts::events::STACK_FILE_OPERATION_PROGRESS, p); };
     let mut pasted = Vec::new();
     let mut failures = Vec::new();
+    let mut moved_count = 0;
+    let mut retry_cut_paths = Vec::new();
+    #[cfg(windows)]
+    let mut undo_items = Vec::new();
     for source in &clipboard.paths {
+        let mut did_move = false;
         progress.current_path = Some(source.to_string_lossy().into_owned());
         progress.determinate = false;
         progress.total_files = None; progress.completed_files = None;
@@ -292,6 +389,10 @@ fn paste_clipboard_items_progress(
                 progress.phase("moving"); report(progress);
                 // The rename path is phase-only; only fallback copy has scanned totals.
                 let progress_cell = std::cell::RefCell::new(&mut *progress);
+                #[cfg(windows)]
+                let mut undo_item = if track_undo && clipboard.paths.len() <= MAX_LOCAL_ITEMS {
+                    UndoItem::before_clipboard_rename(source, &target)
+                } else { None };
                 move_path_with_fallback_journal_progress(source, &target, journal_dir,
                     &mut |path, bytes| {
                         let mut progress = progress_cell.borrow_mut();
@@ -314,13 +415,27 @@ fn paste_clipboard_items_progress(
                         progress.total_files = None; progress.completed_files = None;
                         progress.total_bytes = None; progress.completed_bytes = None;
                         progress.phase("deleting"); report(&progress);
+                    }, &mut |method: MoveMethod| {
+                        did_move = true;
+                        moved_count += 1;
+                        #[cfg(windows)]
+                        if let MoveMethod::Rename = method {
+                            undo_items.extend(undo_item.take().and_then(UndoItem::verify_clipboard_rename));
+                        }
+                        #[cfg(not(windows))]
+                        let _ = method;
                     })?;
             }
             stack_item_from_path(target)
         })();
         match item {
             Ok(item) => pasted.push(item),
-            Err(message) => failures.push(StackPasteFailure { path: source.to_string_lossy().into_owned(), message }),
+            Err(message) => {
+                if clipboard.mode == ClipboardMode::Cut && !did_move {
+                    retry_cut_paths.push(source.clone());
+                }
+                failures.push(StackPasteFailure { path: source.to_string_lossy().into_owned(), message });
+            }
         }
     }
     progress.determinate = false;
@@ -329,7 +444,13 @@ fn paste_clipboard_items_progress(
     if failures.is_empty() { progress.phase("completed"); }
     else { progress.error = Some(format!("{} item(s) could not be pasted", failures.len())); progress.phase("failed"); }
     report(progress);
-    StackPasteResult { pasted, failures }
+    PasteWorkerResult {
+        result: StackPasteResult { pasted, failures, undo_move_id: None },
+        moved: moved_count,
+        retry_cut_paths,
+        #[cfg(windows)]
+        undo_items,
+    }
 }
 
 #[cfg(test)]
@@ -388,7 +509,7 @@ fn read_native_file_clipboard() -> Result<Option<StackClipboard>, String> {
 
     // SAFETY: Opening the process clipboard does not dereference raw pointers; it
     // establishes process-global clipboard access that is closed before return.
-    let _session = ClipboardSession::open()?;
+    let _session = ClipboardSession::open(None)?;
 
     // SAFETY: Clipboard handles returned by Win32 are checked before locking and
     // are only read while the clipboard is open. Buffers passed to DragQueryFileW
@@ -449,13 +570,17 @@ fn read_native_file_clipboard() -> Result<Option<StackClipboard>, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn set_native_file_clipboard(paths: &[PathBuf], mode: ClipboardMode) -> Result<(), String> {
+fn set_native_file_clipboard(
+    owner: windows::Win32::Foundation::HWND,
+    paths: &[PathBuf],
+    mode: ClipboardMode,
+) -> Result<(ClipboardSession, Option<NativeCutPublication>), String> {
     use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{HANDLE, POINT};
     use windows::Win32::System::DataExchange::{
-        EmptyClipboard, RegisterClipboardFormatW, SetClipboardData,
+        EmptyClipboard, GetClipboardSequenceNumber, RegisterClipboardFormatW, SetClipboardData,
     };
     use windows::Win32::System::Ole::CF_HDROP;
     use windows::Win32::UI::Shell::DROPFILES;
@@ -505,10 +630,10 @@ fn set_native_file_clipboard(paths: &[PathBuf], mode: ClipboardMode) -> Result<(
     };
 
     let format_name = to_wide("Preferred DropEffect");
-    // SAFETY: Opens the process clipboard, publishes ownership of the allocated
-    // HGLOBAL handles with SetClipboardData, then closes the clipboard before return.
+    // Use the caller's live window so EmptyClipboard gives this process ownership.
+    let session = ClipboardSession::open(Some(owner))?;
+    // SAFETY: Publishes the allocated HGLOBAL handles under the open session.
     unsafe {
-        let _session = ClipboardSession::open()?;
         EmptyClipboard().map_err(|error| format!("Failed to empty clipboard: {error}"))?;
         let effect_format = RegisterClipboardFormatW(PCWSTR(format_name.as_ptr()));
         if effect_format != 0 {
@@ -533,7 +658,12 @@ fn set_native_file_clipboard(paths: &[PathBuf], mode: ClipboardMode) -> Result<(
             }
         }
     }
-    Ok(())
+    let publication = (mode == ClipboardMode::Cut).then(|| NativeCutPublication {
+        owner: owner.0 as isize,
+        // SAFETY: The publishing session is still open and all data was supplied eagerly.
+        sequence: unsafe { GetClipboardSequenceNumber() },
+    });
+    Ok((session, publication))
 }
 
 #[cfg(target_os = "windows")]

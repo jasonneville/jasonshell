@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
-
-function readRepoFile(path) {
-  const url = new URL(`../${path}`, import.meta.url);
-  return existsSync(url) ? readFileSync(url, 'utf8') : '';
-}
+import { readRepoFile } from './support/repoSource.mjs';
 
 const commandsSource = readRepoFile('src/ipc/commands.ts');
 const stackPopupApi = readRepoFile('src/lib/stackPopup.ts');
@@ -233,9 +228,9 @@ test('browser summary has separate typed context, summary and deferred metadata 
 });
 
 test('stack popup renders branch summary and minimal row git badges', () => {
-  assert.match(stackPopupSurface, /stackGitStatusPathMatchesEntry/);
+  assert.match(stackPopupSurface, /stackRowDisplay/); // FE-25: badge matching lives in stackRowDisplay (behaviour: stack-row-display*.test.ts)
   assert.match(stackPopupSurface, /stack-git-summary/);
-  assert.match(stackPopupSurface, /\{:else if gitStatusPopupOpen\}\s*<StackGitPanel/);
+  assert.match(stackPopupSurface, /\{:else if gitStatusPopupOpen\}[\s\S]*?this=\{StackGitPanelPane\}/);
   assert.match(stackPopupSurface, /stack-git-summary/);
   assert.match(stackPopupSurface, /openGitRemoteRepository\(url: string \| null \| undefined\)/);
   assert.match(stackPopupSurface, /await openStackGitRemoteUrl\(url\)/);
@@ -259,7 +254,8 @@ test('stack popup renders branch summary and minimal row git badges', () => {
   assert.match(stackGitPanel, /type="submit" class="stack-git-button--outline" disabled=\{!commitMessage\.trim\(\) \|\| !canCommit \|\| gitMutationBlocked\}>Commit<\/button>/);
   assert.match(stackGitPanel, /Commit message/);
   assert.match(stackPopupSurface, /stackGitSummaryParts\(gitStatus\)/);
-  assert.match(stackPopupSurface, /stackGitStatusForEntry\(entry, gitStatus, gitStatusPath, currentPath, gitRepositoryContext\?\.canonicalPath\)/);
+  // FE-25: rows resolve badges through the precomputed index (behaviour covered by stack-row-display*.test.ts); the legacy per-row scan call is still accepted.
+  assert.match(stackPopupSurface, /stackGitStatusForEntry\(entry, gitStatus, gitStatusPath, currentPath, gitRepositoryContext\?\.canonicalPath\)|stackGitStatusFromIndex\(/);
   assert.match(stackPopupSurface, /data-git-status=\{gitEntryStatus \?\? undefined\}/);
   assert.match(stackPopupSurface, /git-status-badge/);
   assert.match(stackPopupSurface, /stackGitStatusLabel\(gitEntryStatus\)/);
@@ -276,7 +272,7 @@ test('stack git changes popup splits staged and unstaged sections and hides empt
 test('stack git status dialog is upgraded into a dense developer workbench', () => {
   assert.doesNotMatch(stackPopupSurface, /class="stack-git-popup"/);
   assert.doesNotMatch(stackPopupSurface, /class="stack-git-workbench"/);
-  assert.match(stackPopupSurface, /<StackGitPanel/);
+  assert.match(stackPopupSurface, /<svelte:component[^>]*\bthis=\{StackGitPanelPane\}/);
   assert.match(stackGitPanel, /class="stack-git-change-group"/);
   assert.match(stackGitPanel, /type StackGit\w*View = 'changes' \| 'history' \| 'stashes' \| 'branches';/);
   assert.match(stackGitPanel, /let activeView: StackGit\w*View = 'changes';/);

@@ -1,5 +1,7 @@
 #![cfg(target_os = "windows")]
 
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -104,6 +106,77 @@ impl ExplorerTaskbarSnapshot {
     }
 }
 
+/// Marker file written (in the per-user state dir) before JasonShell hides the
+/// Explorer taskbar and removed after it is shown again. A marker that is still
+/// present at startup means a previous run hid the taskbar and died.
+pub(crate) const HIDDEN_MARKER_FILE_NAME: &str = "taskbar-hidden-by-jasonshell.marker";
+
+/// A leftover marker means the taskbar is hidden by us, not by the user.
+pub(crate) fn effective_originally_visible(observed_visible: bool, marker_present: bool) -> bool {
+    observed_visible || marker_present
+}
+
+pub(crate) fn write_hidden_marker(dir: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join(HIDDEN_MARKER_FILE_NAME), b"hidden\n")
+}
+
+pub(crate) fn hidden_marker_present(dir: &Path) -> bool {
+    dir.join(HIDDEN_MARKER_FILE_NAME).is_file()
+}
+
+pub(crate) fn clear_hidden_marker(dir: &Path) -> io::Result<()> {
+    match std::fs::remove_file(dir.join(HIDDEN_MARKER_FILE_NAME)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Stable per-user state dir that does not need a Tauri `AppHandle`
+/// (`%LOCALAPPDATA%\JasonShell\state`).
+fn hidden_marker_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    base.is_absolute()
+        .then(|| base.join("JasonShell").join("state"))
+}
+
+fn startup_marker_present() -> bool {
+    hidden_marker_dir().is_some_and(|dir| hidden_marker_present(&dir))
+}
+
+fn persist_hidden_marker() {
+    if let Some(dir) = hidden_marker_dir() {
+        if let Err(error) = write_hidden_marker(&dir) {
+            eprintln!("Failed to persist taskbar hidden marker: {error}");
+        }
+    }
+}
+
+unsafe extern "system" fn show_tray_window(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+    if current_taskbar_class(hwnd).is_some() {
+        let _ = ShowWindow(hwnd, SW_SHOW);
+    }
+    BOOL(1)
+}
+
+/// Panic/crash safety net: shows every Explorer taskbar again when a hidden
+/// marker says this process (or a previous one) hid it. Takes no locks, so it
+/// is safe to call from a panic hook while other locks may be poisoned/held.
+pub(crate) fn emergency_restore_taskbar() {
+    let Some(dir) = hidden_marker_dir() else {
+        return;
+    };
+    if !hidden_marker_present(&dir) {
+        return;
+    }
+    // The marker stays: the work area and AppBars are not restored here, so the
+    // next start must still treat the taskbar as hidden by JasonShell.
+    unsafe {
+        let _ = EnumWindows(Some(show_tray_window), LPARAM(0));
+    }
+}
+
 pub fn primary_taskbar_snapshot(
     primary_monitor_rect: RECT,
 ) -> Result<Option<ExplorerTaskbarSnapshot>, WindowsError> {
@@ -197,13 +270,20 @@ pub fn classify_taskbar_edge(monitor_rect: RECT, taskbar_rect: RECT) -> TaskbarE
 pub fn hide_primary_taskbar_if_needed(
     primary_monitor_rect: RECT,
 ) -> Result<Option<ExplorerTaskbarSnapshot>, WindowsError> {
-    let Some(snapshot) = primary_taskbar_snapshot(primary_monitor_rect)? else {
+    let Some(mut snapshot) = primary_taskbar_snapshot(primary_monitor_rect)? else {
         return Ok(None);
     };
+    snapshot.originally_visible =
+        effective_originally_visible(snapshot.originally_visible, startup_marker_present());
     if !snapshot.originally_visible {
         return Ok(Some(snapshot));
     }
     let taskbar = HWND(snapshot.identity.hwnd as *mut _);
+    if let Some(dir) = hidden_marker_dir() {
+        if let Err(error) = write_hidden_marker(&dir) {
+            eprintln!("Failed to persist taskbar hidden marker: {error}");
+        }
+    }
     let hidden_by_jasonshell = set_taskbar_visibility(taskbar, false)?;
     if !hidden_by_jasonshell {
         eprintln!("Explorer taskbar remained visible after hide retries; startup will continue with guard enforcement");
@@ -217,13 +297,26 @@ pub fn hide_primary_taskbar_if_needed(
 pub fn hide_taskbars_if_needed(
     snapshots: Vec<ExplorerTaskbarSnapshot>,
 ) -> Result<Vec<ExplorerTaskbarSnapshot>, WindowsError> {
+    let marker_present = startup_marker_present();
+    let snapshots = snapshots
+        .into_iter()
+        .map(|snapshot| ExplorerTaskbarSnapshot {
+            originally_visible: effective_originally_visible(
+                snapshot.originally_visible,
+                marker_present,
+            ),
+            ..snapshot
+        })
+        .collect::<Vec<_>>();
     let mut hide = |snapshot: ExplorerTaskbarSnapshot| -> Result<bool, WindowsError> {
+        persist_hidden_marker();
         set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
     };
     Ok(hide_taskbars_core(snapshots, &mut hide)?.0)
 }
 
 pub fn enforce_taskbar_hidden(snapshot: ExplorerTaskbarSnapshot) -> Result<bool, WindowsError> {
+    persist_hidden_marker();
     set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
 }
 
@@ -232,6 +325,7 @@ pub fn reconcile_owned_taskbars(
 ) -> Result<(), WindowsError> {
     let current = all_taskbar_snapshots()?;
     let mut hide = |snapshot: ExplorerTaskbarSnapshot| -> Result<bool, WindowsError> {
+        persist_hidden_marker();
         set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
     };
     let (next, recreated, failures) =
@@ -259,6 +353,7 @@ pub fn reconcile_primary_taskbar_ownership(
 ) -> Result<(), WindowsError> {
     let current = primary_taskbar_snapshots(primary_monitor_rect)?;
     let mut hide = |snapshot: ExplorerTaskbarSnapshot| -> Result<bool, WindowsError> {
+        persist_hidden_marker();
         set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), false)
     };
     let (next, _, _) = reconcile_primary_taskbar_ownership_core(
@@ -476,6 +571,25 @@ pub fn restore_taskbar(snapshot: ExplorerTaskbarSnapshot) -> Result<bool, Window
         return Ok(false);
     }
     set_taskbar_visibility(HWND(snapshot.identity.hwnd as *mut _), true)
+}
+
+/// The marker may only go once EVERY owned taskbar was shown again; the first
+/// success of several must not clear it. An empty list (nothing was hidden)
+/// clears it; any failed restore keeps it.
+pub(crate) fn should_clear_hidden_marker(restore_results: &[bool]) -> bool {
+    restore_results.iter().all(|restored| *restored)
+}
+
+/// Call once after all snapshots were restored; clears the marker iff all succeeded.
+pub(crate) fn finish_taskbar_restore(restore_results: &[bool]) {
+    if !should_clear_hidden_marker(restore_results) {
+        return;
+    }
+    if let Some(dir) = hidden_marker_dir() {
+        if let Err(error) = clear_hidden_marker(&dir) {
+            eprintln!("Failed to clear taskbar hidden marker: {error}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1202,3 +1316,7 @@ mod tests {
         (next, ops)
     }
 }
+
+#[cfg(test)]
+#[path = "explorer_tier0_tests.rs"]
+mod tier0_tests;

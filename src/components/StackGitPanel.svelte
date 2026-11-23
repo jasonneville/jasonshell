@@ -2115,7 +2115,6 @@
     background: color-mix(in srgb, var(--js-color-control-hover) 84%, var(--js-color-accent-border));
     border-color: var(--js-color-accent-border);
     color: var(--js-color-text-strong);
-    outline: 0;
   }
 
   .stack-git-panel-header {
@@ -2292,7 +2291,7 @@
   }
 
   .stack-git-panel button.stack-git-branch-row.current .stack-git-branch-row__state {
-    color: var(--js-color-accent-border);
+    color: var(--js-color-accent);
   }
 
   .stack-git-branch-dropdown__state {
@@ -2609,6 +2608,7 @@
   .stack-git-panel button.stack-git-change-row__action:focus-visible,
   .stack-git-panel button.stack-git-change-row__discard:focus-visible {
     box-shadow: var(--js-focus-ring);
+    outline: 2px solid var(--js-focus-color);
   }
 
   .stack-git-change-group-header__title {
@@ -2769,7 +2769,7 @@
   }
 
   .stack-git-history-files {
-    border-left: 1px solid color-mix(in srgb, var(--js-color-accent-border) 58%, transparent);
+    border-left: 1px solid var(--js-color-border);
     display: grid;
     gap: 4px;
     margin: -8px 0 2px var(--stack-git-change-guide-offset, 18px);
@@ -2875,13 +2875,13 @@
   }
 
   .stack-git-panel button.stack-git-history-file:focus-visible {
-    box-shadow: var(--js-focus-ring);
-    outline: 0;
+    outline-offset: -2px;
   }
 
   .stack-git-change-group-shell > button:focus-visible,
   .stack-git-change-group-file-shell > button:focus-visible {
     box-shadow: none;
+    outline-offset: -2px;
   }
 
   .stack-git-panel .stack-git-change-group-file-shell > button.stack-git-change-row__action,
@@ -3165,7 +3165,6 @@
   .stack-git-panel button:focus-visible {
     border-color: var(--js-color-accent-border);
     box-shadow: var(--js-focus-ring);
-    outline: 0;
   }
 
   .stack-git-commit-actions {
@@ -3183,7 +3182,7 @@
   }
 
   .stack-git-button--primary {
-    background: var(--js-color-accent-border);
+    background: var(--js-bg-active);
     color: var(--js-color-text-strong);
   }
 
