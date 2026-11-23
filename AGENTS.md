@@ -11,6 +11,7 @@
 7. Delegate specialist implementation, testing, documentation, and QA work to suitable subagents when available.
 8. Keep user replies in caveman ultra mode unless the user asks for normal mode.
 9. Preserve unrelated dirty worktree changes.
+10. Main agent owns the full-spec read in step 1 and passes relevant excerpts or section headings to subagents. A delegated subagent reads those plus targeted searches, unless its dispatch asks for a full read.
 
 ## Authority order
 
