@@ -32,8 +32,21 @@ result.txt
 .fusion/
 .worktrees/
 .tmp-*/
-.local/
+.local/*
+!.local/Everything-SDK/
+.local/Everything-SDK/Everything-SDK.zip
+.local/Everything-SDK/**/obj/
+.local/Everything-SDK/**/bin/
+.local/Everything-SDK/**/*.suo
+.local/Everything-SDK/**/*.user
 .slim/deepwork/
+.code/
+.openchamber/
+smoke-results/
+src-tauri/logs/
+src-tauri/test-results/
+.zed/
+.codex
 *.cer
 *.pfx
 
@@ -48,4 +61,5 @@ target-pi-check/*
 NUL
 .harness/**
 .agent-checkpoints/
-/docs/scheduled/
+/docs/scheduled/*
+!/docs/scheduled/11162026_WEEKLY_HEALTH_AUDIT.md
